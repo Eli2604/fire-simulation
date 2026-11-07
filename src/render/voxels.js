@@ -1,0 +1,184 @@
+import * as THREE from 'three';
+import { MATERIALS } from '../sim/materials.js';
+import { F_LIQUID, F_BURNING } from '../sim/world.js';
+import { blackbody, heatmap } from './colors.js';
+
+/**
+ * Renders the surface voxels of the world as one InstancedMesh. Geometry is
+ * rebuilt when the world's geomVersion changes; colours/glow every frame.
+ */
+export class VoxelRenderer {
+  constructor(scene) {
+    this.scene = scene;
+    this.mesh = null;
+    this.capacity = 0;
+    this.visible = new Int32Array(0);
+    this.count = 0;
+    this.version = -1;
+    this.cut = 1; // section cut along z (0..1, 1 = no cut)
+    this.mode = 'realistic';
+    this.showGround = true;
+    this.geometry = new THREE.BoxGeometry(1, 1, 1);
+    this.material = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 });
+    this.material.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec3 aGlow;\nvarying vec3 vGlow;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow;');
+    };
+    this.tmp = [0, 0, 0];
+    this.tmp2 = [0, 0, 0];
+    this.matrix = new THREE.Matrix4();
+  }
+
+  setWorld(world) {
+    this.world = world;
+    this.version = -1;
+  }
+
+  ensureCapacity(n) {
+    if (n <= this.capacity && this.mesh) return;
+    const cap = Math.ceil(n * 1.3) + 256;
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.dispose();
+    }
+    const geo = this.geometry.clone();
+    this.glowAttr = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+    this.glowAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aGlow', this.glowAttr);
+    this.mesh = new THREE.InstancedMesh(geo, this.material, cap);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.castShadow = true;
+    this.mesh.receiveShadow = true;
+    this.mesh.frustumCulled = false;
+    this.scene.add(this.mesh);
+    this.capacity = cap;
+    this.visible = new Int32Array(cap);
+  }
+
+  rebuild() {
+    const w = this.world;
+    const { nx, ny, nz, mat, h } = w;
+    const nxy = nx * ny;
+    const cutZ = this.cut >= 1 ? nz : Math.max(1, Math.round(this.cut * nz));
+    if (w.listDirty) w.rebuildLists();
+    const solids = w.solids;
+    const n = w.solidCount;
+    this.ensureCapacity(n);
+    const vis = this.visible;
+    let c = 0;
+    for (let k = 0; k < n; k++) {
+      const i = solids[k];
+      const x = i % nx;
+      const r = (i - x) / nx;
+      const y = r % ny;
+      const z = (r - y) / ny;
+      if (z >= cutZ) continue;
+      if (y === 0 && !this.showGround) continue;
+      const exposed =
+        z === cutZ - 1 ||
+        x === 0 || x === nx - 1 || z === 0 || z === nz - 1 || y === ny - 1 ||
+        !mat[i - 1] || !mat[i + 1] || !mat[i + nx] || (y > 0 && !mat[i - nx]) || !mat[i - nxy] || !mat[i + nxy];
+      if (!exposed) continue;
+      vis[c++] = i;
+    }
+    if (c > this.capacity) {
+      this.ensureCapacity(c);
+      return this.rebuild();
+    }
+    this.count = c;
+    const m = this.matrix;
+    const arr = this.mesh.instanceMatrix.array;
+    for (let k = 0; k < c; k++) {
+      const i = vis[k];
+      const x = i % nx;
+      const r = (i - x) / nx;
+      const y = r % ny;
+      const z = (r - y) / ny;
+      m.makeScale(h, h, h);
+      m.setPosition((x + 0.5) * h, (y + 0.5) * h, (z + 0.5) * h);
+      m.toArray(arr, k * 16);
+    }
+    this.mesh.count = c;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.version = w.geomVersion;
+  }
+
+  update(time) {
+    const w = this.world;
+    if (!w) return;
+    if (this.version !== w.geomVersion) this.rebuild();
+    const { mat, temp, skin, char, flags, moist, tint, melt } = w;
+    const col = this.mesh.instanceColor.array;
+    const glow = this.glowAttr.array;
+    const vis = this.visible;
+    const out = this.tmp;
+    const thermal = this.mode === 'thermal';
+    for (let k = 0; k < this.count; k++) {
+      const i = vis[k];
+      const M = MATERIALS[mat[i]];
+      const T = skin[i] > temp[i] ? skin[i] : temp[i];
+      const o = k * 3;
+      if (thermal) {
+        heatmap(T, out);
+        col[o] = out[0] * 0.35;
+        col[o + 1] = out[1] * 0.35;
+        col[o + 2] = out[2] * 0.35;
+        glow[o] = out[0] * 0.75;
+        glow[o + 1] = out[1] * 0.75;
+        glow[o + 2] = out[2] * 0.75;
+        continue;
+      }
+      let r = tint[i * 3] / 255;
+      let g = tint[i * 3 + 1] / 255;
+      let b = tint[i * 3 + 2] / 255;
+      const f = flags[i];
+      if (f & F_LIQUID && M.liquidColor) {
+        r = M.liquidColor[0];
+        g = M.liquidColor[1];
+        b = M.liquidColor[2];
+      } else if (melt[i] > 0 && M.liquidColor) {
+        const t = melt[i] * 0.6;
+        r += (M.liquidColor[0] - r) * t;
+        g += (M.liquidColor[1] - g) * t;
+        b += (M.liquidColor[2] - b) * t;
+      }
+      const ch = char[i] * 0.92;
+      if (ch > 0) {
+        const cc = M.charColor;
+        r += (cc[0] - r) * ch;
+        g += (cc[1] - g) * ch;
+        b += (cc[2] - b) * ch;
+      }
+      // wet surfaces look darker
+      const wet = moist[i] / (M.maxMoisture || 1);
+      if (wet > 0.3) {
+        const d = 1 - Math.min(0.3, (wet - 0.3) * 0.5);
+        r *= d;
+        g *= d;
+        b *= d;
+      }
+      col[o] = r * r; // tint is sRGB-ish, convert to linear
+      col[o + 1] = g * g;
+      col[o + 2] = b * b;
+      blackbody(T, out);
+      let gl = 1;
+      if (f & F_BURNING) gl = 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
+      glow[o] = out[0] * gl;
+      glow[o + 1] = out[1] * gl;
+      glow[o + 2] = out[2] * gl;
+    }
+    this.mesh.instanceColor.needsUpdate = true;
+    this.glowAttr.needsUpdate = true;
+  }
+
+  /** Map a raycast instance id back to a voxel index. */
+  voxelOfInstance(id) {
+    return id >= 0 && id < this.count ? this.visible[id] : -1;
+  }
+}

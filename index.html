@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fire Simulation</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <div id="title"></div>
+      <div id="desc"></div>
+      <div id="stats"></div>
+      <div id="legend" hidden>
+        <div class="bar"></div>
+        <div class="ticks"></div>
+      </div>
+    </div>
+    <div id="inspect" hidden></div>
+    <div id="toolhint"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

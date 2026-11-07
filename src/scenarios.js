@@ -1,0 +1,131 @@
+import { defaultWeather } from './sim/weather.js';
+
+/**
+ * Scene description format (also used for JSON import/export):
+ * {
+ *   name, description,
+ *   world:   { size: [x, y, z] metres, h: voxel size m, ground: material },
+ *   weather: { ambient, humidity, windSpeed, windDir, rain, fog },
+ *   timeScale, view: { mode, camera: [x,y,z] offset from centre },
+ *   objects: [{ type, params, x, z, rotation, ignite }]
+ * }
+ */
+const w = (o = {}) => ({ ...defaultWeather(), ...o });
+
+export const SCENARIOS = {
+  campfire: {
+    name: 'Campfire',
+    description: 'A log-cabin campfire lit from the kindling, inside a stone ring on a patch of dry grass. Logs char into glowing embers, then ash.',
+    world: { size: [4, 2.2, 4], h: 0.05 },
+    weather: w({ humidity: 0.4, windSpeed: 0.5 }),
+    timeScale: 4,
+    view: { camera: [2.6, 1.9, 2.6] },
+    objects: [
+      { type: 'grass', params: { width: 3.8, depth: 3.8, height: 0.1, density: 0.6, moisture: 0.12, clearRadius: 0.75 }, x: 2, z: 2 },
+      { type: 'woodPile', params: { logs: 8, logLength: 0.6, logRadius: 0.05 }, x: 2, z: 2, ignite: true },
+    ],
+  },
+  candle: {
+    name: 'Candles',
+    description: 'A paraffin and a beeswax candle. The wick draws molten wax up, the pool grows, wax drips and re-solidifies.',
+    world: { size: [0.36, 0.28, 0.24], h: 0.008 },
+    weather: w({ ambient: 20, humidity: 0.4 }),
+    timeScale: 20,
+    view: { camera: [0.18, 0.16, 0.3] },
+    objects: [
+      { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 0.11, z: 0.12, ignite: true },
+      { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 0.25, z: 0.12, ignite: true },
+    ],
+  },
+  metalBars: {
+    name: 'Metal bars on burners',
+    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
+    world: { size: [1.4, 0.6, 0.7], h: 0.02 },
+    weather: w({ ambient: 20 }),
+    timeScale: 20,
+    view: { mode: 'thermal', camera: [0.2, 0.8, 1.1] },
+    objects: [
+      { type: 'metalBar', params: { material: 'steel', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.15 },
+      { type: 'metalBar', params: { material: 'aluminium', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.35 },
+      { type: 'metalBar', params: { material: 'copper', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.55 },
+    ],
+  },
+  grassFire: {
+    name: 'Wind-driven grass fire',
+    description: 'Dry grass lit on the upwind edge. Wind pushes the flames forward towards trees and a fence.',
+    world: { size: [24, 9, 14], h: 0.2 },
+    weather: w({ windSpeed: 4, windDir: 0, humidity: 0.25, ambient: 28 }),
+    timeScale: 3,
+    view: { camera: [-10, 9, 16] },
+    objects: [
+      { type: 'grass', params: { width: 23, depth: 13, height: 0.4, density: 0.85, moisture: 0.07 }, x: 12, z: 7 },
+      { type: 'grass', params: { width: 2, depth: 2, height: 0.05, density: 1, moisture: 0.07 }, x: 1.5, z: 7, ignite: true },
+      { type: 'tree', params: { species: 'conifer', height: 6, crownRadius: 1.6, foliageMoisture: 0.8 }, x: 15, z: 5 },
+      { type: 'tree', params: { height: 5.5, crownRadius: 1.8, seed: 3 }, x: 17, z: 9.5 },
+      { type: 'fence', params: { length: 8 }, x: 20, z: 7, rotation: 90 },
+    ],
+  },
+  carHouse: {
+    name: 'Car fire next to a house',
+    description: 'An engine fire spreads to the cabin, the tyres and the fuel tank, then radiates onto the wooden house next to it.',
+    world: { size: [14, 8, 11], h: 0.15 },
+    weather: w({ windSpeed: 1.5, windDir: 90 }),
+    timeScale: 10,
+    view: { camera: [8, 7, 11] },
+    objects: [
+      { type: 'house', params: { width: 7, depth: 5, wallMaterial: 'wood', roofMaterial: 'wood shingles' }, x: 7, z: 7.5 },
+      { type: 'car', params: { bodyColor: '#a8322f' }, x: 6.5, z: 2.6, ignite: true },
+      { type: 'tree', params: { height: 5, crownRadius: 1.5 }, x: 12, z: 3 },
+    ],
+  },
+  neighbourhood: {
+    name: 'Garden on a dry day',
+    description: 'A brick house with a furnished living room, a car, trees, a hedge of grass, a woodpile and a fence. The fire starts on the sofa.',
+    world: { size: [22, 9, 18], h: 0.2 },
+    weather: w({ windSpeed: 2, windDir: 30, humidity: 0.3, ambient: 25 }),
+    timeScale: 10,
+    view: { camera: [-6, 12, 20] },
+    objects: [
+      { type: 'grass', params: { width: 21, depth: 17, height: 0.2, density: 0.7, moisture: 0.12 }, x: 11, z: 9 },
+      { type: 'house', params: { width: 8, depth: 6, windowsPerSide: 3 }, x: 9, z: 8, ignite: true },
+      { type: 'car', params: { bodyColor: '#e0e0e0' }, x: 9, z: 2.3, rotation: 0 },
+      { type: 'woodPile', params: { arrangement: 'stack', logs: 15, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 15, z: 11.5, rotation: 90 },
+      { type: 'tree', params: { height: 6, crownRadius: 2 }, x: 17, z: 5 },
+      { type: 'tree', params: { species: 'conifer', height: 7, crownRadius: 1.4 }, x: 3, z: 14 },
+      { type: 'tree', params: { species: 'conifer', height: 5, crownRadius: 1.2, seed: 5 }, x: 18.5, z: 14 },
+      { type: 'fence', params: { length: 14 }, x: 11, z: 16.5 },
+    ],
+  },
+  foggyForest: {
+    name: 'Forest fire in fog',
+    description: 'A small conifer stand burning in fog: the temperature inversion caps the plume so smoke spreads sideways, and steam lingers.',
+    world: { size: [16, 10, 12], h: 0.2 },
+    weather: w({ fog: 0.8, humidity: 0.9, ambient: 8, windSpeed: 0.5 }),
+    timeScale: 6,
+    view: { camera: [-4, 9, 14] },
+    objects: [
+      { type: 'grass', params: { width: 15, depth: 11, height: 0.2, density: 0.5, moisture: 0.2 }, x: 8, z: 6 },
+      ...[
+        [3, 3], [6, 4.5], [9, 3.2], [12, 4], [4.5, 7.5], [8, 8], [11.5, 8.5], [13.5, 6.5],
+      ].map(([x, z], k) => ({ type: 'tree', params: { species: 'conifer', height: 5 + (k % 3), crownRadius: 1.2, foliageMoisture: 0.7, seed: k + 1 }, x, z })),
+      { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1, logRadius: 0.07, stones: false }, x: 5, z: 6, ignite: true },
+    ],
+  },
+  rainyHouse: {
+    name: 'House fire in the rain',
+    description: 'A furnished house fire in steady rain. Rain cannot reach the fire inside, which still breaks through the roof, but the soaked grass and the tree do not catch, and rain on hot surfaces makes steam.',
+    world: { size: [14, 8, 12], h: 0.15 },
+    weather: w({ rain: 15, humidity: 0.9, windSpeed: 1, ambient: 10 }),
+    timeScale: 10,
+    view: { camera: [-2, 8, 14] },
+    objects: [
+      { type: 'grass', params: { width: 13, depth: 11, height: 0.15, density: 0.7, moisture: 0.6 }, x: 7, z: 6 },
+      { type: 'house', params: { width: 7, depth: 5, roofMaterial: 'wood shingles' }, x: 7, z: 6, ignite: true },
+      { type: 'tree', params: { height: 5, crownRadius: 1.6 }, x: 12, z: 2.5 },
+    ],
+  },
+};
+
+export function cloneScene(s) {
+  return JSON.parse(JSON.stringify(s));
+}

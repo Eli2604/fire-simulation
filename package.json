@@ -1,0 +1,21 @@
+{
+  "name": "fire-simulation",
+  "version": "0.1.0",
+  "description": "Voxel based, physically inspired fire simulation: heat conduction, combustion, melting, smoke and weather on parameterisable 3D models.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test test/",
+    "headless": "node scripts/headless.js"
+  },
+  "dependencies": {
+    "lil-gui": "0.19.2",
+    "three": "0.169.0"
+  },
+  "devDependencies": {
+    "vite": "5.4.10"
+  }
+}
