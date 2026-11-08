@@ -50,6 +50,8 @@ export class SurfaceRenderer {
     this.slot = new Int32Array(world.N);
     this.version = -1;
     this.forceAll = true;
+    this.staged = [];
+    this.pending = false;
   }
 
   setVisible(v) {
@@ -86,6 +88,7 @@ export class SurfaceRenderer {
     const now = performance.now();
     this.cutZ = this.cut >= 1 ? w.nz : Math.max(1, Math.round(this.cut * w.nz));
     // re-mesh changed chunks a few times per second at most
+    this.time = time;
     if (this.forceAll || this.pending || (this.version !== w.geomVersion && now - this.lastMesh > 250)) {
       this.remesh();
       this.version = w.geomVersion;
@@ -109,6 +112,7 @@ export class SurfaceRenderer {
       if (!this.forceAll && hash === ch.hash) continue;
       ch.hash = hash;
       this.buildChunk(ch);
+      if (!this.staged.includes(ch)) this.staged.push(ch);
       if (!this.forceAll && performance.now() - t0 > 8) {
         this.cursor = (this.cursor + k + 1) % n;
         this.pending = true; // continue next frame
@@ -116,6 +120,20 @@ export class SurfaceRenderer {
       }
     }
     this.pending = false;
+    // Swap all rebuilt chunks in at once (no cracks between old and new
+    // neighbours) and colour them before they are ever drawn (no black flashes).
+    for (const ch of this.staged) {
+      this.disposeChunk(ch);
+      ch.mesh = ch.next;
+      ch.corners = ch.nextCorners;
+      ch.next = null;
+      if (ch.mesh) this.group.add(ch.mesh);
+    }
+    if (this.staged.length) {
+      this.shade(this.time ?? 0);
+      this.lastShade = performance.now();
+    }
+    this.staged.length = 0;
   }
 
   /** Occupancy hash of the samples a chunk's mesh depends on. */
@@ -134,6 +152,7 @@ export class SurfaceRenderer {
   }
 
   buildChunk(ch) {
+    if (ch.next) ch.next.geometry.dispose(); // rebuilt again before it was swapped in
     const w = this.world;
     const h = w.h;
     const x0 = ch.x * C;
@@ -196,9 +215,9 @@ export class SurfaceRenderer {
           // edge +z
           if (s !== this.solid(x, y, z + 1)) quad(vert(x - 1, y - 1, z), vert(x, y - 1, z), vert(x, y, z), vert(x - 1, y, z), !s);
         }
-    this.disposeChunk(ch);
     if (!idx.length) {
-      ch.corners = null;
+      ch.next = null;
+      ch.nextCorners = null;
       return;
     }
     const geo = new THREE.BufferGeometry();
@@ -211,9 +230,8 @@ export class SurfaceRenderer {
     const mesh = new THREE.Mesh(geo, this.material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    this.group.add(mesh);
-    ch.mesh = mesh;
-    ch.corners = Int32Array.from(corners);
+    ch.next = mesh; // swapped in by remesh() once the whole pass is done
+    ch.nextCorners = Int32Array.from(corners);
   }
 
   /** Colour every vertex from the solid voxels around it. */

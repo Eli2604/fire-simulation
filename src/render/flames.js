@@ -15,8 +15,13 @@ const VERT = /* glsl */ `
   }
 `;
 const FRAG = /* glsl */ `
+  uniform sampler2D uDepth;
+  uniform float uUseDepth;
+  uniform vec2 uRes;
   varying vec4 vColor;
   void main() {
+    // drawn after the volumetric pass: hide behind opaque geometry using the scene depth
+    if (uUseDepth > 0.5 && gl_FragCoord.z > texture2D(uDepth, gl_FragCoord.xy / uRes).r + 1e-6) discard;
     vec2 p = gl_PointCoord - 0.5;
     float r = length(p) * 2.0;
     if (r > 1.0) discard;
@@ -54,7 +59,7 @@ export class FlameRenderer {
     this.material = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
-      uniforms: { uScale: { value: 800 } },
+      uniforms: { uScale: { value: 800 }, uDepth: { value: null }, uUseDepth: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,

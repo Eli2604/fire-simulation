@@ -43,17 +43,20 @@ export class View {
     this.fireLight = new THREE.PointLight(0xff8a3a, 0, 0, 1.6);
     this.root.add(this.fireLight);
 
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x5b5236, roughness: 1 });
+    // pushed back in depth so it never fights with the ground surface of the grid (flicker)
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x5b5236, roughness: 1, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 });
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), groundMat);
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
     this.root.add(this.ground);
 
     this.voxels = new VoxelRenderer(this.root);
-    this.flames = new FlameRenderer(this.root);
+    // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
+    this.overlay = new THREE.Scene();
+    this.flames = new FlameRenderer(this.overlay);
     this.smoke = new SmokeRenderer(this.root);
     this.rain = new RainRenderer(this.root);
-    this.spray = new SprayRenderer(this.root);
+    this.spray = new SprayRenderer(this.overlay);
     this.debris = new DebrisRenderer(this.root);
     this.surface = new SurfaceRenderer(this.root);
     this.volume = new VolumeRenderer(this.renderer);
@@ -99,7 +102,7 @@ export class View {
     this.flash = null;
 
     this.ground.scale.set(diag * 12, diag * 12, 1);
-    this.ground.position.set(sx / 2, world.h * 0.985, sz / 2);
+    this.ground.position.set(sx / 2, world.h * 0.9, sz / 2);
 
     this.camera.near = Math.max(0.002, world.h * 0.3);
     this.camera.far = diag * 30;
@@ -203,7 +206,7 @@ export class View {
     const scale = this.pointScale();
     this.handleEvents();
     this.smoke.points && (this.smoke.points.visible = this.smoke.enabled && !volumetric);
-    this.flames.intensity = volumetric ? 0.55 : 1;
+    this.flames.intensity = volumetric ? 0.8 : 1;
     this.flames.update(dt, scale);
     if (!volumetric) this.smoke.update(scale, this.rh ?? 0.5);
     this.rain.update(dt, this.world, sim.weather);
@@ -211,11 +214,25 @@ export class View {
     this.debris.update(this.world);
     this.updateFireLight(stats);
     this.updateFlash(dt);
-    if (volumetric && this.smoke.enabled) {
+    const r = this.renderer;
+    const useVolume = volumetric && this.smoke.enabled;
+    if (useVolume) {
       this.volume.showSteam = this.smoke.showSteam;
       this.volume.density = this.smoke.density;
       this.volume.render(this.scene, this.camera, this);
-    } else this.renderer.render(this.scene, this.camera);
+    } else r.render(this.scene, this.camera);
+    // overlay: flames, sparks, spray. After the volume pass the screen has no depth buffer,
+    // so the particles test against the scene depth texture themselves.
+    const depth = useVolume ? this.volume.target.depthTexture : null;
+    const res = r.getDrawingBufferSize(this._res ?? (this._res = new THREE.Vector2()));
+    for (const m of [this.flames.material, this.spray.material]) {
+      m.uniforms.uUseDepth.value = depth ? 1 : 0;
+      m.uniforms.uDepth.value = depth;
+      m.uniforms.uRes.value.copy(res);
+    }
+    r.autoClear = false;
+    r.render(this.overlay, this.camera);
+    r.autoClear = true;
   }
 
   /** New explosion events: a bright flash and a burst of sparks. */

@@ -74,6 +74,7 @@ const FRAG = /* glsl */ `
         vec2 g = texture(tGlow, p / uSize).rg;
         // flames and hot gas emit light (roughly constant luminance per flame, independent of cell size)
         float fl = g.r;
+        m.a *= 1.0 - 0.85 * fl; // soot inside a flame glows (emission below) instead of darkening it
         vec3 emit = mix(vec3(1.0, 0.28, 0.03), vec3(1.0, 0.78, 0.35), fl) * (fl * fl) * uFlameGain / uCell
                   + vec3(0.9, 0.25, 0.04) * g.g * 0.6 / uCell * 0.1;
         if (m.a > 1e-4) {

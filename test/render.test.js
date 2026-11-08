@@ -56,6 +56,7 @@ test('only changed chunks are rebuilt, and colours follow the voxels', () => {
   w.rebuildLists();
   s.lastMesh = -1e9;
   s.update(1);
+  for (let k = 0; k < 50 && s.pending; k++) s.update(1); // rebuilds are spread over frames
   const changed = s.chunks.filter((c, k) => c.mesh !== before[k]).length;
   assert.ok(changed >= 1 && changed < s.chunks.length / 2, `${changed} of ${s.chunks.length} chunks rebuilt`);
   // heat one voxel: the vertices around it glow
