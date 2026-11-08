@@ -28,8 +28,6 @@ export class VoxelRenderer {
         .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow;');
     };
-    this.tmp = [0, 0, 0];
-    this.tmp2 = [0, 0, 0];
     this.matrix = new THREE.Matrix4();
   }
 
@@ -113,75 +111,10 @@ export class VoxelRenderer {
     const w = this.world;
     if (!w) return;
     if (this.version !== w.geomVersion) this.rebuild();
-    const { mat, temp, skin, char, flags, moist, tint, melt, waterIn, coat } = w;
     const col = this.mesh.instanceColor.array;
     const glow = this.glowAttr.array;
     const vis = this.visible;
-    const out = this.tmp;
-    const thermal = this.mode === 'thermal';
-    for (let k = 0; k < this.count; k++) {
-      const i = vis[k];
-      const M = MATERIALS[mat[i]];
-      const T = skin[i] > temp[i] ? skin[i] : temp[i];
-      const o = k * 3;
-      if (thermal) {
-        heatmap(T, out);
-        col[o] = out[0] * 0.35;
-        col[o + 1] = out[1] * 0.35;
-        col[o + 2] = out[2] * 0.35;
-        glow[o] = out[0] * 0.75;
-        glow[o + 1] = out[1] * 0.75;
-        glow[o + 2] = out[2] * 0.75;
-        continue;
-      }
-      let r = tint[i * 3] / 255;
-      let g = tint[i * 3 + 1] / 255;
-      let b = tint[i * 3 + 2] / 255;
-      const f = flags[i];
-      if (f & F_LIQUID && M.liquidColor) {
-        r = M.liquidColor[0];
-        g = M.liquidColor[1];
-        b = M.liquidColor[2];
-      } else if (melt[i] > 0 && M.liquidColor) {
-        const t = melt[i] * 0.6;
-        r += (M.liquidColor[0] - r) * t;
-        g += (M.liquidColor[1] - g) * t;
-        b += (M.liquidColor[2] - b) * t;
-      }
-      const ch = char[i] * 0.92;
-      if (ch > 0) {
-        const cc = M.charColor;
-        r += (cc[0] - r) * ch;
-        g += (cc[1] - g) * ch;
-        b += (cc[2] - b) * ch;
-      }
-      // wet surfaces look darker: being rained on / sprayed, or soaked above their normal moisture
-      let wet = (moist[i] - M.moisture) / (0.25 * M.maxMoisture + 0.02);
-      if (waterIn[i] > 0 && wet < 0.7) wet = 0.7;
-      if (wet > 0) {
-        const d = 1 - 0.38 * Math.min(1, wet);
-        r *= d;
-        g *= d;
-        b *= d;
-      }
-      // foam / powder blanket
-      const ct = coat[i];
-      if (ct > 0.02) {
-        const c = Math.min(1, ct) * 0.85;
-        r += (0.95 - r) * c;
-        g += (0.95 - g) * c;
-        b += (0.92 - b) * c;
-      }
-      col[o] = r * r; // tint is sRGB-ish, convert to linear
-      col[o + 1] = g * g;
-      col[o + 2] = b * b;
-      blackbody(T, out);
-      let gl = 1;
-      if (f & F_BURNING) gl = 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
-      glow[o] = out[0] * gl;
-      glow[o + 1] = out[1] * gl;
-      glow[o + 2] = out[2] * gl;
-    }
+    for (let k = 0; k < this.count; k++) shadeVoxel(w, vis[k], time, this.mode, col, glow, k * 3);
     this.mesh.instanceColor.needsUpdate = true;
     this.glowAttr.needsUpdate = true;
   }
@@ -190,4 +123,73 @@ export class VoxelRenderer {
   voxelOfInstance(id) {
     return id >= 0 && id < this.count ? this.visible[id] : -1;
   }
+}
+
+const tmp = [0, 0, 0];
+
+/**
+ * Colour (linear RGB) and emitted glow of voxel i, written to col/glow at offset o.
+ * Shared by the voxel and the smooth surface renderers.
+ */
+export function shadeVoxel(w, i, time, mode, col, glow, o) {
+  const { mat, temp, skin, char, flags, moist, tint, melt, waterIn, coat } = w;
+  const M = MATERIALS[mat[i]];
+  const T = skin[i] > temp[i] ? skin[i] : temp[i];
+  if (mode === 'thermal') {
+    heatmap(T, tmp);
+    col[o] = tmp[0] * 0.35;
+    col[o + 1] = tmp[1] * 0.35;
+    col[o + 2] = tmp[2] * 0.35;
+    glow[o] = tmp[0] * 0.75;
+    glow[o + 1] = tmp[1] * 0.75;
+    glow[o + 2] = tmp[2] * 0.75;
+    return;
+  }
+  let r = tint[i * 3] / 255;
+  let g = tint[i * 3 + 1] / 255;
+  let b = tint[i * 3 + 2] / 255;
+  const f = flags[i];
+  if (f & F_LIQUID && M.liquidColor) {
+    r = M.liquidColor[0];
+    g = M.liquidColor[1];
+    b = M.liquidColor[2];
+  } else if (melt[i] > 0 && M.liquidColor) {
+    const t = melt[i] * 0.6;
+    r += (M.liquidColor[0] - r) * t;
+    g += (M.liquidColor[1] - g) * t;
+    b += (M.liquidColor[2] - b) * t;
+  }
+  const ch = char[i] * 0.92;
+  if (ch > 0) {
+    const cc = M.charColor;
+    r += (cc[0] - r) * ch;
+    g += (cc[1] - g) * ch;
+    b += (cc[2] - b) * ch;
+  }
+  // wet surfaces look darker: being rained on / sprayed, or soaked above their normal moisture
+  let wet = (moist[i] - M.moisture) / (0.25 * M.maxMoisture + 0.02);
+  if (waterIn[i] > 0 && wet < 0.7) wet = 0.7;
+  if (wet > 0) {
+    const d = 1 - 0.38 * Math.min(1, wet);
+    r *= d;
+    g *= d;
+    b *= d;
+  }
+  // foam / powder blanket
+  const ct = coat[i];
+  if (ct > 0.02) {
+    const c = Math.min(1, ct) * 0.85;
+    r += (0.95 - r) * c;
+    g += (0.95 - g) * c;
+    b += (0.92 - b) * c;
+  }
+  col[o] = r * r; // tint is sRGB-ish, convert to linear
+  col[o + 1] = g * g;
+  col[o + 2] = b * b;
+  blackbody(T, tmp);
+  let gl = 1;
+  if (f & F_BURNING) gl = 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
+  glow[o] = tmp[0] * gl;
+  glow[o + 1] = tmp[1] * gl;
+  glow[o + 2] = tmp[2] * gl;
 }

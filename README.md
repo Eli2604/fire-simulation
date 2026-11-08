@@ -31,6 +31,12 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   these can be changed while the fire burns.
 - **View**: realistic or thermal-camera mode, flames, smoke, steam, fire light, and a
   section cut to look inside objects (for example heat soaking into a wall).
+  - *Surfaces*: **voxels** (exactly what is simulated) or **smooth**, a surface-nets mesh of
+    the voxel field, rebuilt chunk by chunk as things burn, melt and collapse.
+  - *Smoke & flames*: **particles** (fast) or **volumetric**: ray-marched in a shader through
+    3D textures of the air grid, with absorption, self-shadowing, fire-lit smoke and
+    emissive flames, clipped by the scene depth. *Volume quality* sets the number of
+    ray-march steps.
 - **Tools** (click on a model; dragging still orbits the camera):
   - *Inspect*: material, core and surface temperature, fuel left, moisture, state.
   - *Ignite*: a lighter.
@@ -196,11 +202,13 @@ A mesh with a fire shader only paints flames and char on a fixed surface and can
 of that. The way games and VFX tools do it (Houdini Pyro, EmberGen) is the same: simulate
 on grids, then render the result.
 
-The rendering could be much smoother without changing the simulation. Surfaces could be
-extracted from the voxel field (marching cubes or surface nets) and shaded from the voxel
-state (temperature glow, char, wetness). Smoke and flames could be ray-marched as volumes
-from 3D textures instead of drawn as point sprites. The simulation itself could move to the
-GPU (WebGPU compute) for larger scenes. These are the natural next steps.
+Rendering is a separate choice, and both options are available in **View**. The *smooth*
+surface mode extracts a mesh from the voxel field (surface nets) and colours it from the
+voxel state, so char, wetness, foam, incandescence and the thermal view carry over.
+*Volumetric* smoke ray-marches the simulated smoke, steam, flame and hot-gas fields in a
+fragment shader. A shader can render any volume, but it needs those fields to march
+through; the simulation provides them, for every scenario. A possible next step is moving
+the simulation itself to the GPU (WebGPU compute) for larger scenes.
 
 ## Scene file format
 
@@ -222,7 +230,8 @@ GPU (WebGPU compute) for larger scenes. These are the natural next steps.
 ```
 src/sim/        simulation (no dependencies): materials, world grid, solid + air physics, weather
 src/models/     parameterised models and the voxeliser
-src/render/     three.js rendering: voxels, flames/sparks, smoke/steam, rain, view
+src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, particle or
+                volumetric smoke/steam, rain, extinguisher spray, debris, view
 src/main.js     app, controls panel, HUD, tools
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers

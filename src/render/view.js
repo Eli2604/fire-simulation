@@ -6,6 +6,8 @@ import { SmokeRenderer } from './smoke.js';
 import { RainRenderer } from './rain.js';
 import { SprayRenderer } from './spray.js';
 import { DebrisRenderer } from './debris.js';
+import { SurfaceRenderer } from './surface.js';
+import { VolumeRenderer } from './volume.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -53,6 +55,10 @@ export class View {
     this.rain = new RainRenderer(this.root);
     this.spray = new SprayRenderer(this.root);
     this.debris = new DebrisRenderer(this.root);
+    this.surface = new SurfaceRenderer(this.root);
+    this.volume = new VolumeRenderer(this.renderer);
+    this.surfaceMode = 'voxels'; // or 'smooth'
+    this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
     this.root.add(this.flashLight);
     this.flash = null;
@@ -87,6 +93,8 @@ export class View {
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
+    this.surface.setWorld(world);
+    this.volume.setWorld(world);
     this.seenEvents = 0;
     this.flash = null;
 
@@ -185,17 +193,29 @@ export class View {
     const stats = sim.stats;
     this.time += dt;
     this.controls.update();
-    this.voxels.update(this.time);
+    const smooth = this.surfaceMode === 'smooth';
+    const volumetric = this.smokeMode === 'volumetric';
+    if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
+    if (!smooth) this.voxels.update(this.time);
+    if (smooth !== this.surface.visible) this.surface.setVisible(smooth);
+    this.surface.mode = this.voxels.mode;
+    this.surface.update(this.time);
     const scale = this.pointScale();
     this.handleEvents();
+    this.smoke.points && (this.smoke.points.visible = this.smoke.enabled && !volumetric);
+    this.flames.intensity = volumetric ? 0.55 : 1;
     this.flames.update(dt, scale);
-    this.smoke.update(scale, this.rh ?? 0.5);
+    if (!volumetric) this.smoke.update(scale, this.rh ?? 0.5);
     this.rain.update(dt, this.world, sim.weather);
     this.spray.update(dt, scale, sim.spray);
     this.debris.update(this.world);
     this.updateFireLight(stats);
     this.updateFlash(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (volumetric && this.smoke.enabled) {
+      this.volume.showSteam = this.smoke.showSteam;
+      this.volume.density = this.smoke.density;
+      this.volume.render(this.scene, this.camera, this);
+    } else this.renderer.render(this.scene, this.camera);
   }
 
   /** New explosion events: a bright flash and a burst of sparks. */
@@ -235,6 +255,7 @@ export class View {
     const rect = el.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
+    if (this.surfaceMode === 'smooth') return this.surface.pick(this.raycaster);
     if (!this.voxels.mesh) return null;
     const hits = this.raycaster.intersectObject(this.voxels.mesh, false);
     if (!hits.length) return null;

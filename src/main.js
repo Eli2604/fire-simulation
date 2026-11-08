@@ -29,6 +29,9 @@ const state = {
   fireLight: true,
   section: 1,
   smokeDensity: 1,
+  surfaces: 'voxels',
+  smokeStyle: 'particles',
+  volumeSteps: 96,
 };
 
 let scene = null; // editable scene description
@@ -108,6 +111,15 @@ fV.add(state, 'mode', { Realistic: 'realistic', 'Thermal camera': 'thermal' })
     view.voxels.mode = v;
     updateLegend();
   });
+fV.add(state, 'surfaces', { Voxels: 'voxels', Smooth: 'smooth' })
+  .name('Surfaces')
+  .onChange((v) => (view.surfaceMode = v));
+fV.add(state, 'smokeStyle', { 'Particles (fast)': 'particles', 'Volumetric (ray-marched)': 'volumetric' })
+  .name('Smoke & flames')
+  .onChange((v) => (view.smokeMode = v));
+fV.add(state, 'volumeSteps', 16, 256, 8)
+  .name('Volume quality (steps)')
+  .onChange((v) => (view.volume.steps = v));
 fV.add(state, 'flames').name('Flames').onChange((v) => (view.flames.enabled = v));
 fV.add(state, 'smoke').name('Smoke').onChange((v) => (view.smoke.enabled = v));
 fV.add(state, 'steam').name('Steam').onChange((v) => (view.smoke.showSteam = v));
@@ -118,6 +130,8 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   .onChange((v) => {
     view.voxels.cut = v;
     view.voxels.version = -1;
+    view.surface.cut = v;
+    view.surface.invalidate();
   });
 
 const fT = gui.addFolder('Tools (click the model)');
