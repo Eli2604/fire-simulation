@@ -159,6 +159,25 @@ export function shadeVoxel(w, i, time, mode, col, glow, o) {
     g += (M.liquidColor[1] - g) * t;
     b += (M.liquidColor[2] - b) * t;
   }
+  // paint: intact (tint) -> yellowed/browned -> blistered and mottled -> peeled (bare wall)
+  const pt = w.paint[i];
+  if (pt === 1) {
+    const n = 0.9 + 0.2 * ((i * 2654435761) % 1000) / 1000;
+    r = M.color[0] * n;
+    g = M.color[1] * n;
+    b = M.color[2] * n;
+  } else if (pt > 1 && pt < 250) {
+    const d = 1 - pt / 255;
+    r += (0.55 - r) * d * 0.8;
+    g += (0.4 - g) * d * 0.8;
+    b += (0.22 - b) * d * 0.8;
+    if (pt < 128) {
+      const m = 0.75 + 0.25 * (((i * 40503) % 997) / 997); // blisters
+      r *= m;
+      g *= m;
+      b *= m;
+    }
+  }
   const ch = char[i] * 0.92;
   if (ch > 0) {
     const cc = M.charColor;

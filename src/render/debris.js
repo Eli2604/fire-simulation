@@ -32,7 +32,8 @@ export class DebrisRenderer {
       const d = list[k];
       this.e.set(d.age * 7 + k, d.age * 5 + k * 0.7, d.age * 3);
       this.q.setFromEuler(this.e);
-      this.s.set(h, h, h);
+      if (d.flake) this.s.set(h * 0.35, h * 0.04, h * 0.3);
+      else this.s.set(h, h, h);
       this.p.set(d.p[0], d.p[1], d.p[2]);
       this.m.compose(this.p, this.q, this.s);
       this.mesh.setMatrixAt(k, this.m);

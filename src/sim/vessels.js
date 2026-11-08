@@ -313,7 +313,7 @@ export function stepDebris(sim, dt) {
     d.age += dt;
     const M = MATERIALS[d.mat];
     // quadratic drag of a voxel-sized fragment: light panels slow down fast
-    const k = Math.min(3, 0.6 / (M.density * d.dens * h));
+    const k = d.flake ? 6 : Math.min(3, 0.6 / (M.density * d.dens * h));
     const sp = Math.hypot(...d.v);
     const steps = Math.min(30, Math.max(1, Math.ceil((sp * dt) / (0.5 * h))));
     const sdt = dt / steps;
@@ -335,6 +335,7 @@ export function stepDebris(sim, dt) {
       if (y >= w.ny) continue;
       if (y < 1 || w.mat[w.idx(x, y, z)]) {
         landed = true;
+        if (d.flake) break; // paint flakes just settle, they do not become voxels
         let px = Math.floor(prev[0] / h);
         let py = Math.max(1, Math.floor(prev[1] / h));
         let pz = Math.floor(prev[2] / h);

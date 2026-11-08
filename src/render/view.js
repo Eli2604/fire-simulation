@@ -8,6 +8,7 @@ import { SprayRenderer } from './spray.js';
 import { DebrisRenderer } from './debris.js';
 import { SurfaceRenderer } from './surface.js';
 import { VolumeRenderer } from './volume.js';
+import { MarkerRenderer } from './markers.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -60,6 +61,7 @@ export class View {
     this.debris = new DebrisRenderer(this.root);
     this.surface = new SurfaceRenderer(this.root);
     this.volume = new VolumeRenderer(this.renderer);
+    this.markers = new MarkerRenderer(this.root);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
@@ -88,8 +90,9 @@ export class View {
     return h / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
   }
 
-  setWorld(world, cameraOffset, keepCamera = false) {
+  setWorld(world, cameraOffset, keepCamera = false, markers = []) {
     this.world = world;
+    this.markers.setMarkers(markers, world);
     const [sx, sy, sz] = world.size;
     const diag = Math.hypot(sx, sy, sz);
     this.voxels.setWorld(world);
@@ -195,7 +198,8 @@ export class View {
   render(dt, sim) {
     const stats = sim.stats;
     this.time += dt;
-    this.controls.update();
+    if (this.controls.enabled) this.controls.update();
+    this.markers.update(this.time, this.world);
     const smooth = this.surfaceMode === 'smooth';
     const volumetric = this.smokeMode === 'volumetric';
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;

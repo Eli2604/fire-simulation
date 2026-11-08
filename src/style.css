@@ -105,3 +105,123 @@ body {
     display: none;
   }
 }
+
+/* firefighter walk-through */
+#mask {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+#mask .vignette {
+  position: absolute;
+  inset: 0;
+  /* the visor of a full face mask: clear in the middle, frame and shadow around */
+  background: radial-gradient(ellipse 62% 58% at 50% 46%, transparent 60%, rgba(0, 0, 0, 0.55) 78%, rgba(8, 8, 10, 0.97) 92%);
+}
+#mask .fog {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 60%, rgba(230, 235, 240, 0.0) 30%, rgba(230, 235, 240, 0.9) 100%);
+  opacity: 0;
+  transition: opacity 1s;
+}
+#mask .heat {
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 160px 40px rgba(255, 70, 20, 0.85);
+  opacity: 0;
+}
+#mask .tic {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #9fe;
+  font: 600 13px/1 ui-monospace, monospace;
+  letter-spacing: 0.2em;
+}
+#mask .crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+}
+#maskHud {
+  position: absolute;
+  left: 50%;
+  bottom: 13%;
+  transform: translateX(-50%);
+  width: min(520px, 80vw);
+  color: #d8ffe0;
+  font: 600 12px/1.5 ui-monospace, monospace;
+  text-shadow: 0 0 4px #000;
+}
+#maskHud .air {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#maskHud .air .fill {
+  height: 100%;
+}
+#maskHud .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#maskHud .warn {
+  color: #ff6a5a;
+  text-align: center;
+  animation: blink 0.8s steps(2) infinite;
+}
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+#walkStart {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  background: rgba(18, 18, 22, 0.94);
+  padding: 18px 22px;
+  border-radius: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+}
+#walkStart h2 {
+  margin: 0 0 6px;
+  color: var(--accent);
+}
+#walkStart td {
+  padding: 2px 10px 2px 0;
+  vertical-align: top;
+}
+#walkStart td:first-child {
+  color: var(--accent);
+  white-space: nowrap;
+}
+#walkStart .buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+#walkStart button {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 0;
+  background: var(--accent);
+  color: #111;
+  cursor: pointer;
+}
+#walkStart button#walkLeave {
+  background: #444;
+  color: var(--text);
+}

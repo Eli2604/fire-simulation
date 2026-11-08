@@ -24,7 +24,8 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 
 - **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
-  what a car's fuel tank does in a fire, a house fire in the rain.
+  what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway, a house fire
+  in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -37,10 +38,16 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
     3D textures of the air grid, with absorption, self-shadowing, fire-lit smoke and
     emissive flames, clipped by the scene depth. *Volume quality* sets the number of
     ray-march steps.
+- **Fire start**: every fire start (and a pending gas-pipe burst) is shown with a marker. The
+  *Set fire start* tool picks your own (Shift+click adds more). You can return to the
+  scenario's own start, or start without any fire and light it yourself.
 - **Tools** (click on a model; dragging still orbits the camera):
   - *Inspect*: material, core and surface temperature, fuel left, moisture, state.
   - *Ignite*: a lighter.
-  - *Blow torch*: a burner held on a spot for a set time and power.
+  - *Fire torch*: hold the left mouse button to play a flame on a spot.
+  - *Hand grenade*: lobbed to the clicked spot, goes off after 2.5 s. The blast throws light
+    parts as debris, breaks windows, bursts gas pipes in range and its flash ignites what is
+    close.
   - *Water bucket*: cools, wets and puts out the fire, making steam.
   - *Fire extinguisher*: hold the left mouse button to spray where you point; right-drag
     rotates the view meanwhile. Choose water, AFFF foam, CO2 or dry powder (ABC). Each has
@@ -48,6 +55,25 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 - **Scene objects**: every object's parameters, position, rotation and "burning at start"
   can be edited, objects can be added and removed, and the world size and voxel size
   can be changed. Edits restart the simulation. Scenes can be exported and imported as JSON.
+
+## Firefighter walk-through
+
+Press **Walk through as a firefighter** (made for the hallway scenario, but it works in any
+scene). You walk in first person wearing breathing apparatus:
+
+- **Controls:** WASD to move, the mouse to look, Shift to hurry, and **C to crawl**. Below
+  the smoke layer you can see further and it is cooler.
+- **Handheld tools:** 1 / 2 / 3 select the hose (fog nozzle), the fire torch or a hand
+  grenade, and the left mouse button uses them.
+- **T** toggles the thermal imaging camera, which sees through smoke. **L** toggles the
+  helmet lamp.
+- **Mask display:** your remaining air (consumption depends on effort and heat), the gas
+  temperature at your face, a visibility estimate, and warnings. The visor fogs up in
+  steam and its edges glow red when it gets too hot.
+- **Sound:** generated live, with no audio files: the breathing apparatus (demand-valve
+  click, inhale, exhale; faster when you work hard or get hot), positional fire roar and
+  crackle, the hiss of a gas jet, the hose, the low-air whistle, a heartbeat under heat
+  stress, and blasts.
 
 ## Models and their parameters
 
@@ -63,6 +89,7 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
+| Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.
@@ -168,7 +195,17 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
      parts as tumbling, burning debris that lands and keeps burning, windows break, and the
      flashing liquid becomes a fireball sized by the standard correlations (D ≈ 5.8 m^⅓,
      t ≈ 0.45 m^⅓).
-10. **Structure.** A flood fill from the ground finds parts that are no longer supported
+10. **Building materials breaking down.**
+    - Thin steel profiles buckle at about 550 °C, mineral-fibre ceiling tiles drop when
+      their binder burns out (about 400 °C), and calcined plasterboard crumbles at about
+      650 °C.
+    - Ceiling tiles are separate panels: each rests on the grid, not on its neighbours,
+      so single tiles drop and whole sections fall when hangers fail.
+    - Paint discolours, blisters (and smokes), then peels off in flakes.
+    - Damp concrete spalls when heated quickly.
+    - Gas pipe joints give way when heated, and pipes burst in a blast, each time
+      releasing a burning gas jet.
+11. **Structure.** A flood fill from the ground finds parts that are no longer supported
    (a burnt-through trunk, a roof whose beams are gone), and they fall.
 
 Calibration targets used during development (`npm run headless`):

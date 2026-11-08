@@ -10,6 +10,7 @@ const MAX_AIR_T = 1250;
 export const FLAME_TAU = 0.5; // s, burn-out time of released fuel gas
 export const FLAME_REF = 1.5e5; // J/m³ of burning gas that makes a cell fully flame
 export const FLAME_TEMP = 1100; // °C, gas temperature inside a flame
+const CEILING_JET = 0.006; // m/s per K across 2 cells, hot layer spreading under a ceiling
 const ENTRAIN = 0.0005; // m/s per K of temperature difference across 2 cells
 // The blurred field ignores shadowing by solids; this accounts for the part
 // of the emission that is re-absorbed inside the burning object itself.
@@ -130,12 +131,20 @@ export function stepAir(w, W, D, dt, sim) {
         const o2 = open * open;
         const tb = turbAmp * (1 + flame[a] * 2);
         // entrainment: a rising plume draws surrounding air in towards it
-        let ex = ENTRAIN * ((ax + 1 < anx ? airT[a + 1] : T) - (ax > 0 ? airT[a - 1] : T));
-        let ez = ENTRAIN * ((az + 1 < anz ? airT[a + sxy] : T) - (az > 0 ? airT[a - sxy] : T));
-        if (ex > 0.6) ex = 0.6;
-        else if (ex < -0.6) ex = -0.6;
-        if (ez > 0.6) ez = 0.6;
-        else if (ez < -0.6) ez = -0.6;
+        const gx = (ax + 1 < anx ? airT[a + 1] : T) - (ax > 0 ? airT[a - 1] : T);
+        const gz = (az + 1 < anz ? airT[a + sxy] : T) - (az > 0 ? airT[a - sxy] : T);
+        let ex = ENTRAIN * gx;
+        let ez = ENTRAIN * gz;
+        // ceiling jet: hot gas trapped under a ceiling flows away from the hot
+        // spot along it (that is how smoke fills a corridor from the top down)
+        if (dT > 20 && ay + 1 < any && occ[a + anx] > 0.6) {
+          ex = -CEILING_JET * gx;
+          ez = -CEILING_JET * gz;
+        }
+        if (ex > 1.5) ex = 1.5;
+        else if (ex < -1.5) ex = -1.5;
+        if (ez > 1.5) ez = 1.5;
+        else if (ez < -1.5) ez = -1.5;
         vx[a] = (wx + ex + tb * (tx[ax] * tzv * 0.6 + tyv * 0.4)) * o2;
         vz[a] = (wz + ez + tb * (tz2v * tx2[ax] * 0.6 - tyv * 0.4)) * o2;
         let v = (up + tb * 0.5 * tx2[ax] * tyv) * open;

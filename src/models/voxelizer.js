@@ -29,7 +29,7 @@ import { MODELS, resolveParams } from './index.js';
 const EPS = 1e-6;
 
 function insideFn(p, h) {
-  const minT = h * 0.55; // thin parts still produce at least one voxel line
+  const minT = h * 0.72; // thin parts still produce at least one voxel line, even between voxel centres
   switch (p.shape) {
     case 'box': {
       const mn = p.min.slice();
@@ -148,12 +148,14 @@ export function buildScene(scene) {
     for (let x = 0; x < nx; x++) world.setVoxel(world.idx(x, 0, z), ground, { anchored: true, variation: 0.12 });
 
   const ignitions = [];
+  let spawn = null;
   scene.objects.forEach((obj, oi) => {
     const res = placeObject(world, obj, oi);
     if (obj.ignite && res.ignite) ignitions.push(res.ignite);
+    spawn ??= res.spawn;
   });
   world.rebuildLists();
-  return { world, ignitions };
+  return { world, ignitions, spawn };
 }
 
 /** Voxelise one scene object into the world. */
@@ -207,6 +209,9 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const id = mode === 'carve' ? 0 : materialId(p.material);
     const fill = p.fill ?? 1;
     const salt = Math.floor((p.seed ?? 0) * 1000) + ownerIndex * 31;
+    const group = p.group ? ++world.groupCounter : 0; // one rigid panel per primitive
+    const pipe = p.gasPipe ? { voxels: [], power: p.gasPipe.power ?? 150000, jetHeight: p.gasPipe.jetHeight ?? 1, failTemp: p.gasPipe.failTemp ?? 450, owner: ownerIndex } : null;
+    if (pipe) world.gasPipes.push(pipe);
     for (let z = z0; z <= z1; z++)
       for (let y = y0; y <= y1; y++)
         for (let x = x0; x <= x1; x++) {
@@ -232,9 +237,12 @@ export function placeObject(world, obj, ownerIndex = -1) {
             variation: p.variation,
             anchored: p.anchored,
             density: p.density,
+            group,
+            paint: p.paint,
             owner: ownerIndex,
             vesselTag: p.vessel !== undefined ? (p.vesselRole === 'contents' ? -1 : 1) * (vesselIndex[p.vessel] + 1) : 0,
           });
+          if (pipe) pipe.voxels.push(i);
         }
   }
 
@@ -250,5 +258,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
       power: built.ignite.power ?? 0, // W of a temporary ignition source (burning rag, fault...)
     };
   }
-  return { ignite, params };
+  // where a walk-through would start (yaw in the world frame)
+  const spawn = built.spawn ? { p: toWorld(...built.spawn.p), yaw: (built.spawn.yaw ?? 0) + rot } : null;
+  return { ignite, params, spawn };
 }

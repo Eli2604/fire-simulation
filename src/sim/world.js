@@ -46,6 +46,11 @@ export class World {
     this.waterIn = new Float32Array(N); // kg of water arriving this step (rain, extinguisher)
     this.sfac = new Float32Array(N).fill(1); // combustion suppression factor 0..1 (1 = free burning)
     this.vesselTag = new Int16Array(N); // +k: shell of vessel k-1, -k: its contents
+    this.group = new Int32Array(N); // rigid panels (ceiling tiles): voxels of different groups do not hold each other up
+    this.paint = new Uint8Array(N); // 0 never painted, 1 paint gone (bare), 2..255 paint condition (255 = intact)
+    this.crack = new Float32Array(N); // thermal-shock cracking 0..1 (1 = breaks off)
+    this.pickupTag = new Int16Array(N); // voxels of an item that can be picked up (k+1)
+    this.groupCounter = 0;
     this.gsum = new Float32Array(N); // core conductances (implicit update), W/K
     this.skin = new Float32Array(N).fill(ambient); // surface temperature of bulk materials
     this.dEs = new Float32Array(N); // surface energy accumulator, J
@@ -103,6 +108,13 @@ export class World {
     this.heaters = [];
     this.vessels = []; // pressure vessels (fuel tanks, gas cylinders), see vessels.js
     this.debris = []; // flying fragments after an explosion
+    this.gasPipes = []; // { voxels, power }: gas lines that can burst (blast, heat)
+    this.projectiles = []; // thrown grenades
+    this.sprinklers = []; // { p, bulb, actT, rti, rate, radius, active }
+    this.pickups = []; // { type, agent?, capacity?, length?, p, taken }
+    this.pool = new Float32Array(nx * nz); // standing water depth on the floor, m
+    this.floorTop = new Int16Array(nx * nz); // first empty voxel above the floor in each column
+    this.floorVersion = -1;
     this.events = []; // { type: 'explosion' | 'leak' | 'vent', pos, time, ... } for the renderer/HUD
     this.waterList = [];
     this.time = 0;
@@ -164,6 +176,10 @@ export class World {
     this.skinMelt[i] = 0;
     this.coat[i] = 0;
     this.vesselTag[i] = o.vesselTag ?? 0;
+    this.group[i] = o.group ?? 0;
+    this.paint[i] = o.paint ? 255 : 0;
+    this.crack[i] = 0;
+    this.pickupTag[i] = o.pickupTag ?? 0;
     this.fuel[i] = 1;
     this.moist[i] = o.moisture ?? m.moisture;
     const liquid = o.liquid ?? m.meltingPoint < this.temp[i];
@@ -191,6 +207,10 @@ export class World {
     this.owner[i] = -1;
     this.vesselTag[i] = 0;
     this.coat[i] = 0;
+    this.group[i] = 0;
+    this.paint[i] = 0;
+    this.crack[i] = 0;
+    this.pickupTag[i] = 0;
     this.listDirty = true;
     this.structureDirty = true;
     this.geomVersion++;
@@ -207,6 +227,14 @@ export class World {
     this.coat[j] = this.coat[i];
     this.vesselTag[j] = this.vesselTag[i];
     this.vesselTag[i] = 0;
+    this.group[j] = this.group[i];
+    this.group[i] = 0;
+    this.paint[j] = this.paint[i];
+    this.paint[i] = 0;
+    this.crack[j] = this.crack[i];
+    this.crack[i] = 0;
+    this.pickupTag[j] = this.pickupTag[i];
+    this.pickupTag[i] = 0;
     this.coat[i] = 0;
     this.fuel[j] = this.fuel[i];
     this.moist[j] = this.moist[i];

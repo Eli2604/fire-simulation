@@ -63,6 +63,10 @@ const DEFAULTS = {
   deadFuel: false,
   timeLag: 3600,
   shatterTemp: Infinity,
+  failTemp: Infinity, // °C: loses its strength / binder and breaks away (fire resistance breakdown)
+  spalling: false, // damp concrete: surface pieces burst off when heated quickly
+  brittle: false, // cracks from thermal shock when cold water hits it hot
+  wetFail: Infinity, // kg/kg: soaked this much it goes soft and falls (plasterboard, ceiling tiles)
   oxidizeTemp: Infinity,
   wicks: null,
   wickRate: 0,
@@ -142,14 +146,39 @@ const DEFS = {
     meltingPoint: 1600, latentHeat: 400e3,
   },
   brick: {
-    label: 'Brick', color: [0.62, 0.27, 0.2], density: 1900, specificHeat: 840, conductivity: 0.7,
+    label: 'Brick', color: [0.62, 0.27, 0.2], density: 1900, specificHeat: 840, conductivity: 0.7, brittle: true,
     meltingPoint: 1600, latentHeat: 400e3, maxMoisture: 0.08, oxidizeTemp: 500,
     charColor: [0.15, 0.12, 0.11],
   },
   concrete: {
-    label: 'Concrete', color: [0.66, 0.66, 0.64], density: 2300, specificHeat: 880, conductivity: 1.4,
+    label: 'Concrete', color: [0.66, 0.66, 0.64], density: 2300, specificHeat: 880, conductivity: 1.4, spalling: true, brittle: true,
     meltingPoint: 1500, latentHeat: 400e3, moisture: 0.03, maxMoisture: 0.08, oxidizeTemp: 500,
     charColor: [0.2, 0.19, 0.18],
+  },
+  plaster: {
+    // gypsum board: ~20 % chemically bound water that boils off at 100–150 °C (its fire protection)
+    label: 'Plasterboard', color: [0.9, 0.89, 0.86], density: 700, specificHeat: 1000, conductivity: 0.25,
+    moisture: 0.2, maxMoisture: 0.25, meltingPoint: 1200, latentHeat: 300e3, oxidizeTemp: 400,
+    charColor: [0.55, 0.5, 0.45], failTemp: 650, // calcined gypsum crumbles and falls off
+    brittle: true, wetFail: 0.45, maxMoisture: 0.6,
+  },
+  ceilingTile: {
+    // mineral-fibre suspended-ceiling tile: the organic binder breaks down and the tile sags and drops
+    label: 'Ceiling tile', color: [0.93, 0.93, 0.9], density: 280, specificHeat: 800, conductivity: 0.06,
+    moisture: 0.02, maxMoisture: 0.6, failTemp: 400, oxidizeTemp: 250, charColor: [0.45, 0.42, 0.38],
+    brittle: true, wetFail: 0.35, // a soaked tile is heavy and soft: it sags and drops
+  },
+  steelProfile: {
+    label: 'Light steel profile', color: [0.75, 0.76, 0.78], density: 7850, specificHeat: 490, conductivity: 45,
+    emissivity: 0.6, meltingPoint: 1450, latentHeat: 270e3, oxidizeTemp: 350, failTemp: 550, // thin members buckle
+    charColor: [0.2, 0.15, 0.12],
+  },
+  cable: {
+    // PVC insulated cables: very smoky, dripping, black soot
+    label: 'PVC cables', color: [0.15, 0.15, 0.17], density: 1400, specificHeat: 1500, conductivity: 0.2,
+    combustible: true, ignitionTemp: 330, pyrolysisTemp: 220, heatOfCombustion: 18e6, burnRate: 0.012,
+    residue: 0.3, smokeYield: 0.12, smokeColor: [0.05, 0.05, 0.05], smolderColor: [0.55, 0.55, 0.5],
+    meltingPoint: 180, latentHeat: 80e3, fluidity: 0.2, liquidColor: [0.12, 0.12, 0.13],
   },
   tiles: {
     label: 'Roof tiles', color: [0.55, 0.22, 0.16], density: 1900, specificHeat: 800, conductivity: 0.8,

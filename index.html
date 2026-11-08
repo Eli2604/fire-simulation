@@ -19,6 +19,30 @@
     </div>
     <div id="inspect" hidden></div>
     <div id="toolhint"></div>
+    <div id="mask" hidden>
+      <div class="vignette"></div>
+      <div class="fog"></div>
+      <div class="heat"></div>
+      <div class="tic" hidden>THERMAL IMAGING CAMERA</div>
+      <div class="crosshair"></div>
+      <div id="maskHud"></div>
+    </div>
+    <div id="walkStart" hidden>
+      <h2>Firefighter walk-through</h2>
+      <p>You wear breathing apparatus: watch your air. Sound on.</p>
+      <table>
+        <tr><td>W A S D / arrows</td><td>walk</td></tr>
+        <tr><td>Mouse</td><td>look around</td></tr>
+        <tr><td>Shift</td><td>hurry (uses more air)</td></tr>
+        <tr><td>C</td><td>crawl: below the smoke you see more and it is cooler</td></tr>
+        <tr><td>1 / 2 / 3</td><td>hose · fire torch · hand grenade</td></tr>
+        <tr><td>Left mouse</td><td>use it (hold for hose and torch, click to throw)</td></tr>
+        <tr><td>T</td><td>thermal imaging camera (sees through smoke)</td></tr>
+        <tr><td>L</td><td>helmet lamp</td></tr>
+        <tr><td>Esc</td><td>pause</td></tr>
+      </table>
+      <div class="buttons"><button id="walkGo">Start / resume</button><button id="walkLeave">Leave the building</button></div>
+    </div>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>

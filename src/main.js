@@ -1,6 +1,8 @@
 import GUI from 'lil-gui';
 import { MOUSE } from 'three';
 import { AGENTS } from './sim/simulation.js';
+import { Walkthrough } from './walk/walk.js';
+import { defaultStartPower } from './sim/createSimulation.js';
 import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
@@ -21,6 +23,7 @@ const state = {
   torchPower: 5000,
   torchSeconds: 30,
   waterLitres: 10,
+  grenadeKg: 0.18,
   agent: 'water',
   mode: 'realistic',
   flames: true,
@@ -32,6 +35,7 @@ const state = {
   surfaces: 'voxels',
   smokeStyle: 'particles',
   volumeSteps: 96,
+  markers: true,
 };
 
 let scene = null; // editable scene description
@@ -52,7 +56,9 @@ function load(desc, fresh = true) {
   for (const o of scene.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
   sim = createSimulation(scene);
   sim.weather = weather;
-  view.setWorld(sim.world, scene.view?.camera, !fresh);
+  if (walk?.active) walk.exit();
+  view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
+  view.markers.visible = state.markers;
   view.applyWeather(weather);
   if (fresh) {
     // a new scenario brings its own view settings; a restart after an edit keeps the user's
@@ -87,6 +93,13 @@ const gui = new GUI({ title: 'Fire simulation' });
 const scenarioNames = Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [v.name, k]));
 gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => load(cloneScene(SCENARIOS[k])));
 gui.add({ restart }, 'restart').name('↺ Restart scene');
+gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
+
+// --- fire starts: shown as markers; the "Set fire start" tool replaces them (Shift+click adds)
+const fFire = gui.addFolder('Fire start');
+fFire.add(state, 'markers').name('Show markers').onChange((v) => (view.markers.visible = v));
+fFire.add({ reset: () => { delete scene.fireStarts; delete scene.noFire; restart(); } }, 'reset').name("↺ Use the scenario's fire start");
+fFire.add({ none: () => { scene.noFire = true; delete scene.fireStarts; restart(); } }, 'none').name('No fire at start (light it yourself)');
 
 const fSim = gui.addFolder('Simulation');
 fSim.add(state, 'running').name('Running');
@@ -135,17 +148,18 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Ignite (lighter)': 'ignite', 'Blow torch': 'torch', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
   .onChange(() => {
     updateToolHint();
     // while extinguishing, the left button sprays and the right button rotates the view
-    view.controls.mouseButtons.LEFT = state.tool === 'extinguisher' ? null : MOUSE.ROTATE;
-    view.controls.mouseButtons.RIGHT = state.tool === 'extinguisher' ? MOUSE.ROTATE : MOUSE.PAN;
+    const hold = state.tool === 'extinguisher' || state.tool === 'torch';
+    view.controls.mouseButtons.LEFT = hold ? null : MOUSE.ROTATE;
+    view.controls.mouseButtons.RIGHT = hold ? MOUSE.ROTATE : MOUSE.PAN;
   });
 fT.add(state, 'toolRadius', 0.01, 3, 0.01).name('Radius (m)');
 fT.add(state, 'torchPower', 100, 50000, 100).name('Torch power (W)');
-fT.add(state, 'torchSeconds', 1, 300, 1).name('Torch duration (s)');
+fT.add(state, 'grenadeKg', 0.05, 2, 0.05).name('Grenade explosive (kg TNT)');
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')
@@ -298,12 +312,12 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
     .slice(-2)
-    .map((e) => ['Event', `${fmtTime(e.time)} ${e.name === 'cylinder' ? 'gas cylinder' : 'fuel tank'} ${EVENT_TEXT[e.type] ?? e.type}${e.pressure ? ` at ${(e.pressure / 1e5).toFixed(1)} bar` : ''}`]);
+    .map((e) => ['Event', `${fmtTime(e.time)} ${{ cylinder: 'gas cylinder', fuelTank: 'fuel tank', 'gas pipe': 'gas pipe', grenade: 'grenade', concrete: 'concrete' }[e.name] ?? e.name} ${EVENT_TEXT[e.type] ?? e.type}${e.pressure ? ` at ${(e.pressure / 1e5).toFixed(1)} bar` : ''}`]);
 }
 
 function showInspect() {
@@ -331,7 +345,9 @@ function showInspect() {
 const HINTS = {
   inspect: 'Click a voxel to inspect it',
   ignite: 'Click to set fire to combustible material',
-  torch: 'Click to aim a blow torch at a spot',
+  torch: 'Hold the left mouse button to play a fire torch on a spot (right-drag rotates)',
+  firestart: 'Click where the fire should start (Shift+click adds another); the scene restarts',
+  grenade: 'Click to throw a hand grenade at a spot (it goes off after 2.5 s)',
   water: 'Click to throw a bucket of water',
   extinguisher: 'Hold the left mouse button to spray where you point (right-drag rotates the view)',
 };
@@ -344,15 +360,30 @@ function updateToolHint() {
 let down = null;
 const canvas = $('view');
 canvas.addEventListener('pointerdown', (e) => {
+  if (walk.active) return; // the walk-through handles its own input
   if (e.button === 0) down = [e.clientX, e.clientY];
   if (e.button === 0 && state.tool === 'extinguisher') {
     spraying = true;
     aim(e);
   }
+  if (e.button === 0 && state.tool === 'torch') {
+    torching = true;
+    aimTorch(e);
+  }
 });
 canvas.addEventListener('pointermove', (e) => {
   if (spraying) aim(e);
+  if (torching) aimTorch(e);
 });
+let torching = false;
+let torchPoint = null;
+function aimTorch(e) {
+  const hit = view.pick(e.clientX, e.clientY);
+  if (!hit) return;
+  const r = Math.max(sim.world.h, state.toolRadius * 0.5);
+  torchPoint = hit.point.map((v, k) => v + hit.normal[k] * r);
+  torchPoint[1] += r;
+}
 const stopSpray = () => {
   spraying = false;
   if (sim) sim.spray = null;
@@ -376,6 +407,13 @@ function aim(e) {
   sim.spray = { agent: state.agent, nozzle, target: t, radius: Math.min(ag.radius, diag * 0.06), tank };
 }
 canvas.addEventListener('pointerup', (e) => {
+  if (walk.active) return;
+  if (e.button === 0 && torching) {
+    torching = false;
+    torchPoint = null;
+    down = null;
+    return;
+  }
   if (e.button === 0 && spraying) {
     stopSpray();
     down = null;
@@ -398,10 +436,21 @@ canvas.addEventListener('pointerup', (e) => {
     case 'ignite':
       sim.ignite(c, state.toolRadius);
       break;
-    case 'torch': {
-      const r = Math.max(w.h, state.toolRadius * 0.5);
-      const p = hit.point.map((v, k) => v + hit.normal[k] * r);
-      sim.addTorch([p[0], p[1] + r, p[2]], state.torchPower, state.torchSeconds, r);
+    case 'firestart': {
+      const start = { p: c, radius: Math.max(w.h * 2, state.toolRadius), power: defaultStartPower(w) };
+      const keep = (scene.fireStarts ?? []).filter((f) => f.power > 0);
+      scene.fireStarts = e.shiftKey ? [...keep, start] : [start];
+      delete scene.noFire;
+      for (const o of scene.objects) o.ignite = false;
+      restart();
+      break;
+    }
+    case 'grenade': {
+      // lob it from the camera so that it lands on the clicked spot
+      const from = [view.camera.position.x, view.camera.position.y, view.camera.position.z];
+      const d = hit.point.map((v, k) => v - from[k]);
+      const T = Math.min(1.8, Math.max(0.4, Math.hypot(...d) / 10));
+      sim.throwGrenade(from, [d[0] / T, d[1] / T + 0.5 * 9.81 * T, d[2] / T], state.grenadeKg * 4.6e6);
       break;
     }
     case 'water':
@@ -415,13 +464,33 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (walk.active) walk.update(dt);
+  if (torching && torchPoint) sim.holdTorch(torchPoint, state.torchPower, Math.max(sim.world.h, state.toolRadius * 0.5));
   if (state.running && sim) {
-    const done = sim.advance(dt * state.timeScale, 22);
+    // the walk-through runs in real time
+    const done = sim.advance(dt * (walk.active ? 1 : state.timeScale), 22);
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
   } else speed *= 0.9;
   view.render(dt, sim);
   updateHud(dt);
   requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------------
+// Firefighter walk-through
+const walk = new Walkthrough(view, {
+  getSim: () => sim,
+  // a thermal imaging camera sees heat, and sees through smoke
+  onThermal: (on) => {
+    view.voxels.mode = on ? 'thermal' : state.mode;
+    view.smoke.enabled = on ? false : state.smoke;
+  },
+});
+document.getElementById('walkLeave').addEventListener('click', () => walk.exit());
+function startWalk() {
+  inspected = -1;
+  $('inspect').hidden = true;
+  walk.enter();
 }
 
 load(cloneScene(SCENARIOS[state.scenario]));

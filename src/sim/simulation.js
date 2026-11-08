@@ -1,7 +1,8 @@
 import { MATERIALS, TBL } from './materials.js';
 import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER } from './world.js';
 import { deriveWeather } from './weather.js';
-import { stepVessels, stepDebris } from './vessels.js';
+import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
+import { stepProjectiles, stepGasPipes } from './explosions.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -21,6 +22,7 @@ export const AGENTS = {
   foam: { label: "Foam AFFF (9 l)", capacity: 9, rate: 0.45, range: 5, radius: 0.6 },
   co2: { label: "CO2 (5 kg)", capacity: 5, rate: 0.5, range: 2.5, radius: 0.6 },
   powder: { label: "Dry powder ABC (6 kg)", capacity: 6, rate: 0.5, range: 4, radius: 0.7 },
+  hose: { label: "Fire hose, fog nozzle (unlimited)", capacity: 1e9, rate: 2.5, range: 10, radius: 0.8 },
 };
 
 /**
@@ -108,9 +110,11 @@ export class Simulation {
     blurRadiation(w, this.radGain);
     this.structure(dt);
     stepDebris(this, dt);
+    stepProjectiles(this, dt);
+    if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     // jet flames from vents and fireballs count as heat release too
     let extra = this.stats.ventHrr;
-    for (const ht of w.heaters) if (ht.fireball) extra += ht.power;
+    for (const ht of w.heaters) if ((ht.fireball || ht.jet) && ht.on && !(ht.start !== undefined && w.time < ht.start)) extra += ht.power;
     this.stats.hrr += extra;
     w.time += dt;
     this.stats.steps++;
@@ -198,17 +202,19 @@ export class Simulation {
     // along the jet: water droplets cross the hot gas above the fire
     const [nx0, ny0, nz0] = s.nozzle;
     const [tx, ty, tz] = s.target;
-    if (s.agent === 'water' || s.agent === 'foam') {
+    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose') {
       for (let k = 1; k <= 12; k++) {
         const t = k / 12;
         const a = this.airCellAt(nx0 + (tx - nx0) * t, ny0 + (ty - ny0) * t, nz0 + (tz - nz0) * t);
-        if (a >= 0) this.coolGas(a, (m * 0.25 * Math.min(0.5, (airT[a] - 100) / 1500)) / 12, dt, airT, airQ, steam, fgas);
+        // a fog nozzle puts far more fine droplets into the hot gas
+        const share = s.agent === 'hose' ? 0.6 : 0.25;
+        if (a >= 0) this.coolGas(a, (m * share * Math.min(0.5, (airT[a] - 100) / 1500)) / 12, dt, airT, airQ, steam, fgas);
       }
     }
 
     // where it lands
     const r = Math.max(s.radius, h);
-    if (s.agent === 'water' || s.agent === 'foam') {
+    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose') {
       const hits = [];
       this.forSphere(s.target, r, (i) => {
         if (w.expo[i] > 0) hits.push(i);
@@ -276,6 +282,12 @@ export class Simulation {
     w.heaters = w.heaters.filter((ht) => ht.until === undefined || ht.until > w.time);
     for (const ht of w.heaters) {
       if (!ht.on || ht.power <= 0) continue;
+      // delayed sources (a pipe that bursts after some time)
+      if (ht.start !== undefined && w.time < ht.start) continue;
+      if (ht.start !== undefined && !ht.started) {
+        ht.started = true;
+        w.events.push({ type: ht.event ?? 'ignition', pos: ht.pos.slice(), time: w.time, name: ht.label ?? 'source' });
+      }
       const [px, py, pz] = ht.pos;
       const r = Math.max(ht.radius, ah * 0.5);
       const hgt = Math.max(ht.height, ah);
@@ -306,6 +318,13 @@ export class Simulation {
         w.airQ[a] += share * (1 - RAD_FRACTION);
         w.radSrc[a] += share * RAD_FRACTION;
         w.flameAcc[a] += share;
+        if (ht.smokeYield) {
+          const sm = (share * dt * ht.smokeYield) / 50e6;
+          w.smoke[a] += sm;
+          w.smokeR[a] += sm * 0.08;
+          w.smokeG[a] += sm * 0.08;
+          w.smokeB[a] += sm * 0.08;
+        }
       }
     }
     void dt;
@@ -492,6 +511,9 @@ export class Simulation {
     const rainRate = D.rainRate;
     const burnouts = this.burnouts;
     burnouts.length = 0;
+    const spallList = (this.spallList = this.spallList ?? []);
+    spallList.length = 0;
+    (this.flakeList = this.flakeList ?? []).length = 0;
     let hrrTotal = 0;
     let burning = 0;
     let maxT = -Infinity;
@@ -674,6 +696,38 @@ export class Simulation {
         f |= F_FALLING;
         w.structureDirty = true;
       }
+      // --- fire resistance breakdown: thin steel buckles, tile binder burns out,
+      // calcined plasterboard crumbles: the part breaks away (and may bring
+      // what it supports down with it)
+      if (Thot > M.failTemp && !(f & (F_FALLING | F_LIQUID | F_ANCHOR)) && this.rand() < dt * 0.12 * Math.min(3, 1 + (Thot - M.failTemp) / 100)) {
+        f |= F_FALLING;
+        w.structureDirty = true;
+        this.stats.failures = (this.stats.failures ?? 0) + 1;
+      }
+      // --- spalling: the moisture in quickly heated concrete turns to steam
+      // behind the surface, which bursts off in pieces
+      if (M.spalling && ex > 0 && Ts > 250 && mo > 0.01 && Ts - T > 120 && y > 0 && !(f & F_ANCHOR) && this.rand() < dt * 0.0004 * Math.min(3, (Ts - 250) / 150)) {
+        this.spallList.push(i);
+      }
+      // --- paint on walls: discolours, blisters (and smokes), then peels off in flakes
+      const pt = w.paint[i];
+      if (pt > 1 && Ts > 110 && ex > 0) {
+        const dmg = (dt * (Ts - 110) * 255) / 900;
+        let np = pt - dmg;
+        if (np > 2 && np < 128 && Ts > 220) {
+          // blistered paint softens and smokes a little
+          const sm = 2e-7 * A * 1e4 * dt;
+          smoke[fa] += sm;
+          smokeR[fa] += sm * 0.3;
+          smokeG[fa] += sm * 0.28;
+          smokeB[fa] += sm * 0.25;
+        }
+        if (np <= 2 || (np < 90 && Ts > 330)) {
+          np = 1; // peeled off: the bare wall shows
+          this.flakeList.push(i);
+        }
+        w.paint[i] = np;
+      }
 
       // --- metals / paint / masonry discolour when hot
       if (Thot > M.oxidizeTemp && char[i] < 1) char[i] = Math.min(1, char[i] + (dt * (Thot - M.oxidizeTemp)) / 4000);
@@ -804,6 +858,10 @@ export class Simulation {
       flags[i] = f;
     }
 
+    // spalled concrete pieces fly off the wall, peeled paint falls as flakes
+    for (const i of spallList) this.spall(i);
+    for (const i of this.flakeList) this.flake(i);
+
     // Burnt-out voxels turn into their residue (char -> ash) or vanish.
     for (const i of burnouts) {
       const m = mat[i];
@@ -828,6 +886,41 @@ export class Simulation {
     s.burning = burning;
     s.maxT = maxT === -Infinity ? Tamb : maxT;
     s.liquid = liquids;
+  }
+
+  /** Burst a spalling piece off a concrete surface, away from the wall. */
+  spall(i) {
+    const w = this.world;
+    if (!w.mat[i]) return;
+    const [x, y, z] = w.coords(i);
+    const dirs = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0], [0, 1, 0]];
+    for (const d of dirs) {
+      const xx = x + d[0];
+      const yy = y + d[1];
+      const zz = z + d[2];
+      if (!w.inBounds(xx, yy, zz) || w.mat[w.idx(xx, yy, zz)]) continue;
+      const v = 2 + this.rand() * 4;
+      launchVoxel(w, i, [d[0] * v + (this.rand() - 0.5), d[1] * v + this.rand(), d[2] * v + (this.rand() - 0.5)]);
+      this.stats.spalls = (this.stats.spalls ?? 0) + 1;
+      w.events.push({ type: 'spall', pos: w.center(x, y, z), time: w.time, name: 'concrete' });
+      return;
+    }
+  }
+
+  /** A few flakes of peeled paint drift down (visual only). */
+  flake(i) {
+    const w = this.world;
+    const [x, y, z] = w.coords(i);
+    const c = w.center(x, y, z);
+    for (let k = 0; k < 3; k++) {
+      w.debris.push({
+        flake: true,
+        p: [c[0] + (this.rand() - 0.5) * w.h, c[1] + (this.rand() - 0.5) * w.h, c[2] + (this.rand() - 0.5) * w.h],
+        v: [(this.rand() - 0.5) * 0.4, this.rand() * 0.3, (this.rand() - 0.5) * 0.4],
+        mat: w.mat[i], temp: w.temp[i], skin: w.skin[i], fuel: 0, moist: 0, melt: 0, char: 0.6, flags: 0, dens: 0.002, owner: -1,
+        tint: [w.tint[i * 3], w.tint[i * 3 + 1], w.tint[i * 3 + 2]], age: 0,
+      });
+    }
   }
 
   /** Spread energy E (J) over the exposed wax surface around a wick. */
@@ -979,7 +1072,7 @@ export class Simulation {
   /** Flood fill from the ground/anchors through structural voxels (26-connected). */
   checkSupport() {
     const w = this.world;
-    const { nx, ny, nz, mat, flags, solids } = w;
+    const { nx, ny, nz, mat, flags, solids, group } = w;
     const n = w.solidCount;
     if (!this.visit || this.visit.length !== w.N) {
       this.visit = new Uint32Array(w.N);
@@ -1020,6 +1113,10 @@ export class Simulation {
             if (xx < 0 || xx >= nx) continue;
             const j = xx + nx * (yy + ny * zz);
             if (visit[j] === gen || !structural(j)) continue;
+            // separate panels (ceiling tiles) rest on the grid, not on each other
+            const gi = group[i];
+            const gj = group[j];
+            if (gi && gj && gi !== gj) continue;
             visit[j] = gen;
             queue[qt++] = j;
           }
@@ -1040,6 +1137,26 @@ export class Simulation {
 
   // ---------------------------------------------------------------------------
   // Interaction tools
+
+  /** Throw a hand grenade (energy in J; ~0.18 kg of explosive ≈ 0.8 MJ). */
+  throwGrenade(from, vel, energy = 8e5, fuse = 2.5) {
+    this.world.projectiles.push({ p: from.slice(), v: vel.slice(), fuse, energy, resting: false });
+  }
+
+  /** A hand-held fire torch: a burning jet that follows the aim point while held. */
+  holdTorch(p, power, radius) {
+    const w = this.world;
+    let ht = this.handTorch;
+    if (!ht || !w.heaters.includes(ht)) {
+      ht = this.handTorch = { pos: p.slice(), power, radius, height: radius * 3, on: true, temporary: true, jet: true, label: 'torch' };
+      w.heaters.push(ht);
+    }
+    ht.pos = [p[0], p[1] - radius, p[2]];
+    ht.power = power;
+    ht.radius = radius;
+    ht.height = radius * 3;
+    ht.until = w.time + 0.4; // goes out shortly after you let go
+  }
 
   /** Light everything combustible within `radius` metres of a point (a match / lighter). */
   ignite(p, radius, materials = null) {

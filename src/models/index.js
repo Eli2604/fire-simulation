@@ -8,6 +8,7 @@ import woodPile from './woodPile.js';
 import burner from './burner.js';
 import fence from './fence.js';
 import gasCylinder from './gasCylinder.js';
+import hallway from './hallway.js';
 
 /**
  * Model registry. Every model is:
@@ -18,7 +19,7 @@ import gasCylinder from './gasCylinder.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway };
 
 export function resolveParams(model, given = {}) {
   const out = {};
