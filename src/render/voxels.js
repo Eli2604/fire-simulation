@@ -113,7 +113,7 @@ export class VoxelRenderer {
     const w = this.world;
     if (!w) return;
     if (this.version !== w.geomVersion) this.rebuild();
-    const { mat, temp, skin, char, flags, moist, tint, melt } = w;
+    const { mat, temp, skin, char, flags, moist, tint, melt, waterIn, coat } = w;
     const col = this.mesh.instanceColor.array;
     const glow = this.glowAttr.array;
     const vis = this.visible;
@@ -155,13 +155,22 @@ export class VoxelRenderer {
         g += (cc[1] - g) * ch;
         b += (cc[2] - b) * ch;
       }
-      // wet surfaces look darker
-      const wet = moist[i] / (M.maxMoisture || 1);
-      if (wet > 0.3) {
-        const d = 1 - Math.min(0.3, (wet - 0.3) * 0.5);
+      // wet surfaces look darker: being rained on / sprayed, or soaked above their normal moisture
+      let wet = (moist[i] - M.moisture) / (0.25 * M.maxMoisture + 0.02);
+      if (waterIn[i] > 0 && wet < 0.7) wet = 0.7;
+      if (wet > 0) {
+        const d = 1 - 0.38 * Math.min(1, wet);
         r *= d;
         g *= d;
         b *= d;
+      }
+      // foam / powder blanket
+      const ct = coat[i];
+      if (ct > 0.02) {
+        const c = Math.min(1, ct) * 0.85;
+        r += (0.95 - r) * c;
+        g += (0.95 - g) * c;
+        b += (0.92 - b) * c;
       }
       col[o] = r * r; // tint is sRGB-ish, convert to linear
       col[o + 1] = g * g;

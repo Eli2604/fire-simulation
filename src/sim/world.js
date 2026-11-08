@@ -42,6 +42,10 @@ export class World {
     this.dE = new Float32Array(N); // per step energy accumulator, J
     this.dens = new Float32Array(N).fill(1); // effective density factor (thin sheets, panels)
     this.skinMelt = new Float32Array(N); // melted share of the skin layer 0..1
+    this.coat = new Float32Array(N); // foam / powder blanket 0..1 (smothers, insulates)
+    this.waterIn = new Float32Array(N); // kg of water arriving this step (rain, extinguisher)
+    this.sfac = new Float32Array(N).fill(1); // combustion suppression factor 0..1 (1 = free burning)
+    this.vesselTag = new Int16Array(N); // +k: shell of vessel k-1, -k: its contents
     this.gsum = new Float32Array(N); // core conductances (implicit update), W/K
     this.skin = new Float32Array(N).fill(ambient); // surface temperature of bulk materials
     this.dEs = new Float32Array(N); // surface energy accumulator, J
@@ -81,6 +85,8 @@ export class World {
     this.flameAcc = fa(); // W of flaming combustion deposited this step
     this.fgas = fa(); // J of burning gas in the cell (transported, burns out in ~0.5 s)
     this.tmpG = fa();
+    this.supp = fa(); // flame suppression in the gas: CO2 (inerting) or dry powder (inhibition), 1 = fully suppressed
+    this.tmpH = fa();
     this.radSrc = fa(); // W emitted as radiation in this cell this step
     this.radField = fa(); // irradiance W/m² (previous step)
     this.airG = fa(); // sum of convective conductances to solids, W/K
@@ -95,6 +101,10 @@ export class World {
 
     this.colTop = new Int16Array(nx * nz).fill(-1);
     this.heaters = [];
+    this.vessels = []; // pressure vessels (fuel tanks, gas cylinders), see vessels.js
+    this.debris = []; // flying fragments after an explosion
+    this.events = []; // { type: 'explosion' | 'leak' | 'vent', pos, time, ... } for the renderer/HUD
+    this.waterList = [];
     this.time = 0;
     this.geomVersion = 0;
     this.structureDirty = true;
@@ -152,6 +162,8 @@ export class World {
     this.wetSkin[i] = 1;
     this.dens[i] = o.density ?? 1;
     this.skinMelt[i] = 0;
+    this.coat[i] = 0;
+    this.vesselTag[i] = o.vesselTag ?? 0;
     this.fuel[i] = 1;
     this.moist[i] = o.moisture ?? m.moisture;
     const liquid = o.liquid ?? m.meltingPoint < this.temp[i];
@@ -177,6 +189,8 @@ export class World {
     this.fuel[i] = 0;
     this.hrr[i] = 0;
     this.owner[i] = -1;
+    this.vesselTag[i] = 0;
+    this.coat[i] = 0;
     this.listDirty = true;
     this.structureDirty = true;
     this.geomVersion++;
@@ -190,6 +204,10 @@ export class World {
     this.wetSkin[j] = this.wetSkin[i];
     this.dens[j] = this.dens[i];
     this.skinMelt[j] = this.skinMelt[i];
+    this.coat[j] = this.coat[i];
+    this.vesselTag[j] = this.vesselTag[i];
+    this.vesselTag[i] = 0;
+    this.coat[i] = 0;
     this.fuel[j] = this.fuel[i];
     this.moist[j] = this.moist[i];
     this.melt[j] = this.melt[i];

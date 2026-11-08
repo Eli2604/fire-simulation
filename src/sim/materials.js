@@ -70,6 +70,7 @@ const DEFAULTS = {
   maxBurnTemp: 950,
   charColor: [0.06, 0.05, 0.045],
   liquidColor: null,
+  vapor: null, // liquid fuels: { refP Pa at refT °C, B (K, Clausius–Clapeyron), Tb boiling °C, Lv J/kg, beta thermal expansion 1/K }
 };
 
 const DEFS = {
@@ -212,9 +213,18 @@ const DEFS = {
   },
   gasoline: {
     label: 'Gasoline', color: [0.85, 0.75, 0.35], density: 740, specificHeat: 2200, conductivity: 0.13,
-    combustible: true, ignitionTemp: 250, pyrolysisTemp: 100, heatOfCombustion: 44e6, burnRate: 0.055,
+    // ignitionTemp is a pilot proxy: its vapour (flash point -43 °C) catches as soon as a flame reaches it
+    combustible: true, ignitionTemp: 80, pyrolysisTemp: 60, heatOfCombustion: 44e6, burnRate: 0.055,
     selfHeating: 0.25, residue: 0, smokeYield: 0.06, smokeColor: [0.06, 0.06, 0.06],
     meltingPoint: -60, latentHeat: 0, fluidity: 0.95,
+    vapor: { refP: 60e3, refT: 38, B: 3600, Tb: 70, Lv: 350e3, beta: 0.00095 },
+  },
+  propane: {
+    label: 'Propane (LPG)', color: [0.82, 0.86, 0.9], density: 500, specificHeat: 2500, conductivity: 0.1,
+    combustible: true, ignitionTemp: 80, pyrolysisTemp: 60, heatOfCombustion: 46e6, burnRate: 0.08,
+    selfHeating: 0.2, residue: 0, smokeYield: 0.002, smokeColor: [0.3, 0.3, 0.3],
+    meltingPoint: -188, latentHeat: 0, fluidity: 1,
+    vapor: { refP: 8.4e5, refT: 20, B: 2000, Tb: -42, Lv: 428e3, beta: 0.0031 },
   },
   charcoal: {
     label: 'Charcoal / embers', color: [0.09, 0.08, 0.07], density: 180, specificHeat: 1000, conductivity: 0.1,

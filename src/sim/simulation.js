@@ -1,6 +1,7 @@
 import { MATERIALS, TBL } from './materials.js';
 import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER } from './world.js';
 import { deriveWeather } from './weather.js';
+import { stepVessels, stepDebris } from './vessels.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -12,6 +13,15 @@ const SKIN_DEPTH = 0.004; // m, thickness of the surface layer of bulk materials
 const LIQUID_MIXING = 10; // effective conductivity boost for convecting melts
 const POOL_FEEDBACK = 0.2; // share of a candle flame heating its melt pool
 const CONTACT_SHARE = 0.5; // max share of the total heat release reaching surfaces by flame contact
+const W_CRIT = 0.004; // kg/(m²·s): water application rate that quenches a flaming surface (fire research: ~2–6 g/m²·s)
+
+/** Hand-held extinguishers (typical 6–9 kg/l units). rate kg/s, range m (nozzle to target). */
+export const AGENTS = {
+  water: { label: "Water (9 l)", capacity: 9, rate: 0.45, range: 6, radius: 0.5 },
+  foam: { label: "Foam AFFF (9 l)", capacity: 9, rate: 0.45, range: 5, radius: 0.6 },
+  co2: { label: "CO2 (5 kg)", capacity: 5, rate: 0.5, range: 2.5, radius: 0.6 },
+  powder: { label: "Dry powder ABC (6 kg)", capacity: 6, rate: 0.5, range: 4, radius: 0.7 },
+};
 
 /**
  * Advances a World in time. All physics lives here and in air.js; the
@@ -87,14 +97,177 @@ export class Simulation {
     w.radSrc.fill(0);
     w.flameAcc.fill(0);
 
+    this.stats.ventHrr = 0;
+
     this.applyHeaters(dt);
+    this.applyWater(dt, D);
+    stepVessels(this, dt);
     this.solidPassA(dt, D);
     this.solidPassB(dt, D);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
     this.structure(dt);
+    stepDebris(this, dt);
+    // jet flames from vents and fireballs count as heat release too
+    let extra = this.stats.ventHrr;
+    for (const ht of w.heaters) if (ht.fireball) extra += ht.power;
+    this.stats.hrr += extra;
     w.time += dt;
     this.stats.steps++;
+  }
+
+  /**
+   * Water and extinguishing agents arriving this step.
+   * Rain falls down every column: each surface it meets intercepts part of it
+   * (porous fuels and thin parts let some drip through to what is below), and
+   * the drops falling through hot gas partly evaporate (cooling the plume and
+   * damping the flames, making steam).
+   */
+  applyWater(dt, D) {
+    const w = this.world;
+    const { waterIn, waterList, mat, dens, colTop, nx, ny, nz, h } = w;
+    for (const i of waterList) waterIn[i] = 0;
+    waterList.length = 0;
+    if (D.rainRate > 0) {
+      const per = D.rainRate * h * h * dt;
+      for (let z = 0; z < nz; z++)
+        for (let x = 0; x < nx; x++) {
+          const top = colTop[x + nx * z];
+          if (top < 0) continue;
+          let water = per;
+          for (let y = top; y >= 0 && water > per * 0.03; y--) {
+            const i = x + nx * (y + ny * z);
+            const m = mat[i];
+            if (!m) continue;
+            const M = MATERIALS[m];
+            const intercept = y === 0 ? 1 : M.burnTime > 0 ? 0.45 : dens[i] < 0.2 ? 0.7 : 0.9;
+            const take = water * intercept;
+            this.addWater(i, take);
+            water -= take;
+          }
+        }
+      const { anx, any, anz, ah, airT, airQ, steam, fgas, occ } = w;
+      const perCell = D.rainRate * ah * ah * dt;
+      for (let az = 0; az < anz; az++)
+        for (let ax = 0; ax < anx; ax++) {
+          let m = perCell;
+          for (let ay = any - 1; ay >= 0; ay--) {
+            const a = ax + anx * (ay + any * az);
+            if (occ[a] > 0.6) break; // under a roof
+            this.coolGas(a, m * Math.min(0.5, (airT[a] - 100) / 1500), dt, airT, airQ, steam, fgas);
+          }
+        }
+    }
+    if (this.spray) this.applySpray(dt);
+  }
+
+  addWater(i, m) {
+    const w = this.world;
+    if (!w.waterIn[i]) w.waterList.push(i);
+    w.waterIn[i] += m;
+  }
+
+  /** Evaporate water mass m (kg) in air cell a if it is hot: cooling, steam, weaker flames. */
+  coolGas(a, m, dt, airT, airQ, steam, fgas) {
+    if (m <= 0 || airT[a] <= 100) return;
+    const E = m * (LV + CW * 80);
+    airQ[a] -= E / dt;
+    steam[a] += m;
+    fgas[a] = Math.max(0, fgas[a] - E * 0.5);
+  }
+
+  /**
+   * A hand-held extinguisher: `spray` = { agent, nozzle, target, radius, tank: { remaining } }.
+   * Mechanisms per agent:
+   *  water   cools (boiling off), wets, and quenches above the critical application rate
+   *  foam    mostly water (cooling) + a blanket that smothers and insulates surfaces
+   *  co2     displaces oxygen in the gas around the fire (inerting), slight cooling
+   *  powder  interrupts the flame chemistry in the gas (very effective per kg) and
+   *          leaves a thin smothering layer on surfaces
+   */
+  applySpray(dt) {
+    const w = this.world;
+    const s = this.spray;
+    const ag = AGENTS[s.agent];
+    const m = Math.min(ag.rate * dt, s.tank.remaining);
+    if (m <= 0) return;
+    s.tank.remaining -= m;
+    const { airT, airQ, steam, fgas, supp, smoke, smokeR, smokeG, smokeB, ah, h } = w;
+    const A = h * h;
+
+    // along the jet: water droplets cross the hot gas above the fire
+    const [nx0, ny0, nz0] = s.nozzle;
+    const [tx, ty, tz] = s.target;
+    if (s.agent === 'water' || s.agent === 'foam') {
+      for (let k = 1; k <= 12; k++) {
+        const t = k / 12;
+        const a = this.airCellAt(nx0 + (tx - nx0) * t, ny0 + (ty - ny0) * t, nz0 + (tz - nz0) * t);
+        if (a >= 0) this.coolGas(a, (m * 0.25 * Math.min(0.5, (airT[a] - 100) / 1500)) / 12, dt, airT, airQ, steam, fgas);
+      }
+    }
+
+    // where it lands
+    const r = Math.max(s.radius, h);
+    if (s.agent === 'water' || s.agent === 'foam') {
+      const hits = [];
+      this.forSphere(s.target, r, (i) => {
+        if (w.expo[i] > 0) hits.push(i);
+      });
+      if (!hits.length) return;
+      const share = (m * 0.85) / hits.length;
+      for (const i of hits) {
+        this.addWater(i, s.agent === 'foam' ? share * 0.7 : share);
+        // foam: expanded ~8x, 1 = a ~2 cm blanket
+        if (s.agent === 'foam') w.coat[i] = Math.min(1.5, w.coat[i] + (share * 0.4) / A);
+      }
+      return;
+    }
+    // gaseous / powder agents fill the air cells around the target
+    const cells = [];
+    const rr = r * 1.5;
+    for (let az = Math.max(0, Math.floor((tz - rr) / ah)); az <= Math.min(w.anz - 1, Math.floor((tz + rr) / ah)); az++)
+      for (let ay = Math.max(0, Math.floor((ty - rr) / ah)); ay <= Math.min(w.any - 1, Math.floor((ty + rr) / ah)); ay++)
+        for (let ax = Math.max(0, Math.floor((tx - rr) / ah)); ax <= Math.min(w.anx - 1, Math.floor((tx + rr) / ah)); ax++) {
+          const dx = (ax + 0.5) * ah - tx;
+          const dy = (ay + 0.5) * ah - ty;
+          const dz = (az + 0.5) * ah - tz;
+          if (dx * dx + dy * dy + dz * dz <= rr * rr) cells.push(w.airIdx(ax, ay, az));
+        }
+    if (!cells.length) return;
+    const airMass = 1.2 * ah ** 3;
+    const per = m / cells.length;
+    for (const a of cells) {
+      if (s.agent === 'co2') {
+        // design concentration ~35 % by volume ≈ 0.5 kg CO2 per kg of air
+        supp[a] = Math.min(1.5, supp[a] + per / airMass / 0.5);
+        airQ[a] -= (per * (843 * (airT[a] + 78) + 571e3)) / dt; // cold gas + sublimation
+        steam[a] += per * 0.3; // the cold jet condenses moisture: a white cloud
+      } else {
+        // dry chemical: ~0.2 kg per kg of air near the flame is enough
+        supp[a] = Math.min(1.5, supp[a] + (per * 0.7) / airMass / 0.2);
+        const vis = per * 0.04; // visible powder cloud
+        smoke[a] += vis;
+        smokeR[a] += vis * 0.95;
+        smokeG[a] += vis * 0.95;
+        smokeB[a] += vis * 0.9;
+      }
+    }
+    if (s.agent === 'powder') {
+      const hits = [];
+      this.forSphere(s.target, r, (i) => {
+        if (w.expo[i] > 0) hits.push(i);
+      });
+      for (const i of hits) w.coat[i] = Math.min(1.2, w.coat[i] + (m * 0.3 * 0.3) / hits.length / A);
+    }
+  }
+
+  airCellAt(px, py, pz) {
+    const w = this.world;
+    const ax = Math.floor(px / w.ah);
+    const ay = Math.floor(py / w.ah);
+    const az = Math.floor(pz / w.ah);
+    if (ax < 0 || ay < 0 || az < 0 || ax >= w.anx || ay >= w.any || az >= w.anz) return -1;
+    return w.airIdx(ax, ay, az);
   }
 
   applyHeaters(dt) {
@@ -141,7 +314,7 @@ export class Simulation {
   solidPassA(dt, D) {
     const w = this.world;
     const { nx, ny, nz, h, mat, temp, dE, expo, faceAir, anx, any, flags, dens } = w;
-    const { airT, airG, airGT, radSrc, radField, flame, vx, vy, vz } = w;
+    const { airT, airG, airGT, radSrc, radField, flame, vx, vy, vz, waterIn, coat, supp, sfac } = w;
     const contactScale = this.contactScale;
     let contactDemand = 0;
     const A = h * h;
@@ -172,6 +345,18 @@ export class Simulation {
       const Ti = temp[i]; // core: conduction with neighbouring voxels
       const Ts = skin[i]; // surface: exchange with gas and radiation
       const burningNow = flags[i] & F_BURNING; // its own flame feedback is in selfHeating
+      // Suppression of combustion at this surface (1 = burns freely):
+      //  water arriving faster than the critical application rate quenches it,
+      //  a foam/powder blanket smothers it, CO2/powder in the gas starves the flame.
+      let sf = 1;
+      const wIn = waterIn[i];
+      if (wIn > 0) sf *= Math.max(0, 1 - wIn / (A * dt * W_CRIT));
+      const ct = coat[i];
+      if (ct > 0) sf *= 1 - Math.min(1, ct);
+      const sp0 = supp[faceAir[i]];
+      if (sp0 > 0) sf *= Math.max(0, 1 - sp0);
+      sfac[i] = sf;
+      const shield = 1 - 0.85 * Math.min(1, ct); // a foam blanket insulates against heat
       const x = i % nx;
       const r = (i - x) / nx;
       const y = r % ny;
@@ -235,10 +420,10 @@ export class Simulation {
         const fT = FLAME_TEMP * fl;
         if (fT > Ta && fT > Ts) {
           const want = g * (fT - (Ta > Ts ? Ta : Ts));
-          if (burningNow) dEx += want * dt; // a burning surface sits inside its own flame
+          if (burningNow) dEx += want * sf * dt; // a burning surface sits inside its own flame
           else {
             contactDemand += want;
-            dEx += want * contactScale * dt;
+            dEx += want * contactScale * shield * dt;
           }
         }
         ex++;
@@ -264,7 +449,7 @@ export class Simulation {
         }
         const absorb = eps * 0.5 * area * radField[own];
         radDemand += absorb;
-        dEx += absorb * radScale * dt;
+        dEx += absorb * radScale * shield * dt;
       }
       dE[i] += dEi;
       gsum[i] += gs;
@@ -296,7 +481,7 @@ export class Simulation {
 
   solidPassB(dt, D) {
     const w = this.world;
-    const { nx, ny, h, mat, temp, fuel, moist, melt, char, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop } = w;
+    const { nx, ny, h, mat, temp, fuel, moist, melt, char, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop, waterIn, coat, sfac } = w;
     const { airQ, radSrc, flameAcc, smoke, smokeR, smokeG, smokeB, steam } = w;
     const A = h * h;
     const V = A * h;
@@ -380,18 +565,27 @@ export class Simulation {
       // energy removal / addition helpers act on the skin when there is one
       const Csurf = Cs > 0 ? Cs : Ctot;
 
-      // --- rain hits the top-most surface of each column
+      // --- water arriving (rain, extinguisher): boils off a hot surface (cooling,
+      // steam); whatever does not boil soaks in / wets the surface
       let ws = wetSkin[i];
-      if (rainRate > 0 && ex > 0 && y === colTop[x + nx * z]) {
-        const water = rainRate * A * dt;
+      const water = waterIn[i];
+      if (water > 0) {
+        let rest = water;
         if (Ts > 100) {
-          Ts -= (water * (CW * (100 - Tamb) + LV)) / Csurf;
-          steam[fa] += water;
-        } else if (mo < M.maxMoisture) {
-          mo = Math.min(M.maxMoisture, mo + water / dry);
+          const per = CW * (100 - Tamb) + LV;
+          const evap = Math.min(water, ((Ts - 100) * Csurf) / per);
+          Ts -= (evap * per) / Csurf;
+          steam[fa] += evap;
+          rest -= evap;
+        }
+        if (rest > 0) {
+          if (Ts > Tamb) Ts -= Math.min(Ts - Tamb, (rest * CW * (Ts - Tamb)) / Csurf);
+          mo = Math.min(M.maxMoisture, mo + rest / dry);
           ws = 1;
         }
       }
+      // a foam or powder blanket slowly breaks down, faster on hot surfaces
+      if (coat[i] > 0) coat[i] *= Math.exp(-dt / (Ts > 100 ? 90 : 900));
 
       // --- dead fuels exchange moisture with the air
       if (M.deadFuel && T < 60) mo += (D.emc - mo) * Math.min(1, dt / M.timeLag);
@@ -486,15 +680,18 @@ export class Simulation {
 
       // --- combustion: driven by the surface temperature
       let q = 0;
-      if (comb && fuel[i] > 0) {
+      const sf = sfac[i];
+      // sealed contents of a tank have no oxygen and cannot burn
+      if (comb && fuel[i] > 0 && w.vesselTag[i] >= 0) {
         const fuelMass0 = rho * V * (1 - res);
         // a dry skin can burn on a still-moist core
         const wetOk = Cs > 0 ? ws < 0.2 || mo < M.extinctionMoisture : mo < M.extinctionMoisture;
-        if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk) {
+        if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk && sf > 0.5) {
           f |= F_BURNING;
         }
         if (f & F_BURNING) {
-          if (ex === 0 || Ts < M.ignitionTemp - 120 || !wetOk) {
+          // quenched, smothered or starved of oxygen: the flame goes out
+          if (ex === 0 || Ts < M.ignitionTemp - 120 || !wetOk || (sf < 0.35 && this.rand() < (0.35 - sf) * dt * 3)) {
             f &= ~F_BURNING;
           } else {
             // hotter surfaces pyrolyse faster; more exposed faces = more oxygen
@@ -505,6 +702,7 @@ export class Simulation {
               M.burnTime > 0
                 ? ((fuelMass0 / M.burnTime) * tf * windO2 * dt * faces) / 3 // fine fuel: residence time
                 : M.burnRate * A * faces * tf * windO2 * dt; // bulk fuel: regression per surface area
+            dm *= sf; // water, foam, powder or CO2 slow the burning down
             let Hc = M.heatOfCombustion;
             let smokeYield = M.smokeYield;
             let sc = M.smokeColor;
@@ -522,7 +720,7 @@ export class Simulation {
                   feed = (temp[src] - (S.meltingPoint - 30)) / 30;
                   feed = feed < 0.3 ? 0.3 : feed > 1 ? 1 : feed;
                 }
-                const want = M.wickRate * dt * feed;
+                const want = M.wickRate * dt * feed * sf;
                 const take = Math.min(want, fuel[src] * srcMass0);
                 fuel[src] -= take / srcMass0;
                 if (fuel[src] <= 1e-6) burnouts.push(src);

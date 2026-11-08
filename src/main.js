@@ -1,4 +1,6 @@
 import GUI from 'lil-gui';
+import { MOUSE } from 'three';
+import { AGENTS } from './sim/simulation.js';
 import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
@@ -19,6 +21,7 @@ const state = {
   torchPower: 5000,
   torchSeconds: 30,
   waterLitres: 10,
+  agent: 'water',
   mode: 'realistic',
   flames: true,
   smoke: true,
@@ -33,6 +36,9 @@ let sim = null;
 let weather = defaultWeather();
 let inspected = -1;
 let speed = 0;
+const tank = { remaining: AGENTS.water.capacity }; // the extinguisher in your hand
+let spraying = false;
+let lastAim = null;
 
 // ---------------------------------------------------------------------------
 function load(desc, fresh = true) {
@@ -115,13 +121,22 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Ignite (lighter)': 'ignite', 'Blow torch': 'torch', 'Water bucket': 'water' })
+fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Ignite (lighter)': 'ignite', 'Blow torch': 'torch', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
-  .onChange(updateToolHint);
+  .onChange(() => {
+    updateToolHint();
+    // while extinguishing, the left button sprays and the right button rotates the view
+    view.controls.mouseButtons.LEFT = state.tool === 'extinguisher' ? null : MOUSE.ROTATE;
+    view.controls.mouseButtons.RIGHT = state.tool === 'extinguisher' ? MOUSE.ROTATE : MOUSE.PAN;
+  });
 fT.add(state, 'toolRadius', 0.01, 3, 0.01).name('Radius (m)');
 fT.add(state, 'torchPower', 100, 50000, 100).name('Torch power (W)');
 fT.add(state, 'torchSeconds', 1, 300, 1).name('Torch duration (s)');
-fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Water (litres)');
+fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
+fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
+  .name('Extinguisher')
+  .onChange(() => (tank.remaining = AGENTS[state.agent].capacity));
+fT.add({ refill: () => (tank.remaining = AGENTS[state.agent].capacity) }, 'refill').name('↻ Refill extinguisher');
 
 const fS = gui.addFolder('Scene objects');
 let fObjects = null;
@@ -250,11 +265,31 @@ function updateHud(dt) {
     ['Smoke in air', fmtMass(s.smoke)],
     ['Steam in air', fmtMass(s.steam)],
     ['Molten voxels', s.liquid],
+    ...vesselRows(w),
+    ...(state.tool === 'extinguisher' ? [['Extinguisher', `${AGENTS[state.agent].label}: ${tank.remaining.toFixed(1)} left${spraying ? ' (spraying)' : ''}`]] : []),
+    ...eventRows(w),
     ['Voxels', `${w.solidCount.toLocaleString()} @ ${(w.h * 100).toFixed(1)} cm`],
     ['FPS', fps.toFixed(0)],
   ];
   $('stats').innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
   if (inspected >= 0) showInspect();
+}
+
+const VESSEL_STATE = { sealed: 'sealed', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
+function vesselRows(w) {
+  return w.vessels.map((v) => {
+    const label = v.name === 'cylinder' ? 'Gas cylinder' : 'Fuel tank';
+    const st = v.venting ? 'relief valve venting' : VESSEL_STATE[v.state] ?? v.state;
+    const p = v.state === 'sealed' && v.pressure != null ? ` ${(v.pressure / 1e5).toFixed(1)} bar (holds ${(v.strength / 1e5).toFixed(0)})` : '';
+    return [label, st + p];
+  });
+}
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out' };
+function eventRows(w) {
+  return w.events
+    .filter((e) => w.time - e.time < 30)
+    .slice(-2)
+    .map((e) => ['Event', `${fmtTime(e.time)} ${e.name === 'cylinder' ? 'gas cylinder' : 'fuel tank'} ${EVENT_TEXT[e.type] ?? e.type}${e.pressure ? ` at ${(e.pressure / 1e5).toFixed(1)} bar` : ''}`]);
 }
 
 function showInspect() {
@@ -284,6 +319,7 @@ const HINTS = {
   ignite: 'Click to set fire to combustible material',
   torch: 'Click to aim a blow torch at a spot',
   water: 'Click to throw a bucket of water',
+  extinguisher: 'Hold the left mouse button to spray where you point (right-drag rotates the view)',
 };
 function updateToolHint() {
   $('toolhint').textContent = HINTS[state.tool];
@@ -295,8 +331,42 @@ let down = null;
 const canvas = $('view');
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button === 0) down = [e.clientX, e.clientY];
+  if (e.button === 0 && state.tool === 'extinguisher') {
+    spraying = true;
+    aim(e);
+  }
 });
+canvas.addEventListener('pointermove', (e) => {
+  if (spraying) aim(e);
+});
+const stopSpray = () => {
+  spraying = false;
+  if (sim) sim.spray = null;
+};
+canvas.addEventListener('pointerleave', stopSpray);
+
+/** Point the extinguisher: the nozzle stands back from the target, up to the agent's range. */
+function aim(e) {
+  const hit = view.pick(e.clientX, e.clientY);
+  if (hit) lastAim = hit.point;
+  if (!lastAim) return;
+  const ag = AGENTS[state.agent];
+  const cam = view.camera.position;
+  const t = lastAim;
+  const d = [cam.x - t[0], cam.y - t[1], cam.z - t[2]];
+  const len = Math.hypot(...d) || 1;
+  const diag = Math.hypot(...sim.world.size);
+  const reach = Math.min(ag.range, len * 0.85, diag * 0.45);
+  const nozzle = d.map((v, k) => t[k] + (v / len) * reach);
+  nozzle[1] = Math.max(sim.world.h * 2, Math.min(nozzle[1], t[1] + reach * 0.6));
+  sim.spray = { agent: state.agent, nozzle, target: t, radius: Math.min(ag.radius, diag * 0.06), tank };
+}
 canvas.addEventListener('pointerup', (e) => {
+  if (e.button === 0 && spraying) {
+    stopSpray();
+    down = null;
+    return;
+  }
   if (!down || e.button !== 0) return;
   const moved = Math.hypot(e.clientX - down[0], e.clientY - down[1]);
   down = null;
@@ -335,7 +405,7 @@ function frame(now) {
     const done = sim.advance(dt * state.timeScale, 22);
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
   } else speed *= 0.9;
-  view.render(dt, sim.stats, weather);
+  view.render(dt, sim);
   updateHud(dt);
   requestAnimationFrame(frame);
 }

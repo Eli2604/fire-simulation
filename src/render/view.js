@@ -4,6 +4,8 @@ import { VoxelRenderer } from './voxels.js';
 import { FlameRenderer } from './flames.js';
 import { SmokeRenderer } from './smoke.js';
 import { RainRenderer } from './rain.js';
+import { SprayRenderer } from './spray.js';
+import { DebrisRenderer } from './debris.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -49,6 +51,12 @@ export class View {
     this.flames = new FlameRenderer(this.root);
     this.smoke = new SmokeRenderer(this.root);
     this.rain = new RainRenderer(this.root);
+    this.spray = new SprayRenderer(this.root);
+    this.debris = new DebrisRenderer(this.root);
+    this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
+    this.root.add(this.flashLight);
+    this.flash = null;
+    this.seenEvents = 0;
     this.raycaster = new THREE.Raycaster();
     this.fireLightOn = true;
     this.time = 0;
@@ -78,6 +86,9 @@ export class View {
     this.voxels.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
+    this.spray.setScale(world);
+    this.seenEvents = 0;
+    this.flash = null;
 
     this.ground.scale.set(diag * 12, diag * 12, 1);
     this.ground.position.set(sx / 2, world.h * 0.985, sz / 2);
@@ -170,16 +181,52 @@ export class View {
     this.fireLight.intensity = 6 * k * flick * (this.diag / 3) ** 2;
   }
 
-  render(dt, stats, weather) {
+  render(dt, sim) {
+    const stats = sim.stats;
     this.time += dt;
     this.controls.update();
     this.voxels.update(this.time);
     const scale = this.pointScale();
+    this.handleEvents();
     this.flames.update(dt, scale);
     this.smoke.update(scale, this.rh ?? 0.5);
-    this.rain.update(dt, this.world, weather);
+    this.rain.update(dt, this.world, sim.weather);
+    this.spray.update(dt, scale, sim.spray);
+    this.debris.update(this.world);
     this.updateFireLight(stats);
+    this.updateFlash(dt);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** New explosion events: a bright flash and a burst of sparks. */
+  handleEvents() {
+    const w = this.world;
+    if (!w) return;
+    for (; this.seenEvents < w.events.length; this.seenEvents++) {
+      const e = w.events[this.seenEvents];
+      if (e.type !== 'explosion') continue;
+      this.flash = { t: 0, pos: e.pos, power: Math.min(4, 0.5 + Math.cbrt(e.energy / 1e5)) };
+      const n = Math.min(600, 150 + Math.round(e.energy / 2000));
+      for (let k = 0; k < n; k++) {
+        const th = Math.random() * Math.PI * 2;
+        const ph = Math.acos(Math.random() * 2 - 1) * 0.8;
+        const sp = 4 + Math.random() * 14;
+        this.flames.spawn(e.pos[0], e.pos[1], e.pos[2], Math.sin(ph) * Math.cos(th) * sp, Math.abs(Math.cos(ph)) * sp, Math.sin(ph) * Math.sin(th) * sp, 0.6 + Math.random() * 1.6, Math.max(0.01, w.h * 0.25), 1, 1);
+      }
+    }
+  }
+
+  updateFlash(dt) {
+    const f = this.flash;
+    if (!f) {
+      this.flashLight.intensity = 0;
+      return;
+    }
+    f.t += dt;
+    const k = Math.max(0, 1 - f.t / 0.8);
+    this.flashLight.position.set(...f.pos);
+    this.flashLight.intensity = 400 * f.power * k * k * (this.diag / 3) ** 2;
+    if (k <= 0) this.flash = null;
   }
 
   /** Raycast the voxels under a screen point. Returns { voxel, point, normal } or null. */

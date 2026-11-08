@@ -178,6 +178,13 @@ export function placeObject(world, obj, ownerIndex = -1) {
   const sr = Math.sin(rot);
   const toWorld = (lx, ly, lz) => [ox + cr * lx + sr * lz, oy + ly, oz - sr * lx + cr * lz];
 
+  // pressure vessels declared by the model (fuel tanks, gas cylinders)
+  const vesselIndex = {};
+  for (const [name, spec] of Object.entries(built.vessels ?? {})) {
+    vesselIndex[name] = world.vessels.length;
+    world.vessels.push({ ...spec, name, owner: ownerIndex, state: 'sealed' });
+  }
+
   for (const p of built.prims) {
     const { bounds, test } = insideFn(p, h);
     // world AABB of the rotated local AABB
@@ -226,6 +233,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
             anchored: p.anchored,
             density: p.density,
             owner: ownerIndex,
+            vesselTag: p.vessel !== undefined ? (p.vesselRole === 'contents' ? -1 : 1) * (vesselIndex[p.vessel] + 1) : 0,
           });
         }
   }

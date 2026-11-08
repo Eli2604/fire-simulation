@@ -23,7 +23,8 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 ## Using it
 
 - **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
-  next to a house, a garden on a dry day, a forest fire in fog, a house fire in the rain.
+  next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
+  what a car's fuel tank does in a fire, a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -35,6 +36,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   - *Ignite*: a lighter.
   - *Blow torch*: a burner held on a spot for a set time and power.
   - *Water bucket*: cools, wets and puts out the fire, making steam.
+  - *Fire extinguisher*: hold the left mouse button to spray where you point; right-drag
+    rotates the view meanwhile. Choose water, AFFF foam, CO2 or dry powder (ABC). Each has
+    a realistic capacity, discharge rate and reach, and a refill button.
 - **Scene objects**: every object's parameters, position, rotation and "burning at start"
   can be edited, objects can be added and removed, and the world size and voxel size
   can be changed. Edits restart the simulation. Scenes can be exported and imported as JSON.
@@ -52,6 +56,7 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 | Wood pile / campfire | log cabin / teepee / stack, number, length and radius of logs, moisture, kindling, stone ring |
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
+| Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.
@@ -129,7 +134,35 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
    - Steam is only visible where the vapour has cooled and condensed, and lingers longer
      in humid air and fog.
    - Smoke opacity follows Beer–Lambert with soot's mass extinction coefficient.
-8. **Structure.** A flood fill from the ground finds parts that are no longer supported
+8. **Suppression.** Rain falls down every column. Each surface intercepts part of it and
+   porous fuels let some through, and drops falling through hot gas evaporate, cooling the
+   plume and damping the flames. Water on a surface first boils off (cooling, steam), then
+   soaks in. Burning slows in proportion to how close the water supply is to the
+   **critical application rate** of about 4 g/m²·s, above which flaming is quenched.
+   The extinguisher agents act through different mechanisms:
+   - *Water* cools, wets and quenches.
+   - *Foam* is mostly water but also forms a blanket that smothers the surface and shields
+     it from heat; the blanket slowly breaks down, faster when hot.
+   - *CO2* displaces oxygen in the gas: about 35 % by volume stops flaming.
+   - *Dry powder* interrupts the flame chemistry: very effective per kg, and it leaves a
+     thin coating.
+
+   CO2 and powder are carried by the air flow, so wind blows them away.
+9. **Pressure vessels** (`src/sim/vessels.js`): fuel tanks and gas cylinders.
+   - The vapour pressure follows the liquid temperature (Clausius–Clapeyron), plus the
+     heated gas in the ullage.
+   - Expanding liquid can fill the vessel completely (hydraulic overfill), after which the
+     pressure rises by about 5 bar per K.
+   - The shell weakens with temperature: steel loses most of its strength between 300 and
+     700 °C, plastics soften towards their melting point.
+   - A working relief valve vents burning vapour as a jet flame; boiling cools the liquid.
+   - A shell that melts or burns through, or fails below 1.5 bar, splits and leaks into a
+     pool fire. This is what car fuel tanks do.
+   - Above that pressure the vessel **bursts**: a blast throws the shell and light nearby
+     parts as tumbling, burning debris that lands and keeps burning, windows break, and the
+     flashing liquid becomes a fireball sized by the standard correlations (D ≈ 5.8 m^⅓,
+     t ≈ 0.45 m^⅓).
+10. **Structure.** A flood fill from the ground finds parts that are no longer supported
    (a burnt-through trunk, a roof whose beams are gone), and they fall.
 
 Calibration targets used during development (`npm run headless`):
@@ -141,6 +174,9 @@ Calibration targets used during development (`npm run headless`):
 | Grass fire, 2 m/s wind | ~0.1–0.3 m/s spread | ~0.08 m/s from a point ignition, accelerating |
 | Car fire | slow growth over ~10 min, spreads to nearby buildings | ~0.1 → 0.6 MW in 11 min, then the house next to it |
 | Metal bars | copper spreads heat furthest, steel keeps a steep gradient | yes |
+| Campfire in 50 mm/h rain | dies down, core keeps glowing | −55 % in 4 min, still dropping |
+| 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst | vents at 17.5 bar after ~13 min; bursts at ~99 bar after ~17 min |
+| Car fuel tank in a car fire | thin tank fails and leaks; explosions are very rare | splits, pool fire to ~10 MW |
 
 ### Limitations
 
@@ -149,6 +185,22 @@ pressure-projected. Radiation is a blurred field without real shadowing, correct
 view factor. A voxel stands for its material, so geometry finer than the voxel size is
 represented through effective density and surface factors. Results are qualitatively
 right and of the right order of magnitude, but should not be used for engineering.
+
+## Why voxels?
+
+The voxels are the *simulation*, not just the look. Heat has to flow *through* material
+(into a log, along a bar, through a wall), objects have to change shape as they burn,
+melt and collapse, and neighbouring objects have to exchange heat. That needs a
+volumetric state: temperature, fuel, moisture and melt state everywhere inside every object.
+A mesh with a fire shader only paints flames and char on a fixed surface and cannot do any
+of that. The way games and VFX tools do it (Houdini Pyro, EmberGen) is the same: simulate
+on grids, then render the result.
+
+The rendering could be much smoother without changing the simulation. Surfaces could be
+extracted from the voxel field (marching cubes or surface nets) and shaded from the voxel
+state (temperature glow, char, wetness). Smoke and flames could be ray-marched as volumes
+from 3D textures instead of drawn as point sprites. The simulation itself could move to the
+GPU (WebGPU compute) for larger scenes. These are the natural next steps.
 
 ## Scene file format
 

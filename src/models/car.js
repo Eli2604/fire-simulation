@@ -10,6 +10,7 @@ export default {
     upholstery: { value: '#5a5d66', color: true, label: 'Seat colour' },
     fuelLiters: { value: 40, min: 0, max: 90, step: 1, label: 'Fuel (litres)' },
     tankMaterial: { value: 'plastic', options: ['plastic', 'steel'], label: 'Fuel tank' },
+    tankVent: { value: 'working', options: ['working', 'blocked'], label: 'Tank vent valve' },
     igniteAt: { value: 'engine', options: ['engine', 'interior'], label: 'Fire starts in' },
   },
   build(p, { h }) {
@@ -78,8 +79,8 @@ export default {
       const x0 = cx0 + 0.05;
       const y0 = floor + t;
       prims.push(
-        { shape: 'box', min: [x0 - t, y0, -lz / 2 - t], max: [x0 + lx + t, y0 + ly + t, lz / 2 + t], material: p.tankMaterial === 'steel' ? 'steel' : 'plastic', density: thin(p.tankMaterial === 'steel' ? 0.0012 : 0.005) },
-        { shape: 'box', min: [x0, y0 + t, -lz / 2], max: [x0 + lx, y0 + ly, lz / 2], material: 'gasoline' },
+        { shape: 'box', min: [x0 - t, y0, -lz / 2 - t], max: [x0 + lx + t, y0 + ly + t, lz / 2 + t], material: p.tankMaterial === 'steel' ? 'steel' : 'plastic', density: thin(p.tankMaterial === 'steel' ? 0.0012 : 0.005), vessel: 'fuelTank' },
+        { shape: 'box', min: [x0, y0 + t, -lz / 2], max: [x0 + lx, y0 + ly, lz / 2], material: 'gasoline', vessel: 'fuelTank', vesselRole: 'contents' },
       );
     }
     // bumpers
@@ -102,6 +103,17 @@ export default {
       p.igniteAt === 'engine'
         ? { p: [cx1 + 0.9, 0.7, 0], radius: 0.35, materials: ['plastic', 'rubber', 'foam'], power: 15000 }
         : { p: [cx1 - 0.75, 0.6, -0.4], radius: 0.3, materials: ['foam', 'fabric', 'plastic'], power: 8000 };
-    return { prims, ignite };
+    // The tank is a pressure vessel: a plastic tank softens and leaks long before it
+    // bursts; a steel tank with a blocked vent can rupture.
+    const vessels = p.fuelLiters > 0 ? {
+      fuelTank: {
+        burstPressure: p.tankMaterial === 'steel' ? 4e5 : 1.5e5,
+        ventPressure: p.tankVent === 'working' ? 1.5e4 : null,
+        ventRate: 0.003,
+        ullage: 0.15,
+        volume: p.fuelLiters / 1000 / 0.85,
+      },
+    } : {};
+    return { prims, ignite, vessels };
   },
 };

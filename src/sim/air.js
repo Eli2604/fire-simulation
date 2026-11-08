@@ -91,7 +91,7 @@ function box1D(src, dst, nx, ny, nz, r, axis) {
  */
 export function stepAir(w, W, D, dt, sim) {
   const { anx, any, anz, ah, airT, airG, airGT, airQ, flame, flameAcc, occ, vx, vy, vz } = w;
-  const { smoke, smokeR, smokeG, smokeB, steam, fgas } = w;
+  const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp } = w;
   const NA = w.NA;
   const ah3 = ah * ah * ah;
   const Tamb = W.ambient;
@@ -153,6 +153,7 @@ export function stepAir(w, W, D, dt, sim) {
   const oB = w.tmpE;
   const oW = w.tmpF;
   const oF = w.tmpG;
+  const oX = w.tmpH;
   const inv = dt / ah;
   for (let az = 0; az < anz; az++)
     for (let ay = 0; ay < any; ay++) {
@@ -163,7 +164,7 @@ export function stepAir(w, W, D, dt, sim) {
         let pz = az - vz[a] * inv;
         if (px < -0.5 || pz < -0.5 || px > anx - 0.5 || pz > anz - 0.5 || py > any - 0.5) {
           oT[a] = Tamb;
-          oS[a] = oR[a] = oG[a] = oB[a] = oW[a] = oF[a] = 0;
+          oS[a] = oR[a] = oG[a] = oB[a] = oW[a] = oF[a] = oX[a] = 0;
           continue;
         }
         if (px < 0) px = 0;
@@ -207,6 +208,7 @@ export function stepAir(w, W, D, dt, sim) {
         oB[a] = smokeB[i0] * w0 + smokeB[i1] * w1 + smokeB[i2] * w2 + smokeB[i3] * w3 + smokeB[i4] * w4 + smokeB[i5] * w5 + smokeB[i6] * w6 + smokeB[i7] * w7;
         oW[a] = steam[i0] * w0 + steam[i1] * w1 + steam[i2] * w2 + steam[i3] * w3 + steam[i4] * w4 + steam[i5] * w5 + steam[i6] * w6 + steam[i7] * w7;
         oF[a] = fgas[i0] * w0 + fgas[i1] * w1 + fgas[i2] * w2 + fgas[i3] * w3 + fgas[i4] * w4 + fgas[i5] * w5 + fgas[i6] * w6 + fgas[i7] * w7;
+        oX[a] = supp[i0] * w0 + supp[i1] * w1 + supp[i2] * w2 + supp[i3] * w3 + supp[i4] * w4 + supp[i5] * w5 + supp[i6] * w6 + supp[i7] * w7;
       }
     }
 
@@ -219,6 +221,7 @@ export function stepAir(w, W, D, dt, sim) {
   // steam: droplets evaporate quickly in dry air, linger in humid air / fog
   const steamKeep = Math.exp(-(0.01 + 0.12 * (1.02 - D.rh)) * dt);
   const fgasKeep = Math.exp(-dt / FLAME_TAU);
+  const suppKeep = Math.exp(-0.05 * dt);
   for (let az = 0; az < anz; az++)
     for (let ay = 0; ay < any; ay++) {
       let a = anx * (ay + any * az);
@@ -239,7 +242,11 @@ export function stepAir(w, W, D, dt, sim) {
         smokeG[a] = lap(oG, a, xm, xp, ym, yp, zm, zp, 0, k) * smokeKeep;
         smokeB[a] = lap(oB, a, xm, xp, ym, yp, zm, zp, 0, k) * smokeKeep;
         steam[a] = lap(oW, a, xm, xp, ym, yp, zm, zp, 0, k) * steamKeep;
-        fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep;
+        // CO2 / powder: carried with the gas, slowly diluting and settling; it
+        // starves and inhibits the flames in its cell
+        const sp = lap(oX, a, xm, xp, ym, yp, zm, zp, 0, k) * suppKeep;
+        supp[a] = sp;
+        fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep * (sp > 0 ? Math.exp(-6 * sp * dt) : 1);
       }
     }
 
@@ -260,6 +267,7 @@ export function stepAir(w, W, D, dt, sim) {
     let f = Math.sqrt(g / flameRefJ);
     const hot = (Tn - 450) / 500;
     if (hot > f) f = hot;
+    if (supp[a] > 0) f *= 1 - Math.min(1, supp[a]);
     flame[a] = f < 0 ? 0 : f > 1 ? 1 : f;
     smokeTotal += smoke[a];
     steamTotal += steam[a];
