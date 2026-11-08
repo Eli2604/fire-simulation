@@ -11,7 +11,8 @@ export const FLAME_TAU = 0.5; // s, burn-out time of released fuel gas
 export const FLAME_REF = 1.5e5; // J/m³ of burning gas that makes a cell fully flame
 export const FLAME_TEMP = 1100; // °C, gas temperature inside a flame
 const CEILING_JET = 0.006; // m/s per K across 2 cells, hot layer spreading under a ceiling
-const ENTRAIN = 0.0005; // m/s per K of temperature difference across 2 cells
+const ENTRAIN = 0.0005;
+const FILL = 0.004; // m/s per K: descent of a smoke layer collecting under a ceiling // m/s per K of temperature difference across 2 cells
 // The blurred field ignores shadowing by solids; this accounts for the part
 // of the emission that is re-absorbed inside the burning object itself.
 const RAD_VIEW = 0.55;
@@ -92,7 +93,7 @@ function box1D(src, dst, nx, ny, nz, r, axis) {
  */
 export function stepAir(w, W, D, dt, sim) {
   const { anx, any, anz, ah, airT, airG, airGT, airQ, flame, flameAcc, occ, vx, vy, vz } = w;
-  const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp } = w;
+  const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp, passX, passY, passZ, capped } = w;
   const NA = w.NA;
   const ah3 = ah * ah * ah;
   const Tamb = W.ambient;
@@ -125,7 +126,10 @@ export function stepAir(w, W, D, dt, sim) {
       for (let ax = 0; ax < anx; ax++, a++) {
         const T = airT[a];
         const dT = T - Tamb;
-        let up = dT > 0 ? buoyF * Math.sqrt(dT / (T + 273.15)) : 0;
+        // in a stratified layer under a ceiling, gas only rises if it is hotter than the gas above it
+        const layered = capped[a] && ay + 1 < any && passY[a] > 0.5;
+        const dTb = layered ? T - Math.max(Tamb, airT[a + anx]) : dT;
+        let up = dTb > 0 ? buoyF * Math.sqrt(dTb / (T + 273.15)) : 0;
         if (up > 6) up = 6;
         const open = 1 - occ[a];
         const o2 = open * open;
@@ -137,7 +141,7 @@ export function stepAir(w, W, D, dt, sim) {
         let ez = ENTRAIN * gz;
         // ceiling jet: hot gas trapped under a ceiling flows away from the hot
         // spot along it (that is how smoke fills a corridor from the top down)
-        if (dT > 20 && ay + 1 < any && occ[a + anx] > 0.6) {
+        if (dT > 20 && ay + 1 < any && passY[a] < 0.5) {
           ex = -CEILING_JET * gx;
           ez = -CEILING_JET * gz;
         }
@@ -145,10 +149,26 @@ export function stepAir(w, W, D, dt, sim) {
         else if (ex < -1.5) ex = -1.5;
         if (ez > 1.5) ez = 1.5;
         else if (ez < -1.5) ez = -1.5;
-        vx[a] = (wx + ex + tb * (tx[ax] * tzv * 0.6 + tyv * 0.4)) * o2;
-        vz[a] = (wz + ez + tb * (tz2v * tx2[ax] * 0.6 - tyv * 0.4)) * o2;
+        // flow only through the open part of the face it comes through
+        let u = (wx + ex + tb * (tx[ax] * tzv * 0.6 + tyv * 0.4)) * o2;
+        u *= u > 0 ? (ax > 0 ? passX[a - 1] : 1) : passX[a];
+        vx[a] = u;
+        let q = (wz + ez + tb * (tz2v * tx2[ax] * 0.6 - tyv * 0.4)) * o2;
+        q *= q > 0 ? (az > 0 ? passZ[a - sxy] : 1) : passZ[a];
+        vz[a] = q;
         let v = (up + tb * 0.5 * tx2[ax] * tyv) * open;
-        if (v > 0 && ay + 1 < any && occ[a + anx] > 0.6) v = 0; // ceiling
+        v *= v > 0 ? (ay > 0 ? passY[a - anx] : 1) : passY[a];
+        if (v > 0 && ay + 1 < any && passY[a] < 0.25) v *= passY[a] * 4; // under a ceiling
+        // Under a ceiling the hot layer deepens: the plume keeps adding gas, which
+        // pushes the layer interface down (the air model has no volume balance of its own)
+        if (capped[a] && ay + 1 < any && passY[a] > 0.5) {
+          const above = airT[a + anx] - T;
+          if (above > 2) {
+            let d = FILL * above;
+            if (d > 0.12) d = 0.12;
+            v -= d;
+          }
+        }
         if (ay === 0 && v < 0) v = 0;
         vy[a] = v;
       }
@@ -226,7 +246,7 @@ export function stepAir(w, W, D, dt, sim) {
   let alpha = (Dturb * dt) / (ah * ah);
   if (alpha > 0.14) alpha = 0.14;
   const relaxT = 1 - Math.exp(-(0.03 + 0.08 * D.rainFrac) * dt);
-  const smokeKeep = Math.exp(-(0.002 + 0.03 * D.rainFrac) * dt);
+  const smokeKeep = Math.exp(-(0.0005 + 0.03 * D.rainFrac) * dt); // soot deposits slowly
   // steam: droplets evaporate quickly in dry air, linger in humid air / fog
   const steamKeep = Math.exp(-(0.01 + 0.12 * (1.02 - D.rh)) * dt);
   const fgasKeep = Math.exp(-dt / FLAME_TAU);
@@ -242,6 +262,13 @@ export function stepAir(w, W, D, dt, sim) {
         const yp = ay + 1 < any ? a + anx : -1;
         const zm = az > 0 ? a - sxy : -1;
         const zp = az + 1 < anz ? a + sxy : -1;
+        // mixing only through open faces
+        P[0] = ax > 0 ? passX[a - 1] : 1;
+        P[1] = passX[a];
+        P[2] = ay > 0 ? passY[a - anx] : 1;
+        P[3] = passY[a];
+        P[4] = az > 0 ? passZ[a - sxy] : 1;
+        P[5] = passZ[a];
         const k = alpha * (1 - occ[a] * 0.8);
         let T = lap(oT, a, xm, xp, ym, yp, zm, zp, Tamb, k);
         T += (Tamb - T) * relaxT;
@@ -285,11 +312,18 @@ export function stepAir(w, W, D, dt, sim) {
   sim.stats.steam = steamTotal;
 }
 
+const P = new Float32Array(6); // open fraction of the 6 faces of the current cell
+
 function lap(s, a, xm, xp, ym, yp, zm, zp, b, k) {
   const c = s[a];
   const sum =
-    (xm >= 0 ? s[xm] : b) + (xp >= 0 ? s[xp] : b) + s[ym] + (yp >= 0 ? s[yp] : b) + (zm >= 0 ? s[zm] : b) + (zp >= 0 ? s[zp] : b);
-  return c + k * (sum - 6 * c);
+    ((xm >= 0 ? s[xm] : b) - c) * P[0] +
+    ((xp >= 0 ? s[xp] : b) - c) * P[1] +
+    (s[ym] - c) * P[2] +
+    ((yp >= 0 ? s[yp] : b) - c) * P[3] +
+    ((zm >= 0 ? s[zm] : b) - c) * P[4] +
+    ((zp >= 0 ? s[zp] : b) - c) * P[5];
+  return c + k * sum;
 }
 
 function turbTable(w, key, n, freq, speed, t) {

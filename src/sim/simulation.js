@@ -1,5 +1,5 @@
 import { MATERIALS, TBL } from './materials.js';
-import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER } from './world.js';
+import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN } from './world.js';
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepProjectiles, stepGasPipes } from './explosions.js';
@@ -290,25 +290,41 @@ export class Simulation {
       }
       const [px, py, pz] = ht.pos;
       const r = Math.max(ht.radius, ah * 0.5);
-      const hgt = Math.max(ht.height, ah);
+      const len = Math.max(ht.height, ah);
+      // flame axis: straight up for burners, any direction for a jet (burst pipe)
+      let [dx, dy, dz] = ht.dir ?? [0, 1, 0];
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      dx /= dl;
+      dy /= dl;
+      dz /= dl;
+      const ex = px + dx * len;
+      const ey = py + dy * len;
+      const ez = pz + dz * len;
+      const rMax = r * (ht.jet ? 1.4 : 1) + ah;
       const cells = [];
-      const x0 = Math.max(0, Math.floor((px - r) / ah));
-      const x1 = Math.min(anx - 1, Math.floor((px + r) / ah));
-      const z0 = Math.max(0, Math.floor((pz - r) / ah));
-      const z1 = Math.min(anz - 1, Math.floor((pz + r) / ah));
-      const y0 = Math.max(0, Math.floor(py / ah));
-      const y1 = Math.min(any - 1, Math.floor((py + hgt) / ah));
+      const x0 = Math.max(0, Math.floor((Math.min(px, ex) - rMax) / ah));
+      const x1 = Math.min(anx - 1, Math.floor((Math.max(px, ex) + rMax) / ah));
+      const y0 = Math.max(0, Math.floor((Math.min(py, ey) - (ht.dir ? rMax : 0)) / ah));
+      const y1 = Math.min(any - 1, Math.floor((Math.max(py, ey) + (ht.dir ? rMax : 0)) / ah));
+      const z0 = Math.max(0, Math.floor((Math.min(pz, ez) - rMax) / ah));
+      const z1 = Math.min(anz - 1, Math.floor((Math.max(pz, ez) + rMax) / ah));
       for (let az = z0; az <= z1; az++)
         for (let ay = y0; ay <= y1; ay++)
           for (let ax = x0; ax <= x1; ax++) {
             const cx = (ax + 0.5) * ah - px;
+            const cy = (ay + 0.5) * ah - py;
             const cz = (az + 0.5) * ah - pz;
-            // flame narrows with height
-            const frac = ((ay + 0.5) * ah - py) / hgt;
-            const rr = r * Math.max(0.35, 1 - 0.6 * frac) + ah * 0.5;
+            let t = (cx * dx + cy * dy + cz * dz) / len;
+            if (t < -0.05 || t > 1.05) continue;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            const qx = cx - dx * t * len;
+            const qy = cy - dy * t * len;
+            const qz = cz - dz * t * len;
+            // a burner flame narrows with height, a jet widens with distance
+            const rr = (ht.jet ? r * (0.5 + 0.9 * t) : r * Math.max(0.35, 1 - 0.6 * t)) + ah * 0.5;
             const a = w.airIdx(ax, ay, az);
             // flames go around solid objects, not through them
-            if (cx * cx + cz * cz <= rr * rr && w.occ[a] < 0.75) cells.push(a);
+            if (qx * qx + qy * qy + qz * qz <= rr * rr && w.occ[a] < 0.75) cells.push(a);
           }
       if (!cells.length) continue;
       let wsum = 0;
@@ -699,8 +715,14 @@ export class Simulation {
       // --- fire resistance breakdown: thin steel buckles, tile binder burns out,
       // calcined plasterboard crumbles: the part breaks away (and may bring
       // what it supports down with it)
-      if (Thot > M.failTemp && !(f & (F_FALLING | F_LIQUID | F_ANCHOR)) && this.rand() < dt * 0.12 * Math.min(3, 1 + (Thot - M.failTemp) / 100)) {
-        f |= F_FALLING;
+      if (Thot > M.failTemp && !(f & (F_FALLING | F_LIQUID | F_ANCHOR | F_BROKEN)) && this.rand() < dt * 0.12 * Math.min(3, 1 + (Thot - M.failTemp) / 100)) {
+        f |= F_FALLING | F_BROKEN;
+        w.structureDirty = true;
+        this.stats.failures = (this.stats.failures ?? 0) + 1;
+      }
+      // --- charred branches lose their strength and break off
+      if (char[i] > M.charFail && !(f & (F_FALLING | F_LIQUID | F_ANCHOR | F_BROKEN)) && this.rand() < dt * 0.25) {
+        f |= F_FALLING | F_BROKEN;
         w.structureDirty = true;
         this.stats.failures = (this.stats.failures ?? 0) + 1;
       }

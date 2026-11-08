@@ -66,6 +66,7 @@ const DEFAULTS = {
   failTemp: Infinity, // °C: loses its strength / binder and breaks away (fire resistance breakdown)
   spalling: false, // damp concrete: surface pieces burst off when heated quickly
   brittle: false, // cracks from thermal shock when cold water hits it hot
+  charFail: Infinity, // 0..1: charred this far the part breaks off (burning branches dropping)
   wetFail: Infinity, // kg/kg: soaked this much it goes soft and falls (plasterboard, ceiling tiles)
   oxidizeTemp: Infinity,
   wicks: null,
@@ -94,6 +95,34 @@ const DEFS = {
     combustible: true, ignitionTemp: 320, pyrolysisTemp: 230, heatOfCombustion: 17e6, burnRate: 0.003,
     selfHeating: 0.3, residue: 0.22, residueMaterial: 'charcoal', smokeYield: 0.02,
     smokeColor: [0.4, 0.38, 0.36], moisture: 0.5, maxMoisture: 1.0, extinctionMoisture: 0.9,
+  },
+  oak: {
+    // dense hardwood: branches mostly burn in place
+    label: 'Oak wood (living)', color: [0.36, 0.27, 0.19], density: 750, specificHeat: 1800, conductivity: 0.17,
+    combustible: true, ignitionTemp: 330, pyrolysisTemp: 240, heatOfCombustion: 18e6, burnRate: 0.003,
+    selfHeating: 0.3, residue: 0.22, residueMaterial: 'charcoal', smokeYield: 0.015, smokeColor: [0.38, 0.36, 0.34],
+    moisture: 0.45, maxMoisture: 1.0, extinctionMoisture: 0.9, charFail: 0.92,
+  },
+  willow: {
+    // soft, brittle wood: charred branches snap and drop
+    label: 'Willow wood (living)', color: [0.42, 0.36, 0.26], density: 420, specificHeat: 1800, conductivity: 0.12,
+    combustible: true, ignitionTemp: 300, pyrolysisTemp: 220, heatOfCombustion: 17e6, burnRate: 0.004,
+    selfHeating: 0.3, residue: 0.2, residueMaterial: 'charcoal', smokeYield: 0.018, smokeColor: [0.42, 0.4, 0.37],
+    moisture: 0.6, maxMoisture: 1.2, extinctionMoisture: 1.0, charFail: 0.45,
+  },
+  pine: {
+    // resinous softwood: burns hot and sooty
+    label: 'Pine wood (living)', color: [0.4, 0.28, 0.18], density: 520, specificHeat: 1700, conductivity: 0.13,
+    combustible: true, ignitionTemp: 290, pyrolysisTemp: 210, heatOfCombustion: 20e6, burnRate: 0.004,
+    selfHeating: 0.32, residue: 0.2, residueMaterial: 'charcoal', smokeYield: 0.03, smokeColor: [0.22, 0.21, 0.2],
+    moisture: 0.45, maxMoisture: 1.0, extinctionMoisture: 0.9, charFail: 0.7,
+  },
+  deadWood: {
+    // dead, dry branches (the self-pruned lower whorls of a pine): catch easily and drop
+    label: 'Dead branches', color: [0.5, 0.42, 0.32], density: 380, specificHeat: 1600, conductivity: 0.1,
+    combustible: true, ignitionTemp: 270, pyrolysisTemp: 200, heatOfCombustion: 18e6, burnRate: 0.006,
+    selfHeating: 0.3, residue: 0.15, smokeYield: 0.015, smokeColor: [0.4, 0.38, 0.35],
+    moisture: 0.1, maxMoisture: 0.8, deadFuel: true, timeLag: 3600, charFail: 0.35,
   },
   twigs: {
     label: 'Kindling', color: [0.62, 0.48, 0.3], density: 25, burnTime: 60, specificHeat: 1600, conductivity: 0.06,

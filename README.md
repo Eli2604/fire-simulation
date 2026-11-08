@@ -67,6 +67,13 @@ scene). You walk in first person wearing breathing apparatus:
   grenade, and the left mouse button uses them.
 - **T** toggles the thermal imaging camera, which sees through smoke. **L** toggles the
   helmet lamp.
+- **Health:** hot gas and radiant heat get through the turnout gear, flames can set your gear
+  alight (crawl to roll it out, or get water on yourself), falling and flying debris hurt,
+  and running out of air or breathing smoke through a broken mask is deadly. At zero health
+  you collapse and can try again.
+- **The visor:** cracks from heat and from things falling on you, and can fail completely, so
+  that air leaks and smoke gets in. Bright light (the fire, the sun) gives glare and a ghost
+  reflection, and the helmet lamp lights up thick smoke in front of you.
 - **Mask display:** your remaining air (consumption depends on effort and heat), the gas
   temperature at your face, a visibility estimate, and warnings. The visor fogs up in
   steam and its edges glow red when it gets too hot.
@@ -79,7 +86,7 @@ scene). You walk in first person wearing breathing apparatus:
 
 | Model | Parameters |
 |---|---|
-| Tree | species (deciduous / conifer), height, trunk radius, crown radius, foliage density, foliage and wood moisture, branches, seed |
+| Tree | species: **oak** (heavy forking limbs, leaf clusters), **weeping willow** (arching limbs, hanging whips), **pine** (whorls, needle clusters, dead lower branches); height, trunk and crown radius, foliage density, foliage and wood moisture, main branches, seed |
 | Grass patch | size, height, density, moisture (dry vs green), rectangle/ellipse, bare circle in the middle |
 | Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, fire starts in engine or interior |
 | House | size, wall height and thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, windows, furnished, door open, chimney |
@@ -205,7 +212,14 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
     - Damp concrete spalls when heated quickly.
     - Gas pipe joints give way when heated, and pipes burst in a blast, each time
       releasing a burning gas jet.
-11. **Structure.** A flood fill from the ground finds parts that are no longer supported
+11. **Branches breaking.** Each tree species has its own wood. Charred willow branches snap
+    early and drop, burning; pine branches break later; oak limbs mostly burn in place.
+    Everything beyond a break falls with it.
+12. **Smoke filling enclosed spaces.** Walls and slabs one voxel thick block the air grid
+    exactly at the faces they close, so smoke stays inside buildings. Under a ceiling, hot
+    gas spreads sideways as a ceiling jet. The layer deepens as the fire keeps adding gas,
+    and gas only rises if it is hotter than the gas above it.
+13. **Structure.** A flood fill from the ground finds parts that are no longer supported
    (a burnt-through trunk, a roof whose beams are gone), and they fall.
 
 Calibration targets used during development (`npm run headless`):

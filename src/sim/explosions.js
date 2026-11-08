@@ -95,7 +95,7 @@ export function burstPipeAt(sim, gp, i) {
   // not twice at (nearly) the same spot
   for (const ht of w.heaters) if (ht.gasPipe === gp && Math.hypot(ht.pos[0] - c[0], ht.pos[1] - c[1], ht.pos[2] - c[2]) < 1) return;
   gp.bursts = (gp.bursts ?? 0) + 1;
-  w.heaters.push({ pos: c, power: gp.power, radius: 0.3, height: gp.jetHeight ?? 1, on: true, label: 'gas pipe', jet: true, smokeYield: 0.004, gasPipe: gp });
+  w.heaters.push({ pos: c, dir: gp.dir, power: gp.power, radius: gp.dir ? 0.2 : 0.3, height: gp.jetHeight ?? 1, on: true, label: 'gas pipe', jet: true, smokeYield: 0.004, gasPipe: gp });
   w.events.push({ type: 'pipeBurst', pos: c, time: w.time, name: 'gas pipe' });
 }
 

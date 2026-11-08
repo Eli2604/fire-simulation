@@ -8,6 +8,7 @@ export const F_FALLING = 2; // detached from structure, falls under gravity
 export const F_ANCHOR = 4; // always considered supported (e.g. bolted down)
 export const F_BURNING = 8; // flaming combustion
 export const F_SMOLDER = 16; // pyrolysing / smoking without flame
+export const F_BROKEN = 32; // has broken away once (a fallen branch, a dropped tile): does not break again
 
 /**
  * The world is a regular voxel grid of size nx*ny*nz with cell size h (metres).
@@ -86,6 +87,13 @@ export class World {
     this.vy = fa();
     this.vz = fa();
     this.occ = fa(); // solid occupancy 0..1
+    // open fraction (0..1) of the face between an air cell and its +x / +y / +z neighbour:
+    // a wall one voxel thick sits inside a 2-voxel air cell, so occupancy alone lets
+    // gas through it; these block exactly the faces a wall closes
+    this.passX = fa().fill(1);
+    this.passY = fa().fill(1);
+    this.passZ = fa().fill(1);
+    this.capped = new Uint8Array(NA); // 1 if there is a (nearly) closed ceiling somewhere above this cell
     this.flame = fa(); // flame presence 0..1
     this.flameAcc = fa(); // W of flaming combustion deposited this step
     this.fgas = fa(); // J of burning gas in the cell (transported, burns out in ~0.5 s)
@@ -286,7 +294,64 @@ export class World {
       const c = x + nx * z;
       if (y > colTop[c]) colTop[c] = y;
     }
+    this.updatePass();
     void mat;
+    void nz;
+  }
+
+  /** Open fraction of every air-cell face, from the voxel pairs on both sides of it. */
+  updatePass() {
+    const { nx, ny, nz, anx, any, anz, mat, passX, passY, passZ } = this;
+    const nxy = nx * ny;
+    const blocks = (i) => mat[i] !== 0 && OCC_WEIGHT[mat[i]] >= 1; // porous fuels let gas through
+    for (let az = 0; az < anz; az++)
+      for (let ay = 0; ay < any; ay++)
+        for (let ax = 0; ax < anx; ax++) {
+          const a = ax + anx * (ay + any * az);
+          // +x face: voxel columns 2ax+1 | 2ax+2
+          let open = 0;
+          if (ax + 1 < anx) {
+            const x1 = 2 * ax + 1;
+            for (let dy = 0; dy < 2; dy++)
+              for (let dz = 0; dz < 2; dz++) {
+                const i = x1 + nx * (2 * ay + dy) + nxy * (2 * az + dz);
+                if (!blocks(i) && !blocks(i + 1)) open++;
+              }
+            passX[a] = open / 4;
+          } else passX[a] = 1;
+          open = 0;
+          if (ay + 1 < any) {
+            const y1 = 2 * ay + 1;
+            for (let dx = 0; dx < 2; dx++)
+              for (let dz = 0; dz < 2; dz++) {
+                const i = 2 * ax + dx + nx * y1 + nxy * (2 * az + dz);
+                if (!blocks(i) && !blocks(i + nx)) open++;
+              }
+            passY[a] = open / 4;
+          } else passY[a] = 1;
+          open = 0;
+          if (az + 1 < anz) {
+            const z1 = 2 * az + 1;
+            for (let dx = 0; dx < 2; dx++)
+              for (let dy = 0; dy < 2; dy++) {
+                const i = 2 * ax + dx + nx * (2 * ay + dy) + nxy * z1;
+                if (!blocks(i) && !blocks(i + nxy)) open++;
+              }
+            passZ[a] = open / 4;
+          } else passZ[a] = 1;
+        }
+    // which cells have a ceiling above them (smoke collects and the layer deepens there)
+    const capped = this.capped;
+    for (let az = 0; az < anz; az++)
+      for (let ax = 0; ax < anx; ax++) {
+        let cap = 0;
+        for (let ay = any - 1; ay >= 0; ay--) {
+          const a = ax + anx * (ay + any * az);
+          if (passY[a] < 0.3 && ay + 1 < any) cap = 1;
+          capped[a] = cap;
+        }
+      }
+    void ny;
     void nz;
   }
 

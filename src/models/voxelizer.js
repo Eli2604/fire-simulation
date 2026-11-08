@@ -179,6 +179,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   const cr = Math.cos(rot);
   const sr = Math.sin(rot);
   const toWorld = (lx, ly, lz) => [ox + cr * lx + sr * lz, oy + ly, oz - sr * lx + cr * lz];
+  const dirToWorld = (d) => (d ? [cr * d[0] + sr * d[2], d[1], -sr * d[0] + cr * d[2]] : undefined);
 
   // pressure vessels declared by the model (fuel tanks, gas cylinders)
   const vesselIndex = {};
@@ -210,7 +211,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const fill = p.fill ?? 1;
     const salt = Math.floor((p.seed ?? 0) * 1000) + ownerIndex * 31;
     const group = p.group ? ++world.groupCounter : 0; // one rigid panel per primitive
-    const pipe = p.gasPipe ? { voxels: [], power: p.gasPipe.power ?? 150000, jetHeight: p.gasPipe.jetHeight ?? 1, failTemp: p.gasPipe.failTemp ?? 450, owner: ownerIndex } : null;
+    const pipe = p.gasPipe ? { voxels: [], power: p.gasPipe.power ?? 150000, jetHeight: p.gasPipe.jetHeight ?? 1, dir: dirToWorld(p.gasPipe.dir), failTemp: p.gasPipe.failTemp ?? 450, owner: ownerIndex } : null;
     if (pipe) world.gasPipes.push(pipe);
     for (let z = z0; z <= z1; z++)
       for (let y = y0; y <= y1; y++)
@@ -247,7 +248,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   }
 
   for (const ht of built.heaters ?? []) {
-    world.heaters.push({ ...ht, pos: toWorld(...ht.pos), on: ht.on ?? true, owner: ownerIndex });
+    world.heaters.push({ ...ht, pos: toWorld(...ht.pos), dir: dirToWorld(ht.dir), on: ht.on ?? true, owner: ownerIndex });
   }
   let ignite = null;
   if (built.ignite) {

@@ -225,3 +225,55 @@ body {
   background: #444;
   color: var(--text);
 }
+
+#maskCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#mask .burn {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: linear-gradient(to top, rgba(255, 120, 20, 0.9), rgba(255, 60, 0, 0.35) 30%, transparent 60%);
+}
+#maskHud .bars {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+#maskHud .msg {
+  color: #ffd27a;
+  text-align: center;
+}
+#walkDown {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 11;
+  background: rgba(40, 8, 8, 0.95);
+  padding: 18px 22px;
+  border-radius: 10px;
+  max-width: min(460px, calc(100vw - 32px));
+}
+#walkDown h2 {
+  margin: 0 0 6px;
+  color: #ff6a5a;
+}
+#walkDown .buttons {
+  display: flex;
+  gap: 10px;
+}
+#walkDown button {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 0;
+  cursor: pointer;
+  background: var(--accent);
+  color: #111;
+}

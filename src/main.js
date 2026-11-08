@@ -487,6 +487,11 @@ const walk = new Walkthrough(view, {
   },
 });
 document.getElementById('walkLeave').addEventListener('click', () => walk.exit());
+document.getElementById('walkDownLeave').addEventListener('click', () => walk.exit());
+document.getElementById('walkRespawn').addEventListener('click', () => {
+  walk.respawn();
+  walk.resume();
+});
 function startWalk() {
   inspected = -1;
   $('inspect').hidden = true;

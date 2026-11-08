@@ -33,7 +33,7 @@ export default {
     doorsPerSide: { value: 3, min: 0, max: 8, step: 1, label: 'Doors per side' },
     entranceOpen: { value: true, label: 'Entrance door open' },
     endWindow: { value: true, label: 'Window at the far end' },
-    pipeIn: { value: 'ceiling void', options: ['ceiling void', 'wall'], label: 'Gas pipe runs in' },
+    pipeIn: { value: 'hallway', options: ['hallway', 'ceiling void'], label: 'Gas pipe runs' },
     burstAt: { value: 0.6, min: 0.05, max: 0.95, step: 0.01, label: 'Burst position along pipe' },
     burstTrigger: { value: 'after delay', options: ['after delay', 'only by fire or blast'], label: 'Pipe burst' },
     burstAfter: { value: 20, min: 0, max: 600, step: 1, label: 'Pipe bursts after (s)' },
@@ -121,18 +121,19 @@ export default {
     }
 
     // --- services: gas pipe (yellow), copper water pipe, cable tray with PVC cables
+    // by default the gas line runs exposed along the corridor wall, just under the ceiling
     const inVoid = suspended && p.pipeIn === 'ceiling void';
     const voidMid = (ceil + h + slab) / 2;
-    const gasZ = inVoid ? -hz + 0.3 : -(hz - 0.06);
-    const gasY = inVoid ? voidMid : t + 0.9;
+    const gasZ = inVoid ? -hz + 0.3 : -(hz - 0.1);
+    const gasY = inVoid ? voidMid : ceil - 0.3;
     // the gas line can burst: on its own timer, when a blast hits it, or when fire heats a joint
-    prims.push({ shape: 'cylinder', a: [-hx, gasY, gasZ], b: [hx, gasY, gasZ], r: 0.025, material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, jetHeight: Math.max(0.3, slab - gasY) } });
+    prims.push({ shape: 'cylinder', a: [-hx, gasY, gasZ], b: [hx, gasY, gasZ], r: 0.025, material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, ...(inVoid ? { jetHeight: Math.max(0.3, slab - gasY) } : { jetHeight: W * 1.15, dir: [0.15, -0.55, 0.82] }) } });
     if (suspended) {
       prims.push({ shape: 'cylinder', a: [-hx, voidMid, 0], b: [hx, voidMid, 0], r: 0.02, material: 'copper', density: thin(0.001), anchored: true });
       if (p.cables) {
-        // the tray runs right next to the gas pipe, as services often do
-        const cz = gasZ + 0.4;
-        const ty = gasY - 0.12;
+        // in the void the tray runs right next to the gas pipe, as services often do
+        const cz = inVoid ? gasZ + 0.4 : -hz + 0.4;
+        const ty = inVoid ? gasY - 0.12 : ceil + p.voidDepth * 0.35;
         prims.push(
           { shape: 'box', min: [-hx, ty, cz - 0.15], max: [hx, ty + 0.01, cz + 0.15], material: 'steelProfile', density: thin(0.0015), anchored: true },
           { shape: 'box', min: [-hx, ty + h, cz - 0.12], max: [hx, ty + h + 0.06, cz + 0.12], material: 'cable', density: 0.35 },
@@ -142,12 +143,14 @@ export default {
     const bx = -hx + p.burstAt * L;
 
     if (p.boxes) {
+      // stored against the opposite wall, where the jet from a burst in the corridor lands
       const box = (x0, y0, z0, sx, sy, sz) => ({ shape: 'box', min: [x0, y0, z0], max: [x0 + sx, y0 + sy, z0 + sz], material: 'paper', density: 0.25, color: [0.68, 0.52, 0.32], variation: 0.15 });
+      const zb = hz - 0.47;
       prims.push(
-        box(bx + 0.15, t, -hz + 0.02, 0.5, 0.4, 0.45),
-        box(bx + 0.7, t, -hz + 0.02, 0.5, 0.4, 0.45),
-        box(bx + 0.4, t + 0.4, -hz + 0.02, 0.5, 0.4, 0.45),
-        box(bx - 0.6, t, -hz + 0.02, 0.45, 0.35, 0.4),
+        box(bx + 0.6, t, zb, 0.5, 0.4, 0.45),
+        box(bx + 1.15, t, zb, 0.5, 0.4, 0.45),
+        box(bx + 0.85, t + 0.4, zb, 0.5, 0.4, 0.45),
+        box(bx - 1.15, t, zb, 0.45, 0.35, 0.4),
       );
     }
     if (p.noticeBoard) {
@@ -162,10 +165,11 @@ export default {
       prims,
       heaters: p.burstTrigger !== 'after delay' ? [] : [
         {
-          pos: [bx, gasY, gasZ + (inVoid ? 0 : 0.12)],
+          pos: [bx, gasY, gasZ + (inVoid ? 0 : 0.08)],
           power: p.burstPower,
-          radius: 0.3,
-          height: Math.max(0.2, slab - gasY),
+          radius: inVoid ? 0.3 : 0.2,
+          // in the corridor the jet shoots across and down, onto the cabinet and boxes opposite
+          ...(inVoid ? { height: Math.max(0.2, slab - gasY) } : { height: W * 1.15, dir: [0.15, -0.55, 0.82] }),
           start: p.burstAfter,
           label: 'gas pipe',
           event: 'pipeBurst',

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { SoundScape } from '../audio/sound.js';
+import { F_FALLING } from '../sim/world.js';
+import { MATERIALS } from '../sim/materials.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -41,6 +43,9 @@ export class Walkthrough {
       fog: document.querySelector('#mask .fog'),
       heat: document.querySelector('#mask .heat'),
       tic: document.querySelector('#mask .tic'),
+      canvas: document.getElementById('maskCanvas'),
+      burn: document.querySelector('#mask .burn'),
+      down: document.getElementById('walkDown'),
     };
     this.lamp = new THREE.SpotLight(0xfff1d6, 0, 25, Math.PI / 7, 0.5, 1.2);
     this.lamp.position.set(0.15, 0.1, 0);
@@ -98,6 +103,7 @@ export class Walkthrough {
     this.crawl = false;
     this.air = AIR_LITRES;
     this.startTime = w.time;
+    this.resetBody();
     this.active = true;
     const v = this.view;
     v.controls.enabled = false;
@@ -110,6 +116,239 @@ export class Walkthrough {
     v.camera.add(this.lamp.target);
     this.el.mask.hidden = false;
     this.el.start.hidden = false;
+  }
+
+  resetBody() {
+    this.health = 100;
+    this.onFire = 0; // seconds of burning gear left
+    this.mask = 1; // visor integrity
+    this.maskBurst = false;
+    this.cracks = [];
+    this.hits = new Set();
+    this.downed = false;
+    this.lastHit = 0;
+    this.message = '';
+    this.messageUntil = 0;
+    if (this.el.down) this.el.down.hidden = true;
+  }
+
+  respawn() {
+    const sim = this.hooks.getSim();
+    const w = sim.world;
+    const sp = sim.spawn ?? { p: [w.size[0] * 0.1, 0, w.size[2] / 2], yaw: 0 };
+    this.pos.set(sp.p[0], this.floorAt(sp.p[0], sp.p[2], w.size[1]), sp.p[2]);
+    this.air = AIR_LITRES;
+    this.crawl = false;
+    this.resetBody();
+  }
+
+  say(text, seconds = 4) {
+    const w = this.hooks.getSim().world;
+    this.message = text;
+    this.messageUntil = w.time + seconds;
+  }
+
+  /** A crack in the visor from point (x, y) in 0..1 screen units. */
+  addCrack(x, y, size) {
+    const lines = [];
+    const n = 3 + Math.floor(Math.random() * 4);
+    for (let k = 0; k < n; k++) {
+      let a = Math.random() * Math.PI * 2;
+      let px = x;
+      let py = y;
+      const pts = [[px, py]];
+      const segs = 3 + Math.floor(Math.random() * 5);
+      for (let s = 0; s < segs; s++) {
+        a += (Math.random() - 0.5) * 0.9;
+        const l = size * (0.03 + Math.random() * 0.06);
+        px += Math.cos(a) * l;
+        py += Math.sin(a) * l;
+        pts.push([px, py]);
+      }
+      lines.push(pts);
+    }
+    this.cracks.push(...lines);
+  }
+
+  damageMask(amount, x = 0.3 + Math.random() * 0.4, y = 0.25 + Math.random() * 0.4) {
+    if (this.maskBurst) return;
+    const before = this.mask;
+    this.mask = Math.max(0, this.mask - amount);
+    // a new crack every 15 % of integrity lost
+    if (Math.floor(before / 0.15) !== Math.floor(this.mask / 0.15)) {
+      this.addCrack(x, y, 1 + (1 - this.mask) * 2);
+      this.sound.crack?.();
+    }
+    if (this.mask <= 0) {
+      this.maskBurst = true;
+      for (let k = 0; k < 4; k++) this.addCrack(0.5 + (Math.random() - 0.5) * 0.3, 0.45 + (Math.random() - 0.5) * 0.3, 3);
+      this.say('MASK FAILURE – smoke is getting in, get out!', 8);
+    }
+  }
+
+  hurt(amount) {
+    if (this.downed) return;
+    this.health = Math.max(0, this.health - amount);
+    if (this.health <= 0) {
+      this.downed = true;
+      this.spraying = false;
+      if (this.el.down) this.el.down.hidden = false;
+      if (document.pointerLockElement) document.exitPointerLock();
+    }
+  }
+
+  /**
+   * What the fire does to you this frame: hot gas and radiant heat through the
+   * turnout gear, flames that set the gear alight, things falling on your head,
+   * running out of air, breathing smoke through a broken mask.
+   */
+  body(dt, sim, cam, eye) {
+    const w = sim.world;
+    const pts = [
+      [this.pos.x, this.pos.y + 0.25, this.pos.z],
+      [this.pos.x, this.pos.y + eye * 0.6, this.pos.z],
+      [cam.position.x, cam.position.y, cam.position.z],
+    ];
+    let gas = w.ambient;
+    let flame = 0;
+    let rad = 0;
+    let smokeC = 0;
+    let wet = false;
+    for (const p of pts) {
+      const a = sim.airCellAt(...p);
+      if (a < 0) continue;
+      gas = Math.max(gas, w.airT[a]);
+      flame = Math.max(flame, w.flame[a]);
+      rad = Math.max(rad, w.radField[a]);
+      smokeC = Math.max(smokeC, w.smoke[a] / w.ah ** 3);
+      const i = w.voxelAt(p[0], p[1] - w.h, p[2]);
+      if (i >= 0 && w.waterIn[i] > 0) wet = true;
+    }
+    // turnout gear: comfortable to ~100 °C gas and ~5 kW/m², harm grows fast above
+    let dmg = Math.max(0, (gas - 110) / 45) + Math.max(0, (rad - 6000) / 2500);
+    // flames on you: the gear catches fire
+    if (flame > 0.35 && this.onFire <= 0 && Math.random() < dt * 2 * flame) {
+      this.onFire = 25;
+      this.say('YOUR GEAR IS ON FIRE – crawl (C) to roll it out, or get water on you');
+    }
+    if (this.onFire > 0) {
+      dmg += 6;
+      // rolling on the floor smothers it, water puts it out
+      this.onFire -= dt * (this.crawl && this.moving ? 6 : 1);
+      if (wet || this.selfDouse) this.onFire -= dt * 15;
+      if (this.onFire <= 0) {
+        this.onFire = 0;
+        this.say('Fire on your gear is out');
+      }
+      // flames around you, visible in the scene too
+      for (let k = 0; k < 4; k++) this.view.flames.spawn(this.pos.x + (Math.random() - 0.5) * 0.5, this.pos.y + Math.random() * (eye + 0.2), this.pos.z + (Math.random() - 0.5) * 0.5, 0, 1, 0, 0.3, 0.25, 0, 0.8);
+    }
+    // the visor: polycarbonate softens and crazes in high heat
+    const headA = sim.airCellAt(...pts[2]);
+    const headT = headA >= 0 ? w.airT[headA] : w.ambient;
+    const visorHeat = Math.max(0, (headT - 170) / 700) + Math.max(0, (rad - 14000) / 90000) + (this.onFire > 0 ? 0.03 : 0);
+    if (visorHeat > 0) this.damageMask(visorHeat * dt);
+    // falling things: tiles, debris, fragments near your head
+    const head = pts[2];
+    for (const d of w.debris) {
+      if (d.flake) continue;
+      const dx = d.p[0] - head[0];
+      const dy = d.p[1] - head[1];
+      const dz = d.p[2] - head[2];
+      if (dx * dx + dy * dy + dz * dz < 0.16 && !this.hits.has(d)) {
+        this.hits.add(d);
+        const m = MATERIALS[d.mat].density * d.dens * w.h ** 3;
+        const v = Math.hypot(...d.v);
+        const e = Math.min(1, 0.5 * m * v * v / 60);
+        this.hurt(5 + 35 * e);
+        this.damageMask(0.1 + 0.6 * e, 0.5 + dx, 0.45 - dy);
+        this.say('Hit by flying debris!');
+      }
+    }
+    const above = w.voxelAt(head[0], head[1] + w.h * 0.6, head[2]);
+    if (above >= 0 && w.mat[above] && w.flags[above] & F_FALLING && !this.hits.has(above) && w.time - this.lastHit > 1) {
+      this.hits.add(above);
+      this.lastHit = w.time;
+      this.hurt(8);
+      this.damageMask(0.15, 0.5, 0.25);
+      this.say(`A falling ${MATERIALS[w.mat[above]].label.toLowerCase()} hits your helmet!`);
+    }
+    // no air, or smoke through a broken mask (CO, irritants)
+    if (this.air <= 0) dmg += 8;
+    if (this.maskBurst) dmg += Math.min(10, smokeC * 4000);
+    if (dmg > 0) this.hurt(dmg * dt);
+    // a little recovery in clean, cool air
+    else if (this.health < 100 && this.onFire <= 0) this.health = Math.min(100, this.health + dt * 0.5);
+    return { gas, rad, flame, smokeC };
+  }
+
+  /** Visor overlay: cracks, glare of bright lights, smoke lit up by the helmet lamp. */
+  drawVisor(sim, cam, smokeSigma) {
+    const c = this.el.canvas;
+    if (!c) return;
+    const W = (c.width = c.clientWidth);
+    const H = (c.height = c.clientHeight);
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    // the helmet lamp lights up the smoke right in front of you ("white wall")
+    if (this.lampOn && smokeSigma > 0.05) {
+      const k = Math.min(0.75, 1 - Math.exp(-smokeSigma * 1.5));
+      const gr = g.createRadialGradient(W * 0.53, H * 0.45, 0, W * 0.53, H * 0.45, W * 0.6);
+      gr.addColorStop(0, `rgba(235,228,210,${k})`);
+      gr.addColorStop(1, `rgba(200,195,180,${k * 0.4})`);
+      g.fillStyle = gr;
+      g.fillRect(0, 0, W, H);
+    }
+    // glare from bright sources: the fire, the sun when outside, plus a ghost
+    // reflection on the curved visor
+    const sources = [];
+    const fl = this.view.fireLight;
+    if (sim.stats.hrr > 2000) sources.push({ p: fl.position.clone(), i: Math.min(1.2, Math.sqrt(sim.stats.hrr / 1e5)), color: [255, 170, 80] });
+    const sunDir = this.view.sun.position.clone().sub(this.view.sun.target.position).normalize();
+    const w = sim.world;
+    const ci = Math.floor(cam.position.x / w.h) + w.nx * Math.floor(cam.position.z / w.h);
+    const outside = cam.position.x < 0 || cam.position.z < 0 || cam.position.x > w.size[0] || cam.position.z > w.size[2] || w.colTop[ci] * w.h < cam.position.y;
+    if (outside && this.view.sun.intensity > 0.5) sources.push({ p: cam.position.clone().add(sunDir.multiplyScalar(100)), i: 1, color: [255, 245, 225] });
+    const fwd = new THREE.Vector3();
+    cam.getWorldDirection(fwd);
+    for (const s of sources) {
+      const to = s.p.clone().sub(cam.position);
+      const dist = to.length();
+      const facing = to.normalize().dot(fwd);
+      if (facing < 0.2) continue;
+      const ndc = s.p.clone().project(cam);
+      const x = (ndc.x * 0.5 + 0.5) * W;
+      const y = (-ndc.y * 0.5 + 0.5) * H;
+      const strength = s.i * Math.min(1, 4 / Math.max(1, dist)) * (facing - 0.2) * Math.exp(-smokeSigma * Math.min(dist, 10) * 0.5);
+      if (strength < 0.02) continue;
+      const [r, gg, b] = s.color;
+      const blob = (bx, by, rad, a) => {
+        const gr = g.createRadialGradient(bx, by, 0, bx, by, rad);
+        gr.addColorStop(0, `rgba(${r},${gg},${b},${a})`);
+        gr.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+        g.fillStyle = gr;
+        g.fillRect(bx - rad, by - rad, rad * 2, rad * 2);
+      };
+      blob(x, y, W * 0.25 * strength + 30, 0.45 * strength);
+      // ghost reflected through the visor centre, and a soft sheen across it
+      blob(W - x * 0.9, H - y * 0.9, W * 0.06 + 10, 0.25 * strength);
+      g.fillStyle = `rgba(${r},${gg},${b},${0.07 * strength})`;
+      g.fillRect(0, 0, W, H);
+    }
+    // cracks: dark core with a light edge
+    for (const pts of this.cracks) {
+      for (const [style, width] of [['rgba(255,255,255,0.55)', 2.2], ['rgba(20,20,20,0.75)', 1]]) {
+        g.strokeStyle = style;
+        g.lineWidth = width;
+        g.beginPath();
+        pts.forEach(([px, py], k) => (k ? g.lineTo(px * W, py * H) : g.moveTo(px * W, py * H)));
+        g.stroke();
+      }
+    }
+    if (this.maskBurst) {
+      g.fillStyle = 'rgba(60,60,60,0.25)';
+      g.fillRect(0, 0, W, H);
+    }
   }
 
   /** Click on the start card: lock the pointer and start the sound (needs a user gesture). */
@@ -219,6 +458,7 @@ export class Walkthrough {
       }
       moving = this.crawl ? 0.8 : hurry ? 1 : 0.45;
     }
+    this.moving = moving > 0;
     const floor = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
     this.pos.y += (floor - this.pos.y) * Math.min(1, dt * 10); // settle / fall onto the floor
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
@@ -227,6 +467,9 @@ export class Walkthrough {
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     cam.updateMatrixWorld();
     this.lamp.intensity = this.lampOn ? 40 : 0;
+
+    // --- what the fire does to you
+    const exposure = this.downed ? null : this.body(dt, sim, cam, eye);
 
     // --- conditions at the face
     const head = [cam.position.x, cam.position.y, cam.position.z];
@@ -239,7 +482,7 @@ export class Walkthrough {
     const steam = a >= 0 ? w.steam[a] / w.ah ** 3 : 0;
 
     // --- breathing air: litres per minute by effort and heat stress
-    const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0);
+    const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0); // a broken mask leaks
     this.air = Math.max(0, this.air - (lpm / 60) * dt * (sim.world.time > 0 ? 1 : 0));
     const bar = (this.air / AIR_LITRES) * 300;
 
@@ -251,6 +494,7 @@ export class Walkthrough {
       const hit = v.pick(rect.left + rect.width / 2, rect.top + rect.height / 2);
       return hit ? hit.point : [head[0] + aimFwd.x * 8, head[1] + aimFwd.y * 8, head[2] + aimFwd.z * 8];
     };
+    this.selfDouse = this.spraying && locked && this.tool === 'hose' && this.pitch < -1.0;
     if (this.spraying && locked && this.tool === 'hose') {
       const target = aim();
       const nozzle = [head[0] + aimFwd.x * 0.6, head[1] - 0.35 + aimFwd.y * 0.6, head[2] + aimFwd.z * 0.6];
@@ -279,12 +523,19 @@ export class Walkthrough {
     const mins = this.air / Math.max(1, lpm);
     const warn = [];
     if (bar < 55) warn.push('LOW AIR – WITHDRAW');
+    if (this.onFire > 0) warn.push('ON FIRE');
+    if (this.health < 30) warn.push('HEALTH CRITICAL');
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
     this.el.hud.innerHTML = `
-      <div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
+      <div class="bars"><span>AIR</span><div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
+      <span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div>
+      <span>VISOR</span><div class="air"><div class="fill" style="width:${(this.mask * 100).toFixed(0)}%;background:${this.mask < 0.3 ? '#ff4a3a' : '#c8c8c8'}"></div></div></div>
       <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE' }[this.tool]}]</span></div>
-      ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}`;
+      ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
+      ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
+    if (this.el.burn) this.el.burn.style.opacity = this.onFire > 0 ? String(0.55 + 0.25 * Math.sin(w.time * 20)) : '0';
+    this.drawVisor(sim, cam, sigma);
 
     // --- sound
     let jet = null;
@@ -303,6 +554,8 @@ export class Walkthrough {
       heat,
       airFraction: this.air / AIR_LITRES,
       events: w.events,
+      onFire: this.onFire > 0,
+      maskLeak: this.maskBurst,
     });
   }
 }

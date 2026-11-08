@@ -24,6 +24,8 @@
       <div class="fog"></div>
       <div class="heat"></div>
       <div class="tic" hidden>THERMAL IMAGING CAMERA</div>
+      <canvas id="maskCanvas"></canvas>
+      <div class="burn"></div>
       <div class="crosshair"></div>
       <div id="maskHud"></div>
     </div>
@@ -42,6 +44,11 @@
         <tr><td>Esc</td><td>pause</td></tr>
       </table>
       <div class="buttons"><button id="walkGo">Start / resume</button><button id="walkLeave">Leave the building</button></div>
+    </div>
+    <div id="walkDown" hidden>
+      <h2>You collapsed</h2>
+      <p>The heat, the smoke or the fire on your gear was too much. Crews are trained to stay low, keep an eye on their air and withdraw in time.</p>
+      <div class="buttons"><button id="walkRespawn">Try again</button><button id="walkDownLeave">Leave</button></div>
     </div>
     <script type="module" src="./src/main.js"></script>
   </body>

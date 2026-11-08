@@ -35,6 +35,8 @@ export class SoundScape {
     this.fireHigh = this.loop([{ type: 'bandpass', frequency: 1200, Q: 0.7 }], true, this.fire.panner);
     this.jet = this.loop([{ type: 'highpass', frequency: 2200, Q: 0.7 }, { type: 'peaking', frequency: 6000, Q: 1, gain: 8 }], true);
     this.hose = this.loop([{ type: 'bandpass', frequency: 2800, Q: 0.5 }], false);
+    this.leak = this.loop([{ type: 'highpass', frequency: 4000, Q: 0.7 }], false); // broken mask hissing
+    this.burning = this.loop([{ type: 'bandpass', frequency: 600, Q: 0.5 }], false); // your gear on fire
     this.whistle = ctx.createOscillator();
     this.whistle.frequency.value = 3150;
     this.whistleGain = ctx.createGain();
@@ -195,6 +197,9 @@ export class SoundScape {
     this.jet.gain.gain.setTargetAtTime(j ? Math.min(1, Math.sqrt(j.power / 1.5e5)) * 0.7 : 0, t, 0.2);
     // hose / extinguisher
     this.hose.gain.gain.setTargetAtTime(state.spraying ? 0.35 : 0, t, 0.08);
+    this.leak.gain.gain.setTargetAtTime(state.maskLeak ? 0.25 : 0, t, 0.1);
+    this.burning.gain.gain.setTargetAtTime(state.onFire ? 0.5 : 0, t, 0.1);
+    if (state.onFire && Math.random() < 0.3) this.burst(t, 0.02, 'bandpass', 2000 + Math.random() * 3000, 2, 0.4);
     // breathing
     if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
@@ -225,6 +230,14 @@ export class SoundScape {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       }
     }
+  }
+
+  /** The visor cracking. */
+  crack() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.12, 'highpass', 2500, 0.7, 0.9);
+    this.burst(t + 0.03, 0.25, 'bandpass', 5500, 3, 0.4);
   }
 
   thump(t, level) {
