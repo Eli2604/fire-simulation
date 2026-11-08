@@ -1,6 +1,7 @@
 import { buildScene } from '../models/voxelizer.js';
 import { Simulation } from './simulation.js';
 import { defaultWeather } from './weather.js';
+import { toggleDoor } from './doors.js';
 
 const IGNITION_SECONDS = 40;
 
@@ -18,6 +19,8 @@ export function createSimulation(scene) {
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
   const sim = new Simulation(world, weather);
   sim.spawn = spawn;
+  world.doors.forEach((d, k) => d.startOpen && toggleDoor(sim, k, true));
+  world.events.length = 0;
   sim.markers = [];
   const custom = scene.fireStarts?.length ? scene.fireStarts : null;
   const starts = scene.noFire

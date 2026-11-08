@@ -5,6 +5,9 @@
  * The air grid is coarser than the voxel grid (2x2x2 voxels per cell).
  */
 
+import { O2_AIR } from './world.js';
+import { conserveO2 } from './oxygen.js';
+
 const CP_AIR = 1005;
 const MAX_AIR_T = 1250;
 export const FLAME_TAU = 0.5; // s, burn-out time of released fuel gas
@@ -93,7 +96,7 @@ function box1D(src, dst, nx, ny, nz, r, axis) {
  */
 export function stepAir(w, W, D, dt, sim) {
   const { anx, any, anz, ah, airT, airG, airGT, airQ, flame, flameAcc, occ, vx, vy, vz } = w;
-  const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp, passX, passY, passZ, capped } = w;
+  const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp, passX, passY, passZ, capped, o2 } = w;
   const NA = w.NA;
   const ah3 = ah * ah * ah;
   const Tamb = W.ambient;
@@ -183,6 +186,7 @@ export function stepAir(w, W, D, dt, sim) {
   const oW = w.tmpF;
   const oF = w.tmpG;
   const oX = w.tmpH;
+  const oO = w.tmpI;
   const inv = dt / ah;
   for (let az = 0; az < anz; az++)
     for (let ay = 0; ay < any; ay++) {
@@ -194,6 +198,7 @@ export function stepAir(w, W, D, dt, sim) {
         if (px < -0.5 || pz < -0.5 || px > anx - 0.5 || pz > anz - 0.5 || py > any - 0.5) {
           oT[a] = Tamb;
           oS[a] = oR[a] = oG[a] = oB[a] = oW[a] = oF[a] = oX[a] = 0;
+          oO[a] = O2_AIR; // fresh air from outside the domain
           continue;
         }
         if (px < 0) px = 0;
@@ -238,6 +243,7 @@ export function stepAir(w, W, D, dt, sim) {
         oW[a] = steam[i0] * w0 + steam[i1] * w1 + steam[i2] * w2 + steam[i3] * w3 + steam[i4] * w4 + steam[i5] * w5 + steam[i6] * w6 + steam[i7] * w7;
         oF[a] = fgas[i0] * w0 + fgas[i1] * w1 + fgas[i2] * w2 + fgas[i3] * w3 + fgas[i4] * w4 + fgas[i5] * w5 + fgas[i6] * w6 + fgas[i7] * w7;
         oX[a] = supp[i0] * w0 + supp[i1] * w1 + supp[i2] * w2 + supp[i3] * w3 + supp[i4] * w4 + supp[i5] * w5 + supp[i6] * w6 + supp[i7] * w7;
+        oO[a] = o2[i0] * w0 + o2[i1] * w1 + o2[i2] * w2 + o2[i3] * w3 + o2[i4] * w4 + o2[i5] * w5 + o2[i6] * w6 + o2[i7] * w7;
       }
     }
 
@@ -280,6 +286,7 @@ export function stepAir(w, W, D, dt, sim) {
         steam[a] = lap(oW, a, xm, xp, ym, yp, zm, zp, 0, k) * steamKeep;
         // CO2 / powder: carried with the gas, slowly diluting and settling; it
         // starves and inhibits the flames in its cell
+        o2[a] = lap(oO, a, xm, xp, ym, yp, zm, zp, O2_AIR, k);
         const sp = lap(oX, a, xm, xp, ym, yp, zm, zp, 0, k) * suppKeep;
         supp[a] = sp;
         fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep * (sp > 0 ? Math.exp(-6 * sp * dt) : 1);
@@ -308,6 +315,8 @@ export function stepAir(w, W, D, dt, sim) {
     smokeTotal += smoke[a];
     steamTotal += steam[a];
   }
+  // closed spaces hold exactly their oxygen inventory
+  conserveO2(w);
   sim.stats.smoke = smokeTotal;
   sim.stats.steam = steamTotal;
 }
@@ -333,3 +342,4 @@ function turbTable(w, key, n, freq, speed, t) {
   for (let i = 0; i < n; i++) arr[i] = Math.sin(i * freq + t * speed);
   return arr;
 }
+

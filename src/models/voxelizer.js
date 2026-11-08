@@ -143,9 +143,12 @@ export function buildScene(scene) {
   const ws = scene.world;
   const world = new World({ size: ws.size, h: ws.h, ambient: scene.weather?.ambient ?? 15 });
   const { nx, nz } = world;
-  const ground = materialId(ws.ground ?? 'soil');
-  for (let z = 0; z < nz; z++)
-    for (let x = 0; x < nx; x++) world.setVoxel(world.idx(x, 0, z), ground, { anchored: true, variation: 0.12 });
+  // a ground layer (soil, concrete...), or none for a ship floating at sea
+  if (ws.ground !== 'none') {
+    const ground = materialId(ws.ground ?? 'soil');
+    for (let z = 0; z < nz; z++)
+      for (let x = 0; x < nx; x++) world.setVoxel(world.idx(x, 0, z), ground, { anchored: true, variation: 0.12 });
+  }
 
   const ignitions = [];
   let spawn = null;
@@ -181,6 +184,16 @@ export function placeObject(world, obj, ownerIndex = -1) {
   const toWorld = (lx, ly, lz) => [ox + cr * lx + sr * lz, oy + ly, oz - sr * lx + cr * lz];
   const dirToWorld = (d) => (d ? [cr * d[0] + sr * d[2], d[1], -sr * d[0] + cr * d[2]] : undefined);
 
+  const hullCandidates = [];
+  // pick-up items (wall extinguisher, hose reel), sprinklers and the sea level of a ship
+  for (const pk of built.pickups ?? []) world.pickups.push({ ...pk, p: toWorld(...pk.p), owner: ownerIndex, voxels: [], taken: false });
+  for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
+  if (built.sea) {
+    const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);
+    const b = toWorld(built.sea.box[2], 0, built.sea.box[3]);
+    world.sea = { level: oy + built.sea.level, box: [Math.min(a[0], b[0]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[2], b[2])] };
+  }
+
   // pressure vessels declared by the model (fuel tanks, gas cylinders)
   const vesselIndex = {};
   for (const [name, spec] of Object.entries(built.vessels ?? {})) {
@@ -213,6 +226,21 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const group = p.group ? ++world.groupCounter : 0; // one rigid panel per primitive
     const pipe = p.gasPipe ? { voxels: [], power: p.gasPipe.power ?? 150000, jetHeight: p.gasPipe.jetHeight ?? 1, dir: dirToWorld(p.gasPipe.dir), failTemp: p.gasPipe.failTemp ?? 450, owner: ownerIndex } : null;
     if (pipe) world.gasPipes.push(pipe);
+    // doors and pick-up items: voxels tagged with their registry index
+    let doorTag = 0;
+    if (p.door) {
+      let d = world.doors.findIndex((x) => x.name === p.door && x.owner === ownerIndex);
+      if (d < 0) {
+        world.doors.push({ name: p.door, voxels: [], owner: ownerIndex, open: false, startOpen: !!p.doorOpen, center: [0, 0, 0], n: 0 });
+        d = world.doors.length - 1;
+      }
+      doorTag = d + 1;
+    }
+    let pickupTag = 0;
+    if (p.pickup) {
+      const k = world.pickups.findIndex((x) => x.id === p.pickup && x.owner === ownerIndex);
+      if (k >= 0) pickupTag = k + 1;
+    }
     for (let z = z0; z <= z1; z++)
       for (let y = y0; y <= y1; y++)
         for (let x = x0; x <= x1; x++) {
@@ -242,9 +270,37 @@ export function placeObject(world, obj, ownerIndex = -1) {
             paint: p.paint,
             owner: ownerIndex,
             vesselTag: p.vessel !== undefined ? (p.vesselRole === 'contents' ? -1 : 1) * (vesselIndex[p.vessel] + 1) : 0,
+            doorTag,
+            pickupTag,
           });
+          if (doorTag) {
+            const d = world.doors[doorTag - 1];
+            d.voxels.push(i);
+            const c = world.center(x, y, z);
+            d.center = d.center.map((v, k2) => (v * d.n + c[k2]) / (d.n + 1));
+            d.n++;
+          }
+          if (pickupTag) world.pickups[pickupTag - 1].voxels.push(i);
+          if (p.hull) hullCandidates.push(i);
           if (pipe) pipe.voxels.push(i);
         }
+  }
+
+  // the hull plating that survived the carving: where it goes missing below the waterline, the sea comes in
+  if (hullCandidates.length) {
+    // only the outer plating: the candidates on the outside faces of the hull's bounding box
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const i of hullCandidates) {
+      const [x, y, z] = world.coords(i);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+    }
+    const shell = new Set();
+    for (const i of hullCandidates) {
+      if (!world.mat[i] || world.owner[i] !== ownerIndex) continue;
+      const [x, y, z] = world.coords(i);
+      if (x === x0 || x === x1 || z === z0 || z === z1 || y === y0) shell.add(i);
+    }
+    world.hull = [...(world.hull ?? []), ...shell];
   }
 
   for (const ht of built.heaters ?? []) {

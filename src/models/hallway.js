@@ -31,6 +31,11 @@ export default {
     voidDepth: { value: 0.6, min: 0.3, max: 1.2, step: 0.05, label: 'Ceiling void depth (m)' },
     cables: { value: true, label: 'Cable tray in the void' },
     doorsPerSide: { value: 3, min: 0, max: 8, step: 1, label: 'Doors per side' },
+    rooms: { value: true, label: 'Offices behind the doors (one side)' },
+    roomDepth: { value: 3, min: 2, max: 6, step: 0.1, label: 'Office depth (m)' },
+    sprinklers: { value: false, label: 'Sprinklers' },
+    extinguisher: { value: 'foam', options: ['foam', 'powder', 'co2', 'water'], label: 'Wall extinguisher' },
+    hoseReel: { value: true, label: 'Hose reel on the wall' },
     entranceOpen: { value: true, label: 'Entrance door open' },
     endWindow: { value: true, label: 'Window at the far end' },
     pipeIn: { value: 'hallway', options: ['hallway', 'ceiling void'], label: 'Gas pipe runs' },
@@ -62,6 +67,13 @@ export default {
       { shape: 'box', min: [-hx - wt, 0, -hz - wt], max: [hx + wt, t, hz + wt], material: 'concrete' },
       { shape: 'box', min: [-hx - wt, t, -hz - wt], max: [hx + wt, slab, hz + wt], material: wall, density: wallD },
       { shape: 'box', min: [-hx - wt, slab, -hz - wt], max: [hx + wt, slab + 0.25, hz + wt], material: 'concrete', anchored: true },
+      ...(p.rooms
+        ? [
+            { shape: 'box', min: [-hx - wt, 0, hz], max: [hx + wt, t, hz + wt + p.roomDepth + wt], material: 'concrete' },
+            { shape: 'box', min: [-hx - wt, t, hz], max: [hx + wt, slab, hz + wt + p.roomDepth + wt], material: wall, density: wallD },
+            { shape: 'box', min: [-hx - wt, slab, hz], max: [hx + wt, slab + 0.25, hz + wt + p.roomDepth + wt], material: 'concrete', anchored: true },
+          ]
+        : []),
       { shape: 'box', min: [-hx, t * 1.01, -hz], max: [hx, slab - 0.001, hz], mode: 'carve' },
       // paint on the inside of the walls (the visible part, below the ceiling)
       { shape: 'box', min: [-hx - h, t * 1.01, -hz - h], max: [hx + h, ceil, -hz], material: wall, mode: 'replace', density: wallD, ...paint },
@@ -71,7 +83,7 @@ export default {
       // entrance at -x
       { shape: 'box', min: [-hx - wt - 0.01, t * 1.01, -0.5], max: [-hx + 0.01, t + 2.1, 0.5], mode: 'carve' },
     ];
-    if (!p.entranceOpen) prims.push({ shape: 'box', min: [-hx - wt / 2 - t / 2, t * 1.01, -0.5], max: [-hx - wt / 2 + t / 2, t + 2.1, 0.5], material: 'wood', density: thin(0.04), color: [0.45, 0.3, 0.18] });
+    prims.push({ shape: 'box', min: [-hx - wt / 2 - t / 2, t * 1.01, -0.5], max: [-hx - wt / 2 + t / 2, t + 2.1, 0.5], material: 'wood', density: thin(0.04), color: [0.45, 0.3, 0.18], door: 'entrance', doorOpen: p.entranceOpen });
     if (p.endWindow) {
       prims.push(
         { shape: 'box', min: [hx - 0.01, t + 0.9, -0.6], max: [hx + wt + 0.01, t + 2.0, 0.6], mode: 'carve' },
@@ -82,14 +94,45 @@ export default {
     const n = p.doorsPerSide;
     for (let k = 0; k < n; k++) {
       const x = -hx + (L * (k + 0.75)) / (n + 0.5);
+      // an office behind the door on the +z side
+      if (p.rooms) {
+        const rw = L / n;
+        const rx0 = -hx + rw * k + wt / 2;
+        const rx1 = -hx + rw * (k + 1) - wt / 2;
+        const rz0 = hz + wt;
+        const rz1 = hz + wt + p.roomDepth;
+        prims.push(
+          { shape: 'box', min: [rx0, t * 1.01, rz0], max: [rx1, ceil + 0.3, rz1], mode: 'carve' },
+          // desk, chair, paperwork, bookshelf
+          { shape: 'box', min: [x - 0.7, t + 0.72, rz1 - 0.8], max: [x + 0.7, t + 0.76, rz1 - 0.05], material: 'wood', color: [0.6, 0.45, 0.3] },
+          { shape: 'box', min: [x - 0.7, t, rz1 - 0.8], max: [x - 0.62, t + 0.72, rz1 - 0.05], material: 'wood', color: [0.6, 0.45, 0.3] },
+          { shape: 'box', min: [x + 0.62, t, rz1 - 0.8], max: [x + 0.7, t + 0.72, rz1 - 0.05], material: 'wood', color: [0.6, 0.45, 0.3] },
+          { shape: 'box', min: [x - 0.5, t + 0.76, rz1 - 0.6], max: [x + 0.1, t + 0.86, rz1 - 0.25], material: 'paper', color: [0.93, 0.92, 0.88], density: 0.5 },
+          { shape: 'box', min: [x - 0.25, t, rz1 - 1.3], max: [x + 0.25, t + 0.5, rz1 - 0.85], material: 'foam', color: [0.2, 0.22, 0.3] },
+          { shape: 'box', min: [rx0, t, rz0 + 0.6], max: [rx0 + 0.35, t + 1.9, rz1 - 0.3], material: 'wood', density: 0.2 },
+          { shape: 'box', min: [rx0 + 0.01, t + 0.3, rz0 + 0.7], max: [rx0 + 0.3, t + 1.8, rz1 - 0.4], material: 'paper', density: 0.5, color: [0.7, 0.5, 0.35], variation: 0.3 },
+          // a window in the outer wall
+          { shape: 'box', min: [x - 0.6, t + 1.0, rz1 - 0.01], max: [x + 0.6, t + 2.0, rz1 + wt + 0.01], mode: 'carve' },
+          { shape: 'box', min: [x - 0.6, t + 1.0, rz1 + wt / 2 - t / 2], max: [x + 0.6, t + 2.0, rz1 + wt / 2 + t / 2], material: 'glass', density: thin(0.006) },
+        );
+      }
       for (const s of [-1, 1]) {
         const zc = s * (hz + wt / 2);
+        const real = s > 0 && p.rooms;
         prims.push(
-          { shape: 'box', min: [x - 0.45, t * 1.01, zc - wt / 2 - 0.01], max: [x + 0.45, t + 2.05, zc + wt / 2 + 0.01], mode: 'carve' },
-          { shape: 'box', min: [x - 0.45, t * 1.01, zc - t / 2], max: [x + 0.45, t + 2.05, zc + t / 2], material: 'wood', density: thin(0.04), color: [0.55, 0.38, 0.22] },
+          { shape: 'box', min: [x - 0.45, t * 1.01, zc - wt / 2 - 0.01], max: [x + 0.45, t + 2.05, zc + wt / 2 + 0.01], mode: real ? 'carve' : 'set', material: wall, density: wallD },
+          { shape: 'box', min: [x - 0.45, t * 1.01, zc - t / 2 - (real ? 0 : wt / 2)], max: [x + 0.45, t + 2.05, zc + t / 2 - (real ? 0 : wt / 2)], material: 'wood', density: thin(0.04), color: [0.55, 0.38, 0.22], ...(real ? { door: 'office ' + (k + 1) } : {}) },
         );
       }
     }
+    // equipment on the walls by the entrance: an extinguisher and a hose reel
+    const extinguisherAt = [-hx + 1.0, t + 0.3, hz - 0.12];
+    prims.push(
+      { shape: 'cylinder', a: extinguisherAt, b: [extinguisherAt[0], t + 0.85, extinguisherAt[2]], r: 0.08, material: 'steel', color: [0.8, 0.08, 0.06], density: thin(0.002), pickup: 'extinguisher' },
+      { shape: 'box', min: [extinguisherAt[0] - 0.03, t + 0.85, extinguisherAt[2] - 0.03], max: [extinguisherAt[0] + 0.03, t + 0.95, extinguisherAt[2] + 0.03], material: 'steel', color: [0.15, 0.15, 0.15], density: 0.2, pickup: 'extinguisher' },
+    );
+    const reelAt = [-hx + 2.2, t + 1.3, -hz + 0.16];
+    if (p.hoseReel) prims.push({ shape: 'cylinder', a: [reelAt[0], reelAt[1], -hz], b: [reelAt[0], reelAt[1], -hz + 0.25], r: 0.32, material: 'steel', color: [0.78, 0.1, 0.08], density: thin(0.003) });
     if (p.carpet) prims.push({ shape: 'box', min: [-hx + 0.3, t, -W * 0.3], max: [hx - 0.3, t + 0.01, W * 0.3], material: 'fabric', color: [0.35, 0.22, 0.25], density: thin(0.008), mode: 'fill' });
 
     // --- suspended ceiling: tiles (one rigid panel each) in a steel grid on hangers
@@ -179,6 +222,11 @@ export default {
       ],
       // where a firefighter starts: outside the entrance, looking in
       spawn: { p: [-hx - wt - 1.5, 0, 0], yaw: 0 },
+      pickups: [
+        { id: 'extinguisher', type: 'extinguisher', agent: p.extinguisher, p: [extinguisherAt[0], t + 0.6, extinguisherAt[2]] },
+        ...(p.hoseReel ? [{ id: 'reel', type: 'hoseReel', length: 30, p: reelAt }] : []),
+      ],
+      sprinklers: p.sprinklers ? Array.from({ length: Math.max(1, Math.round(L / 3)) }, (_, k) => ({ p: [-hx + (L * (k + 0.5)) / Math.max(1, Math.round(L / 3)), ceil - 0.05, 0] })) : [],
     };
   },
 };

@@ -3,6 +3,7 @@ import { MOUSE } from 'three';
 import { AGENTS } from './sim/simulation.js';
 import { Walkthrough } from './walk/walk.js';
 import { defaultStartPower } from './sim/createSimulation.js';
+import { toggleDoor, nearestDoor, doorOfVoxel } from './sim/doors.js';
 import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
@@ -148,7 +149,7 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
   .onChange(() => {
     updateToolHint();
@@ -292,7 +293,8 @@ function updateHud(dt) {
     ['Max temperature', `${s.maxT.toFixed(0)} °C`],
     ['Smoke in air', fmtMass(s.smoke)],
     ['Steam in air', fmtMass(s.steam)],
-    ['Molten voxels', s.liquid],
+    ['Molten / water voxels', s.liquid],
+    ...(w.sea ? [['Sea water coming in', s.flooding ? `${((s.flooding * w.h ** 3) / sim.dt).toFixed(2)} m³/s` : 'no']] : []),
     ...vesselRows(w),
     ...(state.tool === 'extinguisher' ? [['Extinguisher', `${AGENTS[state.agent].label}: ${tank.remaining.toFixed(1)} left${spraying ? ' (spraying)' : ''}`]] : []),
     ...eventRows(w),
@@ -312,12 +314,12 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
     .slice(-2)
-    .map((e) => ['Event', `${fmtTime(e.time)} ${{ cylinder: 'gas cylinder', fuelTank: 'fuel tank', 'gas pipe': 'gas pipe', grenade: 'grenade', concrete: 'concrete' }[e.name] ?? e.name} ${EVENT_TEXT[e.type] ?? e.type}${e.pressure ? ` at ${(e.pressure / 1e5).toFixed(1)} bar` : ''}`]);
+    .map((e) => ['Event', `${fmtTime(e.time)} ${{ cylinder: 'gas cylinder', fuelTank: 'fuel tank', 'gas pipe': 'gas pipe', grenade: 'grenade', concrete: 'concrete', sprinkler: 'a sprinkler' }[e.name] ?? e.name} ${EVENT_TEXT[e.type] ?? e.type}${e.pressure ? ` at ${(e.pressure / 1e5).toFixed(1)} bar` : ''}`]);
 }
 
 function showInspect() {
@@ -348,6 +350,8 @@ const HINTS = {
   torch: 'Hold the left mouse button to play a fire torch on a spot (right-drag rotates)',
   firestart: 'Click where the fire should start (Shift+click adds another); the scene restarts',
   grenade: 'Click to throw a hand grenade at a spot (it goes off after 2.5 s)',
+  door: 'Click a door (or next to it) to open or close it',
+  inert: 'Click inside a room to flood it with inert gas (removes the oxygen; leaks if the room is open)',
   water: 'Click to throw a bucket of water',
   extinguisher: 'Hold the left mouse button to spray where you point (right-drag rotates the view)',
 };
@@ -443,6 +447,17 @@ canvas.addEventListener('pointerup', (e) => {
       delete scene.noFire;
       for (const o of scene.objects) o.ignite = false;
       restart();
+      break;
+    }
+    case 'door': {
+      let d = doorOfVoxel(w, hit.voxel);
+      if (d < 0) d = nearestDoor(w, hit.point, 1.5);
+      if (d >= 0) toggleDoor(sim, d);
+      break;
+    }
+    case 'inert': {
+      const p = hit.point.map((v, k) => v + hit.normal[k] * Math.max(0.3, w.h * 2));
+      sim.inertRoom(p);
       break;
     }
     case 'grenade': {

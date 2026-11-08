@@ -37,6 +37,8 @@ export class SoundScape {
     this.hose = this.loop([{ type: 'bandpass', frequency: 2800, Q: 0.5 }], false);
     this.leak = this.loop([{ type: 'highpass', frequency: 4000, Q: 0.7 }], false); // broken mask hissing
     this.burning = this.loop([{ type: 'bandpass', frequency: 600, Q: 0.5 }], false); // your gear on fire
+    this.sprinkler = this.loop([{ type: 'bandpass', frequency: 4500, Q: 0.4 }], true);
+    this.rush = this.loop([{ type: 'lowpass', frequency: 500, Q: 0.5 }, { type: 'peaking', frequency: 150, Q: 1, gain: 10 }], true);
     this.whistle = ctx.createOscillator();
     this.whistle.frequency.value = 3150;
     this.whistleGain = ctx.createGain();
@@ -199,6 +201,10 @@ export class SoundScape {
     this.hose.gain.gain.setTargetAtTime(state.spraying ? 0.35 : 0, t, 0.08);
     this.leak.gain.gain.setTargetAtTime(state.maskLeak ? 0.25 : 0, t, 0.1);
     this.burning.gain.gain.setTargetAtTime(state.onFire ? 0.5 : 0, t, 0.1);
+    if (state.sprinkler) setPos(this.sprinkler.panner, state.sprinkler);
+    this.sprinkler.gain.gain.setTargetAtTime(state.sprinkler ? 0.4 : 0, t, 0.2);
+    if (state.inflow?.pos) setPos(this.rush.panner, state.inflow.pos);
+    this.rush.gain.gain.setTargetAtTime(state.inflow?.pos ? Math.min(1.2, 0.3 + state.inflow.rate / 20) : 0, t, 0.3);
     if (state.onFire && Math.random() < 0.3) this.burst(t, 0.02, 'bandpass', 2000 + Math.random() * 3000, 2, 0.4);
     // breathing
     if (t >= this.nextBreath - 0.05) {
@@ -230,6 +236,14 @@ export class SoundScape {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       }
     }
+  }
+
+  /** A door swinging open / shut. */
+  door() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.25, 'lowpass', 400, 0.7, 0.5);
+    this.thump(t + 0.05, 0.4);
   }
 
   /** The visor cracking. */

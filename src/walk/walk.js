@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { SoundScape } from '../audio/sound.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
+import { toggleDoor, nearestDoor } from '../sim/doors.js';
+import { AGENTS } from '../sim/simulation.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -85,6 +87,10 @@ export class Walkthrough {
       if (e.code === 'Digit1') this.tool = 'hose';
       if (e.code === 'Digit2') this.tool = 'torch';
       if (e.code === 'Digit3') this.tool = 'grenade';
+      if (e.code === 'Digit4' && this.ext) this.tool = 'ext';
+      if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
+      if (e.code === 'KeyE') this.interact();
+      if (e.code === 'KeyO') this.inert();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     document.getElementById('walkGo').addEventListener('click', () => this.resume());
@@ -116,6 +122,71 @@ export class Walkthrough {
     v.camera.add(this.lamp.target);
     this.el.mask.hidden = false;
     this.el.start.hidden = false;
+  }
+
+  /** Where the sea is coming in (for the sound), the missing hull plating closest to you. */
+  breachPos(w) {
+    if (!w.hull) return null;
+    let best = null;
+    let bd = Infinity;
+    for (let k = 0; k < w.hull.length; k += 3) {
+      const i = w.hull[k];
+      if (w.mat[i] && w.mat[i] !== MATERIALS.findIndex((m) => m.name === 'water')) continue;
+      const c = w.center(...w.coords(i));
+      if (c[1] > w.sea.level) continue;
+      const d = Math.hypot(c[0] - this.pos.x, c[2] - this.pos.z);
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /** E: open/close the nearest door, or take the nearest extinguisher / hose reel. */
+  interact() {
+    const sim = this.hooks.getSim();
+    const w = sim.world;
+    const p = [this.pos.x, this.pos.y + 1.1, this.pos.z];
+    let best = null;
+    let bd = 1.7;
+    w.pickups.forEach((pk) => {
+      if (pk.taken) return;
+      const d = Math.hypot(pk.p[0] - p[0], pk.p[1] - p[1], pk.p[2] - p[2]);
+      if (d < bd) {
+        bd = d;
+        best = { pk };
+      }
+    });
+    const dk = nearestDoor(w, p, bd);
+    if (dk >= 0) best = { door: dk };
+    if (!best) return this.say('Nothing to use here');
+    if (best.door !== undefined) {
+      toggleDoor(sim, best.door);
+      const d = w.doors[best.door];
+      this.sound.door?.();
+      return this.say(`${d.name}: ${d.open ? 'opened' : 'closed'}`, 2);
+    }
+    const pk = best.pk;
+    if (pk.type === 'extinguisher') {
+      pk.taken = true;
+      for (const i of pk.voxels) if (w.pickupTag[i]) w.clearVoxel(i);
+      this.ext = { agent: pk.agent, tank: { remaining: AGENTS[pk.agent].capacity } };
+      this.tool = 'ext';
+      this.say(`You took the ${AGENTS[pk.agent].label} extinguisher (key 4)`);
+    } else if (pk.type === 'hoseReel') {
+      pk.taken = true;
+      this.reel = { p: pk.p, length: pk.length ?? 30 };
+      this.tool = 'reel';
+      this.say(`You run out the hose reel (key 5), ${this.reel.length} m of hose`);
+    }
+  }
+
+  /** O: flood the room you are in with inert gas. */
+  inert() {
+    const sim = this.hooks.getSim();
+    const r = sim.inertRoom([this.pos.x, this.pos.y + 1, this.pos.z]);
+    this.say(r.open ? 'Inert gas released, but this space is open: it leaks away' : 'Room flooded with inert gas: the fire will starve (you are on breathing apparatus)', 5);
   }
 
   resetBody() {
@@ -478,6 +549,7 @@ export class Walkthrough {
     const rad = a >= 0 ? w.radField[a] : 0;
     const sigma = a >= 0 ? (8700 * w.smoke[a]) / w.ah ** 3 : 0;
     const visibility = sigma > 1e-3 ? Math.min(99, 3 / sigma) : 99;
+    const o2pct = a >= 0 ? (w.o2[a] / 0.232) * 20.9 : 20.9;
     const heat = Math.max(0, Math.min(1, (gasT - 50) / 150 + (rad - 2500) / 10000));
     const steam = a >= 0 ? w.steam[a] / w.ah ** 3 : 0;
 
@@ -499,7 +571,21 @@ export class Walkthrough {
       const target = aim();
       const nozzle = [head[0] + aimFwd.x * 0.6, head[1] - 0.35 + aimFwd.y * 0.6, head[2] + aimFwd.z * 0.6];
       sim.spray = { agent: 'hose', nozzle, target, radius: 0.8, tank: this.tank };
-    } else if (sim.spray?.agent === 'hose') sim.spray = null;
+    } else if (this.spraying && locked && this.tool === 'ext' && this.ext) {
+      const target = aim();
+      const nozzle = [head[0] + aimFwd.x * 0.5, head[1] - 0.45 + aimFwd.y * 0.5, head[2] + aimFwd.z * 0.5];
+      sim.spray = { agent: this.ext.agent, nozzle, target, radius: AGENTS[this.ext.agent].radius, tank: this.ext.tank };
+    } else if (this.spraying && locked && this.tool === 'reel' && this.reel) {
+      const d = Math.hypot(this.pos.x - this.reel.p[0], this.pos.z - this.reel.p[2]);
+      if (d > this.reel.length) {
+        sim.spray = null;
+        if (w.time > this.messageUntil) this.say('The hose does not reach this far');
+      } else {
+        const target = aim();
+        const nozzle = [head[0] + aimFwd.x * 0.5, head[1] - 0.4 + aimFwd.y * 0.5, head[2] + aimFwd.z * 0.5];
+        sim.spray = { agent: 'reel', nozzle, target, radius: AGENTS.reel.radius, tank: { remaining: 1e9 } };
+      }
+    } else if (sim.spray && ['hose', 'reel'].includes(sim.spray.agent) || (sim.spray && this.ext && sim.spray.tank === this.ext.tank)) sim.spray = null;
     this.torching = false;
     if (this.spraying && locked && this.tool === 'torch') {
       // the torch flame reaches ~1 m: it acts where you point, if that is close enough
@@ -531,7 +617,7 @@ export class Walkthrough {
       <div class="bars"><span>AIR</span><div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
       <span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div>
       <span>VISOR</span><div class="air"><div class="fill" style="width:${(this.mask * 100).toFixed(0)}%;background:${this.mask < 0.3 ? '#ff4a3a' : '#c8c8c8'}"></div></div></div>
-      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE' }[this.tool]}]</span></div>
+      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL' }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
       ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
       ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
     if (this.el.burn) this.el.burn.style.opacity = this.onFire > 0 ? String(0.55 + 0.25 * Math.sin(w.time * 20)) : '0';
@@ -556,6 +642,22 @@ export class Walkthrough {
       events: w.events,
       onFire: this.onFire > 0,
       maskLeak: this.maskBurst,
+      sprinkler: nearestSprinkler(w, head),
+      inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });
   }
+}
+
+function nearestSprinkler(w, p) {
+  let best = null;
+  let bd = Infinity;
+  for (const s of w.sprinklers) {
+    if (!s.active) continue;
+    const d = Math.hypot(s.p[0] - p[0], s.p[1] - p[1], s.p[2] - p[2]);
+    if (d < bd) {
+      bd = d;
+      best = s.p;
+    }
+  }
+  return best;
 }

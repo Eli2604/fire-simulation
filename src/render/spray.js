@@ -30,6 +30,8 @@ const FRAG = /* glsl */ `
 const LOOK = {
   water: { color: [0.72, 0.84, 1.0], size: 0.6, alpha: 0.55, speed: 9, spread: 0.06, gravity: 4 },
   hose: { color: [0.8, 0.88, 1.0], size: 0.9, alpha: 0.45, speed: 14, spread: 0.22, gravity: 2 },
+  reel: { color: [0.75, 0.85, 1.0], size: 0.7, alpha: 0.5, speed: 10, spread: 0.12, gravity: 4 },
+  sprinkler: { color: [0.78, 0.86, 1.0], size: 0.5, alpha: 0.35, speed: 3, spread: 1.6, gravity: 9 },
   foam: { color: [0.98, 0.98, 0.96], size: 1.2, alpha: 0.75, speed: 7, spread: 0.08, gravity: 3 },
   co2: { color: [0.95, 0.97, 1.0], size: 3.5, alpha: 0.22, speed: 6, spread: 0.18, gravity: 0 },
   powder: { color: [0.96, 0.94, 0.86], size: 3.0, alpha: 0.3, speed: 7, spread: 0.15, gravity: 0.5 },
@@ -72,10 +74,11 @@ export class SprayRenderer {
     this.baseSize = Math.max(0.01, Math.min(0.08, world.h * 0.6));
   }
 
-  update(dt, uScale, spray) {
+  update(dt, uScale, sprays) {
     this.material.uniforms.uScale.value = uScale;
     dt = Math.min(dt, 0.05);
-    if (spray && spray.tank.remaining > 0) {
+    for (const spray of sprays) {
+      if (!spray || spray.tank.remaining <= 0) continue;
       const L = LOOK[spray.agent];
       const [nx, ny, nz] = spray.nozzle;
       const dx = spray.target[0] - nx;

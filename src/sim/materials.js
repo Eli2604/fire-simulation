@@ -284,6 +284,11 @@ const DEFS = {
     meltingPoint: -188, latentHeat: 0, fluidity: 1,
     vapor: { refP: 8.4e5, refT: 20, B: 2000, Tb: -42, Lv: 428e3, beta: 0.0031 },
   },
+  water: {
+    // liquid water (puddles, flooding sea water): flows, soaks, boils off
+    label: 'Water', color: [0.16, 0.3, 0.42], density: 1000, specificHeat: 4186, conductivity: 0.6,
+    meltingPoint: 0, latentHeat: 334e3, fluidity: 1, liquidColor: [0.16, 0.3, 0.42], maxMoisture: 0, emissivity: 0.95,
+  },
   charcoal: {
     label: 'Charcoal / embers', color: [0.09, 0.08, 0.07], density: 180, specificHeat: 1000, conductivity: 0.1,
     combustible: true, ignitionTemp: 380, pyrolysisTemp: Infinity, heatOfCombustion: 30e6, burnRate: 0.0025,

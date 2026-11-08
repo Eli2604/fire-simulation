@@ -1,8 +1,10 @@
 import { MATERIALS, TBL } from './materials.js';
-import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN } from './world.js';
+import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR } from './world.js';
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepProjectiles, stepGasPipes } from './explosions.js';
+import { stepSprinklers, stepWater, stepFlood, waterDamage } from './water.js';
+import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -10,6 +12,12 @@ const LV = 2.26e6; // latent heat of vaporisation of water, J/kg
 const CW = 4186; // specific heat of water, J/(kg·K)
 const RAD_FRACTION = 0.3; // share of combustion heat leaving as radiation
 const MAX_TEMP = 3000;
+/** 0..1 how freely a flame can burn at oxygen mass fraction o (0 below ~15 % by volume). */
+export function oxygenFactor(o) {
+  const f = (o - 0.135) / (O2_AIR - 0.135);
+  return f < 0 ? 0 : f > 1 ? 1 : f;
+}
+
 const SKIN_DEPTH = 0.004; // m, thickness of the surface layer of bulk materials
 const LIQUID_MIXING = 10; // effective conductivity boost for convecting melts
 const POOL_FEEDBACK = 0.2; // share of a candle flame heating its melt pool
@@ -23,6 +31,7 @@ export const AGENTS = {
   co2: { label: "CO2 (5 kg)", capacity: 5, rate: 0.5, range: 2.5, radius: 0.6 },
   powder: { label: "Dry powder ABC (6 kg)", capacity: 6, rate: 0.5, range: 4, radius: 0.7 },
   hose: { label: "Fire hose, fog nozzle (unlimited)", capacity: 1e9, rate: 2.5, range: 10, radius: 0.8 },
+  reel: { label: "Hose reel (first aid, 24 l/min)", capacity: 1e9, rate: 0.4, range: 8, radius: 0.5 },
 };
 
 /**
@@ -100,6 +109,7 @@ export class Simulation {
     w.flameAcc.fill(0);
 
     this.stats.ventHrr = 0;
+    updateRegions(w); // only does work when walls / doors / windows changed
 
     this.applyHeaters(dt);
     this.applyWater(dt, D);
@@ -111,6 +121,8 @@ export class Simulation {
     this.structure(dt);
     stepDebris(this, dt);
     stepProjectiles(this, dt);
+    stepWater(this, dt);
+    stepFlood(this, dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     // jet flames from vents and fireballs count as heat release too
     let extra = this.stats.ventHrr;
@@ -129,9 +141,8 @@ export class Simulation {
    */
   applyWater(dt, D) {
     const w = this.world;
-    const { waterIn, waterList, mat, dens, colTop, nx, ny, nz, h } = w;
-    for (const i of waterList) waterIn[i] = 0;
-    waterList.length = 0;
+    const { mat, dens, colTop, nx, ny, nz, h } = w;
+    stepSprinklers(this, dt);
     if (D.rainRate > 0) {
       const per = D.rainRate * h * h * dt;
       for (let z = 0; z < nz; z++)
@@ -163,6 +174,64 @@ export class Simulation {
         }
     }
     if (this.spray) this.applySpray(dt);
+  }
+
+  /** Burning q watts uses q/13.1 MJ kg/s of oxygen from air cell a (Thornton's rule). */
+  consumeO2(a, q, dt) {
+    takeO2(this.world, a, (q * dt) / 13.1e6);
+  }
+
+  /**
+   * Flood the enclosed space around p with inert gas (an inerting system, or
+   * nitrogen injected by the fire service): oxygen in every air cell that can
+   * be reached through open faces drops to ~3 % by volume. If the space is open
+   * to the outside, only the cells within reach of p are treated.
+   */
+  inertRoom(p, limit = 60000) {
+    const w = this.world;
+    const start = this.airCellAt(...p);
+    if (start < 0) return { cells: 0, open: true };
+    const { anx, any, anz, passX, passY, passZ, o2 } = w;
+    const sxy = anx * any;
+    const seen = new Uint8Array(w.NA);
+    const queue = [start];
+    seen[start] = 1;
+    let open = false;
+    for (let q = 0; q < queue.length && queue.length < limit; q++) {
+      const a = queue[q];
+      const ax = a % anx;
+      const ay = ((a - ax) / anx) % any;
+      const az = (a - ax - ay * anx) / sxy;
+      const go = (b, pass) => {
+        if (pass > 0.5 && !seen[b]) {
+          seen[b] = 1;
+          queue.push(b);
+        }
+      };
+      if (ax + 1 < anx) go(a + 1, passX[a]); else if (passX[a] > 0.5) open = true;
+      if (ax > 0) go(a - 1, passX[a - 1]); else open = true;
+      if (ay + 1 < any) go(a + anx, passY[a]); else open = true;
+      if (ay > 0) go(a - anx, passY[a - anx]);
+      if (az + 1 < anz) go(a + sxy, passZ[a]); else open = true;
+      if (az > 0) go(a - sxy, passZ[a - sxy]); else open = true;
+    }
+    // an open space: only treat the part close to p
+    const r = open ? 3 : Infinity;
+    let n = 0;
+    for (const a of queue) {
+      if (open) {
+        const ax = a % anx;
+        const ay = ((a - ax) / anx) % any;
+        const az = (a - ax - ay * anx) / sxy;
+        const d = Math.hypot((ax + 0.5) * w.ah - p[0], (ay + 0.5) * w.ah - p[1], (az + 0.5) * w.ah - p[2]);
+        if (d > r) continue;
+      }
+      o2[a] = Math.min(o2[a], 0.035);
+      n++;
+    }
+    resyncO2(w);
+    w.events.push({ type: 'inerted', pos: p, time: w.time, name: open ? 'open space' : 'closed room', cells: n });
+    return { cells: n, open };
   }
 
   addWater(i, m) {
@@ -202,7 +271,7 @@ export class Simulation {
     // along the jet: water droplets cross the hot gas above the fire
     const [nx0, ny0, nz0] = s.nozzle;
     const [tx, ty, tz] = s.target;
-    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose') {
+    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose' || s.agent === 'reel') {
       for (let k = 1; k <= 12; k++) {
         const t = k / 12;
         const a = this.airCellAt(nx0 + (tx - nx0) * t, ny0 + (ty - ny0) * t, nz0 + (tz - nz0) * t);
@@ -214,7 +283,7 @@ export class Simulation {
 
     // where it lands
     const r = Math.max(s.radius, h);
-    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose') {
+    if (s.agent === 'water' || s.agent === 'foam' || s.agent === 'hose' || s.agent === 'reel') {
       const hits = [];
       this.forSphere(s.target, r, (i) => {
         if (w.expo[i] > 0) hits.push(i);
@@ -244,8 +313,8 @@ export class Simulation {
     const per = m / cells.length;
     for (const a of cells) {
       if (s.agent === 'co2') {
-        // design concentration ~35 % by volume ≈ 0.5 kg CO2 per kg of air
-        supp[a] = Math.min(1.5, supp[a] + per / airMass / 0.5);
+        // CO2 displaces the air: oxygen falls (34 % CO2 by volume ≈ 14 % O2 puts flames out)
+        takeO2(w, a, w.o2[a] * (1 - airMass / (airMass + per)) * airMass);
         airQ[a] -= (per * (843 * (airT[a] + 78) + 571e3)) / dt; // cold gas + sublimation
         steam[a] += per * 0.3; // the cold jet condenses moisture: a white cloud
       } else {
@@ -330,7 +399,9 @@ export class Simulation {
       let wsum = 0;
       for (const a of cells) wsum += 1 - w.occ[a];
       for (const a of cells) {
-        const share = (ht.power * (1 - w.occ[a])) / wsum;
+        // gas burns only where there is oxygen (unburnt gas otherwise just escapes)
+        const share = ((ht.power * (1 - w.occ[a])) / wsum) * oxygenFactor(w.o2[a]);
+        this.consumeO2(a, share, dt);
         w.airQ[a] += share * (1 - RAD_FRACTION);
         w.radSrc[a] += share * RAD_FRACTION;
         w.flameAcc[a] += share;
@@ -618,8 +689,21 @@ export class Simulation {
         }
         if (rest > 0) {
           if (Ts > Tamb) Ts -= Math.min(Ts - Tamb, (rest * CW * (Ts - Tamb)) / Csurf);
-          mo = Math.min(M.maxMoisture, mo + rest / dry);
+          const take = Math.min(rest, Math.max(0, (M.maxMoisture - mo) * dry));
+          mo += take / dry;
           ws = 1;
+          // what it cannot absorb runs off and collects (puddles)
+          if (rest - take > 0 && M.name !== 'water') {
+            const c = x + nx * z;
+            w.runoff[c] += rest - take;
+            (w.runoffY ??= new Int16Array(nx * w.nz))[c] = y;
+          }
+        }
+        // cold water on a hot brittle wall: thermal shock cracks it
+        if (waterDamage(this, i, M, Ts, water, dt, A) && !(f & (F_FALLING | F_ANCHOR | F_BROKEN))) {
+          f |= F_FALLING | F_BROKEN;
+          w.structureDirty = true;
+          if (M.spalling) this.spallList.push(i);
         }
       }
       // a foam or powder blanket slowly breaks down, faster on hot surfaces
@@ -720,6 +804,11 @@ export class Simulation {
         w.structureDirty = true;
         this.stats.failures = (this.stats.failures ?? 0) + 1;
       }
+      // --- soaked plasterboard / ceiling tiles go soft and fall
+      if (mo > M.wetFail && !(f & (F_FALLING | F_LIQUID | F_ANCHOR | F_BROKEN)) && this.rand() < dt * 0.1) {
+        f |= F_FALLING | F_BROKEN;
+        w.structureDirty = true;
+      }
       // --- charred branches lose their strength and break off
       if (char[i] > M.charFail && !(f & (F_FALLING | F_LIQUID | F_ANCHOR | F_BROKEN)) && this.rand() < dt * 0.25) {
         f |= F_FALLING | F_BROKEN;
@@ -762,12 +851,14 @@ export class Simulation {
         const fuelMass0 = rho * V * (1 - res);
         // a dry skin can burn on a still-moist core
         const wetOk = Cs > 0 ? ws < 0.2 || mo < M.extinctionMoisture : mo < M.extinctionMoisture;
-        if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk && sf > 0.5) {
+        // oxygen at the surface: flames weaken below fresh air and die below ~15 % by volume
+        const ox = oxygenFactor(w.o2[fa]);
+        if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk && sf > 0.5 && ox > 0.3) {
           f |= F_BURNING;
         }
         if (f & F_BURNING) {
           // quenched, smothered or starved of oxygen: the flame goes out
-          if (ex === 0 || Ts < M.ignitionTemp - 120 || !wetOk || (sf < 0.35 && this.rand() < (0.35 - sf) * dt * 3)) {
+          if (ex === 0 || Ts < M.ignitionTemp - 120 || !wetOk || (sf < 0.35 && this.rand() < (0.35 - sf) * dt * 3) || (ox < 0.1 && this.rand() < dt * 2)) {
             f &= ~F_BURNING;
           } else {
             // hotter surfaces pyrolyse faster; more exposed faces = more oxygen
@@ -778,7 +869,7 @@ export class Simulation {
               M.burnTime > 0
                 ? ((fuelMass0 / M.burnTime) * tf * windO2 * dt * faces) / 3 // fine fuel: residence time
                 : M.burnRate * A * faces * tf * windO2 * dt; // bulk fuel: regression per surface area
-            dm *= sf; // water, foam, powder or CO2 slow the burning down
+            dm *= sf * ox; // water, foam, powder, and the oxygen left, set how fast it can burn
             let Hc = M.heatOfCombustion;
             let smokeYield = M.smokeYield;
             let sc = M.smokeColor;
@@ -832,6 +923,7 @@ export class Simulation {
             }
             airQ[fc] += toAir;
             radSrc[fc] += q * RAD_FRACTION;
+            this.consumeO2(fc, q, dt);
             // a candle flame stands off the pool: its burning gas starts above the wick tip
             flameAcc[M.wickIds && y + 2 < ny ? (x >> 1) + w.anx * (((y + 2) >> 1) + w.any * (z >> 1)) : fa] += q;
             const sm = (q * dt * smokeYield) / Hc;
@@ -879,6 +971,9 @@ export class Simulation {
       moist[i] = mo;
       flags[i] = f;
     }
+
+    for (const i of w.waterList) waterIn[i] = 0;
+    w.waterList.length = 0;
 
     // spalled concrete pieces fly off the wall, peeled paint falls as flakes
     for (const i of spallList) this.spall(i);
@@ -1014,6 +1109,7 @@ export class Simulation {
 
     // collect movers
     const movers = this.movers;
+    const seaMask = w.seaMask; // cells that are open sea (water must not leave the hull there)
     movers.length = 0;
     for (let k = 0; k < n; k++) {
       const i = solids[k];
@@ -1042,7 +1138,7 @@ export class Simulation {
         continue;
       }
       const below = i - nx;
-      if (!mat[below]) {
+      if (!mat[below] && !(seaMask && seaMask[below] && f & F_LIQUID)) {
         w.moveVoxel(i, below);
         solids[k] = below;
         moved = true;
@@ -1072,13 +1168,13 @@ export class Simulation {
         const zz = z + dz;
         if (xx < 0 || zz < 0 || xx >= nx || zz >= nz) continue;
         const side = i + dx + nxy * dz;
-        if (mat[side]) continue;
+        if (mat[side] || (seaMask && seaMask[side])) continue; // the sea pushes back: water does not run out below the waterline
         const diag = side - nx;
         if (!mat[diag]) {
           w.moveVoxel(i, diag);
           solids[k] = diag;
           done = true;
-        } else if (!M.granular && f & F_LIQUID && (y + 1 < ny && flags[i + nx] & F_LIQUID ? true : this.rand() < 0.15)) {
+        } else if (!M.granular && f & F_LIQUID && (y + 1 < ny && flags[i + nx] & F_LIQUID ? true : this.rand() < (M.fluidity >= 0.95 ? 0.6 : 0.15))) {
           // spread sideways over a surface (pushed by liquid above)
           w.moveVoxel(i, side);
           solids[k] = side;

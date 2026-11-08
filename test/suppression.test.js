@@ -65,13 +65,18 @@ test('foam leaves a smothering blanket, CO2 and powder suppress the gas around t
   let coated = 0;
   for (let k = 0; k < foam.world.solidCount; k++) if (foam.world.coat[foam.world.solids[k]] > 0.3) coated++;
   assert.ok(coated > 5, `${coated} voxels under foam`);
-  for (const agent of ['co2', 'powder']) {
-    const sim = crib();
-    sim.spray = { agent, nozzle: [0.2, 0.8, 0.8], target: [0.8, 0.15, 0.8], radius: 0.45, tank: { remaining: 5 } };
-    run(sim, sim.world.time + 3);
-    const max = sim.world.supp.reduce((m, v) => Math.max(m, v), 0);
-    assert.ok(max > 0.5, `${agent} suppression in the gas: ${max.toFixed(2)}`);
-  }
+  // powder inhibits the flame chemistry in the gas
+  const powder = crib();
+  powder.spray = { agent: 'powder', nozzle: [0.2, 0.8, 0.8], target: [0.8, 0.15, 0.8], radius: 0.45, tank: { remaining: 5 } };
+  run(powder, powder.world.time + 3);
+  const max = powder.world.supp.reduce((m, v) => Math.max(m, v), 0);
+  assert.ok(max > 0.5, `powder suppression in the gas: ${max.toFixed(2)}`);
+  // CO2 pushes the oxygen out
+  const co2 = crib();
+  co2.spray = { agent: 'co2', nozzle: [0.2, 0.8, 0.8], target: [0.8, 0.15, 0.8], radius: 0.45, tank: { remaining: 5 } };
+  run(co2, co2.world.time + 3);
+  const minO2 = co2.world.o2.reduce((m, v) => Math.min(m, v), 1);
+  assert.ok(minO2 < 0.14, `oxygen around the fire fell to ${((minO2 / 0.232) * 20.9).toFixed(1)} %`);
 });
 
 /** A propane cylinder whose liquid we heat directly. */

@@ -3,6 +3,8 @@ import { MATERIALS, MAT } from './materials.js';
 // how much a voxel of each material blocks the air flow
 const OCC_WEIGHT = Float32Array.from(MATERIALS, (m) => (m.burnTime > 0 ? 0.25 : m.granular ? 0.5 : 1));
 
+export const O2_AIR = 0.232; // mass fraction of oxygen in fresh air (21 % by volume)
+
 export const F_LIQUID = 1; // molten / liquid, flows
 export const F_FALLING = 2; // detached from structure, falls under gravity
 export const F_ANCHOR = 4; // always considered supported (e.g. bolted down)
@@ -51,6 +53,7 @@ export class World {
     this.paint = new Uint8Array(N); // 0 never painted, 1 paint gone (bare), 2..255 paint condition (255 = intact)
     this.crack = new Float32Array(N); // thermal-shock cracking 0..1 (1 = breaks off)
     this.pickupTag = new Int16Array(N); // voxels of an item that can be picked up (k+1)
+    this.doorTag = new Int16Array(N); // voxels of door k (k+1)
     this.groupCounter = 0;
     this.gsum = new Float32Array(N); // core conductances (implicit update), W/K
     this.skin = new Float32Array(N).fill(ambient); // surface temperature of bulk materials
@@ -98,7 +101,10 @@ export class World {
     this.flameAcc = fa(); // W of flaming combustion deposited this step
     this.fgas = fa(); // J of burning gas in the cell (transported, burns out in ~0.5 s)
     this.tmpG = fa();
-    this.supp = fa(); // flame suppression in the gas: CO2 (inerting) or dry powder (inhibition), 1 = fully suppressed
+    this.supp = fa(); // flame suppression by dry powder (chemical inhibition), 1 = fully suppressed
+    this.o2 = fa().fill(O2_AIR); // oxygen mass fraction of the gas (fresh air 0.232)
+    this.tmpI = fa();
+    this.tmpJ = fa();
     this.tmpH = fa();
     this.radSrc = fa(); // W emitted as radiation in this cell this step
     this.radField = fa(); // irradiance W/m² (previous step)
@@ -120,6 +126,9 @@ export class World {
     this.projectiles = []; // thrown grenades
     this.sprinklers = []; // { p, bulb, actT, rti, rate, radius, active }
     this.pickups = []; // { type, agent?, capacity?, length?, p, taken }
+    this.doors = []; // { name, voxels, center, open }
+    this.sea = null; // { level, box: [x0, z0, x1, z1] } the hull footprint, sea outside it below level
+    this.runoff = new Float32Array(nx * nz); // kg of water running off per column, becomes puddles
     this.pool = new Float32Array(nx * nz); // standing water depth on the floor, m
     this.floorTop = new Int16Array(nx * nz); // first empty voxel above the floor in each column
     this.floorVersion = -1;
@@ -188,6 +197,7 @@ export class World {
     this.paint[i] = o.paint ? 255 : 0;
     this.crack[i] = 0;
     this.pickupTag[i] = o.pickupTag ?? 0;
+    this.doorTag[i] = o.doorTag ?? 0;
     this.fuel[i] = 1;
     this.moist[i] = o.moisture ?? m.moisture;
     const liquid = o.liquid ?? m.meltingPoint < this.temp[i];
@@ -219,6 +229,7 @@ export class World {
     this.paint[i] = 0;
     this.crack[i] = 0;
     this.pickupTag[i] = 0;
+    this.doorTag[i] = 0;
     this.listDirty = true;
     this.structureDirty = true;
     this.geomVersion++;
@@ -243,6 +254,8 @@ export class World {
     this.crack[i] = 0;
     this.pickupTag[j] = this.pickupTag[i];
     this.pickupTag[i] = 0;
+    this.doorTag[j] = this.doorTag[i];
+    this.doorTag[i] = 0;
     this.coat[i] = 0;
     this.fuel[j] = this.fuel[i];
     this.moist[j] = this.moist[i];

@@ -9,6 +9,7 @@ import { DebrisRenderer } from './debris.js';
 import { SurfaceRenderer } from './surface.js';
 import { VolumeRenderer } from './volume.js';
 import { MarkerRenderer } from './markers.js';
+import { PuddleRenderer } from './puddles.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -62,6 +63,7 @@ export class View {
     this.surface = new SurfaceRenderer(this.root);
     this.volume = new VolumeRenderer(this.renderer);
     this.markers = new MarkerRenderer(this.root);
+    this.puddles = new PuddleRenderer(this.root);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
@@ -100,10 +102,32 @@ export class View {
     this.smoke.setWorld(world);
     this.spray.setScale(world);
     this.surface.setWorld(world);
+    this.puddles.setWorld(world);
     this.volume.setWorld(world);
     this.seenEvents = 0;
     this.flash = null;
 
+    // a ship floats in the sea: a water surface around the hull instead of the ground
+    if (this.sea) {
+      this.root.remove(this.sea);
+      this.sea.geometry.dispose();
+      this.sea = null;
+    }
+    this.ground.visible = !world.sea;
+    if (world.sea) {
+      const R = diag * 12;
+      const shape = new THREE.Shape([new THREE.Vector2(-R, -R), new THREE.Vector2(R, -R), new THREE.Vector2(R, R), new THREE.Vector2(-R, R)]);
+      const [x0, z0, x1, z1] = world.sea.box;
+      shape.holes.push(new THREE.Path([new THREE.Vector2(x0, -z0), new THREE.Vector2(x0, -z1), new THREE.Vector2(x1, -z1), new THREE.Vector2(x1, -z0)]));
+      this.sea = new THREE.Mesh(
+        new THREE.ShapeGeometry(shape),
+        new THREE.MeshStandardMaterial({ color: 0x1d4e6e, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.88, side: THREE.DoubleSide }),
+      );
+      this.sea.rotation.x = -Math.PI / 2;
+      this.sea.position.y = world.sea.level;
+      this.sea.receiveShadow = true;
+      this.root.add(this.sea);
+    }
     this.ground.scale.set(diag * 12, diag * 12, 1);
     this.ground.position.set(sx / 2, world.h * 0.9, sz / 2);
 
@@ -214,8 +238,12 @@ export class View {
     this.flames.update(dt, scale);
     if (!volumetric) this.smoke.update(scale, this.rh ?? 0.5);
     this.rain.update(dt, this.world, sim.weather);
-    this.spray.update(dt, scale, sim.spray);
+    // the extinguisher / hose and every sprinkler that has gone off
+    const sprays = [sim.spray];
+    for (const s of this.world.sprinklers) if (s.active) sprays.push({ agent: 'sprinkler', nozzle: s.p, target: [s.p[0], s.p[1] - 2.4, s.p[2]], tank: { remaining: 1 } });
+    this.spray.update(dt, scale, sprays);
     this.debris.update(this.world);
+    this.puddles.update();
     this.updateFireLight(stats);
     this.updateFlash(dt);
     const r = this.renderer;

@@ -24,8 +24,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 
 - **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
-  what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway, a house fire
-  in the rain.
+  what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
+  oak, willow and pine in a grass fire, a fire below the waterline of a ship, a house fire in the
+  rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -48,6 +49,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   - *Hand grenade*: lobbed to the clicked spot, goes off after 2.5 s. The blast throws light
     parts as debris, breaks windows, bursts gas pipes in range and its flash ignites what is
     close.
+  - *Open / close door*: doors can be opened and closed.
+  - *Remove oxygen*: floods the enclosed space you click with inert gas. If the space is open
+    to the outside, the gas leaks away.
   - *Water bucket*: cools, wets and puts out the fire, making steam.
   - *Fire extinguisher*: hold the left mouse button to spray where you point; right-drag
     rotates the view meanwhile. Choose water, AFFF foam, CO2 or dry powder (ABC). Each has
@@ -61,6 +65,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 Press **Walk through as a firefighter** (made for the hallway scenario, but it works in any
 scene). You walk in first person wearing breathing apparatus:
 
+- **Interacting:** **E** opens or closes the nearest door, or picks up the wall extinguisher
+  (slot 4) or the hose reel (slot 5, which only reaches as far as its 30 m hose). **O**
+  floods the room you are in with inert gas.
 - **Controls:** WASD to move, the mouse to look, Shift to hurry, and **C to crawl**. Below
   the smoke layer you can see further and it is cooler.
 - **Handheld tools:** 1 / 2 / 3 select the hose (fog nozzle), the fire torch or a hand
@@ -96,6 +103,7 @@ scene). You walk in first person wearing breathing apparatus:
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
+| Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
@@ -219,7 +227,24 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
     exactly at the faces they close, so smoke stays inside buildings. Under a ceiling, hot
     gas spreads sideways as a ceiling jet. The layer deepens as the fire keeps adding gas,
     and gas only rises if it is hotter than the gas above it.
-13. **Structure.** A flood fill from the ground finds parts that are no longer supported
+13. **Oxygen.** The air carries an oxygen fraction. Burning consumes about 1 kg of oxygen per
+    13.1 MJ released (Thornton's rule), and flames weaken as oxygen falls, dying out below about
+    15 % by volume, while embers can still smoulder. Air cells are grouped into connected spaces
+    through their open faces. A closed space keeps an exact oxygen budget, so a fire in a sealed
+    room starves; opening a door or breaking a window feeds it again. CO2 works by displacing
+    the oxygen, and *Remove oxygen* floods a room with inert gas.
+14. **Water.**
+    - Water that surfaces cannot absorb runs off into shallow puddles. These spread over flat
+      floors, soak what stands in them and turn into water voxels once deep enough. Water
+      voxels flow, fill low spaces, soak what they touch and boil off as steam.
+    - Sprinkler bulbs heat with the gas around them (RTI about 50 (m·s)^½) and burst at
+      68 °C. Each head then sprays about 60 l/min.
+    - Cold water on hot brittle walls cracks them (thermal shock), and soaked plasterboard
+      and ceiling tiles go soft and fall.
+    - At sea, any missing hull plating below the waterline lets the sea in at
+      √(2 g depth) (Torricelli). The sea pressure keeps water from running back out, so the
+      ship floods towards the waterline.
+15. **Structure.** A flood fill from the ground finds parts that are no longer supported
    (a burnt-through trunk, a roof whose beams are gone), and they fall.
 
 Calibration targets used during development (`npm run headless`):
