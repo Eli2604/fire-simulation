@@ -201,12 +201,16 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const pk of built.pickups ?? []) world.pickups.push({ ...pk, p: toWorld(...pk.p), owner: ownerIndex, voxels: [], taken: false });
   for (const en of built.enemies ?? []) {
     const p = toWorld(...en.p);
-    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0 });
+    // the patrol area in world coordinates (its corners, so a rotated object rotates it)
+    const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
+    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4 });
   }
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const s of built.inertSystems ?? []) world.inertSystems.push({ ...s, p: toWorld(...s.p), fired: false });
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
+  if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
+  if (built.docks) for (const d of built.docks) world.docks.push({ ...d, p: toWorld(...d.p), dir: dirToWorld(d.dir), arrive: d.arrive ? toWorld(...d.arrive) : undefined });
   if (built.sea) {
     const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);
     const b = toWorld(built.sea.box[2], 0, built.sea.box[3]);
@@ -310,16 +314,16 @@ export function placeObject(world, obj, ownerIndex = -1) {
   // the hull plating that survived the carving: where it goes missing below the waterline, the sea comes in
   if (hullCandidates.length) {
     // only the outer plating: the candidates on the outside faces of the hull's bounding box
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, z0 = Infinity, z1 = -Infinity;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const i of hullCandidates) {
       const [x, y, z] = world.coords(i);
-      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
     }
     const shell = new Set();
     for (const i of hullCandidates) {
       if (!world.mat[i] || world.owner[i] !== ownerIndex) continue;
       const [x, y, z] = world.coords(i);
-      if (x === x0 || x === x1 || z === z0 || z === z1 || y === y0) shell.add(i);
+      if (x === x0 || x === x1 || z === z0 || z === z1 || y === y0 || (world.vacuum && y === y1)) shell.add(i);
     }
     world.hull = [...(world.hull ?? []), ...shell];
   }

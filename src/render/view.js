@@ -124,7 +124,7 @@ export class View {
       this.sea.geometry.dispose();
       this.sea = null;
     }
-    this.ground.visible = !world.sea;
+    this.ground.visible = !world.sea && !world.vacuum;
     if (world.sea) {
       const R = diag * 12;
       const shape = new THREE.Shape([new THREE.Vector2(-R, -R), new THREE.Vector2(R, -R), new THREE.Vector2(R, R), new THREE.Vector2(-R, R)]);
@@ -194,6 +194,11 @@ export class View {
       this.scene.background = new THREE.Color(0x050505);
       this.scene.fog = new THREE.FogExp2(0x050505, 0.02 / this.diag);
     }
+    this.skyBase = this.scene.background.clone();
+    this.fogBase = this.scene.fog.density;
+    this.spaceT = 0;
+    if (this.space) this.setSpaceBlend(1);
+    else if (this.stars) this.stars.visible = false;
     this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog);
     this.hemi.intensity = this.dark ? 0.12 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
@@ -233,6 +238,51 @@ export class View {
     const k = Math.min(3, Math.sqrt(stats.hrr / ref + s * 0.002));
     const flick = 0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3);
     this.fireLight.intensity = 6 * k * flick * (this.diag / 3) ** 2;
+  }
+
+  /**
+   * Blend towards space (t = 0 on the ground … 1 above the atmosphere): the sky
+   * goes black, the haze thins out, the stars come out, and the view reaches
+   * much further (the ground far below, the spaceship far above).
+   */
+  setSpaceBlend(t) {
+    t = Math.max(0, Math.min(1, t));
+    if (!this.stars) {
+      const n = 2500;
+      const pos = new Float32Array(n * 3);
+      for (let k = 0; k < n; k++) {
+        const u = Math.random() * 2 - 1;
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(1 - u * u);
+        pos.set([Math.cos(a) * r * 9000, u * 9000, Math.sin(a) * r * 9000], k * 3);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      this.stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, transparent: true, fog: false, depthWrite: false }));
+      this.stars.frustumCulled = false;
+      this.stars.renderOrder = -1;
+      this.scene.add(this.stars);
+    }
+    if (Math.abs(t - (this.spaceT ?? 0)) < 1e-3 && this.stars.visible === t > 0) {
+      this.stars.position.copy(this.camera.position);
+      return;
+    }
+    this.spaceT = t;
+    this.stars.visible = t > 0.02;
+    this.stars.material.opacity = t;
+    this.stars.position.copy(this.camera.position);
+    if (this.skyBase) this.scene.background = this.skyBase.clone().lerp(new THREE.Color(0x000004), t);
+    if (this.scene.fog) {
+      this.scene.fog.color.copy(this.scene.background);
+      this.scene.fog.density = (this.fogBase ?? 0.001) * (1 - t) ** 3;
+    }
+    const far = t > 0 ? 20000 : (this.diag ?? 50) * 30;
+    if (this.camera.far !== far) {
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
+    // no sky light up there: hard sunlight, dark shadows (a little fill so you can see inside)
+    this.hemi.intensity = (this.dark ? 0.12 : 1.1) * (1 - 0.6 * t);
   }
 
   render(dt, sim) {

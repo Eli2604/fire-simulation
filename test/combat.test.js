@@ -167,3 +167,30 @@ test('a locked glass door: break the pane, then it can be opened from the inside
   for (const i of ws.doors[sk].glass) ws.clearVoxel(i);
   assert.equal(doorGlassBroken(ws, sk), true);
 });
+
+test('enemies keep to their patrol area, or walk their guard round corner by corner', () => {
+  const sim = createSimulation({
+    world: { size: [20, 2.4, 20], h: 0.2, ground: 'stone' },
+    objects: [
+      { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'area', patrolWidth: 6, patrolDepth: 4, patrolOffsetX: 3 }, x: 6, z: 6 },
+      { type: 'enemy', params: { count: 1, spread: 0, patrol: 'route', patrolWidth: 6, patrolDepth: 6 }, x: 14, z: 14 },
+    ],
+    noFire: true,
+  });
+  const w = sim.world;
+  const [a1, a2, guard] = w.enemies;
+  assert.equal(a1.area.mode, 'area');
+  assert.equal(guard.area.mode, 'route');
+  const corners = guard.area.corners;
+  const visited = [];
+  let outside = 0;
+  while (w.time < 120) {
+    sim.step(sim.dt);
+    for (const e of [a1, a2]) if (w.time > 20 && !sim.ai.inArea(e, e.p)) outside++;
+    const k = corners.findIndex((c) => Math.hypot(c[0] - guard.p[0], c[2] - guard.p[2]) < 0.8);
+    if (k >= 0 && visited[visited.length - 1] !== k) visited.push(k);
+  }
+  assert.ok(outside < 200, `patrollers stay in their area (${outside} steps outside)`);
+  assert.ok(visited.length >= 4, `the guard walks the round: corners ${visited.join(' → ')}`);
+  for (let k = 1; k < visited.length; k++) assert.equal(visited[k], (visited[k - 1] + 1) % 4, 'in order');
+});

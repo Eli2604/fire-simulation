@@ -86,6 +86,29 @@ export class MarkerRenderer {
       this.group.add(obj);
       this.items.push({ obj, cone, ring, lbl, mk });
     }
+    // enemies' patrol areas / rounds: an outline on the floor
+    const seen = new Set();
+    for (const e of world.enemies ?? []) {
+      const a = e.area;
+      if (!a) continue;
+      const key = JSON.stringify(a.corners);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const pts = a.corners.map((c) => new THREE.Vector3(c[0], c[1] + 0.05, c[2]));
+      const line = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineDashedMaterial({ color: a.mode === 'route' ? '#ff4040' : '#ff8080', dashSize: s * 0.6, gapSize: s * 0.4, depthTest: false, transparent: true }),
+      );
+      line.computeLineDistances();
+      line.renderOrder = 6;
+      const lbl = this.label(a.mode === 'route' ? 'Guard round' : 'Patrol area', '#ff6060');
+      lbl.scale.set(s * 3, s * 0.56, 1);
+      lbl.position.set(pts[0].x, pts[0].y + s, pts[0].z);
+      const obj = new THREE.Group();
+      obj.add(line, lbl);
+      this.group.add(obj);
+      this.items.push({ obj, cone: null, ring: null, lbl, mk: { kind: 'area', p: [0, 0, 0] } });
+    }
   }
 
   update(time, world) {
@@ -94,6 +117,7 @@ export class MarkerRenderer {
     for (const it of this.items) {
       const started = it.mk.heater?.started;
       it.obj.visible = !(it.mk.kind === 'pending' && started);
+      if (!it.cone) continue; // patrol outline
       it.cone.position.y = s * (0.7 + 0.15 * Math.sin(time * 3));
       it.lbl.position.y = s * 1.35;
       const k = 1 + 0.15 * Math.sin(time * 4);

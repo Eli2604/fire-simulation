@@ -194,7 +194,7 @@ export class EnemyAI {
           }
         }
         if (e.state === 'patrol' && (!e.goal || e.timer <= 0)) {
-          e.goal = [e.home[0] + (Math.random() - 0.5) * 12, e.home[1], e.home[2] + (Math.random() - 0.5) * 12];
+          e.goal = this.patrolGoal(e);
           e.timer = 6 + Math.random() * 6;
           e.repath = 0;
         }
@@ -218,8 +218,14 @@ export class EnemyAI {
           e.fuel = null;
           e.repath = 0;
         } else if (e.state === 'investigate' || e.state === 'retreat') {
+          // back to the patrol area after a short look around
           e.state = 'patrol';
           e.timer = 3 + Math.random() * 3;
+        } else if (e.state === 'patrol' && e.area?.mode === 'route') {
+          // a guard round: straight on to the next corner
+          e.goal = this.patrolGoal(e);
+          e.timer = 30;
+          e.repath = 0;
         }
       }
       // --- walk along the route
@@ -252,6 +258,37 @@ export class EnemyAI {
     e.yaw = Math.atan2(dx, dz);
     e.moving = true;
     e.walkPhase = (e.walkPhase ?? 0) + s * 4;
+  }
+
+  /** Next place to walk to on patrol: around home, a random spot in the area, or the next corner of the round. */
+  patrolGoal(e) {
+    const a = e.area;
+    if (!a) return [e.home[0] + (Math.random() - 0.5) * 12, e.home[1], e.home[2] + (Math.random() - 0.5) * 12];
+    const c = a.corners;
+    if (a.mode === 'route') {
+      e.leg = ((e.leg ?? 0) + 1) % c.length;
+      return c[e.leg].slice();
+    }
+    // a random point in the (possibly rotated) rectangle
+    const u = Math.random();
+    const v = Math.random();
+    return [0, 1, 2].map((k) => c[0][k] + (c[1][k] - c[0][k]) * u + (c[3][k] - c[0][k]) * v);
+  }
+
+  /** Is p inside the enemy's patrol area (or near home)? */
+  inArea(e, p) {
+    const a = e.area;
+    if (!a) return Math.hypot(p[0] - e.home[0], p[2] - e.home[2]) < 8;
+    const [c0, c1, , c3] = a.corners;
+    const ux = c1[0] - c0[0];
+    const uz = c1[2] - c0[2];
+    const vx = c3[0] - c0[0];
+    const vz = c3[2] - c0[2];
+    const dx = p[0] - c0[0];
+    const dz = p[2] - c0[2];
+    const s = (dx * ux + dz * uz) / (ux * ux + uz * uz || 1);
+    const t = (dx * vx + dz * vz) / (vx * vx + vz * vz || 1);
+    return s >= -0.05 && s <= 1.05 && t >= -0.05 && t <= 1.05;
   }
 
   /** Something flammable, reachable, that will draw the player in (not on top of them). */

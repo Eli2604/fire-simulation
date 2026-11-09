@@ -101,6 +101,8 @@ export function stepAir(w, W, D, dt, sim) {
   const ah3 = ah * ah * ah;
   const Tamb = W.ambient;
   const sxy = anx * any;
+  const O2B = w.vacuum ? 0 : O2_AIR; // what comes in from outside the domain (nothing, in space)
+  const suck = w.vacuum ? w.suck : null; // air streaming out through a hull breach
 
   // --- 1. velocity
   const t = w.time;
@@ -174,6 +176,11 @@ export function stepAir(w, W, D, dt, sim) {
         }
         if (ay === 0 && v < 0) v = 0;
         vy[a] = v;
+        if (suck) {
+          vx[a] += suck[a * 3];
+          vy[a] += suck[a * 3 + 1];
+          vz[a] += suck[a * 3 + 2];
+        }
       }
     }
 
@@ -198,7 +205,7 @@ export function stepAir(w, W, D, dt, sim) {
         if (px < -0.5 || pz < -0.5 || px > anx - 0.5 || pz > anz - 0.5 || py > any - 0.5) {
           oT[a] = Tamb;
           oS[a] = oR[a] = oG[a] = oB[a] = oW[a] = oF[a] = oX[a] = 0;
-          oO[a] = O2_AIR; // fresh air from outside the domain
+          oO[a] = O2B; // fresh air from outside the domain (none in space)
           continue;
         }
         if (px < 0) px = 0;
@@ -286,7 +293,7 @@ export function stepAir(w, W, D, dt, sim) {
         steam[a] = lap(oW, a, xm, xp, ym, yp, zm, zp, 0, k) * steamKeep;
         // CO2 / powder: carried with the gas, slowly diluting and settling; it
         // starves and inhibits the flames in its cell
-        o2[a] = lap(oO, a, xm, xp, ym, yp, zm, zp, O2_AIR, k);
+        o2[a] = lap(oO, a, xm, xp, ym, yp, zm, zp, O2B, k);
         const sp = lap(oX, a, xm, xp, ym, yp, zm, zp, 0, k) * suppKeep;
         supp[a] = sp;
         fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep * (sp > 0 ? Math.exp(-6 * sp * dt) : 1);

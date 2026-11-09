@@ -125,6 +125,7 @@ export class World {
     this.gasPipes = []; // { voxels, power }: gas lines that can burst (blast, heat)
     this.projectiles = []; // thrown grenades, arrows, rockets
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
+    this.docks = []; // { p, dir, label }: where a spacecraft can dock
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding

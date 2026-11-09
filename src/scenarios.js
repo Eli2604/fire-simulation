@@ -198,12 +198,12 @@ export const SCENARIOS = {
     objects: [
       { type: 'catacombs', params: {}, x: 9.5, z: 14.5 },
       { type: 'enemy', params: { count: 2, spread: 1.5 }, x: 9.5, z: 14.5 },
-      { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2 }, x: 14.5, z: 19.5 },
+      { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2, patrol: 'route', patrolWidth: 5, patrolDepth: 5 }, x: 14.5, z: 19.5 },
     ],
   },
   carrier: {
-    name: 'Aircraft carrier, island and catacombs',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a campfire and a house on a plateau, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    name: 'Carrier, island, catacombs and a spaceship',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a campfire and a house on a plateau, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -225,7 +225,7 @@ export const SCENARIOS = {
         view: { camera: [16, 14, -8], walk: true },
         objects: [
           { type: 'carrierBelow', params: {}, x: 16, z: 8.5 },
-          { type: 'enemy', params: { count: 2, spread: 1, level: 0.2 }, x: 24, z: 8.5 },
+          { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
           { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
         ],
       },
@@ -244,6 +244,20 @@ export const SCENARIOS = {
           { type: 'tree', params: { species: 'pine', height: 6.5, crownRadius: 1.8, seed: 3 }, x: 33, z: 8, y: 'auto' },
           { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 24, z: 16, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 13.5, z: 8.5, y: 'auto' },
+          { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 12, patrolDepth: 9 }, x: 12, z: 24, y: 'auto' },
+        ],
+      },
+      spaceship: {
+        name: 'Spaceship in orbit',
+        origin: [60, 2400, 40],
+        approach: 60, // shown (and dockable) from 60 m out
+        world: { size: [34, 7, 13], h: 0.2, ground: 'none' },
+        weather: { ambient: 20, humidity: 0.3, windSpeed: 0, rain: 0, fog: 0 },
+        view: { space: true, walk: true, camera: [-12, 10, 22] },
+        proxy: { color: '#c8ccd2', height: 4.4, fill: 0.9, sea: 0.6 },
+        objects: [
+          { type: 'spaceship', params: {}, x: 17.5, z: 6.5 },
+          { type: 'enemy', params: { count: 2, spread: 1, level: 0.9, patrol: 'route', patrolWidth: 18, patrolDepth: 1 }, x: 17.5, z: 6.5 },
         ],
       },
       catacombs: {
@@ -253,7 +267,7 @@ export const SCENARIOS = {
         objects: [
           { type: 'catacombs', params: { exitTo: 'island' }, x: 9.5, z: 14.5 },
           { type: 'enemy', params: { count: 2, spread: 1.5 }, x: 9.5, z: 14.5 },
-          { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2 }, x: 14.5, z: 19.5 },
+          { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2, patrol: 'route', patrolWidth: 5, patrolDepth: 5 }, x: 14.5, z: 19.5 },
         ],
       },
     },

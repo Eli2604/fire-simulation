@@ -2,6 +2,7 @@ import { buildScene } from '../models/voxelizer.js';
 import { Simulation } from './simulation.js';
 import { defaultWeather } from './weather.js';
 import { toggleDoor } from './doors.js';
+import { initVacuum } from './vacuum.js';
 
 const IGNITION_SECONDS = 40;
 
@@ -20,11 +21,13 @@ export function createSimulation(scene) {
     const z = scene.zones[scene.zone ?? scene.startZone ?? Object.keys(scene.zones)[0]];
     scene = { ...scene, world: z.world, objects: z.objects, view: z.view ?? scene.view };
   }
-  const weather = { ...defaultWeather(), ...(scene.weather ?? {}) };
+  const zoneW = scene.zones?.[scene.zone ?? scene.startZone]?.weather; // a zone can have its own (space: no wind, no rain)
+  const weather = { ...defaultWeather(), ...(scene.weather ?? {}), ...(zoneW ?? {}) };
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
   const sim = new Simulation(world, weather);
   sim.spawn = spawn;
   world.doors.forEach((d, k) => d.startOpen && toggleDoor(sim, k, true));
+  if (world.vacuum) initVacuum(world); // the cabin has air, space around it none
   world.events.length = 0;
   sim.markers = [];
   const custom = scene.fireStarts?.length ? scene.fireStarts : null;

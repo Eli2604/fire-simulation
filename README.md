@@ -27,8 +27,8 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs lit by
   wall torches (with enemies), an aircraft carrier with a flyable jet, a server room below deck,
-  and an island nearby (hills, a canal, a campfire, a house, and the catacombs under it), a house
-  fire in the rain.
+  and an island nearby (hills, a canal, a campfire, a house, and the catacombs under it), and a
+  spaceship in orbit above them, a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -101,7 +101,11 @@ scene). You walk in first person wearing breathing apparatus:
 
 Some scenes (the catacombs, below deck on the carrier) have people hiding in them. They:
 
-- patrol, and **hear noises**: breaking glass, doors, explosions, arrows hitting, rockets.
+- **patrol**: around where they start, at random spots inside a **patrol area**, or along a
+  **guard round** (the corners of the area, in turn). Areas are set per enemy group (Patrol,
+  area width and depth, offset) and shown as red outlines with the markers. After
+  investigating or luring they go back to their area.
+- **hear noises**: breaking glass, doors, explosions, arrows hitting, rockets.
   They go to look where a noise came from. Loud noises carry further.
 - **see you** unless smoke or walls are in the way. They shout, keep their distance, and
   try to **lure you** by lighting something nearby (rags, coffins, boxes) with a torch, out
@@ -135,15 +139,68 @@ Lift grows with the square of the speed, so the jet sinks when slow. Banking tur
 Damage comes from blasts (your own rockets fired too close, a bursting tank), from flying
 through flames, hot gas or smoke, from scraping a wing tip or the tail on something, and
 from heavy landings. Hitting something nose first, flying into the sea or landing far too
-hard is a crash: the fuel explodes and burns, you eject, and you are brought back to the ship.
+hard is a crash. A jet shot to pieces (both wings gone, or almost everything wrecked) breaks up
+in the air. Either way the fuel explodes (at least as hard as a rocket, more with a full tank)
+where it comes down, and starts fires there. You eject and are brought back to the ship.
+
+**X ejects.** The rocket seat throws you clear, and it also works on the deck. The parachute
+opens after 1.2 s and you come down at about 5 m/s, drifting with the wind. W/S makes the
+canopy faster or slower, and A/D or the mouse turns it. Land on the deck or on the island and
+you walk on from there; land in the sea and the ship's boat picks you up. Hitting the ground
+before the canopy opens hurts. The empty jet flies on: its nose drops and it rolls off, until
+it comes down and explodes.
 
 To land, stop on the deck or on flat ground (S brakes) and press **E**. The jet becomes
 voxels again where it stands, with its damage, fuel and remaining rockets kept. It can burn
 and explode like everything else.
 
+### Into space (carrier scenario)
+
+**Hold B for the booster**: a rocket that gives far more thrust than the engine and burns 25
+litres of fuel a second. The air thins with height (on a 350 m scale, squeezed to fit the
+game), and lift, drag and the control surfaces fade with it; thrusters take over the
+steering. Gravity fades too, and is gone above about 2.2 km. The sky goes black and the stars
+come out. Above about 1.5 km you are in **space**:
+
+- Flight is Newtonian: thrust pushes along the nose, and momentum is kept, so turning the
+  nose does not turn your path.
+- S at zero throttle fires the braking thrusters.
+
+The **spaceship** orbits 2.4 km up. It is built when you come within 60 m.
+
+- **Docking:** fly slowly (under 4 m/s) up to its docking port and the jet locks on. You go
+  aboard through the airlock.
+- **Undocking:** the docking port inside the airlock (E) puts you back in the jet.
+- **Impacts:** bump into the hull slowly and you bounce off; ram it fast and you crash and
+  explode against it.
+- **Going home:** fly back down. Coming in too fast through thin air heats the airframe
+  (re-entry damage and flames).
+- **No ejecting up there:** there is no air for a parachute.
+
+Inside the spaceship you walk and fight as anywhere else: the grenade, the bow and the
+extinguishers all work. Its main corridor runs from the bridge, which has big windows, to
+the engine room, which has machinery, cable trays and a propellant tank. Along it are the
+crew quarters, the mess, the cargo bay, a lab and the airlock. Guards walk the corridor,
+and a cable fire starts in the engine room after 40 s.
+
+**Decompression** (sim/vacuum.js) replaces flooding: outside the hull there is vacuum, not
+water or air. Breach the hull with a grenade or rocket, shoot out a window, or open both
+airlock doors, and every space connected to the hole empties:
+
+- How fast depends on the path to the hole and its size: about 1 s right next to a big hole,
+  several seconds at the end of the corridor.
+- The air streams to the hole, carrying smoke and loose light things with it, and cools as
+  it expands.
+- The oxygen goes too, so fires die.
+- Closed doors hold: a room behind one keeps its pressure.
+
+For you: the suction pulls you towards the hole, and below a third of cabin pressure you get
+hurt. Your breathing apparatus gives you air but not pressure, so get behind a closed door.
+The HUD shows the cabin pressure, and the sound is a roar of escaping air.
+
 ### Zones: big scenes without simulating everything at once
 
-The carrier scenario is split into four **zones**:
+The carrier scenario is split into five **zones**:
 
 | Zone | Voxel size | Size | Cost per step |
 |---|---|---|---|
@@ -151,6 +208,7 @@ The carrier scenario is split into four **zones**:
 | Below deck: corridors, mess, berthing, store room, server room | 0.2 m | ~70k solids | ~25 ms |
 | The island | 0.4 m | ~20k solids | ~20 ms |
 | The catacombs under the island | 0.2 m | ~56k solids | ~40 ms |
+| The spaceship in orbit | 0.2 m | ~52k solids | ~35 ms |
 
 Only the zone you are in is built and simulated. Each of the others is built the first time
 you go there and is frozen while you are away. Fire, smoke and damage are kept when you come
@@ -158,7 +216,8 @@ back. You move between zones with **E**:
 
 - the hatch next to the carrier's island leads below deck, and the ladder leads back up;
 - the boat ladder at the stern takes you to the island's pier, and the boat there takes you back;
-- the stone hut at the island's north shore has stairs down into the catacombs.
+- the stone hut at the island's north shore has stairs down into the catacombs;
+- the spaceship is reached only by flying (and docking).
 
 The flight deck and the island lie in one sea, each at its own `origin`. Flying, you see the
 zone under the jet in full, and the others as simple stand-ins: columns of the voxels' top
@@ -195,8 +254,9 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
+| Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
-| Enemies | number, spread, floor height, seed |
+| Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable

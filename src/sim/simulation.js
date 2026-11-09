@@ -6,6 +6,7 @@ import { stepProjectiles, stepGasPipes } from './explosions.js';
 import { stepSprinklers, stepWater, stepFlood, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
+import { stepVacuum } from './vacuum.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -118,6 +119,7 @@ export class Simulation {
     stepVessels(this, dt);
     this.solidPassA(dt, D);
     this.solidPassB(dt, D);
+    stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
     this.structure(dt);

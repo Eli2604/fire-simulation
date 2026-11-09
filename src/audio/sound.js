@@ -243,6 +243,10 @@ export class SoundScape {
         this.thump(t, 1);
       } else if (e.type === 'pipeBurst') {
         this.burst(t, 0.4, 'bandpass', 900, 0.8, 0.8);
+      } else if (e.type === 'decompression') {
+        // the roar of air rushing out, then (in the vacuum) silence
+        this.burst(this.ctx.currentTime, 3, 'lowpass', 500, 0.5, 1.2);
+        this.burst(this.ctx.currentTime, 1.5, 'bandpass', 2500, 0.7, 0.5);
       } else if (e.type === 'shout') {
         this.shout(e.pos);
       } else if (e.type === 'glass') {

@@ -18,7 +18,7 @@ function carrierWorld() {
   const zones = {
     current: () => current,
     origin: (name) => scene.zones[name]?.origin ?? null,
-    open: () => Object.entries(scene.zones).filter(([, z]) => z.origin).map(([name, z]) => ({ name, origin: z.origin, size: z.world.size })),
+    open: () => Object.entries(scene.zones).filter(([, z]) => z.origin).map(([name, z]) => ({ name, origin: z.origin, size: z.world.size, approach: z.approach ?? 0 })),
     built: (name) => !!sims[name],
     sim: get,
     activate: (name) => {
@@ -32,8 +32,8 @@ function carrierWorld() {
     hooks: { zones },
     sound: { running: false },
     say: (t) => said.push(t),
-    endFlight: (msg, at, zone) => {
-      walk.ended = { msg, at, zone };
+    endFlight: (msg, at, zone, orphan) => {
+      walk.ended = { msg, at, zone, orphan };
     },
   };
   const deck = get('deck');
@@ -46,7 +46,12 @@ function fly(c, f, seconds, control = () => {}) {
   for (let t = 0; t < seconds && !f.done; t += dt) {
     control(f, t);
     f.update(dt, f.keys ?? new Set());
-    c.zones.sim(c.zones.current()).advance(dt, 1000);
+    // the simulation in its own (0.2 s) steps
+    c.acc = (c.acc ?? 0) + dt;
+    if (c.acc >= 0.2) {
+      c.zones.sim(c.zones.current()).advance(c.acc, 1000);
+      c.acc = 0;
+    }
   }
 }
 
@@ -144,4 +149,107 @@ test('stand-ins for the zones you are not in', () => {
   const deck = r.items.get('deck').obj;
   assert.ok(deck.count > 300, `${deck.count} deck columns`);
   assert.ok(r.items.get('island'), 'a placeholder for the unbuilt island');
+});
+
+test('jet: eject over the island, come down under the parachute and walk on there; the empty jet crashes and explodes', () => {
+  const c = carrierWorld();
+  c.scene.weather.windSpeed = 0;
+  for (const s of Object.values(c.sims)) s.weather.windSpeed = 0;
+  const f = c.board();
+  const isl = c.scene.zones.island;
+  const centre = new THREE.Vector3(isl.origin[0] + 13, 0, isl.origin[2] + 21); // the plateau (the middle of the island is the canal)
+  f.onGround = false;
+  f.pos.set(centre.x - 50, f.seaLevel + 35, centre.z);
+  f.heading = 0;
+  f.speed = 60;
+  f.throttle = 0.6;
+  fly(c, f, 0.2);
+  f.eject();
+  assert.ok(f.pilot, 'ejected');
+  // steer the canopy round the middle of the island (as a player would)
+  const t0 = performance.now();
+  for (let k = 0; k < 30 * 40 && !c.walk.ended; k++) {
+    if (f.pilot && !f.pilot.landed) f.pilot.heading = Math.atan2(-(centre.z - f.pilot.p.z), centre.x - f.pilot.p.x);
+    f.update(1 / 30, new Set());
+    if (k % 6 === 0) c.zones.sim(c.zones.current()).advance(0.2, 1000);
+  }
+  void t0;
+  assert.ok(c.walk.ended, 'down');
+  assert.ok(c.walk.ended.at, `landed on solid ground: ${c.walk.ended.msg}`);
+  assert.equal(c.zones.current(), 'island');
+  assert.ok(f.pilot.chute, 'under an open parachute');
+  // the jet without pilot: it keeps flying until it comes down, then explodes
+  const orphan = c.walk.ended.orphan ?? f;
+  for (let k = 0; k < 30 * 60 && !orphan.jetGone; k++) orphan.update(1 / 30, new Set());
+  assert.ok(orphan.jetGone, 'the jet came down');
+  const blasts = Object.values(c.sims).flatMap((s) => s.world.events.filter((e) => e.name === 'jet crash'));
+  assert.ok(blasts.length >= 1 || !orphan.zoneAt(orphan.pos), 'it exploded where it hit (if it hit a zone)');
+});
+
+test('jet: eject over open sea: the ship\'s boat picks you up', () => {
+  const c = carrierWorld();
+  const f = c.board();
+  f.onGround = false;
+  f.pos.set(-80, f.seaLevel + 25, -80);
+  f.speed = 50;
+  f.eject();
+  for (let k = 0; k < 30 * 30 && !c.walk.ended; k++) f.update(1 / 30, new Set());
+  assert.ok(c.walk.ended, 'down');
+  assert.match(c.walk.ended.msg, /boat/);
+  assert.equal(c.walk.ended.zone, 'deck');
+});
+
+test('jet: boost out of the atmosphere, fly to the spaceship (built on approach), dock, go aboard, undock', () => {
+  const c = carrierWorld();
+  const f = c.board();
+  f.onGround = false;
+  f.pos.set(30, f.seaLevel + 300, 60);
+  f.speed = 120;
+  f.pitch = 1.3; // nose up
+  f.throttle = 1;
+  f.keys = new Set(['KeyB', 'KeyW']);
+  let climbed = false;
+  fly(c, f, 25, (fl) => {
+    fl.pitch = 1.3;
+    if (fl.vel) climbed = true;
+  });
+  assert.ok(!f.done, c.walk.ended?.msg);
+  assert.ok(climbed, `above the atmosphere (alt ${(f.pos.y - f.seaLevel).toFixed(0)} m, air ${(f.rho() * 100).toFixed(1)} %)`);
+  assert.ok(f.gravity() < 3, 'hardly any gravity up here');
+  assert.equal(c.zones.built('spaceship'), false, 'not built yet');
+  // line up 40 m from the docking port and drift in slowly
+  const ss = c.scene.zones.spaceship;
+  const port = new THREE.Vector3(ss.origin[0] + 20, ss.origin[1] + 1.1, ss.origin[2] + 14);
+  f.keys = new Set();
+  f.throttle = 0;
+  f.pos.copy(port).add(new THREE.Vector3(0, -1.6, 40));
+  f.heading = Math.PI / 2; // nose towards -z, at the ship
+  f.pitch = 0;
+  f.roll = 0;
+  f.vel = new THREE.Vector3(0, 0, -3);
+  fly(c, f, 20);
+  assert.ok(c.zones.built('spaceship'), 'the spaceship was built as we came close');
+  assert.ok(c.walk.ended?.orphan?.docked, `docked: ${c.walk.ended?.msg}`);
+  assert.equal(c.zones.current(), 'spaceship');
+  assert.ok(c.walk.ended.at, 'you go aboard through the airlock');
+  // back into the jet
+  f.undock();
+  assert.ok(!f.docked && f.vel.length() > 0, 'pulling away');
+});
+
+test('jet: too fast at the docking port: no docking; ramming the hull is a crash', () => {
+  const c = carrierWorld();
+  const f = c.board();
+  const ss = c.scene.zones.spaceship;
+  const port = new THREE.Vector3(ss.origin[0] + 20, ss.origin[1] + 1.1, ss.origin[2] + 14);
+  f.onGround = false;
+  f.pos.copy(port).add(new THREE.Vector3(0, -1.6, 30));
+  f.heading = Math.PI / 2;
+  f.vel = new THREE.Vector3(0, 0, -25);
+  f.speed = 25;
+  fly(c, f, 3);
+  assert.ok(f.done, 'crashed');
+  assert.match(c.walk.ended.msg, /rammed/);
+  const w = c.sims.spaceship.world;
+  assert.ok(w.events.some((e) => e.name === 'jet crash'), 'it exploded against the ship');
 });

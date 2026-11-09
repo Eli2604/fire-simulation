@@ -71,9 +71,14 @@ function zoneSim(name) {
   if (!zd) return null;
   if (!zoneSims[name]) {
     for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
-    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather });
+    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: zoneWeather(zd) });
   }
   return zoneSims[name];
+}
+
+/** A zone's own weather (space has none), or the scene's. */
+function zoneWeather(zd) {
+  return zd?.weather ? { ...weather, ...zd.weather } : weather;
 }
 
 /** Make zone `name` the one that is simulated and shown (the others freeze). */
@@ -84,11 +89,12 @@ function activateZone(name) {
   useZone(name);
   const zd = scene.zones[name];
   sim = next;
-  sim.weather = weather;
+  sim.weather = zoneWeather(zd);
   view.dark = !!zd.view?.dark;
+  view.space = !!zd.view?.space;
   view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
   view.markers.visible = state.markers;
-  view.applyWeather(weather);
+  view.applyWeather(sim.weather);
   view.voxels.mode = state.mode;
   $('title').textContent = `${scene.name} – ${zd.name}`;
   buildObjectsFolder();
@@ -102,7 +108,7 @@ const zonesApi = {
   origin: (name) => (scene.zones ? scene.zones[name]?.origin ?? null : [0, 0, 0]),
   open: () =>
     scene.zones
-      ? Object.entries(scene.zones).filter(([, z]) => z.origin).map(([name, z]) => ({ name, origin: z.origin, size: z.world.size }))
+      ? Object.entries(scene.zones).filter(([, z]) => z.origin).map(([name, z]) => ({ name, origin: z.origin, size: z.world.size, approach: z.approach ?? 0 }))
       : [{ name: null, origin: [0, 0, 0], size: sim.world.size }],
   built: (name) => !scene.zones || name === scene.zone || !!zoneSims[name],
   sim: (name) => zoneSim(name),
@@ -157,9 +163,10 @@ function load(desc, fresh = true) {
   scene.weather = weather;
   for (const o of scene.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
   sim = createSimulation(scene);
-  sim.weather = weather;
+  sim.weather = scene.zones ? zoneWeather(scene.zones[scene.zone]) : weather;
   if (walk?.active) walk.exit();
   view.dark = !!scene.view?.dark;
+  view.space = !!scene.view?.space;
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
   updateProxies(true);
   view.markers.visible = state.markers;

@@ -6,6 +6,7 @@ import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
 import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
+import { pressureAt, suctionAt } from '../sim/vacuum.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -91,6 +92,7 @@ export class Walkthrough {
       this.keys.add(e.code);
       if (this.flight) {
         if (e.code === 'KeyE') this.flight.tryExit();
+        if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
         return;
       }
@@ -165,6 +167,17 @@ export class Walkthrough {
     const p = [this.pos.x, this.pos.y + 1.1, this.pos.z];
     // a hatch or ladder to another part of the ship
     const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
+    // the docking port: back into the jet docked outside
+    if (pt?.to === 'jet') {
+      if (!this.orphan?.docked) return this.say('No craft is docked here', 2);
+      this.flight = this.orphan;
+      this.orphan = null;
+      this.spraying = false;
+      this.el.mask.hidden = true;
+      this.lamp.intensity = 0;
+      this.flight.undock();
+      return;
+    }
     if (pt && this.hooks.onPortal) return this.hooks.onPortal(pt);
     // the jet: climb in
     const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
@@ -220,12 +233,14 @@ export class Walkthrough {
     this.flight = new Flight(this, sim, vehicle);
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
-    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets', 6);
+    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, X eject', 6);
   }
 
   /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
-  endFlight(msg, at, zone) {
+  endFlight(msg, at, zone, orphan = null) {
     this.flight = null;
+    // after ejecting, the empty jet may still be flying: it carries on until it comes down
+    this.orphan = orphan;
     this.el.mask.hidden = false;
     const v = this.view;
     v.camera.up.set(0, 1, 0);
@@ -563,6 +578,8 @@ export class Walkthrough {
 
   exit() {
     if (!this.active) return;
+    this.orphan?.dispose();
+    this.orphan = null;
     if (this.flight) {
       this.flight.dispose();
       this.flight = null;
@@ -629,6 +646,10 @@ export class Walkthrough {
     const v = this.view;
     dt = Math.min(dt, 0.1);
     const locked = document.pointerLockElement === v.renderer.domElement;
+    if (this.orphan) {
+      this.orphan.update(dt, new Set());
+      if (this.orphan.done) this.orphan = null;
+    }
     if (this.flight) {
       this.flight.update(dt, locked ? this.keys : new Set());
       if (sim.ai) sim.ai.player = null;
@@ -677,6 +698,20 @@ export class Walkthrough {
       moving = this.crawl ? 0.8 : hurry ? 1 : 0.45;
     }
     this.moving = moving > 0;
+    // a hull breach in space: the escaping air drags you towards the hole
+    if (w.vacuum && !this.downed) {
+      const s = suctionAt(sim, [this.pos.x, this.pos.y + 1, this.pos.z]);
+      const pull = 0.12 * dt;
+      for (const [ax, az] of [[s[0] * pull, 0], [0, s[2] * pull]]) {
+        if (!ax && !az) continue;
+        const nx = this.pos.x + Math.max(-0.3, Math.min(0.3, ax));
+        const nz = this.pos.z + Math.max(-0.3, Math.min(0.3, az));
+        const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
+        if (fl - this.pos.y > 0.42 || this.blocked(nx, nz, fl, eye)) continue;
+        this.pos.x = nx;
+        this.pos.z = nz;
+      }
+    }
     const floor = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
     this.pos.y += (floor - this.pos.y) * Math.min(1, dt * 10); // settle / fall onto the floor
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
@@ -703,6 +738,13 @@ export class Walkthrough {
 
     // --- what the fire does to you
     const exposure = this.downed ? null : this.body(dt, sim, cam, eye);
+    // no pressure: your breathing apparatus gives you air, but not pressure
+    this.cabinP = w.vacuum ? pressureAt(sim, [cam.position.x, cam.position.y, cam.position.z]) : 1;
+    if (this.cabinP < 0.35 && !this.downed) {
+      this.hurt((0.35 - this.cabinP) * 25 * dt);
+      if (!this.vacWarned) this.say('DECOMPRESSION – get behind a closed door!', 4);
+      this.vacWarned = true;
+    } else if (this.cabinP > 0.8) this.vacWarned = false;
 
     // --- conditions at the face
     const head = [cam.position.x, cam.position.y, cam.position.z];
@@ -786,6 +828,7 @@ export class Walkthrough {
     if (bar < 55) warn.push('LOW AIR – WITHDRAW');
     if (this.onFire > 0) warn.push('ON FIRE');
     if (this.health < 30) warn.push('HEALTH CRITICAL');
+    if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
     this.el.hud.innerHTML = `
