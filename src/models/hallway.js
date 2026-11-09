@@ -32,6 +32,7 @@ export default {
     cables: { value: true, label: 'Cable tray in the void' },
     doorsPerSide: { value: 3, min: 0, max: 8, step: 1, label: 'Doors per side' },
     rooms: { value: true, label: 'Offices behind the doors (one side)' },
+    lockedOffice: { value: 2, min: 0, max: 8, step: 1, label: 'Locked office (0 = none)' },
     roomDepth: { value: 3, min: 2, max: 6, step: 0.1, label: 'Office depth (m)' },
     sprinklers: { value: false, label: 'Sprinklers' },
     extinguisher: { value: 'foam', options: ['foam', 'powder', 'co2', 'water'], label: 'Wall extinguisher' },
@@ -121,7 +122,9 @@ export default {
         const real = s > 0 && p.rooms;
         prims.push(
           { shape: 'box', min: [x - 0.45, t * 1.01, zc - wt / 2 - 0.01], max: [x + 0.45, t + 2.05, zc + wt / 2 + 0.01], mode: real ? 'carve' : 'set', material: wall, density: wallD },
-          { shape: 'box', min: [x - 0.45, t * 1.01, zc - t / 2 - (real ? 0 : wt / 2)], max: [x + 0.45, t + 2.05, zc + t / 2 - (real ? 0 : wt / 2)], material: 'wood', density: thin(0.04), color: [0.55, 0.38, 0.22], ...(real ? { door: 'office ' + (k + 1) } : {}) },
+          { shape: 'box', min: [x - 0.45, t * 1.01, zc - t / 2 - (real ? 0 : wt / 2)], max: [x + 0.45, t + 2.05, zc + t / 2 - (real ? 0 : wt / 2)], material: 'wood', density: thin(0.04), color: [0.55, 0.38, 0.22], ...(real ? { door: 'office ' + (k + 1), doorLocked: p.lockedOffice === k + 1 } : {}) },
+          // a glass vision panel in the door
+          ...(real ? [{ shape: 'box', min: [x - 0.15, t + 1.2, zc - t / 2], max: [x + 0.15, t + 1.75, zc + t / 2], material: 'glass', density: thin(0.006), door: 'office ' + (k + 1), doorLocked: p.lockedOffice === k + 1 }] : []),
         );
       }
     }

@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { SoundScape } from '../audio/sound.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
-import { toggleDoor, nearestDoor } from '../sim/doors.js';
+import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
+import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
+import { Flight } from './flight.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -66,21 +68,32 @@ export class Walkthrough {
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.active || document.pointerLockElement !== canvas) return;
+      if (this.flight) return this.flight.mouse(e.movementX, e.movementY);
       this.yaw -= e.movementX * 0.0022;
       this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * 0.0022));
     });
     document.addEventListener('mousedown', (e) => {
       if (this.active && document.pointerLockElement === canvas && e.button === 0) {
-        if (this.tool === 'grenade') this.throwRequested = true;
+        if (this.flight) this.flight.fireRequested = true;
+        else if (this.tool === 'grenade') this.throwRequested = true;
+        else if (this.tool === 'bow') this.draw = 0;
         else this.spraying = true;
       }
     });
     document.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.spraying = false;
+      if (e.button === 0) {
+        this.spraying = false;
+        if (this.draw !== undefined) this.loose = true;
+      }
     });
     window.addEventListener('keydown', (e) => {
       if (!this.active) return;
       this.keys.add(e.code);
+      if (this.flight) {
+        if (e.code === 'KeyE') this.flight.tryExit();
+        if (e.code === 'Space') this.flight.fireRequested = true;
+        return;
+      }
       if (e.code === 'KeyC' || e.code === 'ControlLeft') this.toggleCrawl();
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
@@ -89,8 +102,10 @@ export class Walkthrough {
       if (e.code === 'Digit3') this.tool = 'grenade';
       if (e.code === 'Digit4' && this.ext) this.tool = 'ext';
       if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
+      if (e.code === 'Digit6') this.tool = 'bow';
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
+      if (e.code === 'KeyF') this.strike();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     document.getElementById('walkGo').addEventListener('click', () => this.resume());
@@ -148,6 +163,12 @@ export class Walkthrough {
     const sim = this.hooks.getSim();
     const w = sim.world;
     const p = [this.pos.x, this.pos.y + 1.1, this.pos.z];
+    // a hatch or ladder to another part of the ship
+    const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
+    if (pt && this.hooks.onPortal) return this.hooks.onPortal(pt);
+    // the jet: climb in
+    const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
+    if (veh) return this.board(veh);
     let best = null;
     let bd = 1.7;
     w.pickups.forEach((pk) => {
@@ -162,6 +183,15 @@ export class Walkthrough {
     if (dk >= 0) best = { door: dk };
     if (!best) return this.say('Nothing to use here');
     if (best.door !== undefined) {
+      const d0 = w.doors[best.door];
+      if (d0.locked && !d0.open) {
+        if (doorGlassBroken(w, best.door)) {
+          // reach through the broken glass and open it from the other side
+          this.arm = { mode: 'reach', t: 0, door: best.door };
+          return this.say('You reach through the broken glass for the handle…', 2);
+        }
+        return this.say(d0.glass?.length ? 'Locked. Break the glass (F) and reach through' : 'Locked', 3);
+      }
       toggleDoor(sim, best.door);
       const d = w.doors[best.door];
       this.sound.door?.();
@@ -182,11 +212,106 @@ export class Walkthrough {
     }
   }
 
+  /** Climb into the jet and fly it (see flight.js). */
+  board(vehicle) {
+    const sim = this.hooks.getSim();
+    this.spraying = false;
+    this.arm = null;
+    this.flight = new Flight(this, sim, vehicle);
+    this.el.mask.hidden = true;
+    this.lamp.intensity = 0;
+    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets', 6);
+  }
+
+  /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
+  endFlight(msg, at) {
+    this.flight = null;
+    this.el.mask.hidden = false;
+    const v = this.view;
+    v.camera.up.set(0, 1, 0);
+    const sim = this.hooks.getSim();
+    const w = sim.world;
+    const p = at ?? sim.spawn?.p ?? [w.size[0] * 0.1, 0, w.size[2] / 2];
+    this.pos.set(p[0], this.floorAt(p[0], p[2], Math.min(w.size[1], (p[1] ?? 0) + 3)), p[2]);
+    this.pitch = 0;
+    if (msg) this.say(msg, 5);
+  }
+
+  /** Arrive in another zone (after a hatch / ladder) at p, looking along yaw. */
+  arrive(p, yaw = 0) {
+    const w = this.hooks.getSim().world;
+    this.pos.set(p[0], this.floorAt(p[0], p[2], Math.min(w.size[1], p[1] + 1.5)), p[2]);
+    this.yaw = -Math.PI / 2 - yaw;
+    this.pitch = 0;
+    this.near = null;
+  }
+
+  /** F: strike what is in front of you (helmet, axe handle): glass breaks, loudly. */
+  strike() {
+    const sim = this.hooks.getSim();
+    const w = sim.world;
+    if (this.arm && this.arm.mode === 'reach') return;
+    this.arm = { mode: 'swing', t: 0 };
+    const v = this.view;
+    const rect = v.renderer.domElement.getBoundingClientRect();
+    const hit = v.pick(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!hit || hit.voxel < 0) return;
+    const head = v.camera.position;
+    if (Math.hypot(hit.point[0] - head.x, hit.point[1] - head.y, hit.point[2] - head.z) > 1.8) return;
+    const M = MATERIALS[w.mat[hit.voxel]];
+    if (M.shatterTemp !== Infinity) {
+      // the pane goes: everything of that glass around the impact
+      sim.forSphere(hit.point, 0.45, (i) => {
+        if (MATERIALS[w.mat[i]].shatterTemp !== Infinity) w.flags[i] |= 2 | F_BROKEN; // falling
+      });
+      w.structureDirty = true;
+      sim.glassNoise(hit.voxel);
+      this.sound.glass?.();
+      this.say('The glass shatters', 2);
+    } else {
+      w.crack[hit.voxel] += 0.15;
+      w.noises.push({ p: hit.point, loud: 8, time: w.time, kind: 'strike' });
+      this.sound.door?.();
+    }
+  }
+
   /** O: flood the room you are in with inert gas. */
   inert() {
     const sim = this.hooks.getSim();
     const r = sim.inertRoom([this.pos.x, this.pos.y + 1, this.pos.z]);
     this.say(r.open ? 'Inert gas released, but this space is open: it leaks away' : 'Room flooded with inert gas: the fire will starve (you are on breathing apparatus)', 5);
+  }
+
+  /** A gloved forearm in view (only while it does something). */
+  updateArm() {
+    if (!this.armMesh) {
+      const g = new THREE.Group();
+      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.42), new THREE.MeshStandardMaterial({ color: 0x5a4a22, roughness: 0.9 }));
+      sleeve.position.z = -0.21;
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.115, 0.04), new THREE.MeshStandardMaterial({ color: 0xd8d860, emissive: 0x303010 }));
+      band.position.z = -0.3;
+      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.13), new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 1 }));
+      glove.position.z = -0.48;
+      g.add(sleeve, band, glove);
+      g.visible = false;
+      this.view.camera.add(g);
+      this.armMesh = g;
+    }
+    const a = this.arm;
+    const g = this.armMesh;
+    g.visible = !!a;
+    if (!a) return;
+    if (a.mode === 'swing') {
+      const k = Math.sin(Math.min(1, a.t / 0.45) * Math.PI);
+      g.position.set(0.22 - 0.12 * k, -0.25 + 0.05 * k, -0.15 - 0.35 * k);
+      g.rotation.set(0.2 * k, 0.3 - 0.4 * k, 0);
+    } else {
+      // forward through the hole, a turn of the wrist, back
+      const t = a.t;
+      const out = t < 0.8 ? t / 0.8 : t < 1.5 ? 1 : Math.max(0, 1 - (t - 1.5) / 0.5);
+      g.position.set(0.12, -0.12 + 0.05 * out, -0.15 - 0.7 * out);
+      g.rotation.set(0, 0, t > 0.9 && t < 1.4 ? Math.sin((t - 0.9) * 12) * 0.6 : 0);
+    }
   }
 
   resetBody() {
@@ -436,7 +561,14 @@ export class Walkthrough {
 
   exit() {
     if (!this.active) return;
+    if (this.flight) {
+      this.flight.dispose();
+      this.flight = null;
+      this.view.camera.up.set(0, 1, 0);
+    }
     this.active = false;
+    const s0 = this.hooks.getSim();
+    if (s0?.ai) s0.ai.player = null;
     this.spraying = false;
     if (document.pointerLockElement) document.exitPointerLock();
     this.sound.stop();
@@ -495,6 +627,19 @@ export class Walkthrough {
     const v = this.view;
     dt = Math.min(dt, 0.1);
     const locked = document.pointerLockElement === v.renderer.domElement;
+    if (this.flight) {
+      this.flight.update(dt, locked ? this.keys : new Set());
+      if (sim.ai) sim.ai.player = null;
+      return;
+    }
+    // hints when you stand at a hatch or next to the jet
+    {
+      const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
+      const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
+      const near = pt ? `E: ${pt.label}` : veh ? 'E: climb into the jet' : null;
+      if (near && near !== this.near) this.say(near, 3);
+      this.near = near;
+    }
 
     // --- movement
     const eye = this.crawl ? EYE_CRAWL : EYE_STAND;
@@ -538,6 +683,21 @@ export class Walkthrough {
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     cam.updateMatrixWorld();
     this.lamp.intensity = this.lampOn ? 40 : 0;
+
+    // --- the arm: swinging a strike, or reaching through broken glass to the handle
+    if (this.arm) {
+      this.arm.t += dt;
+      if (this.arm.mode === 'reach' && this.arm.t > 1.4 && !this.arm.done) {
+        this.arm.done = true;
+        const d = w.doors[this.arm.door];
+        d.locked = false;
+        toggleDoor(sim, this.arm.door, true);
+        this.sound.door?.();
+        this.say(`${d.name}: unlocked from the inside and opened`, 3);
+      }
+      if (this.arm.t > (this.arm.mode === 'reach' ? 2 : 0.45)) this.arm = null;
+    }
+    this.updateArm();
 
     // --- what the fire does to you
     const exposure = this.downed ? null : this.body(dt, sim, cam, eye);
@@ -597,6 +757,19 @@ export class Walkthrough {
       this.torching = true;
       this.torchPos = p;
     }
+    // the bow: the longer you draw (up to 1.2 s), the faster the arrow
+    if (this.draw !== undefined) this.draw = Math.min(1.2, this.draw + dt);
+    if (this.loose) {
+      const k = Math.max(0.25, (this.draw ?? 0) / 1.2);
+      const v = 15 + 45 * k;
+      const from = [head[0] + aimFwd.x * 0.5, head[1] - 0.05 + aimFwd.y * 0.5, head[2] + aimFwd.z * 0.5];
+      sim.shootArrow(from, [aimFwd.x * v, aimFwd.y * v, aimFwd.z * v]);
+      this.sound.bow?.();
+      this.loose = false;
+      this.draw = undefined;
+    }
+    // where you are, for the enemies (they see your head)
+    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head };
     if (this.throwRequested) {
       this.throwRequested = false;
       const from = [head[0] + aimFwd.x * 0.4, head[1] - 0.1, head[2] + aimFwd.z * 0.4];
@@ -617,7 +790,7 @@ export class Walkthrough {
       <div class="bars"><span>AIR</span><div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
       <span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div>
       <span>VISOR</span><div class="air"><div class="fill" style="width:${(this.mask * 100).toFixed(0)}%;background:${this.mask < 0.3 ? '#ff4a3a' : '#c8c8c8'}"></div></div></div>
-      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL' }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
+      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}` }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
       ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
       ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
     if (this.el.burn) this.el.burn.style.opacity = this.onFire > 0 ? String(0.55 + 0.25 * Math.sin(w.time * 20)) : '0';
@@ -642,6 +815,7 @@ export class Walkthrough {
       events: w.events,
       onFire: this.onFire > 0,
       maskLeak: this.maskBurst,
+      enemies: w.enemies,
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });

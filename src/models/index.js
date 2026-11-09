@@ -10,6 +10,9 @@ import fence from './fence.js';
 import gasCylinder from './gasCylinder.js';
 import hallway from './hallway.js';
 import shipSection from './shipSection.js';
+import enemy from './enemy.js';
+import catacombs from './catacombs.js';
+import { carrierDeck, jet, carrierBelow } from './carrier.js';
 
 /**
  * Model registry. Every model is:
@@ -20,7 +23,7 @@ import shipSection from './shipSection.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow };
 
 export function resolveParams(model, given = {}) {
   const out = {};

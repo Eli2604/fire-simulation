@@ -1,0 +1,376 @@
+import { MATERIALS } from '../sim/materials.js';
+
+/**
+ * Enemies: people in the building who do not want to be found.
+ *
+ *  - They walk on the voxel world (paths over the floors and stairs, step-up
+ *    and drop limits), and their paths avoid hot and burning places: a cell's
+ *    cost rises with the gas temperature and flames.
+ *  - They see the player when there is a line of sight that is not blocked by
+ *    walls or thick smoke, and hear noises (breaking glass, blasts, impacts,
+ *    doors, the bow) within a range that depends on how loud they are.
+ *  - Patrol → investigate noises → when they spot the player they use the
+ *    room: they pick something flammable (paper, fabric, upholstery, wood,
+ *    cables...) in a place that will draw the player in, light it, shout and
+ *    pull back to hide. They flee from heat and smoke.
+ *  - Heat, flames (they catch fire), arrows, blasts and falling debris hurt them.
+ */
+const EYE = 1.6;
+const R = 0.25;
+const SPEED = 1.3;
+const RUN = 2.6;
+const FUELS = new Set(['paper', 'fabric', 'foam', 'wood', 'cable', 'grass', 'leaves', 'twigs', 'deadWood', 'plastic', 'shingles']);
+
+export class EnemyAI {
+  constructor(sim) {
+    this.sim = sim;
+    this.player = null; // set each frame by the walk-through: { p: [x,y,z] feet, head }
+    this.heardUpTo = 0;
+    sim.hitEnemy = (p, type) => this.hit(p, type);
+  }
+
+  get world() {
+    return this.sim.world;
+  }
+
+  solidAt(x, y, z) {
+    const w = this.world;
+    const i = w.voxelAt(x, y, z);
+    return i >= 0 && w.mat[i] !== 0 && !(MATERIALS[w.mat[i]].fluidity >= 0.95);
+  }
+
+  floorAt(x, z, from) {
+    const h = this.world.h;
+    for (let y = from; y > from - 3; y -= h * 0.5) if (this.solidAt(x, y - h * 0.25, z)) return Math.floor((y - h * 0.25) / h) * h + h;
+    return null;
+  }
+
+  blocked(x, z, y) {
+    const w = this.world;
+    if (x < R || z < R || x > w.size[0] - R || z > w.size[2] - R) return true;
+    for (let hy = y + 0.45; hy <= y + EYE + 0.15; hy += w.h)
+      for (const [dx, dz] of [[0, 0], [R, 0], [-R, 0], [0, R], [0, -R]]) if (this.solidAt(x + dx, hy, z + dz)) return true;
+    return false;
+  }
+
+  /** How unpleasant is it to stand here (heat, flames, smoke)? 0 = fine. */
+  hazard(x, y, z) {
+    const w = this.world;
+    const a = this.sim.airCellAt(x, y + 1.2, z);
+    if (a < 0) return 0;
+    return Math.max(0, (w.airT[a] - 45) / 25) + w.flame[a] * 25 + Math.min(3, (w.smoke[a] / w.ah ** 3) * 2000);
+  }
+
+  /** A* over a 0.4 m grid on the floors, avoiding hazards. Returns a list of points or null. */
+  path(from, to, maxNodes = 2500) {
+    const step = 0.4;
+    const key = (x, z, y) => `${Math.round(x / step)},${Math.round(z / step)},${Math.round(y / 0.5)}`;
+    const start = { x: from[0], y: from[1], z: from[2], g: 0, f: 0, prev: null };
+    const goal = to;
+    const open = [start];
+    const seen = new Map([[key(start.x, start.z, start.y), start]]);
+    let best = start;
+    let n = 0;
+    while (open.length && n++ < maxNodes) {
+      let bi = 0;
+      for (let k = 1; k < open.length; k++) if (open[k].f < open[bi].f) bi = k;
+      const cur = open.splice(bi, 1)[0];
+      const dg = Math.hypot(cur.x - goal[0], cur.z - goal[2], (cur.y - goal[1]) * 2);
+      if (dg < Math.hypot(best.x - goal[0], best.z - goal[2], (best.y - goal[1]) * 2)) best = cur;
+      if (dg < 0.6) {
+        best = cur;
+        break;
+      }
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const x = cur.x + dx * step;
+        const z = cur.z + dz * step;
+        const y = this.floorAt(x, z, cur.y + 0.5);
+        if (y === null || y - cur.y > 0.45 || cur.y - y > 1.2) continue;
+        if (this.blocked(x, z, y)) continue;
+        const k = key(x, z, y);
+        const g = cur.g + step * Math.hypot(dx, dz) * (1 + this.hazard(x, y, z));
+        const old = seen.get(k);
+        if (old && old.g <= g) continue;
+        const node = { x, y, z, g, f: g + Math.hypot(x - goal[0], z - goal[2], (y - goal[1]) * 2), prev: cur };
+        seen.set(k, node);
+        open.push(node);
+      }
+    }
+    if (best === start) return null;
+    const pts = [];
+    for (let c = best; c; c = c.prev) pts.push([c.x, c.y, c.z]);
+    return pts.reverse();
+  }
+
+  /** Line of sight from a to b, blocked by solids and thick smoke. */
+  sees(a, b) {
+    const w = this.world;
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    if (d > 22) return false;
+    const n = Math.ceil(d / 0.25);
+    let tau = 0;
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+      if (this.solidAt(...p)) return false;
+      const c = this.sim.airCellAt(...p);
+      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * (d / n);
+      if (tau > 2.5) return false;
+    }
+    return true;
+  }
+
+  step(dt) {
+    const w = this.world;
+    const pl = this.player;
+    // new noises since last time
+    const noises = w.noises.filter((e) => e.time >= this.heardUpTo);
+    this.heardUpTo = w.time;
+    if (w.noises.length > 200) w.noises.splice(0, w.noises.length - 100);
+    for (const e of w.enemies) {
+      if (e.dead) continue;
+      e.timer = (e.timer ?? 0) - dt;
+      e.lureCooldown = (e.lureCooldown ?? 10 + Math.random() * 10) - dt;
+      e.repath = (e.repath ?? 0) - dt;
+      const head = [e.p[0], e.p[1] + EYE, e.p[2]];
+      // --- hurt by heat and flames, catch fire
+      const a = this.sim.airCellAt(e.p[0], e.p[1] + 1, e.p[2]);
+      if (a >= 0) {
+        const T = w.airT[a];
+        if (T > 60) this.damage(e, ((T - 60) / 12) * dt);
+        if (w.flame[a] > 0.3 && !e.onFire && Math.random() < dt * 2) e.onFire = 12;
+      }
+      if (e.onFire > 0) {
+        e.onFire -= dt;
+        this.damage(e, 8 * dt);
+        e.state = 'flee';
+      }
+      if (e.dead) continue;
+      // --- senses
+      const seesPlayer = pl && this.sees(head, pl.head);
+      if (seesPlayer) {
+        e.lastSeen = pl.p.slice();
+        if (!e.alerted) {
+          e.alerted = true;
+          w.events.push({ type: 'shout', pos: head, time: w.time, name: 'enemy' });
+        }
+      }
+      for (const n of noises) {
+        const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
+        if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy') {
+          e.state = 'investigate';
+          e.goal = n.p.slice();
+          e.repath = 0;
+        }
+      }
+      // --- danger first: get out of heat and smoke
+      const hz = this.hazard(...e.p);
+      if (hz > 1) {
+        e.state = 'flee';
+        if (e.repath <= 0) {
+          e.goal = this.coolerSpot(e.p);
+          e.repath = 1.5;
+          e.route = e.goal ? this.path(e.p, e.goal, 1200) : null;
+        }
+      } else if (e.state === 'flee' && !(e.onFire > 0)) e.state = 'patrol';
+      // --- decide
+      if (e.state !== 'flee') {
+        if (seesPlayer && e.lureCooldown <= 0 && e.state !== 'lure' && e.state !== 'retreat') {
+          const fuel = this.lureSpot(e, pl);
+          if (fuel) {
+            e.state = 'lure';
+            e.fuel = fuel;
+            e.goal = fuel.stand;
+            e.repath = 0;
+          }
+        }
+        if (seesPlayer && e.state === 'patrol') {
+          // keep away from the player
+          const d = Math.hypot(pl.p[0] - e.p[0], pl.p[2] - e.p[2]);
+          if (d < 8) {
+            e.state = 'retreat';
+            e.goal = this.awayFrom(e.p, pl.p, 10);
+            e.repath = 0;
+          }
+        }
+        if (e.state === 'patrol' && (!e.goal || e.timer <= 0)) {
+          e.goal = [e.home[0] + (Math.random() - 0.5) * 12, e.home[1], e.home[2] + (Math.random() - 0.5) * 12];
+          e.timer = 6 + Math.random() * 6;
+          e.repath = 0;
+        }
+        if (e.repath <= 0 && e.goal) {
+          e.route = this.path(e.p, e.goal);
+          e.repath = e.state === 'lure' ? 2 : 3;
+        }
+      }
+      // --- arrived?
+      const atGoal = e.goal && Math.hypot(e.goal[0] - e.p[0], e.goal[2] - e.p[2]) < 0.7;
+      if (atGoal) {
+        if (e.state === 'lure' && e.fuel) {
+          // light it, shout to draw the player in, then pull back
+          this.sim.ignite(e.fuel.p, 0.35);
+          this.sim.addTorch(e.fuel.p, 4000, 12, 0.15);
+          w.events.push({ type: 'enemyFire', pos: e.fuel.p, time: w.time, name: 'enemy' });
+          w.noises.push({ p: e.fuel.p.slice(), loud: 25, time: w.time, kind: 'enemy' });
+          e.lureCooldown = 40 + Math.random() * 20;
+          e.state = 'retreat';
+          e.goal = this.awayFrom(e.p, e.fuel.p, 10, pl?.p);
+          e.fuel = null;
+          e.repath = 0;
+        } else if (e.state === 'investigate' || e.state === 'retreat') {
+          e.state = 'patrol';
+          e.timer = 3 + Math.random() * 3;
+        }
+      }
+      // --- walk along the route
+      this.move(e, dt, e.state === 'flee' || e.state === 'retreat' ? RUN : SPEED);
+    }
+  }
+
+  move(e, dt, speed) {
+    const route = e.route;
+    e.moving = false;
+    if (!route || !route.length) return;
+    let target = route[0];
+    while (route.length > 1 && Math.hypot(target[0] - e.p[0], target[2] - e.p[2]) < 0.25) {
+      route.shift();
+      target = route[0];
+    }
+    const dx = target[0] - e.p[0];
+    const dz = target[2] - e.p[2];
+    const d = Math.hypot(dx, dz);
+    if (d < 0.05) return;
+    const s = Math.min(d, speed * dt);
+    const nx = e.p[0] + (dx / d) * s;
+    const nz = e.p[2] + (dz / d) * s;
+    const fy = this.floorAt(nx, nz, e.p[1] + 0.5);
+    if (fy === null || fy - e.p[1] > 0.45 || this.blocked(nx, nz, fy)) {
+      e.repath = 0; // something changed (a door closed, debris): plan again
+      return;
+    }
+    e.p = [nx, e.p[1] + (fy - e.p[1]) * Math.min(1, dt * 10), nz];
+    e.yaw = Math.atan2(dx, dz);
+    e.moving = true;
+    e.walkPhase = (e.walkPhase ?? 0) + s * 4;
+  }
+
+  /** Something flammable, reachable, that will draw the player in (not on top of them). */
+  lureSpot(e, pl) {
+    const w = this.world;
+    let best = null;
+    let bs = Infinity;
+    const h = w.h;
+    for (let k = 0; k < w.solidCount; k += 3) {
+      const i = w.solids[k];
+      const M = MATERIALS[w.mat[i]];
+      if (!FUELS.has(M.name) || w.expo[i] === 0 || w.flags[i] & 8) continue;
+      const c = w.center(...w.coords(i));
+      const de = Math.hypot(c[0] - e.p[0], c[2] - e.p[2]);
+      if (de > 12 || Math.abs(c[1] - e.p[1]) > 2.5) continue;
+      const dp = Math.hypot(c[0] - pl.p[0], c[2] - pl.p[2]);
+      if (dp < 3) continue;
+      const score = de + 0.7 * Math.abs(dp - 7);
+      if (score < bs) {
+        bs = score;
+        best = c;
+      }
+    }
+    if (!best) return null;
+    // a place to stand next to it
+    for (const [dx, dz] of [[0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6], [0.5, 0.5], [-0.5, -0.5]]) {
+      const x = best[0] + dx;
+      const z = best[2] + dz;
+      const y = this.floorAt(x, z, best[1] + 1);
+      if (y !== null && !this.blocked(x, z, y)) return { p: best, stand: [x, y, z] };
+    }
+    void h;
+    return null;
+  }
+
+  awayFrom(p, from, dist, also) {
+    let best = null;
+    let bs = -Infinity;
+    for (let k = 0; k < 16; k++) {
+      const ang = (k / 16) * Math.PI * 2;
+      const x = p[0] + Math.cos(ang) * dist;
+      const z = p[2] + Math.sin(ang) * dist;
+      const y = this.floorAt(x, z, p[1] + 1);
+      if (y === null || this.blocked(x, z, y)) continue;
+      const s = Math.hypot(x - from[0], z - from[2]) + (also ? 0.5 * Math.hypot(x - also[0], z - also[2]) : 0) - this.hazard(x, y, z) * 5;
+      if (s > bs) {
+        bs = s;
+        best = [x, y, z];
+      }
+    }
+    return best ?? p;
+  }
+
+  coolerSpot(p) {
+    let best = null;
+    let bh = this.hazard(...p);
+    for (let r = 1.5; r <= 9; r += 2.5)
+      for (let k = 0; k < 12; k++) {
+        const ang = (k / 12) * Math.PI * 2;
+        const x = p[0] + Math.cos(ang) * r;
+        const z = p[2] + Math.sin(ang) * r;
+        const y = this.floorAt(x, z, p[1] + 1);
+        if (y === null || this.blocked(x, z, y)) continue;
+        const hz = this.hazard(x, y, z);
+        if (hz < bh) {
+          bh = hz;
+          best = [x, y, z];
+        }
+      }
+    return best;
+  }
+
+  damage(e, amount) {
+    if (e.dead) return;
+    e.health -= amount;
+    if (e.health <= 0) {
+      e.dead = true;
+      e.health = 0;
+      this.world.events.push({ type: 'enemyDown', pos: e.p.slice(), time: this.world.time, name: 'enemy' });
+    }
+  }
+
+  /** A projectile at p: did it hit someone? */
+  hit(p, type) {
+    for (const e of this.world.enemies) {
+      if (e.dead) continue;
+      if (Math.hypot(p[0] - e.p[0], p[2] - e.p[2]) < 0.35 && p[1] > e.p[1] && p[1] < e.p[1] + 1.85) {
+        this.damage(e, type === 'arrow' ? 45 : 200);
+        if (type === 'arrow') e.onFire = 10;
+        e.state = 'flee';
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** A blast: hurts everyone in range. */
+  blast(center, radius) {
+    for (const e of this.world.enemies) {
+      const d = Math.hypot(center[0] - e.p[0], center[1] - (e.p[1] + 1), center[2] - e.p[2]);
+      if (d < radius * 1.5) this.damage(e, 160 * (1 - d / (radius * 1.5)));
+    }
+  }
+
+  /** Falling / flying debris near someone. */
+  debrisHits() {
+    const w = this.world;
+    for (const e of w.enemies) {
+      if (e.dead) continue;
+      for (const d of w.debris) {
+        if (d.flake || d.hitEnemy) continue;
+        const v = Math.hypot(...d.v);
+        if (v < 3) continue;
+        if (Math.hypot(d.p[0] - e.p[0], d.p[2] - e.p[2]) < 0.35 && d.p[1] > e.p[1] && d.p[1] < e.p[1] + 1.8) {
+          const m = MATERIALS[d.mat].density * d.dens * w.h ** 3;
+          this.damage(e, Math.min(100, (0.5 * m * v * v) / 8));
+          d.hitEnemy = true;
+        }
+      }
+    }
+  }
+}

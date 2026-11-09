@@ -279,6 +279,37 @@ function rupture(sim, v, a, gauge, Tf) {
   w.events.push({ type: 'explosion', pos: center, time: w.time, energy: E, radius: blastR, name: v.name, pressure: gauge });
 }
 
+/**
+ * A fragment hits something: its kinetic energy ½mv² breaks glass, cracks
+ * brittle material and knocks ceiling tiles / boards down; a burning piece
+ * starts a spot fire where it lands. Loud impacts are heard by enemies.
+ */
+function impact(sim, d, x, y, z, M) {
+  const w = sim.world;
+  const m = M.density * d.dens * w.h ** 3;
+  const E = 0.5 * m * (d.v[0] ** 2 + d.v[1] ** 2 + d.v[2] ** 2);
+  d.impactE = E;
+  if (y >= 0 && y < w.ny && x >= 0 && z >= 0 && x < w.nx && z < w.nz) {
+    const j = w.idx(x, y, z);
+    const T = MATERIALS[w.mat[j]];
+    if (w.mat[j] && !(w.flags[j] & F_ANCHOR)) {
+      if (T.shatterTemp !== Infinity && E > 5) {
+        w.flags[j] |= F_FALLING;
+        sim.glassNoise?.(j);
+      } else if ((T.brittle || T.wetFail !== Infinity) && E > 20) {
+        w.crack[j] += E / 400;
+        if (w.crack[j] >= 1) w.flags[j] |= F_FALLING;
+      }
+      w.structureDirty = true;
+    }
+  }
+  if (d.flags & F_BURNING && M.combustible) sim.ignite(d.p, w.h * 1.2);
+  if (E > 50) {
+    w.noises.push({ p: d.p.slice(), loud: Math.min(40, 5 + Math.sqrt(E) * 0.5), time: w.time, kind: 'impact' });
+    if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label });
+  }
+}
+
 /** Take a voxel out of the grid and make it a flying fragment. */
 export function launchVoxel(w, i, vel) {
   if (!w.mat[i]) return;
@@ -336,6 +367,7 @@ export function stepDebris(sim, dt) {
       if (y < 1 || w.mat[w.idx(x, y, z)]) {
         landed = true;
         if (d.flake) break; // paint flakes just settle, they do not become voxels
+        impact(sim, d, x, y, z, M);
         let px = Math.floor(prev[0] / h);
         let py = Math.max(1, Math.floor(prev[1] / h));
         let pz = Math.floor(prev[2] / h);

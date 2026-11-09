@@ -25,8 +25,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 - **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
-  oak, willow and pine in a grass fire, a fire below the waterline of a ship, a house fire in the
-  rain.
+  oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs lit by
+  wall torches (with enemies), an aircraft carrier (flight deck with a flyable jet, and below
+  deck a server room), a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -66,12 +67,18 @@ Press **Walk through as a firefighter** (made for the hallway scenario, but it w
 scene). You walk in first person wearing breathing apparatus:
 
 - **Interacting:** **E** opens or closes the nearest door, or picks up the wall extinguisher
-  (slot 4) or the hose reel (slot 5, which only reaches as far as its 30 m hose). **O**
-  floods the room you are in with inert gas.
+  (slot 4) or the hose reel (slot 5, which only reaches as far as its 30 m hose). It also
+  climbs through a hatch or ladder into another part of a ship, or into the jet. **O**
+  floods the room you are in with inert gas. **F** strikes what is in front of you, which
+  breaks glass loudly. At a locked door with a glass panel, break the glass and press E:
+  your arm reaches through and opens the door from the other side.
 - **Controls:** WASD to move, the mouse to look, Shift to hurry, and **C to crawl**. Below
   the smoke layer you can see further and it is cooler.
 - **Handheld tools:** 1 / 2 / 3 select the hose (fog nozzle), the fire torch or a hand
-  grenade, and the left mouse button uses them.
+  grenade, and the left mouse button uses them. **6 is a bow with fire arrows**: hold the
+  button to draw (a longer draw shoots faster) and release to shoot. An arrow sticks in what
+  it hits and sets it alight (it burns about 25 s), goes through windows and breaks them,
+  and wounds enemies.
 - **T** toggles the thermal imaging camera, which sees through smoke. **L** toggles the
   helmet lamp.
 - **Health:** hot gas and radiant heat get through the turnout gear, flames can set your gear
@@ -87,7 +94,49 @@ scene). You walk in first person wearing breathing apparatus:
 - **Sound:** generated live, with no audio files: the breathing apparatus (demand-valve
   click, inhale, exhale; faster when you work hard or get hot), positional fire roar and
   crackle, the hiss of a gas jet, the hose, the low-air whistle, a heartbeat under heat
-  stress, and blasts.
+  stress, blasts, breaking glass, the bow, enemies' footsteps and shouts, and the jet engine.
+
+### Enemies
+
+Some scenes (the catacombs, below deck on the carrier) have people hiding in them. They:
+
+- patrol, and **hear noises**: breaking glass, doors, explosions, arrows hitting, rockets.
+  They go to look where a noise came from. Loud noises carry further.
+- **see you** unless smoke or walls are in the way. They shout, keep their distance, and
+  try to **lure you** by lighting something nearby (rags, coffins, boxes) with a torch, out
+  of your reach, and then pull back.
+- **avoid fire**: their path finding (A* on a 0.4 m grid) treats hot gas, flames and thick
+  smoke as costly. They flee from heat, and catch fire and burn like you do.
+- are hurt by arrows, rockets, blasts, heat and **falling debris**. A branch or ceiling
+  part hits with its real mass and speed (½·m·v²), so a burnt-off oak limb is dangerous.
+  The same applies to you.
+
+### Flying the jet (carrier scenario)
+
+Walk up to the jet on the flight deck and press **E**. W/S sets the throttle (on the deck,
+full throttle fires the catapult), the mouse pitches and rolls, A/D works the rudder, and
+**Space or a click fires a rocket** from under the wings. Rockets use `sim.fireRocket`: a
+motor for 3 s, then they explode on impact, so they can set the deck, the island or another
+part of the ship on fire. Lift grows with the square of the speed, so the jet sinks when
+slow. Banking turns it. Landing too hard, or flying into the sea or the island, is a crash:
+the fuel explodes and burns and you eject. To land, stop on the deck (S brakes) and press
+**E**. The jet becomes voxels again where it stands, and it can burn and explode like
+everything else.
+
+### Zones: big scenes without simulating everything at once
+
+The carrier is split into **zones**: the flight deck (0.4 m voxels, ~20k solids, ~14 ms per
+step) and below deck (0.2 m voxels, corridors, mess, berthing, store room and server room,
+~70k solids, ~25 ms per step). Only the zone you are in is built and simulated. The other
+is built the first time you go there (through the hatch next to the island, or up the
+ladder) and is frozen while you are away. Fire, smoke and damage are kept when you come
+back.
+
+The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
+and a locked glass door. A rack catches fire after 25 s (an electrical fault). A heat
+detector under the ceiling releases the **inert-gas system** at 57 °C. This floods the
+room down to ~3 % oxygen and puts the fire out, but only if the door is shut. With the door
+open (or the glass broken) the gas escapes and the fire keeps burning.
 
 ## Models and their parameters
 
@@ -104,6 +153,11 @@ scene). You walk in first person wearing breathing apparatus:
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
 | Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
+| Catacombs | passages along x and z, spacing, width and height, torch spacing, entrance open or closed, seed. Vaulted stone passages, domed chambers with coffins, burial niches with bones and rags, wooden doors (one locked), burning torches on the walls that light the passages |
+| Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
+| Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
+| Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
+| Enemies | number, spread, floor height, seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
@@ -301,6 +355,23 @@ the simulation itself to the GPU (WebGPU compute) for larger scenes.
 }
 ```
 
+Objects can stand on something with `"y"` (metres above the ground, e.g. the jet on the
+flight deck). A scene can be split into **zones** instead of having one `world` and
+`objects`:
+
+```jsonc
+{
+  "name": "Carrier", "weather": { … }, "startZone": "deck",
+  "zones": {
+    "deck":  { "name": "Flight deck", "world": { … }, "view": { … }, "objects": [ … ] },
+    "below": { "name": "Below deck",  "world": { … }, "view": { … }, "objects": [ … ] }
+  }
+}
+```
+
+Models connect zones with `portals` (`{ p, r, to: "below", label }`). Pressing E there
+switches to that zone.
+
 ## Project layout
 
 ```
@@ -308,7 +379,10 @@ src/sim/        simulation (no dependencies): materials, world grid, solid + air
 src/models/     parameterised models and the voxeliser
 src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, particle or
                 volumetric smoke/steam, rain, extinguisher spray, debris, view
-src/main.js     app, controls panel, HUD, tools
+src/ai/         enemies: senses, path finding around fire, luring with fire
+src/walk/       first-person walk-through (firefighter), flying the jet
+src/audio/      procedural sound
+src/main.js     app, controls panel, HUD, tools, zones
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers
 test/           node:test suites

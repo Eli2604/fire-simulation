@@ -5,6 +5,7 @@ import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepProjectiles, stepGasPipes } from './explosions.js';
 import { stepSprinklers, stepWater, stepFlood, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
+import { EnemyAI } from '../ai/enemies.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -63,6 +64,7 @@ export class Simulation {
     this.burnouts = [];
     this.movers = [];
     if (world.listDirty) world.rebuildLists();
+    this.ai = new EnemyAI(this);
   }
 
   rand() {
@@ -123,6 +125,21 @@ export class Simulation {
     stepProjectiles(this, dt);
     stepWater(this, dt);
     stepFlood(this, dt);
+    // automatic inert-gas systems (server rooms): a heat detector under the ceiling
+    // releases the gas once; it only works if the room is closed
+    for (const s of w.inertSystems) {
+      if (s.fired) continue;
+      const a = this.airCellAt(...s.p);
+      if (a < 0 || w.airT[a] < s.trigger) continue;
+      s.fired = true;
+      s.result = this.inertRoom(s.p);
+      w.events.push({ type: 'inertSystem', pos: s.p.slice(), time: w.time, name: `${s.label ?? 'inert-gas system'} released${s.result.open ? ' (room open: the gas escapes)' : ''}` });
+      w.noises.push({ p: s.p.slice(), loud: 40, time: w.time, kind: 'gas' });
+    }
+    if (w.enemies.length) {
+      this.ai.step(dt);
+      this.ai.debrisHits();
+    }
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     // jet flames from vents and fireballs count as heat release too
     let extra = this.stats.ventHrr;
@@ -356,6 +373,8 @@ export class Simulation {
       if (ht.start !== undefined && !ht.started) {
         ht.started = true;
         w.events.push({ type: ht.event ?? 'ignition', pos: ht.pos.slice(), time: w.time, name: ht.label ?? 'source' });
+        // an electrical fault sets what it touches alight
+        if (ht.igniteRadius) this.ignite(ht.pos, ht.igniteRadius);
       }
       const [px, py, pz] = ht.pos;
       const r = Math.max(ht.radius, ah * 0.5);
@@ -795,6 +814,7 @@ export class Simulation {
       if (Thot > M.shatterTemp && !(f & (F_FALLING | F_LIQUID)) && this.rand() < dt * 0.08) {
         f |= F_FALLING;
         w.structureDirty = true;
+        this.glassNoise(i);
       }
       // --- fire resistance breakdown: thin steel buckles, tile binder burns out,
       // calcined plasterboard crumbles: the part breaks away (and may bring
@@ -1005,6 +1025,15 @@ export class Simulation {
     s.liquid = liquids;
   }
 
+  /** Breaking glass is loud: one noise (and sound) per spot and moment. */
+  glassNoise(i) {
+    const w = this.world;
+    const p = w.center(...w.coords(i));
+    for (const e of w.noises) if (e.kind === 'glass' && w.time - e.time < 0.5 && Math.hypot(e.p[0] - p[0], e.p[1] - p[1], e.p[2] - p[2]) < 1.5) return;
+    w.noises.push({ p, loud: 30, time: w.time, kind: 'glass' });
+    w.events.push({ type: 'glass', pos: p, time: w.time, name: 'glass' });
+  }
+
   /** Burst a spalling piece off a concrete surface, away from the wall. */
   spall(i) {
     const w = this.world;
@@ -1098,13 +1127,37 @@ export class Simulation {
   structure(dt) {
     const w = this.world;
     if (w.listDirty) w.rebuildLists();
-    const { nx, ny, nz, mat, flags, solids } = w;
-    const n = w.solidCount;
+    let { solids } = w;
+    const { nx, ny, nz, mat, flags } = w;
+    let n = w.solidCount;
     const nxy = nx * ny;
 
     if (w.structureDirty && w.time - this.lastStructureCheck > 0.5) {
       this.checkSupport();
       this.lastStructureCheck = w.time;
+    }
+
+    // Pieces that broke loose fall under gravity as real fragments (with speed, so
+    // their impact counts); a very large collapse still slides down cell by cell.
+    {
+      const loose = [];
+      for (let k = 0; k < n; k++) {
+        const i = solids[k];
+        const f = flags[i];
+        if (f & F_FALLING && !(f & F_LIQUID) && !MATERIALS[mat[i]].granular) loose.push(i);
+      }
+      if (loose.length && loose.length <= 2500) {
+        for (const i of loose) {
+          // broken glass shatters into shards that scatter and settle (they do not
+          // land back in the frame as a new pane)
+          const glass = MATERIALS[mat[i]].shatterTemp !== Infinity;
+          launchVoxel(w, i, glass ? [(this.rand() - 0.5) * 2, 0.5, (this.rand() - 0.5) * 2] : [(this.rand() - 0.5) * 0.3, 0, (this.rand() - 0.5) * 0.3]);
+          if (glass && w.debris.length) w.debris[w.debris.length - 1].flake = true;
+        }
+        w.rebuildLists();
+        solids = w.solids;
+        n = w.solidCount;
+      }
     }
 
     // collect movers
@@ -1259,6 +1312,18 @@ export class Simulation {
   /** Throw a hand grenade (energy in J; ~0.18 kg of explosive ≈ 0.8 MJ). */
   throwGrenade(from, vel, energy = 8e5, fuse = 2.5) {
     this.world.projectiles.push({ p: from.slice(), v: vel.slice(), fuse, energy, resting: false });
+  }
+
+  /** A fire arrow from p with velocity v (m/s). */
+  shootArrow(from, vel) {
+    this.world.projectiles.push({ type: 'arrow', p: from.slice(), v: vel.slice(), resting: false });
+    this.world.noises.push({ p: from.slice(), loud: 4, time: this.world.time, kind: 'bow' });
+  }
+
+  /** A rocket: motor for a few seconds, explodes on impact (energy J). */
+  fireRocket(from, vel, energy = 1.5e6) {
+    this.world.projectiles.push({ type: 'rocket', p: from.slice(), v: vel.slice(), resting: false, energy, burn: 3 });
+    this.world.noises.push({ p: from.slice(), loud: 60, time: this.world.time, kind: 'rocket' });
   }
 
   /** A hand-held fire torch: a burning jet that follows the aim point while held. */

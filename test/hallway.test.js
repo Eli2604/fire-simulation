@@ -58,7 +58,8 @@ test('tiles rest on the grid: a tile panel falls when its grid is gone', () => {
   }
   sim.lastStructureCheck = -1e9;
   sim.step(sim.dt);
-  const falling = count(w, MAT.ceilingTile, (i) => w.flags[i] & F_FALLING);
+  // loose pieces fall as debris (with real speed) or, in a big collapse, cell by cell
+  const falling = count(w, MAT.ceilingTile, (i) => w.flags[i] & F_FALLING) + w.debris.filter((d) => d.mat === MAT.ceilingTile).length;
   assert.ok(falling > 100, `${falling} tile voxels falling`);
 });
 

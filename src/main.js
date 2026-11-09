@@ -47,10 +47,50 @@ let speed = 0;
 const tank = { remaining: AGENTS.water.capacity }; // the extinguisher in your hand
 let spraying = false;
 let lastAim = null;
+// a scene split into zones (carrier: flight deck / below deck): only the zone you
+// are in is simulated; the others are built when you first go there, then frozen
+let zoneSims = {};
+
+/** Make zone `name` the scene's current world/objects/view (what the GUI edits). */
+function useZone(name) {
+  const zd = scene.zones[name];
+  scene.zone = name;
+  scene.world = zd.world;
+  scene.objects = zd.objects;
+  scene.view = zd.view ?? scene.view;
+  for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
+}
+
+/** Through a hatch / up a ladder into another zone. */
+function switchZone(pt) {
+  if (!scene.zones?.[pt.to]) return;
+  const from = scene.zone;
+  zoneSims[from] = sim; // frozen while you are away
+  useZone(pt.to);
+  const zd = scene.zones[pt.to];
+  sim = zoneSims[pt.to] ??= createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather });
+  sim.weather = weather;
+  view.dark = !!zd.view?.dark;
+  view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
+  view.markers.visible = state.markers;
+  view.applyWeather(weather);
+  view.voxels.mode = state.mode;
+  const back = sim.world.portals.find((q) => q.to === from);
+  const sp = sim.spawn ?? { p: back?.p ?? [sim.world.size[0] / 2, 0, sim.world.size[2] / 2], yaw: 0 };
+  walk.arrive(sp.p, sp.yaw ?? 0);
+  walk.say(zd.name, 3);
+  $('title').textContent = `${scene.name} – ${zd.name}`;
+  buildObjectsFolder();
+}
 
 // ---------------------------------------------------------------------------
 function load(desc, fresh = true) {
   scene = desc;
+  if (scene.zones) {
+    // a restart rebuilds the zone you are in; the others are built again when you go there
+    zoneSims = {};
+    useZone(fresh ? scene.startZone ?? Object.keys(scene.zones)[0] : scene.zone);
+  }
   const wanted = { ...(scene.weather ?? {}) }; // copy first: on restart this is `weather` itself
   weather = Object.assign(weather, defaultWeather(), wanted);
   scene.weather = weather;
@@ -58,6 +98,7 @@ function load(desc, fresh = true) {
   sim = createSimulation(scene);
   sim.weather = weather;
   if (walk?.active) walk.exit();
+  view.dark = !!scene.view?.dark;
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
   view.markers.visible = state.markers;
   view.applyWeather(weather);
@@ -71,7 +112,7 @@ function load(desc, fresh = true) {
   view.voxels.mode = state.mode;
   inspected = -1;
   $('inspect').hidden = true;
-  $('title').textContent = scene.name ?? 'Custom scene';
+  $('title').textContent = (scene.name ?? 'Custom scene') + (scene.zones ? ` – ${scene.zones[scene.zone].name}` : '');
   $('desc').textContent = scene.description ?? '';
   gui.controllersRecursive().forEach((c) => c.updateDisplay());
   buildObjectsFolder();
@@ -314,7 +355,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', shout: 'shouted: they have seen you' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
@@ -495,6 +536,7 @@ function frame(now) {
 // Firefighter walk-through
 const walk = new Walkthrough(view, {
   getSim: () => sim,
+  onPortal: (pt) => switchZone(pt),
   // a thermal imaging camera sees heat, and sees through smoke
   onThermal: (on) => {
     view.voxels.mode = on ? 'thermal' : state.mode;

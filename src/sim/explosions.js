@@ -67,6 +67,8 @@ export function explode(sim, center, E, opts = {}) {
   w.structureDirty = true;
   w.listDirty = true;
   w.events.push({ type: 'explosion', pos: center, time: w.time, energy: E, radius: blastR, name: opts.name ?? 'grenade' });
+  w.noises.push({ p: center.slice(), loud: 80, time: w.time, kind: 'explosion' });
+  sim.ai?.blast(center, blastR);
 }
 
 /** Burst a gas pipe at its voxel closest to `p`, if within `range`. */
@@ -113,33 +115,98 @@ export function stepGasPipes(sim) {
   }
 }
 
-/** Thrown hand grenades: fly, come to rest where they hit, explode when the fuse runs out. */
+/**
+ * Projectiles:
+ *  grenade  thrown; comes to rest where it hits, explodes when the fuse runs out
+ *  arrow    a fire arrow: burns in flight, sticks where it hits and sets it alight,
+ *           wounds and ignites an enemy it hits; burns out after ~25 s
+ *  rocket   thrust for a few seconds, explodes on impact (outside the simulated
+ *           area it is only drawn)
+ */
 export function stepProjectiles(sim, dt) {
   const w = sim.world;
   if (!w.projectiles.length) return;
   const h = w.h;
   const keep = [];
+  const inside = (p) => p[0] >= 0 && p[2] >= 0 && p[1] >= 0 && p[0] < w.size[0] && p[2] < w.size[2] && p[1] < w.size[1];
   for (const g of w.projectiles) {
-    g.fuse -= dt;
+    const type = g.type ?? 'grenade';
+    g.age = (g.age ?? 0) + dt;
+    if (g.fuse !== undefined) g.fuse -= dt;
+    let hit = false;
     if (!g.resting) {
-      const steps = Math.max(1, Math.ceil((Math.hypot(...g.v) * dt) / (0.5 * h)));
+      const steps = Math.min(60, Math.max(1, Math.ceil((Math.hypot(...g.v) * dt) / (0.5 * h))));
       for (let s = 0; s < steps; s++) {
-        g.v[1] -= 9.81 * (dt / steps);
+        const sdt = dt / steps;
+        if (type === 'rocket' && g.age < (g.burn ?? 3)) {
+          const sp = Math.hypot(...g.v) || 1;
+          for (let c = 0; c < 3; c++) g.v[c] += (g.v[c] / sp) * 60 * sdt; // motor
+        }
+        g.v[1] -= 9.81 * sdt;
+        if (type === 'arrow') for (let c = 0; c < 3; c++) g.v[c] *= 1 - 0.02 * sdt;
         const prev = g.p.slice();
-        for (let c = 0; c < 3; c++) g.p[c] += g.v[c] * (dt / steps);
-        const i = w.voxelAt(...g.p);
-        if (g.p[1] < h || (i >= 0 && w.mat[i])) {
-          g.p = prev;
-          g.v = [0, 0, 0];
-          g.resting = true;
+        for (let c = 0; c < 3; c++) g.p[c] += g.v[c] * sdt;
+        // enemies in the way
+        if (type !== 'grenade' && sim.hitEnemy && sim.hitEnemy(g.p, type, g)) {
+          hit = true;
+          g.gone = type === 'arrow';
           break;
         }
-        if (g.p[0] < 0 || g.p[2] < 0 || g.p[0] > w.size[0] || g.p[2] > w.size[2]) g.gone = true;
+        if (!inside(g.p)) {
+          if (type !== 'rocket' || g.age > 12 || g.p[1] < 0) g.gone = true;
+          continue;
+        }
+        const i = w.voxelAt(...g.p);
+        if (g.p[1] < h * (w.sea ? 0 : 1) || (i >= 0 && w.mat[i])) {
+          if (type === 'arrow' && i >= 0 && w.mat[i] && MATERIALS[w.mat[i]].shatterTemp !== Infinity) {
+            // an arrow goes through glass and breaks it
+            w.flags[i] |= F_FALLING;
+            w.structureDirty = true;
+            sim.glassNoise?.(i);
+            continue;
+          }
+          g.hitPos = g.p.slice();
+          g.p = prev;
+          g.dir = g.v.slice();
+          g.v = [0, 0, 0];
+          g.resting = true;
+          hit = true;
+          break;
+        }
       }
     }
     if (g.gone) continue;
-    if (g.fuse <= 0) explode(sim, g.p, g.energy, { name: 'grenade' });
-    else keep.push(g);
+    if (type === 'grenade') {
+      if (g.fuse <= 0) explode(sim, g.p, g.energy, { name: 'grenade' });
+      else keep.push(g);
+      continue;
+    }
+    if (type === 'rocket') {
+      if (inside(g.p)) {
+        const a = sim.airCellAt(...g.p);
+        if (a >= 0 && g.age < (g.burn ?? 3)) w.flameAcc[a] += 40000; // exhaust flame
+      }
+      if (hit) explode(sim, g.hitPos ?? g.p, g.energy ?? 1.5e6, { name: 'rocket' });
+      else if (g.age < 14) keep.push(g);
+      continue;
+    }
+    // arrow
+    if (hit && !g.lit && g.hitPos) {
+      g.lit = true;
+      sim.ignite(g.hitPos, h * 0.9);
+      w.noises.push({ p: g.hitPos.slice(), loud: 6, time: w.time, kind: 'arrow' });
+    }
+    g.burnLeft = (g.burnLeft ?? 25) - dt;
+    if (g.burnLeft > 0) {
+      // the burning rag on the arrow head
+      const a = inside(g.p) ? sim.airCellAt(...g.p) : -1;
+      if (a >= 0) {
+        w.flameAcc[a] += 1500;
+        w.airQ[a] += 600;
+        sim.consumeO2(a, 1500, dt);
+      }
+      keep.push(g);
+    } else if (g.resting) keep.push(Object.assign(g, { burnLeft: 0, spent: true, ttl: (g.ttl ?? 60) - dt })) ;
   }
-  w.projectiles = keep;
+  w.projectiles = keep.filter((g) => !g.spent || g.ttl > 0);
 }

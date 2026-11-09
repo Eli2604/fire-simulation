@@ -17,6 +17,23 @@ export class MarkerRenderer {
     this.grenades.count = 0;
     this.grenades.frustumCulled = false;
     scene.add(this.grenades);
+    // arrows (shaft + fletching as one thin box) and rockets
+    const ag = new THREE.BoxGeometry(0.02, 0.02, 0.8);
+    this.arrows = new THREE.InstancedMesh(ag, new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.8 }), 64);
+    this.arrows.count = 0;
+    this.arrows.frustumCulled = false;
+    scene.add(this.arrows);
+    const rg = new THREE.CylinderGeometry(0.07, 0.07, 1.4, 10);
+    rg.rotateX(Math.PI / 2);
+    this.rockets = new THREE.InstancedMesh(rg, new THREE.MeshStandardMaterial({ color: 0xd8d8d0, roughness: 0.4, metalness: 0.5 }), 32);
+    this.rockets.count = 0;
+    this.rockets.frustumCulled = false;
+    scene.add(this.rockets);
+    this.q = new THREE.Quaternion();
+    this.fwd = new THREE.Vector3(0, 0, 1);
+    this.dv = new THREE.Vector3();
+    this.pv = new THREE.Vector3();
+    this.sv = new THREE.Vector3(1, 1, 1);
     this.m = new THREE.Matrix4();
   }
 
@@ -84,12 +101,39 @@ export class MarkerRenderer {
     }
     const list = world?.projectiles ?? [];
     const r = Math.max(0.04, (world?.h ?? 0.1) * 0.5);
-    for (let k = 0; k < Math.min(32, list.length); k++) {
-      this.m.makeScale(r, r * 1.3, r);
-      this.m.setPosition(...list[k].p);
-      this.grenades.setMatrixAt(k, this.m);
+    let ng = 0;
+    let na = 0;
+    let nr = 0;
+    for (const g of list) {
+      const type = g.type ?? 'grenade';
+      if (type === 'grenade' && ng < 32) {
+        this.m.makeScale(r, r * 1.3, r);
+        this.m.setPosition(...g.p);
+        this.grenades.setMatrixAt(ng++, this.m);
+        continue;
+      }
+      const d = g.resting ? g.dir ?? [0, 0, 1] : g.v;
+      this.dv.set(d[0], d[1], d[2]).normalize();
+      this.q.setFromUnitVectors(this.fwd, this.dv);
+      if (type === 'arrow' && na < 64) {
+        // a stuck arrow sits half in what it hit
+        this.pv.set(g.p[0] - this.dv.x * 0.3, g.p[1] - this.dv.y * 0.3, g.p[2] - this.dv.z * 0.3);
+        this.m.compose(this.pv, this.q, this.sv);
+        this.arrows.setMatrixAt(na++, this.m);
+        if (g.burnLeft > 0 && this.flames) this.flames.spawn(g.p[0], g.p[1], g.p[2], 0, 0.6, 0, 0.25, 0.12, 0, 0.7);
+      } else if (type === 'rocket' && nr < 32) {
+        this.pv.set(...g.p);
+        this.m.compose(this.pv, this.q, this.sv);
+        this.rockets.setMatrixAt(nr++, this.m);
+        if (this.flames && g.age < (g.burn ?? 3))
+          for (let k = 0; k < 6; k++) this.flames.spawn(g.p[0] - this.dv.x * 0.8, g.p[1] - this.dv.y * 0.8, g.p[2] - this.dv.z * 0.8, -this.dv.x * 6 + (Math.random() - 0.5), -this.dv.y * 6 + (Math.random() - 0.5), -this.dv.z * 6 + (Math.random() - 0.5), 0.3, 0.35, 0, 1);
+      }
     }
-    this.grenades.count = Math.min(32, list.length);
+    this.grenades.count = ng;
+    this.arrows.count = na;
+    this.rockets.count = nr;
     this.grenades.instanceMatrix.needsUpdate = true;
+    this.arrows.instanceMatrix.needsUpdate = true;
+    this.rockets.instanceMatrix.needsUpdate = true;
   }
 }

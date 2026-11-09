@@ -209,6 +209,15 @@ const DEFS = {
     residue: 0.3, smokeYield: 0.12, smokeColor: [0.05, 0.05, 0.05], smolderColor: [0.55, 0.55, 0.5],
     meltingPoint: 180, latentHeat: 80e3, fluidity: 0.2, liquidColor: [0.12, 0.12, 0.13],
   },
+  stone: {
+    // limestone (catacombs): dense, brittle, calcines only at very high temperature
+    label: 'Limestone', color: [0.62, 0.58, 0.5], density: 2300, specificHeat: 900, conductivity: 1.3,
+    brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
+  },
+  bone: {
+    label: 'Bone', color: [0.86, 0.82, 0.72], density: 1300, specificHeat: 1300, conductivity: 0.4,
+    oxidizeTemp: 300, charColor: [0.25, 0.22, 0.2],
+  },
   tiles: {
     label: 'Roof tiles', color: [0.55, 0.22, 0.16], density: 1900, specificHeat: 800, conductivity: 0.8,
     meltingPoint: 1500, latentHeat: 400e3, maxMoisture: 0.05, oxidizeTemp: 500,

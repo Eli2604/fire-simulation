@@ -39,7 +39,15 @@ export function toggleDoor(sim, k, open) {
   }
   d.open = want;
   w.events.push({ type: want ? 'doorOpen' : 'doorClose', pos: d.center, time: w.time, name: d.name });
+  w.noises.push({ p: d.center.slice(), loud: 12, time: w.time, kind: 'door' });
   return true;
+}
+
+/** Has the glass panel of a door been broken (a hole to reach through)? */
+export function doorGlassBroken(w, k) {
+  const d = w.doors[k];
+  if (!d || !d.glass?.length || d.open) return false;
+  return d.glass.some((i) => w.doorTag[i] !== k + 1 || w.mat[i] === 0);
 }
 
 /** Door whose centre is closest to p within maxDist (m), or -1. */

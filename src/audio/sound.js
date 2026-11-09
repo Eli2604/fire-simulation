@@ -206,6 +206,17 @@ export class SoundScape {
     if (state.inflow?.pos) setPos(this.rush.panner, state.inflow.pos);
     this.rush.gain.gain.setTargetAtTime(state.inflow?.pos ? Math.min(1.2, 0.3 + state.inflow.rate / 20) : 0, t, 0.3);
     if (state.onFire && Math.random() < 0.3) this.burst(t, 0.02, 'bandpass', 2000 + Math.random() * 3000, 2, 0.4);
+    // footsteps of enemies nearby
+    for (const en of state.enemies ?? []) {
+      if (en.dead || !en.moving) continue;
+      const d = Math.hypot(en.p[0] - pos[0], en.p[2] - pos[2]);
+      if (d > 15) continue;
+      en.stepT = (en.stepT ?? 0) - 1 / 60;
+      if (en.stepT <= 0) {
+        en.stepT = en.state === 'flee' || en.state === 'retreat' ? 0.3 : 0.5;
+        this.burst(t, 0.05, 'lowpass', 700, 0.8, 0.5 / Math.max(1, d / 2));
+      }
+    }
     // breathing
     if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
@@ -232,6 +243,10 @@ export class SoundScape {
         this.thump(t, 1);
       } else if (e.type === 'pipeBurst') {
         this.burst(t, 0.4, 'bandpass', 900, 0.8, 0.8);
+      } else if (e.type === 'shout') {
+        this.shout(e.pos);
+      } else if (e.type === 'glass') {
+        this.glass(e.pos);
       } else if (e.type === 'spall') {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       }
@@ -244,6 +259,64 @@ export class SoundScape {
     const t = this.ctx.currentTime;
     this.burst(t, 0.25, 'lowpass', 400, 0.7, 0.5);
     this.thump(t + 0.05, 0.4);
+  }
+
+  /** The bow string releasing. */
+  bow() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(90, t + 0.12);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.16);
+    this.burst(t, 0.3, 'bandpass', 1500, 1, 0.2);
+  }
+
+  /** A short voiced shout ("hey!") from p. */
+  shout(p) {
+    if (!this.running) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const pan = ctx.createPanner();
+    pan.panningModel = 'HRTF';
+    pan.distanceModel = 'inverse';
+    pan.refDistance = 2;
+    if (pan.positionX) {
+      pan.positionX.value = p[0];
+      pan.positionY.value = p[1];
+      pan.positionZ.value = p[2];
+    }
+    pan.connect(this.master);
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.linearRampToValueAtTime(300, t + 0.12);
+    o.frequency.linearRampToValueAtTime(180, t + 0.35);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 900;
+    f.Q.value = 2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+    o.connect(f).connect(g).connect(pan);
+    o.start(t);
+    o.stop(t + 0.4);
+  }
+
+  /** Breaking glass: a sharp crash and tinkling shards. */
+  glass(pos) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.15, 'highpass', 3000, 0.7, 1.0);
+    for (let k = 0; k < 10; k++) this.burst(t + 0.05 + Math.random() * 0.6, 0.03, 'bandpass', 4000 + Math.random() * 5000, 6, 0.25 + Math.random() * 0.3);
+    void pos;
   }
 
   /** The visor cracking. */

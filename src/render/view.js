@@ -10,6 +10,7 @@ import { SurfaceRenderer } from './surface.js';
 import { VolumeRenderer } from './volume.js';
 import { MarkerRenderer } from './markers.js';
 import { PuddleRenderer } from './puddles.js';
+import { EnemyRenderer } from './enemies.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -44,6 +45,14 @@ export class View {
     this.scene.add(this.sun.target);
     this.fireLight = new THREE.PointLight(0xff8a3a, 0, 0, 1.6);
     this.root.add(this.fireLight);
+    // lights for wall torches and similar small flames (the nearest few get one)
+    this.torchLights = [];
+    for (let k = 0; k < 6; k++) {
+      const l = new THREE.PointLight(0xff9a4a, 0, 9, 1.8);
+      this.root.add(l);
+      this.torchLights.push(l);
+    }
+    this.dark = false;
 
     // pushed back in depth so it never fights with the ground surface of the grid (flicker)
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x5b5236, roughness: 1, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 });
@@ -63,7 +72,9 @@ export class View {
     this.surface = new SurfaceRenderer(this.root);
     this.volume = new VolumeRenderer(this.renderer);
     this.markers = new MarkerRenderer(this.root);
+    this.markers.flames = this.flames;
     this.puddles = new PuddleRenderer(this.root);
+    this.enemies = new EnemyRenderer(this.root, this.flames);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
@@ -177,9 +188,14 @@ export class View {
     this.scene.background = sky;
     const fogDensity = weather.fog > 0 ? (weather.fog * 3.5) / this.diag : 0.02 / this.diag;
     this.scene.fog = new THREE.FogExp2(sky, fogDensity);
-    const light = 1 - 0.55 * grey;
+    // underground / indoor scenes: hardly any daylight
+    const light = (1 - 0.55 * grey) * (this.dark ? 0.06 : 1);
+    if (this.dark) {
+      this.scene.background = new THREE.Color(0x050505);
+      this.scene.fog = new THREE.FogExp2(0x050505, 0.02 / this.diag);
+    }
     this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog);
-    this.hemi.intensity = 0.9 + 0.3 * light;
+    this.hemi.intensity = this.dark ? 0.12 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
   }
@@ -244,7 +260,9 @@ export class View {
     this.spray.update(dt, scale, sprays);
     this.debris.update(this.world);
     this.puddles.update();
+    this.enemies.update(this.world, this.time);
     this.updateFireLight(stats);
+    this.updateTorchLights();
     this.updateFlash(dt);
     const r = this.renderer;
     const useVolume = volumetric && this.smoke.enabled;
@@ -265,6 +283,25 @@ export class View {
     r.autoClear = false;
     r.render(this.overlay, this.camera);
     r.autoClear = true;
+  }
+
+  /** The nearest burning torches each light their surroundings, flickering. */
+  updateTorchLights() {
+    const w = this.world;
+    const cam = this.camera.position;
+    const src = w.heaters.filter((h) => h.light && h.on).map((h) => ({ h, d: Math.hypot(h.pos[0] - cam.x, h.pos[1] - cam.y, h.pos[2] - cam.z) }));
+    src.sort((a, b) => a.d - b.d);
+    this.torchLights.forEach((l, k) => {
+      const s = src[k];
+      if (!s) {
+        l.intensity = 0;
+        return;
+      }
+      const o2 = w.o2[this.flames.world ? Math.max(0, Math.min(w.NA - 1, w.airIdx(Math.floor(s.h.pos[0] / w.ah), Math.floor((s.h.pos[1] + 0.2) / w.ah), Math.floor(s.h.pos[2] / w.ah)))) : 0] ?? 0.232;
+      const f = Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)); // a torch dims and dies as the oxygen goes
+      l.position.set(s.h.pos[0], s.h.pos[1] + 0.25, s.h.pos[2]);
+      l.intensity = 4.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
+    });
   }
 
   /** New explosion events: a bright flash and a burst of sparks. */

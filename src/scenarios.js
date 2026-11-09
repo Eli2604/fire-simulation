@@ -7,8 +7,13 @@ import { defaultWeather } from './sim/weather.js';
  *   world:   { size: [x, y, z] metres, h: voxel size m, ground: material },
  *   weather: { ambient, humidity, windSpeed, windDir, rain, fog },
  *   timeScale, view: { mode, camera: [x,y,z] offset from centre },
- *   objects: [{ type, params, x, z, rotation, ignite }]
+ *   objects: [{ type, params, x, z, y?, rotation, ignite }]
  * }
+ *
+ * A scene can instead be split into zones (a ship's flight deck and the decks
+ * below): { zones: { name: { name, world, view, objects } }, startZone }. Only
+ * the zone you are in is built and simulated; the others are built the first
+ * time you go there (a hatch or ladder, E) and are frozen while you are away.
  */
 const w = (o = {}) => ({ ...defaultWeather(), ...o });
 
@@ -182,6 +187,47 @@ export const SCENARIOS = {
     timeScale: 1,
     view: { camera: [-3, 10, 14] },
     objects: [{ type: 'shipSection', params: {}, x: 9, z: 4.5 }],
+  },
+  catacombs: {
+    name: 'Catacombs',
+    description: 'Vaulted limestone passages lit by torches on the walls, burial niches and chambers with coffins. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
+    world: { size: [19, 4.2, 25], h: 0.2, ground: 'stone' },
+    weather: w({ ambient: 12, humidity: 0.8 }),
+    timeScale: 1,
+    view: { dark: true, camera: [9.5, 14, -4] },
+    objects: [
+      { type: 'catacombs', params: {}, x: 9.5, z: 14.5 },
+      { type: 'enemy', params: { count: 2, spread: 1.5 }, x: 9.5, z: 14.5 },
+      { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2 }, x: 14.5, z: 19.5 },
+    ],
+  },
+  carrier: {
+    name: 'Aircraft carrier: jet and server room',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Only the deck you are on is simulated.',
+    weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
+    timeScale: 1,
+    startZone: 'deck',
+    zones: {
+      deck: {
+        name: 'Flight deck',
+        world: { size: [44, 19, 21], h: 0.4, ground: 'none' },
+        view: { camera: [-14, 20, 30], walk: true },
+        objects: [
+          { type: 'carrierDeck', params: { length: 40, beam: 18, deckHeight: 7 }, x: 22, z: 10.5 },
+          { type: 'jet', params: {}, x: 13, z: 13.5, y: 7, rotation: 0 },
+        ],
+      },
+      below: {
+        name: 'Below deck',
+        world: { size: [32, 3.6, 17], h: 0.2 },
+        view: { camera: [16, 14, -8], walk: true },
+        objects: [
+          { type: 'carrierBelow', params: {}, x: 16, z: 8.5 },
+          { type: 'enemy', params: { count: 2, spread: 1, level: 0.2 }, x: 24, z: 8.5 },
+          { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
+        ],
+      },
+    },
   },
   rainyHouse: {
     name: 'House fire in the rain',

@@ -19,6 +19,10 @@ const countOwned = (world, owner) => {
 test('every model builds voxels with its default parameters', () => {
   for (const type of Object.keys(MODELS)) {
     const { world } = buildScene({ world: { size: [10, 8, 10], h: 0.1 }, objects: [{ type, x: 5, z: 5 }] });
+    if (type === 'enemy') {
+      assert.ok(world.enemies.length > 0, 'enemies are characters, not voxels');
+      continue;
+    }
     assert.ok(countOwned(world, 0) > 0, `${type} produced voxels`);
   }
 });

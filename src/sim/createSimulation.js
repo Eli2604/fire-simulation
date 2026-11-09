@@ -15,6 +15,11 @@ const IGNITION_SECONDS = 40;
  * source (e.g. a gas pipe that will burst) for display.
  */
 export function createSimulation(scene) {
+  // a scene split into zones: build the current (or starting) zone only
+  if (scene.zones && !scene.world) {
+    const z = scene.zones[scene.zone ?? scene.startZone ?? Object.keys(scene.zones)[0]];
+    scene = { ...scene, world: z.world, objects: z.objects, view: z.view ?? scene.view };
+  }
   const weather = { ...defaultWeather(), ...(scene.weather ?? {}) };
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
   const sim = new Simulation(world, weather);
