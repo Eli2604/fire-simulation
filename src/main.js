@@ -11,9 +11,11 @@ import { MODELS, defaultParams } from './models/index.js';
 import { MATERIAL_NAMES } from './sim/materials.js';
 import { defaultWeather } from './sim/weather.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
+import { ProxyRenderer } from './render/proxies.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
+view.proxies = new ProxyRenderer(view.scene);
 
 const state = {
   scenario: 'campfire',
@@ -61,26 +63,85 @@ function useZone(name) {
   for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
 }
 
-/** Through a hatch / up a ladder into another zone. */
-function switchZone(pt) {
-  if (!scene.zones?.[pt.to]) return;
-  const from = scene.zone;
-  zoneSims[from] = sim; // frozen while you are away
-  useZone(pt.to);
-  const zd = scene.zones[pt.to];
-  sim = zoneSims[pt.to] ??= createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather });
+/** The simulation of zone `name` (built the first time it is needed, then kept). */
+function zoneSim(name) {
+  if (!scene.zones) return sim;
+  if (name === scene.zone) return sim;
+  const zd = scene.zones[name];
+  if (!zd) return null;
+  if (!zoneSims[name]) {
+    for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
+    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather });
+  }
+  return zoneSims[name];
+}
+
+/** Make zone `name` the one that is simulated and shown (the others freeze). */
+function activateZone(name) {
+  if (!scene.zones?.[name] || name === scene.zone) return sim;
+  const next = zoneSim(name);
+  zoneSims[scene.zone] = sim; // frozen while you are away
+  useZone(name);
+  const zd = scene.zones[name];
+  sim = next;
   sim.weather = weather;
   view.dark = !!zd.view?.dark;
   view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
   view.markers.visible = state.markers;
   view.applyWeather(weather);
   view.voxels.mode = state.mode;
-  const back = sim.world.portals.find((q) => q.to === from);
-  const sp = sim.spawn ?? { p: back?.p ?? [sim.world.size[0] / 2, 0, sim.world.size[2] / 2], yaw: 0 };
-  walk.arrive(sp.p, sp.yaw ?? 0);
-  walk.say(zd.name, 3);
   $('title').textContent = `${scene.name} – ${zd.name}`;
   buildObjectsFolder();
+  updateProxies(true);
+  return sim;
+}
+
+/** Zones in the open (ship decks, islands) are placed in one sea: `origin` [x, y, z]. */
+const zonesApi = {
+  current: () => (scene.zones ? scene.zone : null),
+  origin: (name) => (scene.zones ? scene.zones[name]?.origin ?? null : [0, 0, 0]),
+  open: () =>
+    scene.zones
+      ? Object.entries(scene.zones).filter(([, z]) => z.origin).map(([name, z]) => ({ name, origin: z.origin, size: z.world.size }))
+      : [{ name: null, origin: [0, 0, 0], size: sim.world.size }],
+  built: (name) => !scene.zones || name === scene.zone || !!zoneSims[name],
+  sim: (name) => zoneSim(name),
+  activate: (name) => activateZone(name),
+};
+
+/** Distant stand-ins for the other open-air zones (what you see from the jet). */
+let proxyTimer = 0;
+function updateProxies(now = false) {
+  proxyTimer -= 1;
+  if (!now && proxyTimer > 0) return;
+  proxyTimer = 60;
+  const here = scene.zones?.[scene.zone]?.origin;
+  if (!here) return view.proxies.update([]);
+  const list = [];
+  for (const [name, z] of Object.entries(scene.zones)) {
+    if (!z.origin || name === scene.zone) continue;
+    const s = zoneSims[name];
+    list.push({
+      name,
+      offset: z.origin.map((v, k) => v - here[k]),
+      world: s?.world,
+      sea: s?.world.sea?.level ?? z.proxy?.sea ?? 0,
+      hint: z.proxy,
+      size: z.world.size,
+    });
+  }
+  view.proxies.update(list);
+}
+
+/** Through a hatch / up a ladder / by boat into another zone. */
+function switchZone(pt) {
+  if (!scene.zones?.[pt.to]) return;
+  const from = scene.zone;
+  activateZone(pt.to);
+  const back = sim.world.portals.find((q) => q.to === from);
+  const sp = back?.arrive ?? sim.spawn ?? { p: back?.p ?? [sim.world.size[0] / 2, 0, sim.world.size[2] / 2], yaw: 0 };
+  walk.arrive(sp.p, sp.yaw ?? 0);
+  walk.say(scene.zones[pt.to].name, 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +161,7 @@ function load(desc, fresh = true) {
   if (walk?.active) walk.exit();
   view.dark = !!scene.view?.dark;
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
+  updateProxies(true);
   view.markers.visible = state.markers;
   view.applyWeather(weather);
   if (fresh) {
@@ -527,6 +589,7 @@ function frame(now) {
     const done = sim.advance(dt * (walk.active ? 1 : state.timeScale), 22);
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
   } else speed *= 0.9;
+  if (scene.zones) updateProxies();
   view.render(dt, sim);
   updateHud(dt);
   requestAnimationFrame(frame);
@@ -537,6 +600,7 @@ function frame(now) {
 const walk = new Walkthrough(view, {
   getSim: () => sim,
   onPortal: (pt) => switchZone(pt),
+  zones: zonesApi,
   // a thermal imaging camera sees heat, and sees through smoke
   onThermal: (on) => {
     view.voxels.mode = on ? 'thermal' : state.mode;

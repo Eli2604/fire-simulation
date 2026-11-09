@@ -19,6 +19,7 @@ export default {
     torchSpacing: { value: 4, min: 2, max: 10, step: 0.5, label: 'Torch spacing (m)' },
     entranceOpen: { value: true, label: 'Entrance open to the surface' },
     seed: { value: 3, min: 1, max: 999, step: 1, label: 'Random seed' },
+    exitTo: { value: '', label: 'Zone the entrance stairs lead up to (empty: none)' },
   },
   build(p, { h, rng }) {
     const prims = [];
@@ -134,6 +135,7 @@ export default {
       prims,
       heaters,
       spawn: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 },
+      portals: p.exitTo ? [{ p: [ex, 0, ez - 2.5], r: 1.0, to: p.exitTo, label: 'Stairs: up to the surface', arrive: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 } }] : [],
       ignite: { p: [chambers[0][0] - cr + 1, 0.65, chambers[0][1]], radius: 0.4, power: 3000, materials: ['fabric', 'wood'] },
     };
   },

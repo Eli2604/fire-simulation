@@ -177,7 +177,19 @@ export function placeObject(world, obj, ownerIndex = -1) {
   // bars) map onto exactly one voxel line.
   const ox = (Math.floor((obj.x ?? world.size[0] / 2) / h) + 0.5) * h;
   const oz = (Math.floor((obj.z ?? world.size[2] / 2) / h) + 0.5) * h;
-  const oy = h + (obj.y ?? 0); // top of the ground layer (or a deck the object stands on)
+  // y: metres above the ground layer, or 'auto' to stand on whatever surface is there (terrain)
+  let oy = h + (typeof obj.y === 'number' ? obj.y : 0);
+  if (obj.y === 'auto') {
+    const cx = Math.min(world.nx - 1, Math.max(0, Math.floor(ox / h)));
+    const cz = Math.min(world.nz - 1, Math.max(0, Math.floor(oz / h)));
+    for (let y = world.ny - 1; y > 0; y--) {
+      const m = world.mat[world.idx(cx, y, cz)];
+      if (m && m !== MAT.water) {
+        oy = (y + 1) * h;
+        break;
+      }
+    }
+  }
   const rot = ((obj.rotation ?? 0) * Math.PI) / 180;
   const cr = Math.cos(rot);
   const sr = Math.sin(rot);
@@ -191,7 +203,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const p = toWorld(...en.p);
     world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0 });
   }
-  for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p) });
+  for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const s of built.inertSystems ?? []) world.inertSystems.push({ ...s, p: toWorld(...s.p), fired: false });
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });

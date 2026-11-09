@@ -224,11 +224,13 @@ export class Walkthrough {
   }
 
   /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
-  endFlight(msg, at) {
+  endFlight(msg, at, zone) {
     this.flight = null;
     this.el.mask.hidden = false;
     const v = this.view;
     v.camera.up.set(0, 1, 0);
+    // after a crash you are brought back to where the jet came from
+    if (zone && this.hooks.zones && this.hooks.zones.current() !== zone) this.hooks.zones.activate(zone);
     const sim = this.hooks.getSim();
     const w = sim.world;
     const p = at ?? sim.spawn?.p ?? [w.size[0] * 0.1, 0, w.size[2] / 2];

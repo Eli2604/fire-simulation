@@ -66,7 +66,9 @@ export function updateRegions(w, force = false) {
       if (az + 1 < anz) go(a + sxy, passZ[a]);
       if (az > 0) go(a - sxy, passZ[a - sxy]);
     }
-    open.push(isOpen);
+    // a pocket of a few cells (inside a log pile, between debris) is not a room:
+    // it breathes through its part-open faces
+    open.push(isOpen || qt < 4);
     mass.push(0);
     r++;
   }

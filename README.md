@@ -26,8 +26,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs lit by
-  wall torches (with enemies), an aircraft carrier (flight deck with a flyable jet, and below
-  deck a server room), a house fire in the rain.
+  wall torches (with enemies), an aircraft carrier with a flyable jet, a server room below deck,
+  and an island nearby (hills, a canal, a campfire, a house, and the catacombs under it), a house
+  fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -115,22 +116,59 @@ Some scenes (the catacombs, below deck on the carrier) have people hiding in the
 
 Walk up to the jet on the flight deck and press **E**. W/S sets the throttle (on the deck,
 full throttle fires the catapult), the mouse pitches and rolls, A/D works the rudder, and
-**Space or a click fires a rocket** from under the wings. Rockets use `sim.fireRocket`: a
-motor for 3 s, then they explode on impact, so they can set the deck, the island or another
-part of the ship on fire. Lift grows with the square of the speed, so the jet sinks when
-slow. Banking turns it. Landing too hard, or flying into the sea or the island, is a crash:
-the fuel explodes and burns and you eject. To land, stop on the deck (S brakes) and press
-**E**. The jet becomes voxels again where it stands, and it can burn and explode like
-everything else.
+**Space or a click fires a rocket** from under the wings. A rocket's motor burns for 3 s,
+then it flies on ballistically. It explodes in whatever it hits: the island's hills, the house,
+the trees, the ship. That zone is built first if you have not been there yet. The explosion
+throws debris, breaks windows and starts fires. A rocket that hits the sea just splashes.
+
+Lift grows with the square of the speed, so the jet sinks when slow. Banking turns it.
+
+**Damage** changes how it flies. The HUD lists each part:
+
+| Part | What damage does |
+|---|---|
+| Wings | Less lift and more drag. The jet rolls towards the damaged wing, and a wing that is torn off sends it into a spin. |
+| Engine | Less thrust and smoke. Past 60 % the engine catches fire, and the fire keeps eating into the engine, the tail and the fuel tank. |
+| Tail | Sluggish controls and a pitch wobble. |
+| Fuel tank | It leaks, and when it is dry the engine stops. A burning, holed tank can explode. |
+
+Damage comes from blasts (your own rockets fired too close, a bursting tank), from flying
+through flames, hot gas or smoke, from scraping a wing tip or the tail on something, and
+from heavy landings. Hitting something nose first, flying into the sea or landing far too
+hard is a crash: the fuel explodes and burns, you eject, and you are brought back to the ship.
+
+To land, stop on the deck or on flat ground (S brakes) and press **E**. The jet becomes
+voxels again where it stands, with its damage, fuel and remaining rockets kept. It can burn
+and explode like everything else.
 
 ### Zones: big scenes without simulating everything at once
 
-The carrier is split into **zones**: the flight deck (0.4 m voxels, ~20k solids, ~14 ms per
-step) and below deck (0.2 m voxels, corridors, mess, berthing, store room and server room,
-~70k solids, ~25 ms per step). Only the zone you are in is built and simulated. The other
-is built the first time you go there (through the hatch next to the island, or up the
-ladder) and is frozen while you are away. Fire, smoke and damage are kept when you come
-back.
+The carrier scenario is split into four **zones**:
+
+| Zone | Voxel size | Size | Cost per step |
+|---|---|---|---|
+| Flight deck | 0.4 m | ~20k solids | ~14 ms |
+| Below deck: corridors, mess, berthing, store room, server room | 0.2 m | ~70k solids | ~25 ms |
+| The island | 0.4 m | ~20k solids | ~20 ms |
+| The catacombs under the island | 0.2 m | ~56k solids | ~40 ms |
+
+Only the zone you are in is built and simulated. Each of the others is built the first time
+you go there and is frozen while you are away. Fire, smoke and damage are kept when you come
+back. You move between zones with **E**:
+
+- the hatch next to the carrier's island leads below deck, and the ladder leads back up;
+- the boat ladder at the stern takes you to the island's pier, and the boat there takes you back;
+- the stone hut at the island's north shore has stairs down into the catacombs.
+
+The flight deck and the island lie in one sea, each at its own `origin`. Flying, you see the
+zone under the jet in full, and the others as simple stand-ins: columns of the voxels' top
+colours, or a placeholder hill for a zone not built yet. When you cross into the island's
+area it becomes the zone that is simulated.
+
+The **island** is a height field: sandy shores, grassy slopes, two hills with rocky tops, a
+canal from the hills to the sea, and a pond on a terrace on the hillside. A plateau holds a
+house and a campfire with dry grass around it. Only the top layers of the terrain are
+voxels, which keeps it cheap. Objects can be put on any surface with `"y": "auto"`.
 
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
 and a locked glass door. A rack catches fire after 25 s (an electrical fault). A heat
@@ -156,6 +194,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Catacombs | passages along x and z, spacing, width and height, torch spacing, entrance open or closed, seed. Vaulted stone passages, domed chambers with coffins, burial niches with bones and rags, wooden doors (one locked), burning torches on the walls that light the passages |
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
+| Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
@@ -369,8 +408,11 @@ flight deck). A scene can be split into **zones** instead of having one `world` 
 }
 ```
 
-Models connect zones with `portals` (`{ p, r, to: "below", label }`). Pressing E there
-switches to that zone.
+Models connect zones with `portals` (`{ p, r, to: "below", label, arrive? }`). Pressing E
+there switches to that zone, and you arrive at the portal there that leads back (its
+`arrive` point). Zones in the open sea have an `origin` [x, y, z], so the jet and its
+rockets can travel between them, and a `proxy` hint for how they look from afar before they
+are built.
 
 ## Project layout
 

@@ -129,7 +129,7 @@ export class View {
       const R = diag * 12;
       const shape = new THREE.Shape([new THREE.Vector2(-R, -R), new THREE.Vector2(R, -R), new THREE.Vector2(R, R), new THREE.Vector2(-R, R)]);
       const [x0, z0, x1, z1] = world.sea.box;
-      shape.holes.push(new THREE.Path([new THREE.Vector2(x0, -z0), new THREE.Vector2(x0, -z1), new THREE.Vector2(x1, -z1), new THREE.Vector2(x1, -z0)]));
+      if (x1 - x0 > 0.01 && z1 - z0 > 0.01) shape.holes.push(new THREE.Path([new THREE.Vector2(x0, -z0), new THREE.Vector2(x0, -z1), new THREE.Vector2(x1, -z1), new THREE.Vector2(x1, -z0)]));
       this.sea = new THREE.Mesh(
         new THREE.ShapeGeometry(shape),
         new THREE.MeshStandardMaterial({ color: 0x1d4e6e, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.88, side: THREE.DoubleSide }),

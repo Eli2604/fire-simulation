@@ -34,9 +34,12 @@ export function createSimulation(scene) {
     ? custom.map((f) => ({ p: f.p, radius: f.radius ?? Math.max(0.25, world.h * 2), materials: null, power: f.power ?? defaultStartPower(world) }))
     : ignitions;
   for (const ig of starts) {
-    sim.ignite(ig.p, ig.radius, ig.materials);
+    // on a coarse grid the model's kindling may be smaller than a voxel: widen the
+    // search and accept any fuel
+    if (!sim.ignite(ig.p, ig.radius, ig.materials)) sim.ignite(ig.p, Math.max(ig.radius, world.h * 1.5));
     // a short-lived ignition source keeps heating the spot, like a real fire start
-    if (ig.power > 0) sim.addTorch(ig.p, ig.power, IGNITION_SECONDS, Math.max(world.h, ig.radius * 0.6));
+    const power = ig.power > 0 ? ig.power : world.h > 0.1 ? defaultStartPower(world) : 0; // coarse grids: kindling is sub-voxel
+    if (power > 0) sim.addTorch(ig.p, power, IGNITION_SECONDS, Math.max(world.h, ig.radius * 0.6));
     sim.markers.push({ p: ig.p, label: custom ? 'Fire start (yours)' : 'Fire start', kind: 'start' });
   }
   for (const ht of world.heaters) {

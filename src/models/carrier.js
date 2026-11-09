@@ -21,6 +21,7 @@ export const carrierDeck = {
     beam: { value: 18, min: 10, max: 30, step: 0.5, label: 'Deck width (m)' },
     deckHeight: { value: 7, min: 4, max: 15, step: 0.5, label: 'Deck above the keel (m)' },
     draft: { value: 2.5, min: 1, max: 6, step: 0.1, label: 'Waterline above the keel (m)' },
+    boatTo: { value: '', label: 'Zone the boat at the stern goes to (empty: none)' },
   },
   build(p, { h }) {
     const thin = thinOf(h);
@@ -74,7 +75,10 @@ export const carrierDeck = {
       prims,
       sea: { level: p.draft, box: [-hx, -hz, hx, hz] },
       spawn: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 },
-      portals: [{ p: [hatch[0], D, hatch[2]], r: 1.0, to: 'below', label: 'Hatch: below deck' }],
+      portals: [
+        { p: [hatch[0], D, hatch[2]], r: 1.0, to: 'below', label: 'Hatch: below deck', arrive: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 } },
+        ...(p.boatTo ? [{ p: [-hx + 1.5, D, hz - 1.5], r: 1.4, to: p.boatTo, label: 'Boat ladder: to the island', arrive: { p: [-hx + 3.5, D, hz - 1.5], yaw: 0 } }] : []),
+      ],
       ignite: { p: [-hx + 5, D + 0.5, hz - 4.3], radius: 0.4, power: 5000 },
     };
   },

@@ -93,3 +93,35 @@ test('catacombs: torches light the passages and the scene is dark', () => {
   const a = sim.airCellAt(t.pos[0], t.pos[1] + 0.1, t.pos[2]);
   assert.ok(w.flame[a] > 0.05 && w.airT[a] > w.ambient + 2, `a flame and warm gas at a torch (${w.airT[a].toFixed(0)} °C)`);
 });
+
+test('carrier: boat to the island, stairs from its shore down into the catacombs and back; the campfire burns', () => {
+  const scene = cloneScene(SCENARIOS.carrier);
+  const deck = createSimulation(scene);
+  assert.ok(deck.world.portals.some((p) => p.to === 'island'), 'a boat from the ship');
+  const island = createSimulation({ ...scene, zone: 'island' });
+  const w = island.world;
+  assert.ok(w.portals.some((p) => p.to === 'deck' && p.arrive), 'a boat back');
+  assert.ok(w.portals.some((p) => p.to === 'catacombs' && p.arrive), 'stairs down');
+  assert.ok(Math.abs(w.sea.level + scene.zones.island.origin[1] - (deck.world.sea.level + scene.zones.deck.origin[1])) < 1e-6, 'one sea');
+  const cat = createSimulation({ ...scene, zone: 'catacombs' });
+  assert.ok(cat.world.portals.some((p) => p.to === 'island'), 'stairs up');
+  // hills above the plateau, a canal and a pond
+  let top = 0;
+  let water = 0;
+  for (let k = 0; k < w.solidCount; k++) {
+    const i = w.solids[k];
+    top = Math.max(top, w.coords(i)[1] * w.h);
+    if (w.mat[i] === MAT.water) water++;
+  }
+  assert.ok(top > w.sea.level + 5, `hills (${top.toFixed(1)} m)`);
+  assert.ok(water > 20, `a pond (${water} water voxels)`);
+  // objects stand on the terrain (y: 'auto'): the house is on the plateau, above the sea
+  const houseOwner = scene.zones.island.objects.findIndex((o) => o.type === 'house');
+  let houseMin = Infinity;
+  for (let k = 0; k < w.solidCount; k++) if (w.owner[w.solids[k]] === houseOwner) houseMin = Math.min(houseMin, w.coords(w.solids[k])[1] * w.h);
+  assert.ok(houseMin > w.sea.level, 'house above the sea');
+  run(island, 25);
+  let burning = 0;
+  for (let k = 0; k < w.solidCount; k++) if (w.flags[w.solids[k]] & 8) burning++;
+  assert.ok(burning > 5, `the campfire burns (${burning})`);
+});

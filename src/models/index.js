@@ -13,6 +13,7 @@ import shipSection from './shipSection.js';
 import enemy from './enemy.js';
 import catacombs from './catacombs.js';
 import { carrierDeck, jet, carrierBelow } from './carrier.js';
+import island from './island.js';
 
 /**
  * Model registry. Every model is:
@@ -23,7 +24,7 @@ import { carrierDeck, jet, carrierBelow } from './carrier.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island };
 
 export function resolveParams(model, given = {}) {
   const out = {};
