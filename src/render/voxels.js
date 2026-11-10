@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
-import { F_LIQUID, F_BURNING } from '../sim/world.js';
+import { F_LIQUID, F_BURNING, F_HIDDEN } from '../sim/world.js';
+import { addPatterns, PATTERN_OF_MAT, PATTERN_UNIFORMS } from './patterns.js';
 import { blackbody, heatmap } from './colors.js';
 
 /**
@@ -27,6 +28,7 @@ export class VoxelRenderer {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow;');
+      addPatterns(shader, true); // limestone blocks, ossuary walls...
     };
     this.matrix = new THREE.Matrix4();
   }
@@ -47,6 +49,8 @@ export class VoxelRenderer {
     this.glowAttr = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
     this.glowAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aGlow', this.glowAttr);
+    this.patAttr = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
+    geo.setAttribute('aPat', this.patAttr);
     this.mesh = new THREE.InstancedMesh(geo, this.material, cap);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
@@ -61,7 +65,7 @@ export class VoxelRenderer {
 
   rebuild() {
     const w = this.world;
-    const { nx, ny, nz, mat, h } = w;
+    const { nx, ny, nz, mat, h, flags } = w;
     const nxy = nx * ny;
     const cutZ = this.cut >= 1 ? nz : Math.max(1, Math.round(this.cut * nz));
     if (w.listDirty) w.rebuildLists();
@@ -78,6 +82,7 @@ export class VoxelRenderer {
       const z = (r - y) / ny;
       if (z >= cutZ) continue;
       if (y === 0 && !this.showGround) continue;
+      if (flags[i] & F_HIDDEN) continue; // drawn by its own mesh
       const exposed =
         z === cutZ - 1 ||
         x === 0 || x === nx - 1 || z === 0 || z === nz - 1 || y === ny - 1 ||
@@ -92,6 +97,7 @@ export class VoxelRenderer {
     this.count = c;
     const m = this.matrix;
     const arr = this.mesh.instanceMatrix.array;
+    const pat = this.patAttr.array;
     for (let k = 0; k < c; k++) {
       const i = vis[k];
       const x = i % nx;
@@ -101,7 +107,9 @@ export class VoxelRenderer {
       m.makeScale(h, h, h);
       m.setPosition((x + 0.5) * h, (y + 0.5) * h, (z + 0.5) * h);
       m.toArray(arr, k * 16);
+      pat[k] = PATTERN_OF_MAT[mat[i]];
     }
+    this.patAttr.needsUpdate = true;
     this.mesh.count = c;
     this.mesh.instanceMatrix.needsUpdate = true;
     this.version = w.geomVersion;
@@ -111,6 +119,7 @@ export class VoxelRenderer {
     const w = this.world;
     if (!w) return;
     if (this.version !== w.geomVersion) this.rebuild();
+    PATTERN_UNIFORMS.uPatOn.value = this.mode === 'thermal' ? 0 : 1;
     const col = this.mesh.instanceColor.array;
     const glow = this.glowAttr.array;
     const vis = this.visible;

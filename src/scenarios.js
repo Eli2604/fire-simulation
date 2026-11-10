@@ -181,7 +181,7 @@ export const SCENARIOS = {
   },
   ship: {
     name: 'Ship: fire below the waterline',
-    description: 'A ship section afloat. A fuel line in the lower-deck corridor (below the waterline) bursts after 30 s. Close the watertight and cabin doors to starve the fire of oxygen, or throw a grenade at the hull side in a cross corridor: the sea pours in and floods the corridors.',
+    description: 'A ship section afloat. After 30 s the fuel line bursts in the aft cross corridor of the lower deck, against the hull below the waterline: the vapour explodes, tears the plating open and sets the corridor on fire, and the sea pours in, filling the lower deck from the bottom up. Close the watertight doors to keep the water (and the fire) to one part; a closed space floods only until its air is squeezed to the sea pressure. Under water you breathe from your mask, and near the hole the inrush pushes you.',
     world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
     weather: w({ ambient: 14, humidity: 0.75, windSpeed: 4 }),
     timeScale: 1,
@@ -190,15 +190,17 @@ export const SCENARIOS = {
   },
   catacombs: {
     name: 'Catacombs',
-    description: 'Vaulted limestone passages lit by torches on the walls, burial niches and chambers with coffins. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
-    world: { size: [19, 4.2, 25], h: 0.2, ground: 'stone' },
+    description: 'Vaulted limestone passages with carved inscriptions and walls of stacked skulls and bones, lit by torches on the walls; burial niches, and chambers with coffins behind wooden doors. Guards make their rounds, opening and closing the doors. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
+    world: { size: [24, 4.2, 29], h: 0.2, ground: 'stone' },
     weather: w({ ambient: 12, humidity: 0.8 }),
     timeScale: 1,
-    view: { dark: true, camera: [9.5, 14, -4] },
+    view: { dark: true, camera: [12, 16, -5] },
     objects: [
-      { type: 'catacombs', params: {}, x: 9.5, z: 14.5 },
-      { type: 'enemy', params: { count: 2, spread: 1.5 }, x: 9.5, z: 14.5 },
-      { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2, patrol: 'route', patrolWidth: 5, patrolDepth: 5 }, x: 14.5, z: 19.5 },
+      { type: 'catacombs', params: {}, x: 12, z: 17 },
+      // guards on their rounds through the passages, the chambers and their doors
+      { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 7, z: 12 },
+      { type: 'enemy', params: { count: 2, spread: 0.5, seed: 2, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 17, z: 22 },
+      { type: 'enemy', params: { count: 1, spread: 0.3, seed: 5, patrol: 'area', patrolWidth: 14, patrolDepth: 14 }, x: 12, z: 17 },
     ],
   },
   carrier: {
@@ -262,12 +264,14 @@ export const SCENARIOS = {
       },
       catacombs: {
         name: 'Catacombs under the island',
-        world: { size: [19, 4.2, 25], h: 0.2, ground: 'stone' },
-        view: { dark: true, camera: [9.5, 14, -4], walk: true },
+        world: { size: [24, 4.2, 29], h: 0.2, ground: 'stone' },
+        view: { dark: true, camera: [12, 16, -5], walk: true },
         objects: [
-          { type: 'catacombs', params: { exitTo: 'island' }, x: 9.5, z: 14.5 },
-          { type: 'enemy', params: { count: 2, spread: 1.5 }, x: 9.5, z: 14.5 },
-          { type: 'enemy', params: { count: 2, spread: 1.5, seed: 2, patrol: 'route', patrolWidth: 5, patrolDepth: 5 }, x: 14.5, z: 19.5 },
+          { type: 'catacombs', params: { exitTo: 'island' }, x: 12, z: 17 },
+          // guards on their rounds through the passages, the chambers and their doors
+          { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 7, z: 12 },
+          { type: 'enemy', params: { count: 2, spread: 0.5, seed: 2, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 17, z: 22 },
+          { type: 'enemy', params: { count: 1, spread: 0.3, seed: 5, patrol: 'area', patrolWidth: 14, patrolDepth: 14 }, x: 12, z: 17 },
         ],
       },
     },

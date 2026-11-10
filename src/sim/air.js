@@ -127,6 +127,7 @@ export function stepAir(w, W, D, dt, sim) {
   const sxy = anx * any;
   const O2B = w.vacuum ? 0 : O2_AIR; // what comes in from outside the domain (nothing, in space)
   const suck = w.vacuum ? w.suck : null; // air streaming out through a hull breach
+  const awake = w.airAwake ?? null; // sleeping blocks (sim/activity.js) keep their state
 
   // --- 1. velocity
   const t = w.time;
@@ -155,6 +156,10 @@ export function stepAir(w, W, D, dt, sim) {
       const tz2v = tz2[az];
       let a = anx * (ay + any * az);
       for (let ax = 0; ax < anx; ax++, a++) {
+        if (awake && !awake[a]) {
+          vx[a] = vy[a] = vz[a] = 0;
+          continue;
+        }
         const T = airT[a];
         const dT = T - Tamb;
         // in a stratified layer under a ceiling, gas only rises if it is hotter than the gas above it
@@ -227,6 +232,19 @@ export function stepAir(w, W, D, dt, sim) {
     for (let ay = 0; ay < any; ay++) {
       let a = anx * (ay + any * az);
       for (let ax = 0; ax < anx; ax++, a++) {
+        if (awake && !awake[a]) {
+          // asleep: carried over as it is
+          oT[a] = airT[a];
+          oS[a] = smoke[a];
+          oR[a] = smokeR[a];
+          oG[a] = smokeG[a];
+          oB[a] = smokeB[a];
+          oW[a] = steam[a];
+          oF[a] = fgas[a];
+          oX[a] = supp[a];
+          oO[a] = o2[a];
+          continue;
+        }
         let px = ax - vx[a] * inv;
         let py = ay - vy[a] * inv;
         let pz = az - vz[a] * inv;
@@ -297,6 +315,7 @@ export function stepAir(w, W, D, dt, sim) {
     for (let ay = 0; ay < any; ay++) {
       let a = anx * (ay + any * az);
       for (let ax = 0; ax < anx; ax++, a++) {
+        if (awake && !awake[a]) continue;
         // neighbour indices; open boundaries mix with ambient (-1), the ground is closed
         const xm = ax > 0 ? a - 1 : -1;
         const xp = ax + 1 < anx ? a + 1 : -1;
@@ -334,6 +353,9 @@ export function stepAir(w, W, D, dt, sim) {
         const sp = lap(oX, a, xm, xp, ym, yp, zm, zp, 0, k) * suppKeep;
         supp[a] = sp;
         fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep * (sp > 0 ? Math.exp(-6 * sp * dt) : 1);
+        if (fgas[a] < 1e-3) fgas[a] = 0; // the last trace of burning gas is gone
+        if (smoke[a] < 1e-12) smoke[a] = smokeR[a] = smokeG[a] = smokeB[a] = 0;
+        if (steam[a] < 1e-12) steam[a] = 0;
       }
     }
 
@@ -343,6 +365,8 @@ export function stepAir(w, W, D, dt, sim) {
   let smokeTotal = 0;
   let steamTotal = 0;
   for (let a = 0; a < NA; a++) {
+    // asleep and nothing arriving: unchanged (heat put into it wakes it)
+    if (awake && !awake[a] && airQ[a] === 0 && airG[a] === 0 && flameAcc[a] === 0) continue;
     const T = airT[a];
     const rho = 353 / (T + 273.15);
     const Ca = rho * CP_AIR * ah3 * (1 - 0.9 * occ[a]);

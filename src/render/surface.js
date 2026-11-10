@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { shadeVoxel } from './voxels.js';
+import { addPatterns, PATTERN_OF_MAT } from './patterns.js';
+import { F_HIDDEN } from '../sim/world.js';
 
 const C = 16; // chunk size in voxels
 
@@ -28,6 +30,7 @@ export class SurfaceRenderer {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow;');
+      addPatterns(shader, false);
     };
     this.mode = 'realistic';
     this.cut = 1;
@@ -79,7 +82,8 @@ export class SurfaceRenderer {
     if (x < 0 || z < 0 || x >= w.nx || z >= w.nz || y >= w.ny) return 0;
     if (z >= this.cutZ) return 0;
     if (y === 0 && !this.showGround) return 0;
-    return w.mat[x + w.nx * (y + w.ny * z)] ? 1 : 0;
+    const i = x + w.nx * (y + w.ny * z);
+    return w.mat[i] && !(w.flags[i] & F_HIDDEN) ? 1 : 0;
   }
 
   update(time) {
@@ -227,6 +231,30 @@ export class SurfaceRenderer {
     const nv = pos.length / 3;
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(nv * 3), 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aGlow', new THREE.BufferAttribute(new Float32Array(nv * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    // the texture of each vertex: the pattern most of the voxels around it have
+    const pat = new Float32Array(nv);
+    const wm = this.world.mat;
+    const { nx: wx, ny: wy, nz: wz } = this.world;
+    for (let v = 0; v < nv; v++) {
+      const cx = corners[v * 3];
+      const cy = corners[v * 3 + 1];
+      const cz = corners[v * 3 + 2];
+      const cnt = [0, 0, 0, 0, 0, 0, 0, 0];
+      let best = 0;
+      for (let k = 0; k < 8; k++) {
+        const x = cx + (k & 1);
+        const y = cy + ((k >> 1) & 1);
+        const z = cz + ((k >> 2) & 1);
+        if (x < 0 || y < 0 || z < 0 || x >= wx || y >= wy || z >= wz) continue;
+        const m = wm[x + wx * (y + wy * z)];
+        if (!m) continue;
+        const p = PATTERN_OF_MAT[m];
+        cnt[p]++;
+        if (cnt[p] > cnt[best] || (best === 0 && p)) best = p;
+      }
+      pat[v] = best;
+    }
+    geo.setAttribute('aPat', new THREE.BufferAttribute(pat, 1));
     const mesh = new THREE.Mesh(geo, this.material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;

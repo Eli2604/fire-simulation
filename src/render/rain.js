@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-/** Falling rain streaks; count follows the rain intensity, drift follows the wind. */
+/**
+ * Falling rain streaks; count follows the rain intensity, drift follows the wind.
+ * A drop ends at the first thing in its column (a roof, a tree crown, the ground):
+ * it does not rain inside a house.
+ */
 export class RainRenderer {
   constructor(scene, max = 6000) {
     this.max = max;
@@ -32,6 +36,7 @@ export class RainRenderer {
     const wx = Math.cos(rad) * weather.windSpeed;
     const wz = Math.sin(rad) * weather.windSpeed;
     const len = Math.min(0.5, sy * 0.04);
+    const { nx, nz, h, colTop } = world;
     for (let k = 0; k < n; k++) {
       const s0 = this.seed[k * 3];
       const s1 = this.seed[k * 3 + 1];
@@ -42,6 +47,16 @@ export class RainRenderer {
       const x = (((s0 * sx + wx * drift) % sx) + sx) % sx;
       const z = (((s1 * sz + wz * drift) % sz) + sz) % sz;
       const o = k * 6;
+      // under a roof: this drop has already landed on it
+      const cx = Math.min(nx - 1, Math.floor(x / h));
+      const cz = Math.min(nz - 1, Math.floor(z / h));
+      const top = colTop ? (colTop[cx + nx * cz] + 1) * h : 0;
+      if (y < top) {
+        this.pos[o] = this.pos[o + 3] = x;
+        this.pos[o + 1] = this.pos[o + 4] = -1000;
+        this.pos[o + 2] = this.pos[o + 5] = z;
+        continue;
+      }
       this.pos[o] = x;
       this.pos[o + 1] = y;
       this.pos[o + 2] = z;

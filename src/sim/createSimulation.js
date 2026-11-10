@@ -24,6 +24,7 @@ export function createSimulation(scene) {
   const zoneW = scene.zones?.[scene.zone ?? scene.startZone]?.weather; // a zone can have its own (space: no wind, no rain)
   const weather = { ...defaultWeather(), ...(scene.weather ?? {}), ...(zoneW ?? {}) };
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
+  world.dark = !!scene.view?.dark; // underground: a light where there should be none is noticed
   const sim = new Simulation(world, weather);
   // where the firefighter walk-through starts: chosen by the user, the scene's own, or the edge
   sim.spawn = scene.walkStart ?? spawn ?? defaultSpawn(world);

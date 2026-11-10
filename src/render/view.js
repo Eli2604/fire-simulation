@@ -10,6 +10,8 @@ import { SurfaceRenderer } from './surface.js';
 import { VolumeRenderer } from './volume.js';
 import { MarkerRenderer } from './markers.js';
 import { PuddleRenderer } from './puddles.js';
+import { TorchRenderer } from './torches.js';
+import { OssuaryRenderer } from './ossuary.js';
 import { EnemyRenderer } from './enemies.js';
 import { deriveWeather } from '../sim/weather.js';
 
@@ -62,6 +64,9 @@ export class View {
     this.root.add(this.ground);
 
     this.voxels = new VoxelRenderer(this.root);
+    this.torches = new TorchRenderer(this.root); // wall torches as objects
+    this.ossuary = new OssuaryRenderer(this.root); // walls built of skulls and bones
+    this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
     this.overlay = new THREE.Scene();
     this.flames = new FlameRenderer(this.overlay);
@@ -109,6 +114,8 @@ export class View {
     const [sx, sy, sz] = world.size;
     const diag = Math.hypot(sx, sy, sz);
     this.voxels.setWorld(world);
+    this.torches.setWorld(world);
+    this.ossuary.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -313,6 +320,8 @@ export class View {
     this.enemies.update(this.world, this.time);
     this.updateFireLight(stats);
     this.updateTorchLights();
+    this.torches.update(this.time);
+    this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
     const r = this.renderer;
     const useVolume = volumetric && this.smoke.enabled;

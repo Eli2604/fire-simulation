@@ -11,10 +11,11 @@
 export default {
   label: 'Catacombs',
   params: {
-    cellsX: { value: 3, min: 1, max: 5, step: 1, label: 'Passages along X' },
-    cellsZ: { value: 3, min: 1, max: 5, step: 1, label: 'Passages along Z' },
+    cellsX: { value: 4, min: 1, max: 6, step: 1, label: 'Passages along X' },
+    cellsZ: { value: 4, min: 1, max: 6, step: 1, label: 'Passages along Z' },
     cell: { value: 5, min: 3, max: 8, step: 0.5, label: 'Spacing (m)' },
-    width: { value: 1.6, min: 1, max: 3, step: 0.1, label: 'Passage width (m)' },
+    width: { value: 1.8, min: 1, max: 3, step: 0.1, label: 'Passage width (m)' },
+    ossuary: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Share of walls of stacked bones (ossuary)' },
     height: { value: 2.6, min: 2, max: 4, step: 0.1, label: 'Height (m)' },
     torchSpacing: { value: 4, min: 2, max: 10, step: 0.5, label: 'Torch spacing (m)' },
     entranceOpen: { value: true, label: 'Entrance open to the surface' },
@@ -81,20 +82,76 @@ export default {
     if (p.entranceOpen) prims.push({ shape: 'box', min: [ex - cw, H, ez - 6 - T - 0.01], max: [ex + cw, 99, ez - 5], mode: 'carve' });
     else prims.push({ shape: 'box', min: [ex - cw - T, 0, ez - 6 - T], max: [ex + cw + T, 99, ez - 5.8], ...stone });
     for (const r of runs) carve(...r);
+    for (const [a, b, alongX] of runs) {
+      const line = { material: 'stone', color: [0.06, 0.055, 0.05], variation: 0.02, anchored: true, mode: 'replace' };
+      if (alongX) prims.push({ shape: 'box', min: [a[0] - cw, H - h * 0.9, a[2] - h * 0.6], max: [b[0] + cw, H + h, a[2] + h * 0.6], ...line });
+      else prims.push({ shape: 'box', min: [a[0] - h * 0.6, H - h * 0.9, a[2] - cw], max: [a[0] + h * 0.6, H + h, b[2] + cw], ...line });
+    }
     for (const [x, z] of chambers) {
       prims.push(
         { shape: 'box', min: [x - cr, h * 0.5, z - cr], max: [x + cr, H - 0.3, z + cr], mode: 'carve' },
         { shape: 'ellipsoid', c: [x, H - 0.3, z], r: [cr, 1.1, cr], mode: 'carve' },
       );
       // coffins in two opposite corners (clear of the passages crossing the chamber), a shroud on one
-      const cl = Math.max(0.7, cr - cw - 0.25); // length that fits the corner
+      const cl = Math.max(0.6, cr - cw - 0.5); // length that fits the corner (clear of the bone walls)
       for (const sg of [-1, 1]) {
-        const xa = sg < 0 ? x - cr + 0.1 : x + cr - 0.1 - cl;
-        const za = sg < 0 ? z - cr + 0.1 : z + cr - 0.7;
+        const xa = sg < 0 ? x - cr + 0.35 : x + cr - 0.35 - cl;
+        const za = sg < 0 ? z - cr + 0.35 : z + cr - 0.95;
         prims.push({ shape: 'box', min: [xa, h * 0.5, za], max: [xa + cl, 0.6, za + 0.6], material: 'wood', density: 0.25, color: [0.38, 0.27, 0.17] });
         if (sg < 0) prims.push({ shape: 'box', min: [xa + 0.05, 0.6, za + 0.05], max: [xa + cl - 0.05, 0.6 + Math.max(h, 0.1), za + 0.55], material: 'fabric', color: [0.6, 0.55, 0.45] });
       }
     }
+    // ossuary walls: in some stretches (and round every chamber) the lower walls are skulls
+    // and long bones stacked in rows, the rest dressed limestone with carved inscriptions
+    const OSS = 1.8; // height of the bone walls
+    const bones = { material: 'ossuary', anchored: true, variation: 0.06, mode: 'replace' };
+    const ossStretch = [];
+    for (const [a, b, alongX] of runs) {
+      const ends = alongX ? xs : zs;
+      for (let k = 0; k + 1 < ends.length; k++) {
+        if (rng() >= p.ossuary) continue;
+        const s0 = ends[k] + cw + 0.2;
+        const s1 = ends[k + 1] - cw - 0.2;
+        if (s1 <= s0) continue;
+        ossStretch.push([alongX, alongX ? a[2] : a[0], s0, s1]);
+        if (alongX) prims.push({ shape: 'box', min: [s0, h * 1.01, a[2] - cw - T], max: [s1, OSS, a[2] + cw + T], ...bones });
+        else prims.push({ shape: 'box', min: [a[0] - cw - T, h * 1.01, s0], max: [a[0] + cw + T, OSS, s1], ...bones });
+      }
+    }
+    // the chambers: bone walls on all four sides (not the coffins inside)
+    const e = h * 1.5;
+    for (const [x, z] of chambers)
+      prims.push(
+        { shape: 'box', min: [x - cr - T, h * 1.01, z - cr - T], max: [x - cr + e, OSS + 0.2, z + cr + T], ...bones },
+        { shape: 'box', min: [x + cr - e, h * 1.01, z - cr - T], max: [x + cr + T, OSS + 0.2, z + cr + T], ...bones },
+        { shape: 'box', min: [x - cr - T, h * 1.01, z - cr - T], max: [x + cr + T, OSS + 0.2, z - cr + e], ...bones },
+        { shape: 'box', min: [x - cr - T, h * 1.01, z + cr - e], max: [x + cr + T, OSS + 0.2, z + cr + T], ...bones },
+      );
+    // engraved stone tablets set into the bone walls (one per stretch, and one in each chamber)
+    // (lines separated by |)
+    const VERSES = [
+      'OSSEMENTS|DU CIMETIÈRE|DES INNOCENTS|DÉPOSÉS EN 1786',
+      'MEMENTO HOMO|QUIA PULVIS ES|ET IN PULVEREM|REVERTERIS',
+      'ICI REPOSENT|EN ATTENDANT|LA RÉSURRECTION',
+      'QUÆRIS QUO|JACEANT IN LOCO|QUÆ NON|NATA JACENT',
+      'OSSEMENTS|DU CIMETIÈRE|SAINT-LAURENT|1804',
+      'BEATI MORTUI|QUI IN DOMINO|MORIUNTUR',
+    ];
+    const plaques = [];
+    ossStretch.forEach(([alongX, line, s0, s1], k) => {
+      if (s1 - s0 < 1.6) return;
+      const side = k % 2 ? 1 : -1;
+      const mid = (s0 + s1) / 2;
+      const p = alongX ? [mid, 0.95, line + side * cw] : [line + side * cw, 0.95, mid];
+      const n = alongX ? [0, 0, -side] : [-side, 0, 0];
+      plaques.push({ p, n, w: 0.56, h: 0.4, text: VERSES[k % VERSES.length] });
+    });
+    chambers.forEach(([x, z], k) => plaques.push({ p: [x + cr, 1.05, z - cr * 0.7], n: [-1, 0, 0], w: 0.6, h: 0.44, text: VERSES[(k + 3) % VERSES.length] }));
+    const inOssuary = (pt) => ossStretch.some(([alongX, line, s0, s1]) => {
+      const along = alongX ? pt[0] : pt[2];
+      const across = alongX ? pt[2] : pt[0];
+      return Math.abs(across - line) < cw + 0.1 && along > s0 - 0.3 && along < s1 + 0.3;
+    });
     // burial niches in the passage walls: bones and rags. Only where there is a wall:
     // not at crossings or inside chambers.
     const walled = (pt) =>
@@ -105,6 +162,7 @@ export default {
       for (let s = 1.2; s < len - 1; s += 1.6) {
         if (rng() < 0.35) continue;
         if (!walled(alongX ? [a[0] + s, 0, a[2]] : [a[0], 0, a[2] + s])) continue;
+        if (inOssuary(alongX ? [a[0] + s, 0, a[2]] : [a[0], 0, a[2] + s])) continue; // the bones are the wall there
         for (const side of [-1, 1]) {
           if (rng() < 0.4) continue;
           const y0 = 0.5 + Math.floor(rng() * 2) * 0.7;
@@ -143,9 +201,9 @@ export default {
         const tip = [base[0] + out[0] * 0.25, 1.85, base[2] + out[2] * 0.25];
         const bw = Math.max(h, 0.08); // at least a voxel
         prims.push(
-          { shape: 'box', min: [base[0] - bw / 2 + Math.min(0, out[0]) * bw, 1.4, base[2] - bw / 2 + Math.min(0, out[2]) * bw], max: [base[0] + bw / 2 + Math.max(0, out[0]) * bw, 1.4 + 2 * bw, base[2] + bw / 2 + Math.max(0, out[2]) * bw], material: 'steel', color: [0.12, 0.11, 0.1], anchored: true },
-          { shape: 'capsule', a: base, b: tip, r: Math.max(0.025, h * 0.6), material: 'wood', density: 0.6, color: [0.3, 0.2, 0.12], anchored: true },
-          { shape: 'sphere', c: tip, r: Math.max(0.06, h * 0.8), material: 'wood', density: 0.9, moisture: 0, color: [0.12, 0.07, 0.04], anchored: true },
+          { shape: 'box', min: [base[0] - bw / 2 + Math.min(0, out[0]) * bw, 1.4, base[2] - bw / 2 + Math.min(0, out[2]) * bw], max: [base[0] + bw / 2 + Math.max(0, out[0]) * bw, 1.4 + 2 * bw, base[2] + bw / 2 + Math.max(0, out[2]) * bw], material: 'steel', color: [0.12, 0.11, 0.1], anchored: true, hidden: true },
+          { shape: 'capsule', a: base, b: tip, r: Math.max(0.025, h * 0.6), material: 'wood', density: 0.6, color: [0.3, 0.2, 0.12], anchored: true, hidden: true },
+          { shape: 'sphere', c: tip, r: Math.max(0.06, h * 0.8), material: 'wood', density: 0.9, moisture: 0, color: [0.12, 0.07, 0.04], anchored: true, hidden: true },
         );
         heaters.push({ pos: [tip[0], tip[1] + 0.05, tip[2]], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' });
       }
@@ -153,16 +211,21 @@ export default {
     // doors between some passages and chambers: wooden, one locked
     const doors = [];
     chambers.forEach(([x, z], k) => {
-      const dz = z - cr - T / 2;
-      doors.push(
-        { shape: 'box', min: [x - cw, h * 0.5, dz - T / 2], max: [x + cw, Math.min(2.1, H - 0.3), dz + T / 2], material: 'wood', density: Math.min(1, 0.05 / h), color: [0.33, 0.22, 0.13], door: `chamber ${k + 1}`, doorLocked: k === 0 },
-      );
+      for (const side of [-1, 1]) {
+        const dz = z + side * (cr + T / 2);
+        doors.push({
+          shape: 'box', min: [x - cw, h * 0.5, dz - T / 2], max: [x + cw, Math.min(2.1, H - 0.3), dz + T / 2],
+          material: 'wood', density: Math.min(1, 0.05 / h), color: [0.33, 0.22, 0.13],
+          door: `chamber ${k + 1} ${side < 0 ? 'north' : 'south'}`, doorLocked: k === 0 && side < 0,
+        });
+      }
     });
     prims.push(...doors);
     return {
       prims,
       heaters,
       spawn: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 },
+      plaques,
       portals: p.exitTo ? [{ p: [ex, 0, ez - 2.5], r: 1.0, to: p.exitTo, label: 'Stairs: up to the surface', arrive: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 } }] : [],
       ignite: { p: [chambers[0][0] - cr + 1, 0.65, chambers[0][1]], radius: 0.4, power: 3000, materials: ['fabric', 'wood'] },
     };

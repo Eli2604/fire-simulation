@@ -2,7 +2,8 @@ import { MATERIALS, TBL } from './materials.js';
 import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR } from './world.js';
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
-import { stepProjectiles, stepGasPipes } from './explosions.js';
+import { stepProjectiles, stepGasPipes, explode } from './explosions.js';
+import { updateActivity } from './activity.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
@@ -117,6 +118,7 @@ export class Simulation {
     this.applyHeaters(dt);
     this.applyWater(dt, D);
     stepVessels(this, dt);
+    updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
     this.solidPassB(dt, D);
     stepVacuum(this, dt);
@@ -440,6 +442,8 @@ export class Simulation {
         w.events.push({ type: ht.event ?? 'ignition', pos: ht.pos.slice(), time: w.time, name: ht.label ?? 'source' });
         // an electrical fault sets what it touches alight
         if (ht.igniteRadius) this.ignite(ht.pos, ht.igniteRadius);
+        // a burst that goes off as an explosion (fuel vapour): a blast where it is
+        if (ht.blast) explode(this, ht.blast.p, ht.blast.energy, { name: ht.label ?? 'explosion' });
       }
       const [px, py, pz] = ht.pos;
       const r = Math.max(ht.radius, ah * 0.5);
@@ -513,8 +517,9 @@ export class Simulation {
     const EPS = TBL.eps;
     const TambK = w.ambient + 273.15;
     const TambK4 = TambK * TambK * TambK * TambK;
-    const solids = w.solids;
-    const n = w.solidCount;
+    // only the awake solids (sim/activity.js): the sleeping ones are at rest
+    const solids = w.activeSolids ?? w.solids;
+    const n = w.activeSolids ? w.activeCount : w.solidCount;
     const radScale = this.radScale;
     const windBoost = Math.sqrt(Math.hypot(D.windX, D.windZ));
     let radDemand = 0;
@@ -675,8 +680,9 @@ export class Simulation {
     const { airQ, radSrc, flameAcc, smoke, smokeR, smokeG, smokeB, steam } = w;
     const A = h * h;
     const V = A * h;
-    const solids = w.solids;
-    const n = w.solidCount;
+    // only the awake solids (sim/activity.js): the sleeping ones are at rest
+    const solids = w.activeSolids ?? w.solids;
+    const n = w.activeSolids ? w.activeCount : w.solidCount;
     const Tamb = w.ambient;
     const windO2 = 1 + 0.08 * Math.hypot(D.windX, D.windZ);
     const rainRate = D.rainRate;

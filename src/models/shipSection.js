@@ -22,6 +22,7 @@ export default {
     sprinklers: { value: false, label: 'Sprinklers' },
     burstAfter: { value: 30, min: 0, max: 600, step: 1, label: 'Fuel line bursts after (s)' },
     burstPower: { value: 200000, min: 20000, max: 1000000, step: 10000, label: 'Burning jet (W)' },
+    burstBlast: { value: 1e6, min: 0, max: 6e6, step: 1e5, label: 'Vapour explosion at the burst (J; 0: none)' },
   },
   build(p, { h }) {
     const L = p.length;
@@ -119,7 +120,17 @@ export default {
     prims.push({ shape: 'cylinder', a: [-hx + 1, gy, gz], b: [hx - 1, gy, gz], r: Math.max(0.03, h * 0.6), material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, jetHeight: 1.6, dir: [0.2, -0.6, 0.78] } });
     // the sea-water fire main along the other side: a blast or the fire breaks it, and it floods the corridor
     prims.push({ shape: 'cylinder', a: [-hx + 1, gy, -gz], b: [hx - 1, gy, -gz], r: Math.max(0.04, h * 0.6), material: 'steel', color: [0.2, 0.45, 0.25], density: thin(0.004), anchored: true, waterPipe: { rate: 20, label: 'sea-water main' } });
-    bursts.push({ pos: [-L / 8, gy, gz + 0.06], power: p.burstPower, radius: 0.2, height: 1.6, dir: [0.2, -0.6, 0.78], start: p.burstAfter, label: 'fuel line', event: 'pipeBurst', jet: true, smokeYield: 0.01 });
+    // a branch runs down the aft cross corridor to the fuel tank outboard; it bursts there,
+    // against the hull below the waterline: the vapour explodes, tears the plating open
+    // (the sea comes in), and the leaking fuel burns as a jet
+    const bx = -L / 4;
+    const bz = -hz + 0.7;
+    prims.push({ shape: 'cylinder', a: [bx + cw - 0.15, gy, gz], b: [bx + cw - 0.15, gy, -hz + t + 0.05], r: Math.max(0.03, h * 0.6), material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, jetHeight: 1.6, dir: [0, -0.6, 0.8] } });
+    bursts.push({
+      pos: [bx + cw - 0.25, gy, bz], power: p.burstPower, radius: 0.2, height: 1.6, dir: [-0.3, -0.6, 0.7], start: p.burstAfter,
+      label: 'fuel line', event: 'pipeBurst', jet: true, smokeYield: 0.01,
+      blast: p.burstBlast > 0 ? { p: [bx, floor1 + 0.6, -hz + t + 0.25], energy: p.burstBlast } : undefined,
+    });
 
     const sprinklers = [];
     if (p.sprinklers)

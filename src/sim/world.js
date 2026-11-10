@@ -10,6 +10,7 @@ export const F_FALLING = 2; // detached from structure, falls under gravity
 export const F_ANCHOR = 4; // always considered supported (e.g. bolted down)
 export const F_BURNING = 8; // flaming combustion
 export const F_SMOLDER = 16; // pyrolysing / smoking without flame
+export const F_HIDDEN = 64; // drawn as a mesh (a wall torch), not as a voxel
 export const F_BROKEN = 32; // has broken away once (a fallen branch, a dropped tile): does not break again
 
 /**
@@ -127,6 +128,7 @@ export class World {
     this.projectiles = []; // thrown grenades, arrows, rockets
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock
+    this.plaques = []; // { p, n, w, h, text }: engraved stone tablets on the walls (drawn only)
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding
@@ -211,7 +213,7 @@ export class World {
     this.melt[i] = liquid ? 1 : 0;
     this.char[i] = 0;
     this.hrr[i] = 0;
-    this.flags[i] = (liquid ? F_LIQUID : 0) | (o.anchored ? F_ANCHOR : 0);
+    this.flags[i] = (liquid ? F_LIQUID : 0) | (o.anchored ? F_ANCHOR : 0) | (o.hidden ? F_HIDDEN : 0);
     this.owner[i] = o.owner ?? -1;
     const col = o.color ?? m.color;
     const v = o.variation ?? 0.08;

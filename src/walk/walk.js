@@ -128,6 +128,7 @@ export class Walkthrough {
     this.crawl = false;
     this.air = AIR_LITRES;
     this.startTime = w.time;
+    this.seenEv = undefined;
     this.resetBody();
     this.active = true;
     const v = this.view;
@@ -263,6 +264,7 @@ export class Walkthrough {
     this.yaw = -Math.PI / 2 - yaw;
     this.pitch = 0;
     this.near = null;
+    this.seenEv = undefined; // another zone, other events
   }
 
   /** F: strike what is in front of you (helmet, axe handle): glass breaks, loudly. */
@@ -356,6 +358,31 @@ export class Walkthrough {
     this.air = AIR_LITRES;
     this.crawl = false;
     this.resetBody();
+  }
+
+  /** Where the lamp's beam first hits something (up to `range` m), or null. */
+  beamSpot(from, dir, range) {
+    const w = this.hooks.getSim().world;
+    const step = w.h * 0.5;
+    for (let d = 0.3; d < range; d += step) {
+      const p = [from[0] + dir[0] * d, from[1] + dir[1] * d, from[2] + dir[2] * d];
+      if (p[0] < 0 || p[1] < 0 || p[2] < 0 || p[0] >= w.size[0] || p[1] >= w.size[1] || p[2] >= w.size[2]) return null;
+      if (this.solidAt(...p)) return [p[0] - dir[0] * step, p[1] - dir[1] * step, p[2] - dir[2] * step];
+    }
+    return null;
+  }
+
+  /** A blue-green murk over the view while your head is under water. */
+  setUnderwater(f) {
+    if (!this.el.mask) return;
+    if (!this.el.under) {
+      const d = document.createElement('div');
+      d.style.cssText = 'position:absolute;inset:0;pointer-events:none;transition:opacity 0.4s;opacity:0;' +
+        'background:radial-gradient(ellipse at 50% 40%, rgba(40,110,120,0.35), rgba(5,30,40,0.92));mix-blend-mode:normal';
+      this.el.mask.appendChild(d);
+      this.el.under = d;
+    }
+    this.el.under.style.opacity = f ? '1' : '0';
   }
 
   say(text, seconds = 4) {
@@ -603,6 +630,7 @@ export class Walkthrough {
     v.controls.enabled = true;
     this.el.mask.hidden = true;
     this.el.start.hidden = true;
+    this.setUnderwater(0);
     const sim = this.hooks.getSim();
     if (sim) sim.spray = null;
   }
@@ -621,7 +649,26 @@ export class Walkthrough {
   solidAt(x, y, z) {
     const w = this.hooks.getSim().world;
     const i = w.voxelAt(x, y, z);
-    return i >= 0 && w.mat[i] !== 0;
+    // water (and other free liquids) is no floor: you wade through it, or swim
+    return i >= 0 && w.mat[i] !== 0 && !(MATERIALS[w.mat[i]].fluidity >= 0.95);
+  }
+
+  isWater(x, y, z) {
+    const w = this.hooks.getSim().world;
+    const i = w.voxelAt(x, y, z);
+    return i >= 0 && w.mat[i] !== 0 && MATERIALS[w.mat[i]].fluidity >= 0.95;
+  }
+
+  /** Water standing over the floor at (x, z): depth, its surface, and whether there is air above it. */
+  waterAt(x, z, floor) {
+    const w = this.hooks.getSim().world;
+    const h = w.h;
+    let y = floor + h * 0.5;
+    while (y < w.size[1] && this.isWater(x, y, z)) y += h;
+    const surface = Math.floor((y - h * 0.5) / h) * h;
+    const depth = Math.max(0, surface - floor);
+    const air = y < w.size[1] && !this.solidAt(x, y, z) && !this.solidAt(x, y + h, z);
+    return { depth, surface, air };
   }
 
   /** Height of the floor under (x, z), searching down from `from`. */
@@ -678,7 +725,10 @@ export class Walkthrough {
       if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) fx += 1;
     }
     const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-    const speed = this.crawl ? 0.5 : hurry ? 2.2 : 1.2;
+    // wading: water round the legs holds you back; deeper, you swim (slowly, in full gear)
+    const wet = this.water?.depth ?? 0;
+    const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 : Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
+    const speed = (this.crawl ? 0.5 : hurry ? 2.2 : 1.2) * wade;
     const len = Math.hypot(fx, fz);
     let moving = 0;
     if (len > 0) {
@@ -715,8 +765,37 @@ export class Walkthrough {
         this.pos.z = nz;
       }
     }
+    // the sea pouring in through a hole: the jet pushes you away from it
+    this.inrush = 0;
+    for (const f of w.inflows ?? []) {
+      const rx = this.pos.x - f.p[0];
+      const ry = this.pos.y + 1 - f.p[1];
+      const rz = this.pos.z - f.p[2];
+      const along = rx * f.dir[0] + ry * f.dir[1] + rz * f.dir[2];
+      if (along < -0.3 || along > 4) continue;
+      const lat = Math.hypot(rx - f.dir[0] * along, ry - f.dir[1] * along, rz - f.dir[2] * along);
+      if (lat > 0.8 + along * 0.35) continue;
+      const push = f.speed * 0.35 * (1 - along / 4);
+      this.inrush = Math.max(this.inrush, push);
+      const nx = this.pos.x + f.dir[0] * Math.min(0.3, push * dt);
+      const nz = this.pos.z + f.dir[2] * Math.min(0.3, push * dt);
+      const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
+      if (fl - this.pos.y <= 0.42 && !this.blocked(nx, nz, Math.max(fl, this.pos.y), eye)) {
+        this.pos.x = nx;
+        this.pos.z = nz;
+      }
+    }
+    if (this.inrush > 1.5 && !this.inrushWarned) {
+      this.say('The sea is pouring in – the inrush pushes you back', 3);
+      this.inrushWarned = true;
+    } else if (this.inrush < 0.5) this.inrushWarned = false;
     const floor = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
-    this.pos.y += (floor - this.pos.y) * Math.min(1, dt * 10); // settle / fall onto the floor
+    // deep water: you float with your head out, as long as there is air above it;
+    // with the space full to the ceiling your gear takes you down and you walk the bottom
+    this.water = this.waterAt(this.pos.x, this.pos.z, floor);
+    this.swimming = this.water.depth > 1.3 && this.water.air;
+    const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12)) : floor;
+    this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
     cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
@@ -761,9 +840,20 @@ export class Walkthrough {
     const steam = a >= 0 ? w.steam[a] / w.ah ** 3 : 0;
 
     // --- breathing air: litres per minute by effort and heat stress
-    const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0); // a broken mask leaks
+    // under water: the mask is all the air there is (cold and effort: you breathe harder)
+    this.underwater = this.isWater(head[0], head[1], head[2]);
+    const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0) + (this.underwater ? 20 + 15 * (this.swimming ? 1 : 0) : 0); // a broken mask leaks
     this.air = Math.max(0, this.air - (lpm / 60) * dt * (sim.world.time > 0 ? 1 : 0));
     const bar = (this.air / AIR_LITRES) * 300;
+    if (this.underwater && !this.downed) {
+      if (!this.wasUnder) this.say('Under water – you are breathing from your mask', 3);
+      if (this.air <= 0 || this.maskBurst) {
+        this.hurt(18 * dt);
+        if (w.time > this.messageUntil) this.say('DROWNING – get your head above the water!', 2);
+      }
+    }
+    this.wasUnder = this.underwater;
+    this.setUnderwater(this.underwater ? 1 : 0);
 
     // --- hose: aim at the centre of the view
     const aimFwd = new THREE.Vector3();
@@ -817,6 +907,16 @@ export class Walkthrough {
     }
     // where you are, for the enemies (they see your head)
     sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head };
+    // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
+    if (this.lampOn && !this.downed) {
+      if (!sim.ai.lamp || w.time - sim.ai.lamp.time > 0.3) {
+        const spot = this.beamSpot(head, [aimFwd.x, aimFwd.y, aimFwd.z], 25);
+        sim.ai.lamp = spot ? { from: head.slice(), spot, time: w.time } : null;
+      }
+    } else sim.ai.lamp = null;
+    // a guard noticed the light
+    for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++)
+      if (sim.world.events[this.seenEv].type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
     if (this.throwRequested) {
       this.throwRequested = false;
       const from = [head[0] + aimFwd.x * 0.4, head[1] - 0.1, head[2] + aimFwd.z * 0.4];
@@ -831,6 +931,9 @@ export class Walkthrough {
     if (bar < 55) warn.push('LOW AIR – WITHDRAW');
     if (this.onFire > 0) warn.push('ON FIRE');
     if (this.health < 30) warn.push('HEALTH CRITICAL');
+    if (this.underwater) warn.push('UNDER WATER – MASK AIR ONLY');
+    else if (this.swimming) warn.push('DEEP WATER – SWIMMING');
+    if (this.inrush > 1.5) warn.push('INRUSHING SEA');
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');

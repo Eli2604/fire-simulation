@@ -75,6 +75,7 @@ const DEFAULTS = {
   maxBurnTemp: 950,
   charColor: [0.06, 0.05, 0.045],
   liquidColor: null,
+  pattern: null, // texture drawn on the voxels ('limestone', 'ossuary', ...; see render/patterns.js)
   vapor: null, // liquid fuels: { refP Pa at refT °C, B (K, Clausius–Clapeyron), Tb boiling °C, Lv J/kg, beta thermal expansion 1/K }
 };
 
@@ -213,6 +214,14 @@ const DEFS = {
     // limestone (catacombs): dense, brittle, calcines only at very high temperature
     label: 'Limestone', color: [0.62, 0.58, 0.5], density: 2300, specificHeat: 900, conductivity: 1.3,
     brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
+    pattern: 'limestone', // drawn as dressed blocks with carved inscriptions
+  },
+  ossuary: {
+    // an ossuary wall: skulls and long bones stacked in rows, set in lime mortar. The voxels
+    // are the dark mass behind; the bones are drawn as geometry on it (render/ossuary.js)
+    label: 'Ossuary wall (bones)', color: [0.16, 0.12, 0.09], density: 1500, specificHeat: 1150, conductivity: 0.6,
+    brittle: true, maxMoisture: 0.08, moisture: 0.04, oxidizeTemp: 350, charColor: [0.08, 0.06, 0.05],
+    bones: true,
   },
   bone: {
     label: 'Bone', color: [0.86, 0.82, 0.72], density: 1300, specificHeat: 1300, conductivity: 0.4,

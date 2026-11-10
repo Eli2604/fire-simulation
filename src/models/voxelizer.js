@@ -24,6 +24,7 @@ import { MODELS, resolveParams } from './index.js';
  *  color      [r,g,b] 0..1 paint/tint
  *  variation  colour noise amount
  *  anchored   never falls
+ *  hidden     simulated, but drawn by a mesh of its own (wall torches)
  */
 
 const EPS = 1e-6;
@@ -210,6 +211,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
+  for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   if (built.docks) for (const d of built.docks) world.docks.push({ ...d, p: toWorld(...d.p), dir: dirToWorld(d.dir), arrive: d.arrive ? toWorld(...d.arrive) : undefined });
   if (built.sea) {
     const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);
@@ -291,6 +293,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
             color: p.color,
             variation: p.variation,
             anchored: p.anchored,
+            hidden: p.hidden,
             density: p.density,
             group,
             paint: p.paint,
@@ -333,7 +336,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   }
 
   for (const ht of built.heaters ?? []) {
-    world.heaters.push({ ...ht, pos: toWorld(...ht.pos), dir: dirToWorld(ht.dir), on: ht.on ?? true, owner: ownerIndex });
+    world.heaters.push({ ...ht, pos: toWorld(...ht.pos), dir: dirToWorld(ht.dir), on: ht.on ?? true, owner: ownerIndex, blast: ht.blast ? { ...ht.blast, p: toWorld(...ht.blast.p) } : undefined });
   }
   let ignite = null;
   if (built.ignite) {

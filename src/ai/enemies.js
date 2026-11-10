@@ -1,4 +1,5 @@
 import { MATERIALS } from '../sim/materials.js';
+import { toggleDoor } from '../sim/doors.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -14,6 +15,10 @@ import { MATERIALS } from '../sim/materials.js';
  *    cables...) in a place that will draw the player in, light it, shout and
  *    pull back to hide. They flee from heat and smoke.
  *  - Heat, flames (they catch fire), arrows, blasts and falling debris hurt them.
+ *  - Light: in the dark, a spot lit up by your lamp that they can see (and that no
+ *    torch explains) makes them come and look; so does seeing the beam itself.
+ *  - Doors: their paths go through doors they can open (not locked ones). They
+ *    open a closed door when they reach it and mostly close it behind them.
  */
 const EYE = 1.6;
 const R = 0.25;
@@ -36,7 +41,10 @@ export class EnemyAI {
   solidAt(x, y, z) {
     const w = this.world;
     const i = w.voxelAt(x, y, z);
-    return i >= 0 && w.mat[i] !== 0 && !(MATERIALS[w.mat[i]].fluidity >= 0.95);
+    if (i < 0 || w.mat[i] === 0 || MATERIALS[w.mat[i]].fluidity >= 0.95) return false;
+    // planning a route: a door that can be opened is no wall
+    if (this.passDoors && w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked) return false;
+    return true;
   }
 
   floorAt(x, z, from) {
@@ -63,6 +71,15 @@ export class EnemyAI {
 
   /** A* over a 0.4 m grid on the floors, avoiding hazards. Returns a list of points or null. */
   path(from, to, maxNodes = 2500) {
+    this.passDoors = true;
+    try {
+      return this.findPath(from, to, maxNodes);
+    } finally {
+      this.passDoors = false;
+    }
+  }
+
+  findPath(from, to, maxNodes) {
     const step = 0.4;
     const key = (x, z, y) => `${Math.round(x / step)},${Math.round(z / step)},${Math.round(y / 0.5)}`;
     const start = { x: from[0], y: from[1], z: from[2], g: 0, f: 0, prev: null };
@@ -155,6 +172,18 @@ export class EnemyAI {
           w.events.push({ type: 'shout', pos: head, time: w.time, name: 'enemy' });
         }
       }
+      // a lit spot in the dark where nothing should be lit: someone is there with a lamp
+      const L = this.lamp;
+      if (L && w.dark && w.time - L.time < 0.6 && !seesPlayer && !['lure', 'retreat', 'flee'].includes(e.state) && !((e.lightCooldown ?? 0) > w.time)) {
+        if (this.suspiciousLight(e, head, L)) {
+          e.lightCooldown = w.time + 8;
+          if (e.state !== 'investigate') w.events.push({ type: 'lightSeen', pos: head, time: w.time, name: 'enemy' });
+          e.state = 'investigate';
+          e.goal = L.spot.slice();
+          e.goal[1] = e.p[1];
+          e.repath = 0;
+        }
+      }
       for (const n of noises) {
         const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
         if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy') {
@@ -230,6 +259,7 @@ export class EnemyAI {
       }
       // --- walk along the route
       this.move(e, dt, e.state === 'flee' || e.state === 'retreat' ? RUN : SPEED);
+      this.closeBehind(e);
     }
   }
 
@@ -251,13 +281,83 @@ export class EnemyAI {
     const nz = e.p[2] + (dz / d) * s;
     const fy = this.floorAt(nx, nz, e.p[1] + 0.5);
     if (fy === null || fy - e.p[1] > 0.45 || this.blocked(nx, nz, fy)) {
+      // a closed door in the way: open it (unless it is locked)
+      const k = this.doorAhead(e, nx, nz, dx / d, dz / d);
+      if (k >= 0) {
+        this.useDoor(k, true);
+        e.openedDoor = k;
+        e.doorWait = 0.4; // the time it takes to push it open
+        return;
+      }
       e.repath = 0; // something changed (a door closed, debris): plan again
+      return;
+    }
+    if (e.doorWait > 0) {
+      e.doorWait -= dt;
       return;
     }
     e.p = [nx, e.p[1] + (fy - e.p[1]) * Math.min(1, dt * 10), nz];
     e.yaw = Math.atan2(dx, dz);
     e.moving = true;
     e.walkPhase = (e.walkPhase ?? 0) + s * 4;
+  }
+
+  /** Can e see the spot the lamp lights up, and is it a place that should be dark? */
+  suspiciousLight(e, head, L) {
+    const w = this.world;
+    const s = L.spot;
+    const d = Math.hypot(s[0] - head[0], s[1] - head[1], s[2] - head[2]);
+    if (d > 18) return false;
+    // torches light their surroundings anyway
+    for (const ht of w.heaters) if (ht.light && ht.on && Math.hypot(ht.pos[0] - s[0], ht.pos[1] - s[1], ht.pos[2] - s[2]) < 2.5) return false;
+    // the spot is on the player (lighting your own feet does not count as a strange light)
+    const pl = this.player;
+    if (pl && Math.hypot(pl.p[0] - s[0], pl.p[2] - s[2]) < 0.8) return false;
+    // they look at it (a little in front of the surface, towards them)
+    const k = 0.2 / Math.max(0.2, d);
+    const p = [s[0] + (head[0] - s[0]) * k, s[1] + (head[1] - s[1]) * k, s[2] + (head[2] - s[2]) * k];
+    return this.sees(head, p);
+  }
+
+  /** A closed, unlocked door right in front of e (moving along dx, dz), or -1. */
+  doorAhead(e, nx, nz, dx, dz) {
+    const w = this.world;
+    for (let ahead = 0; ahead <= 0.6; ahead += w.h)
+      for (const hy of [0.8, 1.3])
+        for (const side of [0, R, -R]) {
+          const i = w.voxelAt(nx + dx * ahead - dz * side, e.p[1] + hy, nz + dz * ahead + dx * side);
+          if (i < 0 || !w.mat[i] || !w.doorTag[i]) continue;
+          const k = w.doorTag[i] - 1;
+          const door = w.doors[k];
+          if (!door.open && !door.locked) return k;
+        }
+    return -1;
+  }
+
+  /** Close the door e came through once e is clear of it (most of them do; nobody else in the doorway). */
+  closeBehind(e) {
+    const k = e.openedDoor;
+    if (k === undefined || k < 0) return;
+    const d = this.world.doors[k];
+    if (!d.open) {
+      e.openedDoor = -1;
+      return;
+    }
+    const clear = (p) => Math.hypot(p[0] - d.center[0], p[2] - d.center[2]) > 1.3;
+    if (!clear(e.p)) return;
+    e.openedDoor = -1;
+    if (Math.random() > 0.8) return; // left open
+    if (this.world.enemies.some((o) => !o.dead && !clear(o.p))) return;
+    if (this.player && !clear(this.player.p)) return;
+    this.useDoor(k, false);
+  }
+
+  /** Open / close a door. Its sound is theirs: the others do not come to look. */
+  useDoor(k, open) {
+    const w = this.world;
+    if (!toggleDoor(this.sim, k, open)) return;
+    const n = w.noises[w.noises.length - 1];
+    if (n?.kind === 'door') n.kind = 'enemy';
   }
 
   /** Next place to walk to on patrol: around home, a random spot in the area, or the next corner of the round. */

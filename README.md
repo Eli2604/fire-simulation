@@ -25,8 +25,8 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 - **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
-  oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs lit by
-  wall torches (with enemies), an aircraft carrier with a flyable jet, a server room below deck,
+  oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs of
+  limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   and an island nearby (hills, a canal, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
@@ -37,6 +37,24 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   section cut to look inside objects (for example heat soaking into a wall).
   - *Surfaces*: **voxels** (exactly what is simulated) or **smooth**, a surface-nets mesh of
     the voxel field, rebuilt chunk by chunk as things burn, melt and collapse.
+  - *Relief*: some surfaces are more than a colour per voxel.
+    - **Limestone** (render/patterns.js) is drawn as dressed blocks with mortar joints, chipped
+      arrises and carved inscriptions, from a colour map and a height map painted on a canvas
+      and mapped in world space over the whole wall. The height has real depth in the shader:
+      parallax occlusion mapping marches the view ray into the stone (joints and letters sit
+      in it and shift with the angle), and normals from the height field let the torches,
+      the lamp and the fire light the relief correctly.
+    - **Ossuary walls** (render/ossuary.js) are built of bones, as real geometry, laid out as
+      in the catacombs of Paris: a facade of long bones stacked end-on (knobbly heads and
+      condyles facing out, row upon row), crossed by two bands of skulls and crowned with a row
+      of skulls along the top; crosses and hearts of skulls set into the bone face; engraved
+      stone tablets in the wall (ossuary origins, Latin verses); loose bones lying on top. Lit
+      and shadowed like any object. Each bone sits on the voxel face it belongs to: blast the
+      wall and they go with it, char it and they blacken. They are drawn in 4 m chunks, only
+      near you and in view. The black guide line runs along the top of the vaults.
+    - **Wall torches** are objects (an iron bracket, a wooden handle, a pitch-soaked head and
+      a flickering flame) over the hidden voxels that simulate them.
+    - The surface colour still darkens with soot and charring, gets wet and glows with heat.
   - *Smoke & flames*: **particles** (fast) or **volumetric**: ray-marched in a shader through
     3D textures of the air grid, with absorption, self-shadowing, fire-lit smoke and
     emissive flames, clipped by the scene depth. *Volume quality* sets the number of
@@ -90,6 +108,10 @@ scene). You walk in first person wearing breathing apparatus:
   and wounds enemies.
 - **T** toggles the thermal imaging camera, which sees through smoke. **L** toggles the
   helmet lamp.
+- **Water:** you wade through water (it holds you back), swim with your head out where it is
+  deep and there is air above it, and walk the bottom in full gear where the space is flooded
+  to the ceiling. Under water the mask is your only air (you use more of it); without air or
+  with a broken mask you drown. The sea pouring in through a hole pushes you away from it.
 - **Health:** hot gas and radiant heat get through the turnout gear, flames can set your gear
   alight (crawl to roll it out, or get water on yourself), falling and flying debris hurt,
   and running out of air or breathing smoke through a broken mask is deadly. At zero health
@@ -107,7 +129,12 @@ scene). You walk in first person wearing breathing apparatus:
 
 ### Enemies
 
-Some scenes (the catacombs, below deck on the carrier) have people hiding in them. They:
+Some scenes (the catacombs, below deck on the carrier, the island, the spaceship) have guards
+in them: armoured soldiers in layered plate (render/enemies.js) with a domed helmet, a glowing
+visor, a power pack and a bullpup rifle. They walk and run with knees and elbows, carry the
+rifle at low ready and raise it when they investigate, hold up a torch to set a lure fire,
+burn, and fall. The visor shows what they are up to: cyan on patrol, amber when they come to
+look, red once they have seen you. They:
 
 - **patrol**: around where they start, at random spots inside a **patrol area**, or along a
   **guard round** (the corners of the area, in turn). Areas are set per enemy group (Patrol,
@@ -118,6 +145,12 @@ Some scenes (the catacombs, below deck on the carrier) have people hiding in the
 - **see you** unless smoke or walls are in the way. They shout, keep their distance, and
   try to **lure you** by lighting something nearby (rags, coffins, boxes) with a torch, out
   of your reach, and then pull back.
+- **notice your light**: underground, a spot lit up by your helmet lamp that they can see,
+  and that no torch explains, makes them come and look (switch the lamp off with L; the
+  thermal camera still works).
+- **use doors**: their routes go through any door they can open (not locked ones). They push
+  a closed door open when they reach it, and most of them close it behind them once they are
+  through (not when someone is in the doorway).
 - **avoid fire**: their path finding (A* on a 0.4 m grid) treats hot gas, flames and thick
   smoke as costly. They flee from heat, and catch fire and burn like you do.
 - are hurt by arrows, rockets, blasts, heat and **falling debris**. A branch or ceiling
@@ -260,7 +293,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
 | Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
-| Catacombs | passages along x and z, spacing, width and height, torch spacing, entrance open or closed, seed. Vaulted stone passages, domed chambers with coffins, burial niches with bones and rags, wooden doors (one locked), burning torches on the walls that light the passages |
+| Catacombs | passages along x and z (default 4 × 4), spacing, width and height, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
@@ -415,10 +448,15 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
       68 °C. Each head then sprays about 60 l/min.
     - Cold water on hot brittle walls cracks them (thermal shock), and soaked plasterboard
       and ceiling tiles go soft and fall.
-    - At sea, any missing hull plating below the waterline lets the sea in at
-      √(2 g depth) (Torricelli). The sea pressure keeps water from running back out, so the
-      ship floods towards the waterline. This holds for every ship at sea: the ship section,
-      and the carrier's deck below the flight deck, which lies under the waterline.
+    - At sea, any missing hull plating below the waterline lets the sea in: Cd·A·√(2 g Δh)
+      (Torricelli), Δh being the height of the sea above the water already inside. The water
+      goes where the sea pushes it, into the lowest free space connected to the hole (through
+      open doors, not closed ones), so a compartment fills from the bottom up, quickly at
+      first and slower as the levels meet, up to the waterline. A sealed space floods only
+      until its trapped air is squeezed to the sea pressure (Boyle). This holds for every ship
+      at sea: the ship section, and the carrier's deck below the flight deck, which lies under
+      the waterline. On the ship section the fuel line bursts against the hull as a vapour
+      explosion that tears the plating open.
     - **Water pipes** (the hallway's copper pipe, the ships' sea-water mains) burst in a
       blast or when the fire heats a joint. They pour water out (4 to 20 l/s) that runs down,
       wets what is under it and collects on the floor.
@@ -437,6 +475,34 @@ Calibration targets used during development (`npm run headless`):
 | Campfire in 50 mm/h rain | dies down, core keeps glowing | −55 % in 4 min, still dropping |
 | 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst within minutes | vents at 17.5 bar after ~1.5 min; bursts at ~90 bar after ~2 min |
 | Car fuel tank in a car fire | thin tank fails and leaks; explosions are very rare | splits, pool fire to ~10 MW |
+
+### Performance: only what is doing something is computed
+
+Big scenes are split twice over:
+
+- **Zones** (the carrier scenario): only the zone you are in is built and simulated; the
+  others are built the first time you go there and frozen while you are away, and drawn as
+  simple stand-ins from a distance.
+- **Sleeping blocks** (sim/activity.js): inside a zone the world is cut into blocks of 2 air
+  cells (0.8 m at 0.2 m voxels). A block is awake when anything in it is off rest: gas or
+  solids off the air temperature, smoke, steam, burning gas, flames, thermal radiation
+  arriving, oxygen that is not fresh air, something burning, smouldering, molten, falling,
+  wet or foamed, a heater, debris or a projectile. Awake blocks wake their neighbours (further
+  downwind in strong wind), so fire, heat and smoke spread into sleeping parts the normal
+  way. Only awake blocks go through the solid passes and the air model; every 50th step runs
+  fully awake. Rain, an extinguisher in use, sprinklers or a decompression keep everything
+  awake.
+
+| Scene, quiet | All awake | With sleeping blocks |
+|---|---|---|
+| Hallway (before the pipe bursts) | 239 ms | 59 ms |
+| Carrier below deck | 108 ms | 43 ms |
+| The island (campfire, wind) | 116 ms | 46 ms |
+| Catacombs (18 burning torches) | 222 ms | 120 ms |
+
+(ms per 0.2 s step on the test machine.) Drawing: the voxel renderer draws only exposed
+voxel faces; ossuary bones are drawn only in the chunks near you. The resolution is the same
+everywhere in a zone: a coarser grid far from you is not done.
 
 ### Limitations
 

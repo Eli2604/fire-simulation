@@ -143,8 +143,8 @@ export default {
     // equipment on the walls by the entrance: an extinguisher and a hose reel
     const extinguisherAt = [-hx + 1.0, t + 0.3, hz - 0.12];
     prims.push(
-      { shape: 'cylinder', a: extinguisherAt, b: [extinguisherAt[0], t + 0.85, extinguisherAt[2]], r: 0.08, material: 'steel', color: [0.8, 0.08, 0.06], density: thin(0.002), pickup: 'extinguisher' },
-      { shape: 'box', min: [extinguisherAt[0] - 0.03, t + 0.85, extinguisherAt[2] - 0.03], max: [extinguisherAt[0] + 0.03, t + 0.95, extinguisherAt[2] + 0.03], material: 'steel', color: [0.15, 0.15, 0.15], density: 0.2, pickup: 'extinguisher' },
+      { shape: 'cylinder', a: extinguisherAt, b: [extinguisherAt[0], t + 0.85, extinguisherAt[2]], r: 0.08, material: 'steel', color: [0.8, 0.08, 0.06], density: thin(0.002), pickup: 'extinguisher', anchored: true },
+      { shape: 'box', min: [extinguisherAt[0] - 0.03, t + 0.85, extinguisherAt[2] - 0.03], max: [extinguisherAt[0] + 0.03, t + 0.95, extinguisherAt[2] + 0.03], material: 'steel', color: [0.15, 0.15, 0.15], density: 0.2, pickup: 'extinguisher', anchored: true },
     );
     const reelAt = [-hx + 2.2, t + 1.3, -hz + 0.16];
     if (p.hoseReel) prims.push({ shape: 'cylinder', a: [reelAt[0], reelAt[1], -hz], b: [reelAt[0], reelAt[1], -hz + 0.25], r: 0.32, material: 'steel', color: [0.78, 0.1, 0.08], density: thin(0.003) });

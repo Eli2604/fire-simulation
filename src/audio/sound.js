@@ -247,8 +247,8 @@ export class SoundScape {
         // the roar of air rushing out, then (in the vacuum) silence
         this.burst(this.ctx.currentTime, 3, 'lowpass', 500, 0.5, 1.2);
         this.burst(this.ctx.currentTime, 1.5, 'bandpass', 2500, 0.7, 0.5);
-      } else if (e.type === 'shout') {
-        this.shout(e.pos);
+      } else if (e.type === 'shout' || e.type === 'lightSeen') {
+        this.shout(e.pos); // "who's there?"
       } else if (e.type === 'glass') {
         this.glass(e.pos);
       } else if (e.type === 'spall') {

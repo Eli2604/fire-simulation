@@ -209,7 +209,22 @@ export function stepLeaks(sim, dt) {
   }
 }
 
-/** Sea water pours in through any opening in the hull below the waterline. */
+/**
+ * Sea water pours in through any opening in the hull below the waterline.
+ *
+ * Each hole lets in Cd·A·√(2 g Δh) (Torricelli), Δh being how far the sea level
+ * is above the water already standing inside the hole (or above the hole itself
+ * while the inside is still dry): the inflow slows as the compartment fills, and
+ * stops when the inside level reaches the sea. The water goes where the sea
+ * pushes it: into the lowest free cells of the space connected to the hole (a
+ * flood fill through air and water, stopped by walls and closed doors), so the
+ * room fills from the bottom up at the rate the holes allow.
+ *
+ * A sealed space (no way out for its air) only fills until its air is squeezed to
+ * the sea pressure at that depth (Boyle): the air pocket stays, compressed.
+ * Where it comes in, the water is a jet: `w.inflows` (position, inward direction,
+ * speed) for the people in the way and for drawing it.
+ */
 export function stepFlood(sim, dt) {
   const w = sim.world;
   const sea = w.sea;
@@ -221,6 +236,7 @@ export function stepFlood(sim, dt) {
   const z0 = Math.max(0, Math.floor(sea.box[1] / h));
   const z1 = Math.min(nz - 1, Math.floor(sea.box[3] / h) - 1);
   const yTop = Math.min(ny - 1, Math.floor(sea.level / h));
+  const nxy = nx * ny;
   // cells outside the hull below the waterline are the sea itself
   if (!w.seaMask) {
     w.seaMask = new Uint8Array(w.N);
@@ -228,22 +244,21 @@ export function stepFlood(sim, dt) {
       for (let y = 0; y <= yTop; y++)
         for (let x = 0; x < nx; x++) if (x < x0 || x > x1 || z < z0 || z > z1) w.seaMask[x + nx * (y + ny * z)] = 1;
   }
-  let inflow = 0;
   const cx = (sea.box[0] + sea.box[2]) / 2;
   const cz = (sea.box[1] + sea.box[3]) / 2;
-  // wherever the hull plating is gone below the waterline the sea comes in as a jet:
-  // speed √(2 g depth) (Torricelli), volume v·A·dt per opening, pushed inwards past
-  // the water that is already there
+  w.inflows = [];
+  // the holes: hull plating gone below the waterline, with the cell just inside
+  const seeds = [];
+  let units = 0;
   for (const i of w.hull ?? []) {
     if (mat[i] && mat[i] !== id) continue;
     const x = i % nx;
     const y = Math.floor(i / nx) % ny;
-    const z = Math.floor(i / (nx * ny));
+    const z = Math.floor(i / nxy);
     if (y > yTop) continue;
     const depth = sea.level - (y + 0.5) * h;
     if (depth <= 0) continue;
-    let units = (Math.sqrt(2 * 9.81 * depth) * dt) / h;
-    // inward direction: away from the nearest hull face
+    // inward: away from the nearest hull face (up through a hole in the bottom)
     const px = (x + 0.5) * h;
     const pz = (z + 0.5) * h;
     const fx = Math.abs(px - cx) / ((sea.box[2] - sea.box[0]) / 2);
@@ -252,21 +267,84 @@ export function stepFlood(sim, dt) {
     if (y <= 1 + (w.hullBottom ?? 1) && fx < 0.98 && fz < 0.98) dy = 1;
     else if (fx > fz) dx = px > cx ? -1 : 1;
     else dz = pz > cz ? -1 : 1;
-    while (units > 0) {
-      if (units < 1 && sim.rand() > units) break;
-      units -= 1;
-      let xx = x, yy = y, zz = z, placed = false;
-      for (let s2 = 0; s2 < 15 && !placed; s2++) {
-        if (xx < 0 || yy < 0 || zz < 0 || xx >= nx || yy >= ny || zz >= nz) break;
-        const j = xx + nx * (yy + ny * zz);
-        if (!mat[j]) {
-          w.setVoxel(j, id, { temp: w.ambient - 3, variation: 0.03 });
-          inflow++;
-          placed = true;
-        } else if (mat[j] !== id && s2 > 0) break; // hit a wall: the jet stops
-        xx += dx; yy += dy; zz += dz;
+    // the water standing inside, over the hole
+    let top = y;
+    while (top + 1 < ny && mat[x + dx + nx * (top + 1 + dy) + nxy * (z + dz)] === id) top++;
+    const inside = mat[x + dx + nx * (y + dy) + nxy * (z + dz)] === id ? (top + 1) * h : (y + 0.5) * h;
+    const head = sea.level - Math.max(inside, (y + 0.5) * h);
+    if (head <= 0) continue;
+    const v = Math.sqrt(2 * 9.81 * head);
+    units += (0.62 * v * dt) / h; // Cd 0.62 for a sharp-edged hole: m³ through h² per step, in voxels
+    seeds.push(i);
+    w.inflows.push({ p: [px, (y + 0.5) * h, pz], dir: [dx, dy, dz], speed: v });
+  }
+  let inflow = 0;
+  if (seeds.length && units > 0) {
+    // the space the sea reaches through the holes (air and water, inside the hull)
+    const seen = (w._floodSeen ??= new Uint32Array(w.N));
+    const stamp = (w._floodStamp = ((w._floodStamp ?? 0) + 1) >>> 0);
+    const queue = (w._floodQ ??= new Int32Array(Math.min(w.N, 400000)));
+    const byY = Array.from({ length: ny }, () => []);
+    let qh = 0;
+    let qt = 0;
+    let waterCells = 0;
+    let airCells = 0;
+    let open = false; // does the air of this space connect to the outside?
+    for (const i of seeds) {
+      seen[i] = stamp;
+      queue[qt++] = i;
+    }
+    while (qh < qt && qt < queue.length - 6) {
+      const i = queue[qh++];
+      const x = i % nx;
+      const y = Math.floor(i / nx) % ny;
+      const z = Math.floor(i / nxy);
+      if (mat[i] === id) waterCells++;
+      else if (!w.seaMask[i]) {
+        airCells++;
+        if (!open) {
+          const a = (x >> 1) + w.anx * ((y >> 1) + w.any * (z >> 1));
+          const k = w.region?.[a] ?? -1;
+          if (y === ny - 1 || (k >= 0 && w.regionOpen[k])) open = true;
+        }
+        // the sea pushes the water up to its own level, no higher
+        if ((y + 0.5) * h < sea.level) byY[y].push(i);
       }
-      if (!placed) break;
+      const nb = [x > x0 ? i - 1 : -1, x < x1 ? i + 1 : -1, y > 0 ? i - nx : -1, y + 1 < ny ? i + nx : -1, z > z0 ? i - nxy : -1, z < z1 ? i + nxy : -1];
+      for (const j of nb) {
+        if (j < 0 || seen[j] === stamp) continue;
+        if (mat[j] && mat[j] !== id) continue; // a wall, a closed door
+        if (w.seaMask[j]) continue;
+        seen[j] = stamp;
+        queue[qt++] = j;
+      }
+    }
+    // a sealed space: its air can only be squeezed so far (Boyle)
+    let allowed = Infinity;
+    if (!open) {
+      // Boyle: the air left ≥ its first volume · p0 / (p0 + ρ g Δh), Δh from the sea level down to the water inside
+      w._floodAir0 ??= new Map();
+      const key = seeds[0];
+      if (!w._floodAir0.has(key)) w._floodAir0.set(key, airCells);
+      const air0 = w._floodAir0.get(key);
+      let levelIn = 0;
+      for (let y = 0; y < ny; y++) if (byY[y].length) {
+        levelIn = y * h;
+        break;
+      }
+      const dh = Math.max(0, sea.level - levelIn);
+      const minAir = air0 * (101325 / (101325 + 1000 * 9.81 * dh));
+      allowed = Math.max(0, Math.floor(airCells - minAir));
+    }
+    let n = Math.min(Math.floor(units) + (sim.rand() < units % 1 ? 1 : 0), allowed);
+    // fill from the bottom up
+    for (let y = 0; y < ny && n > 0; y++) {
+      const row = byY[y];
+      for (let k = 0; k < row.length && n > 0; k++) {
+        w.setVoxel(row[k], id, { temp: w.ambient - 3, variation: 0.03 });
+        inflow++;
+        n--;
+      }
     }
   }
   // water that ends up outside the hull rejoins the sea
@@ -274,7 +352,7 @@ export function stepFlood(sim, dt) {
     const i = w.solids[k];
     if (mat[i] !== id) continue;
     const x = i % nx;
-    const z = Math.floor(i / (nx * ny));
+    const z = Math.floor(i / nxy);
     if (x < x0 || x > x1 || z < z0 || z > z1) w.clearVoxel(i);
   }
   sim.stats.flooding = inflow;
