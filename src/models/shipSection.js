@@ -140,7 +140,8 @@ export default {
       prims,
       heaters: bursts,
       sprinklers,
-      sea: { level: p.draft, box: [-hx, -hz, hx, hz] },
+      // floating: its weight is what it displaces at its draft; water aboard sinks it deeper
+      sea: { level: p.draft, box: [-hx, -hz, hx, hz], ship: { keel: 0, deck: D, kg: D * 0.55 } },
       // start on the lower deck at the aft end of the corridor
       spawn: { p: [-hx + 1.6, floor1, 0], yaw: 0 },
       ignite: { p: [-L / 8, floor1 + 0.4, cw + 0.8], radius: 0.4, power: 8000 },

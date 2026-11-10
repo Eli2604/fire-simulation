@@ -129,6 +129,7 @@ export class World {
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock
     this.plaques = []; // { p, n, w, h, text }: engraved stone tablets on the walls (drawn only)
+    this.trees = []; // tree skeletons (owner, species, segments) for drawing the bark: render/trees.js
     this.props = []; // drawn-only detail (masts, radars, catapult tracks, nets...): render/props.js
     this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone

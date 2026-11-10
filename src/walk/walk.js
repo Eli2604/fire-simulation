@@ -942,6 +942,12 @@ export class Walkthrough {
     if (this.underwater) warn.push('UNDER WATER – MASK AIR ONLY');
     else if (this.swimming) warn.push('DEEP WATER – SWIMMING');
     if (this.inrush > 1.5) warn.push('INRUSHING SEA');
+    const ship = sim.world.sea?.ship;
+    if (ship) {
+      if (ship.foundering) warn.push('SHIP SINKING – GET OUT');
+      else if (Math.abs(ship.heelDeg ?? 0) > 2 || (ship.sunk ?? 0) > 0.15)
+        warn.push(`LIST ${Math.abs(ship.heelDeg ?? 0).toFixed(0)}° ${(ship.heelDeg ?? 0) > 0 ? 'STARBOARD' : 'PORT'} · SETTLED ${(ship.sunk ?? 0).toFixed(1)} m`);
+    }
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');

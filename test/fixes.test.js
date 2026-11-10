@@ -289,3 +289,29 @@ test('catacombs: a blast brings the guards running, and they search the place', 
   const there = closest.filter((d) => d < 4).length;
   assert.ok(there >= 2, `${there} guards reached the blast`);
 });
+
+test('ship: water aboard adds its weight – the ship settles deeper and lists towards the flooded side', () => {
+  const sim = createSimulation(cloneScene(SCENARIOS.ship));
+  const w = sim.world;
+  const level0 = w.sea.level;
+  run(sim, 31); // the fuel line bursts against the hull (aft cross corridor, port side)
+  run(sim, 30);
+  const S = w.sea.ship;
+  assert.ok(S.water > 20000, `water aboard (${(S.water / 1000).toFixed(0)} t)`);
+  // Archimedes: deeper by about m / (ρ A)
+  const A = (w.sea.box[2] - w.sea.box[0]) * (w.sea.box[3] - w.sea.box[1]);
+  const expected = S.water / (1025 * A);
+  assert.ok(w.sea.level - level0 > expected * 0.5, `settled ${(w.sea.level - level0).toFixed(2)} m (balance: ${expected.toFixed(2)} m)`);
+  // the water lies to the side of the hole: a list towards it
+  assert.ok(Math.abs(S.heelDeg) > 0.3, `list ${S.heelDeg.toFixed(1)}°`);
+});
+
+test('carrier: a flooded compartment hardly moves 100 000 tonnes', () => {
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'below' });
+  const w = sim.world;
+  const level0 = w.sea.level;
+  explode(sim, [21, 1.0, 1.6], 8e5);
+  run(sim, 8);
+  assert.ok(w.sea.ship.water > 1000, 'water aboard');
+  assert.ok(w.sea.level - level0 < 0.05, `settled only ${((w.sea.level - level0) * 100).toFixed(1)} cm`);
+});

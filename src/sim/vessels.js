@@ -355,7 +355,7 @@ export function launchVoxel(w, i, vel) {
     moist: w.moist[i],
     melt: w.melt[i],
     char: w.char[i],
-    flags: w.flags[i] & ~F_FALLING,
+    flags: w.flags[i] & ~F_FALLING & ~64, // (no longer hidden: debris is drawn as what it is)
     dens: w.dens[i],
     owner: w.owner[i],
     tint: [w.tint[i * 3], w.tint[i * 3 + 1], w.tint[i * 3 + 2]],

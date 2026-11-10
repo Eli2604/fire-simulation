@@ -39,6 +39,8 @@ export default {
     const species = p.species === 'conifer' ? 'pine' : p.species === 'deciduous' ? 'oak' : p.species;
     const S = SPECIES[species] ?? SPECIES.oak;
     const prims = [];
+    // the skeleton (every trunk and branch segment): drawn as bark by render/trees.js
+    const skeleton = [];
     const H = p.height;
     const CR = Math.min(p.crownRadius, H * 0.6);
     const moist = p.trunkMoisture;
@@ -46,6 +48,7 @@ export default {
     const seg = (a, b, r, material = S.wood) => {
       const density = r < h / 2 ? Math.max(0.02, (Math.PI * r * r) / (h * h)) : 1;
       prims.push({ shape: 'capsule', a, b, r, material, moisture: material === 'deadWood' ? undefined : moist, density });
+      skeleton.push({ a, b, r, dead: material === 'deadWood' });
     };
     const leafBall = (c, r) =>
       prims.push({
@@ -65,6 +68,7 @@ export default {
         const y1 = (top * (k + 1)) / n;
         const r = r0 + ((r1 - r0) * (k + 0.5)) / n;
         prims.push({ shape: 'cylinder', a: [0, y0, 0], b: [0, y1 + h * 0.5, 0], r, material: 'bark', moisture: moist });
+        skeleton.push({ a: [0, y0, 0], b: [0, y1 + h * 0.5, 0], r: r * (1 + 0.04), r1: r0 + ((r1 - r0) * (k + 1)) / n, trunk: true });
       }
     };
     let ignite;
@@ -99,7 +103,7 @@ export default {
       }
       leafBall([0, H * 0.96, 0], 0.35);
       ignite = { p: [0, H * 0.14, 0], radius: Math.max(0.3, h * 2), power: 20000 };
-      return { prims, ignite };
+      return { prims, ignite, tree: { species, skeleton } };
     }
 
     if (species === 'willow') {
@@ -135,7 +139,7 @@ export default {
         }
       }
       ignite = { p: [0, H * 0.25, 0], radius: Math.max(0.3, h * 2), power: 20000 };
-      return { prims, ignite };
+      return { prims, ignite, tree: { species, skeleton } };
     }
 
     // oak: trunk forking into heavy limbs that branch again; leaf clusters at the ends
@@ -164,6 +168,6 @@ export default {
       grow([0, tTop * (0.85 + rng() * 0.15), 0], dir, CR * 0.55, p.trunkRadius * 0.5, 3);
     }
     ignite = { p: [0, tTop * 0.6, 0], radius: Math.max(0.3, h * 2), power: 20000 };
-    return { prims, ignite };
+    return { prims, ignite, tree: { species, skeleton } };
   },
 };

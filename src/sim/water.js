@@ -209,6 +209,89 @@ export function stepLeaks(sim, dt) {
   }
 }
 
+const RHO_SEA = 1025;
+
+/** The sea level against the hull at (x, z): higher where the ship has settled (it lists and trims). */
+export function seaLevelAt(sea, x, z) {
+  const cx = (sea.box[0] + sea.box[2]) / 2;
+  const cz = (sea.box[1] + sea.box[3]) / 2;
+  return sea.level + (sea.slopeX ?? 0) * (x - cx) + (sea.slopeZ ?? 0) * (z - cz);
+}
+
+/**
+ * A ship floats where its weight equals the weight of the sea it displaces
+ * (Archimedes). Water that comes aboard adds its weight: the ship settles deeper by
+ * m / (ρ_sea · A_waterplane) until it balances again, and since the water lies off
+ * the centre line (where the hole is) it lists and trims:
+ *   tan θ = m · offset / (Δ · GM),  GM = KB + BM − KG,  KB = T/2,  BM = B² / (12 T)
+ * (T the draft, B the beam, or L the length for trim; KG the centre of gravity
+ * above the keel). Here the ship stays still in its own frame and the sea moves
+ * instead: its level rises up the hull and its surface tilts against it. That puts
+ * the holes deeper, so the sea comes in faster: the flooding feeds itself. When the
+ * sea reaches the deck edge the ship loses its last reserve of buoyancy and founders:
+ * the sea pours in over the deck until it is gone.
+ */
+export function stepBuoyancy(sim, dt) {
+  const w = sim.world;
+  const sea = w.sea;
+  const S = sea?.ship;
+  if (!S) return;
+  const [bx0, bz0, bx1, bz1] = sea.box;
+  const L = S.length ?? bx1 - bx0;
+  const B = S.beam ?? bz1 - bz0;
+  const A = S.waterplane ?? L * B;
+  S.level0 ??= sea.level;
+  const T0 = Math.max(0.3, S.level0 - S.keel);
+  S.mass0 ??= S.displacement ?? RHO_SEA * A * T0;
+  // the water aboard: how much, and where its centre is
+  const { solids, mat, nx, ny, h } = w;
+  const id = MAT.water;
+  const V = h * h * h * 1000;
+  let m = 0;
+  let mx = 0;
+  let mz = 0;
+  for (let k = 0; k < w.solidCount; k++) {
+    const i = solids[k];
+    if (mat[i] !== id) continue;
+    const x = ((i % nx) + 0.5) * h;
+    const z = (Math.floor(i / (nx * ny)) + 0.5) * h;
+    if (x < bx0 || x > bx1 || z < bz0 || z > bz1) continue;
+    m += V;
+    mx += V * x;
+    mz += V * z;
+  }
+  S.water = m;
+  const cx = (bx0 + bx1) / 2;
+  const cz = (bz0 + bz1) / 2;
+  const disp = S.mass0 + m;
+  const T = T0 + m / (RHO_SEA * A); // the new draft
+  const KG = S.kg ?? (S.deck - S.keel) * 0.55;
+  const gm = (b) => Math.max(0.3, T / 2 + (b * b) / (12 * T) - KG);
+  const lim = Math.tan((25 * Math.PI) / 180);
+  let heel = m > 0 ? (m * (mz / m - cz)) / (disp * gm(B)) : 0;
+  let trim = m > 0 ? (m * (mx / m - cx)) / (disp * gm(L)) : 0;
+  heel = Math.max(-lim, Math.min(lim, heel));
+  trim = Math.max(-lim, Math.min(lim, trim));
+  // settle towards the balance (a ship takes some seconds to come to rest)
+  const k = 1 - Math.exp(-dt / 4);
+  let target = S.keel + T;
+  // foundering: the sea is over the deck edge somewhere: no reserve buoyancy left
+  const edge = Math.max(...[[bx0, bz0], [bx1, bz0], [bx0, bz1], [bx1, bz1]].map(([x, z]) => seaLevelAt(sea, x, z)));
+  if (!S.foundering && edge > S.deck) {
+    S.foundering = true;
+    w.events.push({ type: 'foundering', pos: [cx, S.deck, cz], time: w.time, name: 'the ship' });
+  }
+  // going down, until it is under (the sea over the top of the world)
+  if (S.foundering) target = Math.min(w.size[1] + 1, Math.max(target, sea.level + 0.25 * dt * 20));
+  sea.level += (target - sea.level) * k;
+  sea.slopeZ = (sea.slopeZ ?? 0) + (heel - (sea.slopeZ ?? 0)) * k;
+  sea.slopeX = (sea.slopeX ?? 0) + (trim - (sea.slopeX ?? 0)) * k;
+  S.heelDeg = (Math.atan(sea.slopeZ) * 180) / Math.PI;
+  S.trimDeg = (Math.atan(sea.slopeX) * 180) / Math.PI;
+  S.sunk = sea.level - S.level0;
+  void ny;
+}
+
 /**
  * Sea water pours in through any opening in the hull below the waterline.
  *
@@ -235,14 +318,19 @@ export function stepFlood(sim, dt) {
   const x1 = Math.min(nx - 1, Math.floor(sea.box[2] / h) - 1);
   const z0 = Math.max(0, Math.floor(sea.box[1] / h));
   const z1 = Math.min(nz - 1, Math.floor(sea.box[3] / h) - 1);
-  const yTop = Math.min(ny - 1, Math.floor(sea.level / h));
+  stepBuoyancy(sim, dt); // the ship settles, lists and trims with the water aboard
+  const lvl = (x, z) => seaLevelAt(sea, x, z);
+  const seaTop = Math.max(sea.level, ...[[sea.box[0], sea.box[1]], [sea.box[2], sea.box[1]], [sea.box[0], sea.box[3]], [sea.box[2], sea.box[3]]].map(([x, z]) => lvl(x, z)));
+  const yTop = Math.min(ny - 1, Math.floor(seaTop / h));
   const nxy = nx * ny;
-  // cells outside the hull below the waterline are the sea itself
-  if (!w.seaMask) {
-    w.seaMask = new Uint8Array(w.N);
+  // cells outside the hull below the waterline are the sea itself (redone as the level rises)
+  if (!w.seaMask || w._seaMaskTop !== yTop) {
+    w._seaMaskTop = yTop;
+    w.seaMask ??= new Uint8Array(w.N);
+    w.seaMask.fill(0);
     for (let z = 0; z < nz; z++)
       for (let y = 0; y <= yTop; y++)
-        for (let x = 0; x < nx; x++) if (x < x0 || x > x1 || z < z0 || z > z1) w.seaMask[x + nx * (y + ny * z)] = 1;
+        for (let x = 0; x < nx; x++) if ((x < x0 || x > x1 || z < z0 || z > z1) && (y + 0.5) * h < lvl((x + 0.5) * h, (z + 0.5) * h)) w.seaMask[x + nx * (y + ny * z)] = 1;
   }
   const cx = (sea.box[0] + sea.box[2]) / 2;
   const cz = (sea.box[1] + sea.box[3]) / 2;
@@ -256,7 +344,8 @@ export function stepFlood(sim, dt) {
     const y = Math.floor(i / nx) % ny;
     const z = Math.floor(i / nxy);
     if (y > yTop) continue;
-    const depth = sea.level - (y + 0.5) * h;
+    const here = lvl((x + 0.5) * h, (z + 0.5) * h);
+    const depth = here - (y + 0.5) * h;
     if (depth <= 0) continue;
     // inward: away from the nearest hull face (up through a hole in the bottom)
     const px = (x + 0.5) * h;
@@ -271,12 +360,27 @@ export function stepFlood(sim, dt) {
     let top = y;
     while (top + 1 < ny && mat[x + dx + nx * (top + 1 + dy) + nxy * (z + dz)] === id) top++;
     const inside = mat[x + dx + nx * (y + dy) + nxy * (z + dz)] === id ? (top + 1) * h : (y + 0.5) * h;
-    const head = sea.level - Math.max(inside, (y + 0.5) * h);
+    const head = here - Math.max(inside, (y + 0.5) * h);
     if (head <= 0) continue;
     const v = Math.sqrt(2 * 9.81 * head);
     units += (0.62 * v * dt) / h; // Cd 0.62 for a sharp-edged hole: m³ through h² per step, in voxels
     seeds.push(i);
     w.inflows.push({ p: [px, (y + 0.5) * h, pz], dir: [dx, dy, dz], speed: v });
+  }
+  if (sea.ship?.foundering) {
+    // over the deck edge: the sea pours in from above, everywhere along the sides
+    for (let x = x0; x <= x1; x++)
+      for (const z of [z0, z1]) {
+        const top = Math.min(ny - 1, Math.floor(lvl((x + 0.5) * h, (z + 0.5) * h) / h));
+        for (let y = Math.floor(sea.ship.deck / h); y <= top; y++) {
+          const i = x + nx * (y + ny * z);
+          if (!mat[i]) {
+            seeds.push(i);
+            units += (0.5 * Math.sqrt(2 * 9.81 * Math.max(0.05, (top - y) * h)) * dt) / h;
+            break;
+          }
+        }
+      }
   }
   let inflow = 0;
   if (seeds.length && units > 0) {
@@ -308,7 +412,7 @@ export function stepFlood(sim, dt) {
           if (y === ny - 1 || (k >= 0 && w.regionOpen[k])) open = true;
         }
         // the sea pushes the water up to its own level, no higher
-        if ((y + 0.5) * h < sea.level) byY[y].push(i);
+        if ((y + 0.5) * h < lvl((x + 0.5) * h, (z + 0.5) * h)) byY[y].push(i);
       }
       const nb = [x > x0 ? i - 1 : -1, x < x1 ? i + 1 : -1, y > 0 ? i - nx : -1, y + 1 < ny ? i + nx : -1, z > z0 ? i - nxy : -1, z < z1 ? i + nxy : -1];
       for (const j of nb) {

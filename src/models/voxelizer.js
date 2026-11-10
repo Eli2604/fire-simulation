@@ -211,6 +211,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
+  if (built.tree) world.trees.push({ owner: ownerIndex, species: built.tree.species, segs: built.tree.skeleton.map((s) => ({ ...s, a: toWorld(...s.a), b: toWorld(...s.b) })) });
   for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   for (const br of built.barrels ?? []) {
@@ -222,6 +223,8 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);
     const b = toWorld(built.sea.box[2], 0, built.sea.box[3]);
     world.sea = { level: oy + built.sea.level, box: [Math.min(a[0], b[0]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[2], b[2])] };
+    // a ship that floats (it sinks deeper, lists and trims as water comes aboard: water.js)
+    if (built.sea.ship) world.sea.ship = { ...built.sea.ship, keel: oy + (built.sea.ship.keel ?? 0), deck: oy + built.sea.ship.deck };
   }
 
   // pressure vessels declared by the model (fuel tanks, gas cylinders)

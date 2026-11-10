@@ -99,7 +99,9 @@ export const carrierDeck = {
     return {
       prims,
       props,
-      sea: { level: p.draft, box: [-hx, -hz, hx, hz] },
+      // a Nimitz-class carrier displaces ~100 000 t on a ~20 000 m² waterplane: a flooded
+      // compartment hardly moves it (the deck we see is a section of the whole ship)
+      sea: { level: p.draft, box: [-hx, -hz, hx, hz], ship: { keel: 0, deck: D, displacement: 1.0e8, waterplane: 20000, beam: 77, length: 333, kg: 15 } },
       spawn: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 },
       portals: [
         { p: [hatch[0], D, hatch[2]], r: 1.0, to: 'below', label: 'Hatch: below deck', arrive: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 } },
@@ -286,7 +288,7 @@ export const carrierBelow = {
       heaters: [{ pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 }],
       spawn: { p: [lx + 1.2, h, 0], yaw: 0 },
       portals: [{ p: [lx, h, 0], r: 0.9, to: 'deck', label: 'Ladder: flight deck' }],
-      sea: p.waterline > 0 ? { level: p.waterline, box: [-hx, -hz, hx, hz] } : undefined,
+      sea: p.waterline > 0 ? { level: p.waterline, box: [-hx, -hz, hx, hz], ship: { keel: -8, deck: H + 6, displacement: 1.0e8, waterplane: 20000, beam: 77, length: 333, kg: 15 } } : undefined,
       inertSystems: p.inertSystem ? [{ p: [(sx0 + sx1) / 2, H - 0.6, (sz0 + sz1) / 2], trigger: 57, label: 'server room inert-gas system' }] : [],
     };
   },

@@ -19,6 +19,7 @@ import { OssuaryRenderer } from './ossuary.js';
 import { VehicleRenderer } from './vehicles.js';
 import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
+import { TreeRenderer } from './trees.js';
 import { EnemyRenderer } from './enemies.js';
 import { deriveWeather } from '../sim/weather.js';
 
@@ -78,6 +79,7 @@ export class View {
     this.vehicles = new VehicleRenderer(this.root); // the parked jet
     this.props = new PropsRenderer(this.root); // masts, radars, deck detail
     this.doors = new DoorRenderer(this.root); // doors drawn as doors
+    this.trees = new TreeRenderer(this.root); // trees: bark and leaves
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
     this.overlay = new THREE.Scene();
@@ -162,6 +164,7 @@ export class View {
     this.vehicles.setWorld(world);
     this.props.setWorld(world);
     this.doors.setWorld(world);
+    this.trees.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -256,6 +259,23 @@ export class View {
     this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
+  }
+
+  /** The sea against a ship that settles, lists and trims (water aboard): its level and tilt. */
+  updateSea() {
+    const s = this.world?.sea;
+    if (!this.sea || !s) return;
+    const cx = (s.box[0] + s.box[2]) / 2;
+    const cz = (s.box[1] + s.box[3]) / 2;
+    const sx = s.slopeX ?? 0;
+    const sz = s.slopeZ ?? 0;
+    // the plane through (cx, level, cz) with slopes sx along x and sz along z
+    const n = (this._seaN ??= new THREE.Vector3()).set(-sx, 1, -sz).normalize();
+    const tilt = (this._seaQ ??= new THREE.Quaternion()).setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
+    const flat = (this._seaFlat ??= new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)));
+    this.sea.quaternion.copy(tilt).multiply(flat);
+    // its origin (x = 0, z = 0) lies on that plane
+    this.sea.position.set(0, s.level - sx * cx - sz * cz, 0);
   }
 
   /** Put the fire light at the centre of the flames, brightness from the heat release. */
@@ -355,6 +375,7 @@ export class View {
     const smooth = this.surfaceMode === 'smooth';
     const volumetric = this.smokeMode === 'volumetric';
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
+    this.updateSea();
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
     if (this.voxels.mesh) this.voxels.mesh.castShadow = !(this.dark && this.torchShadows);
@@ -382,6 +403,7 @@ export class View {
     this.vehicles.update(this.time);
     this.props.update(dt);
     this.doors.update(dt);
+    this.trees.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
     const r = this.renderer;
