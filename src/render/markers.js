@@ -70,7 +70,7 @@ export class MarkerRenderer {
     const s = Math.max(0.15, Math.min(1.2, Math.hypot(...world.size) * 0.025));
     this.scale = s;
     for (const mk of markers) {
-      const color = mk.kind === 'start' ? '#ff6a2a' : '#ffd23a';
+      const color = mk.kind === 'start' ? '#ff6a2a' : mk.kind === 'walk' ? '#3ad27a' : '#ffd23a';
       const obj = new THREE.Group();
       const mat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
       const cone = new THREE.Mesh(new THREE.ConeGeometry(s * 0.25, s * 0.6, 16), mat);
@@ -82,6 +82,18 @@ export class MarkerRenderer {
       const lbl = this.label(mk.label, color);
       lbl.scale.set(s * 3, s * 0.56, 1);
       obj.add(cone, ring, lbl);
+      if (mk.kind === 'walk') {
+        // an arrow on the floor: the way you will be facing
+        const arrow = new THREE.Mesh(new THREE.ConeGeometry(s * 0.18, s * 0.6, 3), mat.clone());
+        arrow.rotation.set(0, 0, -Math.PI / 2); // along +x
+        const holder = new THREE.Group();
+        holder.add(arrow);
+        arrow.position.set(s * 0.6, 0.02, 0);
+        holder.rotation.y = -(mk.yaw ?? 0);
+        holder.renderOrder = 6;
+        arrow.renderOrder = 6;
+        obj.add(holder);
+      }
       obj.position.set(...mk.p);
       this.group.add(obj);
       this.items.push({ obj, cone, ring, lbl, mk });

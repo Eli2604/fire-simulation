@@ -167,6 +167,48 @@ export function stepWater(sim, dt) {
   }
 }
 
+/**
+ * Burst water pipes: each pours `rate` litres a second. The water comes out as
+ * water voxels next to the break (it then falls, spreads over the floor and
+ * collects, like any other water), and wets and cools what is right under it.
+ */
+export function stepLeaks(sim, dt) {
+  const w = sim.world;
+  if (!w.leaks.length) return;
+  const { nx, ny, nz, mat, h } = w;
+  const litres = h * h * h * 1000;
+  for (const l of w.leaks) {
+    l.acc += l.rate * dt;
+    const x = Math.min(nx - 1, Math.max(0, Math.floor(l.p[0] / h)));
+    const z = Math.min(nz - 1, Math.max(0, Math.floor(l.p[2] / h)));
+    let y = Math.min(ny - 1, Math.max(0, Math.floor(l.p[1] / h)));
+    // the first free cell at or under the break (the pipe itself, or just below it)
+    while (y > 0 && mat[x + nx * (y + ny * z)] && mat[x + nx * (y + ny * z)] !== MAT.water) y--;
+    while (l.acc >= litres) {
+      // spread a little around the jet so it does not stack in one column
+      const xx = Math.min(nx - 1, Math.max(0, x + Math.round((sim.rand() - 0.5) * 2)));
+      const zz = Math.min(nz - 1, Math.max(0, z + Math.round((sim.rand() - 0.5) * 2)));
+      let j = -1;
+      for (let yy = y; yy < ny; yy++) {
+        const k = xx + nx * (yy + ny * zz);
+        if (!mat[k]) {
+          j = k;
+          break;
+        }
+        if (mat[k] !== MAT.water) break;
+      }
+      if (j < 0) {
+        l.acc = 0; // nowhere to go (it is all water around the break): the room is flooded up to here
+        break;
+      }
+      w.setVoxel(j, MAT.water, { temp: w.ambient, variation: 0.03 });
+      l.acc -= litres;
+    }
+    // the spray wets and cools what is under the break
+    if (sim.rand() < dt * 2) sim.douse([l.p[0], Math.max(h, l.p[1] - 0.6), l.p[2]], 0.5, Math.min(5, l.rate * 0.3));
+  }
+}
+
 /** Sea water pours in through any opening in the hull below the waterline. */
 export function stepFlood(sim, dt) {
   const w = sim.world;

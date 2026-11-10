@@ -146,6 +146,7 @@ export const carrierBelow = {
     height: { value: 2.8, min: 2.4, max: 4, step: 0.1, label: 'Deck height (m)' },
     rackFireAfter: { value: 25, min: 0, max: 600, step: 1, label: 'Server rack fire after (s)' },
     inertSystem: { value: true, label: 'Server room inert-gas system' },
+    waterline: { value: 4.5, min: 0, max: 8, step: 0.1, label: 'Sea level above this deck (m, 0: above the sea)' },
   },
   build(p, { h, rng }) {
     const thin = thinOf(h);
@@ -159,9 +160,9 @@ export const carrierBelow = {
     const bulk = { material: 'steel', density: thin(0.008), color: [0.82, 0.83, 0.8] };
     const prims = [
       // floor, overhead, outer bulkheads
-      { shape: 'box', min: [-hx, 0, -hz], max: [hx, h, hz], material: 'steel', density: thin(0.015), anchored: true, color: [0.35, 0.37, 0.38] },
+      { shape: 'box', min: [-hx, 0, -hz], max: [hx, h, hz], material: 'steel', density: thin(0.015), anchored: true, color: [0.35, 0.37, 0.38], hull: p.waterline > 0 },
       { shape: 'box', min: [-hx, H, -hz], max: [hx, H + h, hz], material: 'steel', density: thin(0.015), anchored: true, color: [0.6, 0.6, 0.58] },
-      { shape: 'box', min: [-hx, h, -hz], max: [hx, H, hz], ...bulk },
+      { shape: 'box', min: [-hx, h, -hz], max: [hx, H, hz], ...bulk, hull: p.waterline > 0 },
       // the main corridor and a cross corridor
       { shape: 'box', min: [-hx + 1, h * 1.01, -cw], max: [hx - 1, H - 0.01, cw], mode: 'carve' },
       { shape: 'box', min: [-cw, h * 1.01, -hz + 1], max: [cw, H - 0.01, hz - 1], mode: 'carve' },
@@ -173,6 +174,8 @@ export const carrierBelow = {
     ];
     // cable runs along the corridor overhead
     prims.push({ shape: 'box', min: [-hx + 1, H - 0.25, -cw + 0.1], max: [hx - 1, H - 0.15, -cw + 0.45], material: 'cable', density: 0.4 });
+    // the sea-water main (fire fighting, cooling) along the other side of the overhead
+    prims.push({ shape: 'cylinder', a: [-hx + 1, H - 0.3, cw - 0.2], b: [hx - 1, H - 0.3, cw - 0.2], r: Math.max(0.04, h * 0.6), material: 'steel', color: [0.2, 0.45, 0.25], density: thin(0.004), anchored: true, waterPipe: { rate: 20, label: 'sea-water main' } });
     const doors = [];
     const room = (x0, x1, z0, z1, name, fill) => {
       prims.push({ shape: 'box', min: [x0 + t, h * 1.01, z0 + t], max: [x1 - t, H - 0.01, z1 - t], mode: 'carve' });
@@ -256,6 +259,7 @@ export const carrierBelow = {
       heaters: [{ pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 }],
       spawn: { p: [lx + 1.2, h, 0], yaw: 0 },
       portals: [{ p: [lx, h, 0], r: 0.9, to: 'deck', label: 'Ladder: flight deck' }],
+      sea: p.waterline > 0 ? { level: p.waterline, box: [-hx, -hz, hx, hz] } : undefined,
       inertSystems: p.inertSystem ? [{ p: [(sx0 + sx1) / 2, H - 0.6, (sz0 + sz1) / 2], trigger: 57, label: 'server room inert-gas system' }] : [],
     };
   },

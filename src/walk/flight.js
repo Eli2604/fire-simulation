@@ -794,6 +794,12 @@ export class Flight {
 
   crash(msg) {
     if (this.jetGone) return;
+    // still aboard: the seat fires automatically as the jet goes (wherever there is air
+    // for the parachute), and you come down under it while the jet explodes
+    if (!this.pilot && this.rho() >= 0.15) {
+      this.eject(true);
+      this.walk.say(`${msg}. The seat fired you out – steer the parachute with W/S A/D or the mouse`, 5);
+    }
     const p = this.pos.clone();
     p.y = Math.max(p.y + 1, this.seaLevel + 0.5);
     const z = this.zoneAt(p, true);
@@ -856,9 +862,9 @@ export class Flight {
 
   // ------------------------------------------------------------------ ejection
   /** X: the rocket seat fires you out (works from the deck too: a zero-zero seat). */
-  eject() {
+  eject(auto = false) {
     if (this.pilot || this.done) return;
-    if (this.rho() < 0.15) return this.walk.say('Not up here – there is no air for a parachute', 2);
+    if (!auto && this.rho() < 0.15) return this.walk.say('Not up here – there is no air for a parachute', 2);
     const { q, f, u } = this.axes();
     const p = this.at(q, [3, 2.8, 0]);
     const v = f.clone().multiplyScalar(this.speed).addScaledVector(u, 22);
@@ -870,7 +876,7 @@ export class Flight {
     this.view.scene.add(this.pilotMesh);
     const snd = this.walk.sound;
     if (snd.running) snd.burst(snd.ctx.currentTime, 0.6, 'bandpass', 700, 0.8, 0.9);
-    this.walk.say('EJECT! The parachute opens in a moment – W/S A/D or the mouse steer it', 4);
+    if (!auto) this.walk.say('EJECT! The parachute opens in a moment – W/S A/D or the mouse steer it', 4);
   }
 
   buildPilot() {

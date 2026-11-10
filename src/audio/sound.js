@@ -241,7 +241,7 @@ export class SoundScape {
       if (e.type === 'explosion') {
         this.burst(t, 1.8, 'lowpass', 300, 0.7, 1.2);
         this.thump(t, 1);
-      } else if (e.type === 'pipeBurst') {
+      } else if (e.type === 'pipeBurst' || e.type === 'waterBurst') {
         this.burst(t, 0.4, 'bandpass', 900, 0.8, 0.8);
       } else if (e.type === 'decompression') {
         // the roar of air rushing out, then (in the vacuum) silence

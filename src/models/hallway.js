@@ -39,6 +39,7 @@ export default {
     hoseReel: { value: true, label: 'Hose reel on the wall' },
     entranceOpen: { value: true, label: 'Entrance door open' },
     endWindow: { value: true, label: 'Window at the far end' },
+    sideWindows: { value: true, label: 'Windows in the outer corridor wall' },
     pipeIn: { value: 'hallway', options: ['hallway', 'ceiling void'], label: 'Gas pipe runs' },
     burstAt: { value: 0.6, min: 0.05, max: 0.95, step: 0.01, label: 'Burst position along pipe' },
     burstTrigger: { value: 'after delay', options: ['after delay', 'only by fire or blast'], label: 'Pipe burst' },
@@ -91,8 +92,19 @@ export default {
         { shape: 'box', min: [hx + wt / 2 - t / 2, t + 0.9, -0.6], max: [hx + wt / 2 + t / 2, t + 2.0, 0.6], material: 'glass', density: thin(0.006) },
       );
     }
-    // closed office doors along both walls
     const n = p.doorsPerSide;
+    // windows in the outer wall of the corridor (the -z side), between the doors
+    if (p.sideWindows) {
+      for (let k = 0; k <= n; k++) {
+        const x = n ? -hx + (L * (k + 0.25)) / (n + 0.5) : 0;
+        if (Math.abs(x) > hx - 0.7) continue;
+        prims.push(
+          { shape: 'box', min: [x - 0.6, t + 1.0, -hz - wt - 0.01], max: [x + 0.6, t + 2.0, -hz + 0.01], mode: 'carve' },
+          { shape: 'box', min: [x - 0.6, t + 1.0, -hz - wt / 2 - t / 2], max: [x + 0.6, t + 2.0, -hz - wt / 2 + t / 2], material: 'glass', density: thin(0.006) },
+        );
+      }
+    }
+    // closed office doors along both walls
     for (let k = 0; k < n; k++) {
       const x = -hx + (L * (k + 0.75)) / (n + 0.5);
       // an office behind the door on the +z side
@@ -175,7 +187,7 @@ export default {
     // the gas line can burst: on its own timer, when a blast hits it, or when fire heats a joint
     prims.push({ shape: 'cylinder', a: [-hx, gasY, gasZ], b: [hx, gasY, gasZ], r: 0.025, material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, ...(inVoid ? { jetHeight: Math.max(0.3, slab - gasY) } : { jetHeight: W * 1.15, dir: [0.15, -0.55, 0.82] }) } });
     if (suspended) {
-      prims.push({ shape: 'cylinder', a: [-hx, voidMid, 0], b: [hx, voidMid, 0], r: 0.02, material: 'copper', density: thin(0.001), anchored: true });
+      prims.push({ shape: 'cylinder', a: [-hx, voidMid, 0], b: [hx, voidMid, 0], r: Math.max(0.02, h * 0.6), material: 'copper', density: thin(0.001), anchored: true, waterPipe: { rate: 4, label: 'water pipe' } });
       if (p.cables) {
         // in the void the tray runs right next to the gas pipe, as services often do
         const cz = inVoid ? gasZ + 0.4 : -hz + 0.4;

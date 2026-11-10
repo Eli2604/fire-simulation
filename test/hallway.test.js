@@ -30,7 +30,8 @@ test('the hallway has a suspended ceiling, hidden services, painted walls and a 
   assert.ok(count(w, MAT.ceilingTile) > 100, 'ceiling tiles');
   assert.ok(count(w, MAT.steelProfile) > 50, 'grid and hangers');
   assert.ok(count(w, MAT.cable) > 10, 'cables in the void');
-  assert.equal(w.gasPipes.length, 1, 'one gas line');
+  assert.equal(w.gasPipes.filter((g) => !g.water).length, 1, 'one gas line');
+  assert.equal(w.gasPipes.filter((g) => g.water).length, 1, 'and a water pipe');
   assert.ok(count(w, MAT.concrete, (i) => w.paint[i] === 255) > 100, 'painted walls');
   assert.ok(sim.spawn && sim.spawn.p[0] < 2, 'spawn outside the entrance');
   assert.ok(sim.markers.some((m) => m.kind === 'pending'), 'pending pipe burst marker');
@@ -115,5 +116,5 @@ test('a chosen fire start replaces the scenario default and gets a marker', () =
   assert.equal(sim.markers.filter((m) => m.kind === 'start').length, 1);
   assert.ok(sim.world.heaters.some((h) => h.temporary), 'ignition source at the chosen spot');
   const none = hallway({ burstTrigger: 'only by fire or blast' }, { noFire: true });
-  assert.equal(none.markers.length, 0);
+  assert.equal(none.markers.filter((m) => m.kind !== 'walk').length, 0);
 });

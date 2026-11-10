@@ -126,17 +126,40 @@ test('jet: blasts damage the parts nearby; a damaged wing rolls the jet, a dead 
   assert.ok(g.speed < 5, `no thrust (${g.speed.toFixed(1)} m/s)`);
 });
 
-test('jet: flying into the sea is a crash; you are brought back to the ship', () => {
+test('jet: flying into the sea is a crash; the seat fires, you come down in the sea and are brought back to the ship', () => {
   const c = carrierWorld();
   const f = c.board();
   f.onGround = false;
   f.pos.set(-30, f.seaLevel + 3, -30); // over open sea
   f.speed = 60;
   f.pitch = -0.6;
-  fly(c, f, 3);
-  assert.ok(f.done, 'crashed');
-  assert.match(c.walk.ended.msg, /sea/);
+  fly(c, f, 1.5);
+  assert.ok(f.jetGone && f.pilot, 'the jet is gone, you are out');
+  for (let k = 0; k < 40 && !f.done; k++) fly(c, f, 0.5);
+  assert.ok(f.done, 'down');
+  assert.match(c.walk.ended.msg, /boat|fished/);
   assert.equal(c.walk.ended.zone, 'deck');
+});
+
+test('jet: shot to pieces in the air, it explodes; the seat fires you out and the parachute brings you down slowly', () => {
+  const c = carrierWorld();
+  const f = c.board();
+  f.onGround = false;
+  f.pos.set(-60, f.seaLevel + 250, -60);
+  f.speed = 90;
+  f.dmg.wingL = f.dmg.wingR = 1;
+  fly(c, f, 0.4);
+  assert.ok(f.jetGone, 'the jet broke up');
+  assert.ok(f.pilot && !f.done, 'you are out, still in the air');
+  fly(c, f, 4);
+  assert.ok(f.pilot.chute, 'parachute open');
+  assert.ok(-f.pilot.v.y < 7, `sinking slowly (${(-f.pilot.v.y).toFixed(1)} m/s)`);
+  // and it steers
+  const x0 = f.pilot.p.x;
+  const z0 = f.pilot.p.z;
+  f.keys = new Set(['KeyD']);
+  fly(c, f, 3);
+  assert.ok(Math.hypot(f.pilot.p.x - x0, f.pilot.p.z - z0) > 3, 'drifts where you steer');
 });
 
 test('stand-ins for the zones you are not in', () => {

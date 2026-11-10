@@ -94,6 +94,30 @@ function box1D(src, dst, nx, ny, nz, r, axis) {
  *  4. implicit heat exchange with the solids + heat sources (flames, burners)
  *  5. flame presence from burning gas and hot gas
  */
+/**
+ * How much of the wind reaches each air cell: 1 in the open, little under a roof
+ * (indoors only what comes in through doors and windows moves the air), nothing
+ * in a closed room. Recomputed when walls, roofs, doors or windows change.
+ */
+function windShelter(w) {
+  if (w.shelter && w.shelterHash === w.regionHash) return w.shelter;
+  w.shelterHash = w.regionHash;
+  const { anx, any, anz, passY, occ } = w;
+  const sh = (w.shelter ??= new Float32Array(w.NA));
+  for (let az = 0; az < anz; az++)
+    for (let ax = 0; ax < anx; ax++) {
+      let covered = false;
+      for (let ay = any - 1; ay >= 0; ay--) {
+        const a = ax + anx * (ay + any * az);
+        if (occ[a] > 0.6 || (ay + 1 < any && passY[a] < 0.25)) covered = true;
+        const k = w.region ? w.region[a] : -1;
+        const sealed = k >= 0 && w.regionOpen && !w.regionOpen[k];
+        sh[a] = sealed ? 0 : covered ? 0.12 : 1;
+      }
+    }
+  return sh;
+}
+
 export function stepAir(w, W, D, dt, sim) {
   const { anx, any, anz, ah, airT, airG, airGT, airQ, flame, flameAcc, occ, vx, vy, vz } = w;
   const { smoke, smokeR, smokeG, smokeB, steam, fgas, supp, passX, passY, passZ, capped, o2 } = w;
@@ -108,7 +132,9 @@ export function stepAir(w, W, D, dt, sim) {
   const t = w.time;
   const fog = W.fog;
   const inversionH = w.size[1] * 0.55;
-  const turbAmp = 0.15 + 0.05 * Math.hypot(D.windX, D.windZ);
+  const windTurb = 0.05 * Math.hypot(D.windX, D.windZ);
+  const turbAmp = 0.15 + windTurb;
+  const shelter = windShelter(w);
   // separable turbulence: products of per-axis waves, recomputed per step
   const tx = turbTable(w, 'tx', anx, 1.7, 2.3, t);
   const ty = turbTable(w, 'ty', any, 0.9, -3.1, t);
@@ -155,10 +181,12 @@ export function stepAir(w, W, D, dt, sim) {
         if (ez > 1.5) ez = 1.5;
         else if (ez < -1.5) ez = -1.5;
         // flow only through the open part of the face it comes through
-        let u = (wx + ex + tb * (tx[ax] * tzv * 0.6 + tyv * 0.4)) * o2;
+        const sw = shelter[a];
+        const tbw = (turbAmp - windTurb * (1 - sw)) * (1 + flame[a] * 2); // indoors, no wind-driven gusting (the fire still stirs the air)
+        let u = (wx * sw + ex + tbw * (tx[ax] * tzv * 0.6 + tyv * 0.4)) * o2;
         u *= u > 0 ? (ax > 0 ? passX[a - 1] : 1) : passX[a];
         vx[a] = u;
-        let q = (wz + ez + tb * (tz2v * tx2[ax] * 0.6 - tyv * 0.4)) * o2;
+        let q = (wz * sw + ez + tbw * (tz2v * tx2[ax] * 0.6 - tyv * 0.4)) * o2;
         q *= q > 0 ? (az > 0 ? passZ[a - sxy] : 1) : passZ[a];
         vz[a] = q;
         let v = (up + tb * 0.5 * tx2[ax] * tyv) * open;
@@ -258,6 +286,7 @@ export function stepAir(w, W, D, dt, sim) {
   const Dturb = 0.004 + 0.01 * Math.hypot(D.windX, D.windZ);
   let alpha = (Dturb * dt) / (ah * ah);
   if (alpha > 0.14) alpha = 0.14;
+  const fireMix = Math.min(0.15, (0.25 * dt) / (ah * ah));
   const relaxT = 1 - Math.exp(-(0.03 + 0.08 * D.rainFrac) * dt);
   const smokeKeep = Math.exp(-(0.0005 + 0.03 * D.rainFrac) * dt); // soot deposits slowly
   // steam: droplets evaporate quickly in dry air, linger in humid air / fog
@@ -283,6 +312,7 @@ export function stepAir(w, W, D, dt, sim) {
         P[4] = az > 0 ? passZ[a - sxy] : 1;
         P[5] = passZ[a];
         const k = alpha * (1 - occ[a] * 0.8);
+        const dTk = oT[a] - Tamb;
         let T = lap(oT, a, xm, xp, ym, yp, zm, zp, Tamb, k);
         T += (Tamb - T) * relaxT;
         airT[a] = T;
@@ -293,7 +323,14 @@ export function stepAir(w, W, D, dt, sim) {
         steam[a] = lap(oW, a, xm, xp, ym, yp, zm, zp, 0, k) * steamKeep;
         // CO2 / powder: carried with the gas, slowly diluting and settling; it
         // starves and inhibits the flames in its cell
-        o2[a] = lap(oO, a, xm, xp, ym, yp, zm, zp, O2B, k);
+        // a fire is turbulent: its flames and hot gas stir fresh air in from all around
+        // (eddy diffusivity ~0.1-0.3 m²/s in a fire plume), much faster than still air mixes
+        let kf = k;
+        if (dTk > 0) {
+          kf += fireMix * (flame[a] > 0.5 ? 1 : flame[a] * 2 + (dTk > 300 ? 0.5 : dTk / 600));
+          if (kf > 0.16) kf = 0.16;
+        }
+        o2[a] = lap(oO, a, xm, xp, ym, yp, zm, zp, O2B, kf);
         const sp = lap(oX, a, xm, xp, ym, yp, zm, zp, 0, k) * suppKeep;
         supp[a] = sp;
         fgas[a] = lap(oF, a, xm, xp, ym, yp, zm, zp, 0, k) * fgasKeep * (sp > 0 ? Math.exp(-6 * sp * dt) : 1);

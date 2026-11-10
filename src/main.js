@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 import { MOUSE } from 'three';
 import { AGENTS } from './sim/simulation.js';
 import { Walkthrough } from './walk/walk.js';
-import { defaultStartPower } from './sim/createSimulation.js';
+import { defaultStartPower, walkMarker } from './sim/createSimulation.js';
 import { toggleDoor, nearestDoor, doorOfVoxel } from './sim/doors.js';
 import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
@@ -71,7 +71,7 @@ function zoneSim(name) {
   if (!zd) return null;
   if (!zoneSims[name]) {
     for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
-    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: zoneWeather(zd) });
+    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: zoneWeather(zd), walkStart: zd.walkStart });
   }
   return zoneSims[name];
 }
@@ -205,12 +205,14 @@ const scenarioNames = Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) 
 gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => load(cloneScene(SCENARIOS[k])));
 gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
+gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
 
 // --- fire starts: shown as markers; the "Set fire start" tool replaces them (Shift+click adds)
 const fFire = gui.addFolder('Fire start');
 fFire.add(state, 'markers').name('Show markers').onChange((v) => (view.markers.visible = v));
 fFire.add({ reset: () => { delete scene.fireStarts; delete scene.noFire; restart(); } }, 'reset').name("↺ Use the scenario's fire start");
-fFire.add({ none: () => { scene.noFire = true; delete scene.fireStarts; restart(); } }, 'none').name('No fire at start (light it yourself)');
+fFire.add({ pick: () => setTool('firestart') }, 'pick').name('🔥 Choose where it starts (click the scene)');
+fFire.add({ none: () => { scene.noFire = true; delete scene.fireStarts; restart(); setTool('ignite'); } }, 'none').name('No fire at start (light it yourself)');
 
 const fSim = gui.addFolder('Simulation');
 fSim.add(state, 'running').name('Running');
@@ -259,15 +261,27 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Place new object (click)': 'place', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
   .onChange(() => {
+    toolChanged();
+  });
+function toolChanged() {
+  {
     updateToolHint();
     // while extinguishing, the left button sprays and the right button rotates the view
     const hold = state.tool === 'extinguisher' || state.tool === 'torch';
     view.controls.mouseButtons.LEFT = hold ? null : MOUSE.ROTATE;
     view.controls.mouseButtons.RIGHT = hold ? MOUSE.ROTATE : MOUSE.PAN;
-  });
+  }
+}
+/** Switch tool from a button (opens the tools folder so you see which one is active). */
+function setTool(t) {
+  state.tool = t;
+  toolCtl.updateDisplay();
+  fT.open();
+  toolChanged();
+}
 fT.add(state, 'toolRadius', 0.01, 3, 0.01).name('Radius (m)');
 fT.add(state, 'torchPower', 100, 50000, 100).name('Torch power (W)');
 fT.add(state, 'grenadeKg', 0.05, 2, 0.05).name('Grenade explosive (kg TNT)');
@@ -322,13 +336,7 @@ function buildObjectsFolder() {
   });
   const fAdd = fObjects.addFolder('Add object');
   fAdd.add(addState, 'type', modelNames).name('Type');
-  fAdd.add({
-    add: () => {
-      const [sx, , sz] = scene.world.size;
-      scene.objects.push({ type: addState.type, params: defaultParams(addState.type), x: sx / 2, z: sz / 2, rotation: 0, ignite: false });
-      restart();
-    },
-  }, 'add').name('+ Add at centre');
+  fAdd.add({ add: () => setTool('place') }, 'add').name('+ Add: click the scene to place it');
 }
 
 const io = {
@@ -424,7 +432,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', shout: 'shouted: they have seen you' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', shout: 'shouted: they have seen you' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
@@ -459,6 +467,8 @@ const HINTS = {
   ignite: 'Click to set fire to combustible material',
   torch: 'Hold the left mouse button to play a fire torch on a spot (right-drag rotates)',
   firestart: 'Click where the fire should start (Shift+click adds another); the scene restarts',
+  walkstart: 'Click where the walk-through should start; you will face the way the camera looks',
+  place: 'Click where the new object should go (choose its type under Scene objects › Add object); the scene restarts',
   grenade: 'Click to throw a hand grenade at a spot (it goes off after 2.5 s)',
   door: 'Click a door (or next to it) to open or close it',
   inert: 'Click inside a room to flood it with inert gas (removes the oxygen; leaks if the room is open)',
@@ -550,6 +560,26 @@ canvas.addEventListener('pointerup', (e) => {
     case 'ignite':
       sim.ignite(c, state.toolRadius);
       break;
+    case 'walkstart': {
+      // you face the way the camera looks
+      const d = [hit.point[0] - view.camera.position.x, hit.point[2] - view.camera.position.z];
+      const start = { p: hit.point.slice(), yaw: Math.atan2(d[1], d[0]) };
+      if (scene.zones) scene.zones[scene.zone].walkStart = start;
+      else scene.walkStart = start;
+      sim.spawn = start;
+      sim.markers = [...sim.markers.filter((m) => m.kind !== 'walk'), walkMarker(sim)];
+      view.markers.setMarkers(sim.markers, w);
+      break;
+    }
+    case 'place': {
+      const o = { type: addState.type, params: defaultParams(addState.type), x: hit.point[0], z: hit.point[2], rotation: 0, ignite: false };
+      // on a deck, a roof or a hill: stand on what you clicked
+      if (hit.point[1] > w.h * 1.5) o.y = hit.point[1];
+      scene.objects.push(o);
+      restart();
+      setTool('inspect');
+      break;
+    }
     case 'firestart': {
       const start = { p: c, radius: Math.max(w.h * 2, state.toolRadius), power: defaultStartPower(w) };
       const keep = (scene.fireStarts ?? []).filter((f) => f.power > 0);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { defaultSpawn, spawnFloor } from '../sim/createSimulation.js';
 import { SoundScape } from '../audio/sound.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
@@ -117,9 +118,10 @@ export class Walkthrough {
   enter() {
     const sim = this.hooks.getSim();
     const w = sim.world;
-    const sp = sim.spawn ?? { p: [w.size[0] * 0.1, 0, w.size[2] / 2], yaw: 0 };
+    const sp = sim.spawn ?? defaultSpawn(w);
     this.pos = new THREE.Vector3(sp.p[0], 0, sp.p[2]);
-    this.pos.y = this.floorAt(this.pos.x, this.pos.z, w.size[1]) ;
+    // on the floor at the start point (not on the roof above it: catacombs, below deck)
+    this.pos.y = spawnFloor(w, sp.p);
     // yaw 0 = looking along +x
     this.yaw = -Math.PI / 2 - (sp.yaw ?? 0);
     this.pitch = 0;
@@ -257,7 +259,7 @@ export class Walkthrough {
   /** Arrive in another zone (after a hatch / ladder) at p, looking along yaw. */
   arrive(p, yaw = 0) {
     const w = this.hooks.getSim().world;
-    this.pos.set(p[0], this.floorAt(p[0], p[2], Math.min(w.size[1], p[1] + 1.5)), p[2]);
+    this.pos.set(p[0], p[1] == null ? spawnFloor(w, p) : this.floorAt(p[0], p[2], Math.min(w.size[1], p[1] + 1.5)), p[2]);
     this.yaw = -Math.PI / 2 - yaw;
     this.pitch = 0;
     this.near = null;
@@ -348,8 +350,9 @@ export class Walkthrough {
   respawn() {
     const sim = this.hooks.getSim();
     const w = sim.world;
-    const sp = sim.spawn ?? { p: [w.size[0] * 0.1, 0, w.size[2] / 2], yaw: 0 };
-    this.pos.set(sp.p[0], this.floorAt(sp.p[0], sp.p[2], w.size[1]), sp.p[2]);
+    const sp = sim.spawn ?? defaultSpawn(w);
+    this.pos.set(sp.p[0], spawnFloor(w, sp.p), sp.p[2]);
+    this.yaw = -Math.PI / 2 - (sp.yaw ?? 0);
     this.air = AIR_LITRES;
     this.crawl = false;
     this.resetBody();

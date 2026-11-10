@@ -3,7 +3,7 @@ import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR }
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepProjectiles, stepGasPipes } from './explosions.js';
-import { stepSprinklers, stepWater, stepFlood, waterDamage } from './water.js';
+import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
 import { stepVacuum } from './vacuum.js';
@@ -127,12 +127,26 @@ export class Simulation {
     stepProjectiles(this, dt);
     stepWater(this, dt);
     stepFlood(this, dt);
+    stepLeaks(this, dt);
     // automatic inert-gas systems (server rooms): a heat detector under the ceiling
     // releases the gas once; it only works if the room is closed
     for (const s of w.inertSystems) {
       if (s.fired) continue;
+      // heat detectors spread over the ceiling: the hottest gas within 3 m (same room) counts
       const a = this.airCellAt(...s.p);
-      if (a < 0 || w.airT[a] < s.trigger) continue;
+      if (a < 0) continue;
+      const ah = w.ah;
+      const R0 = s.radius ?? 3;
+      const reg = w.region?.[a] ?? -1;
+      let hot = -Infinity;
+      for (let dz = -R0; dz <= R0 && hot < s.trigger; dz += ah)
+        for (let dy = -ah; dy <= ah && hot < s.trigger; dy += ah)
+          for (let dx = -R0; dx <= R0; dx += ah) {
+            const c = this.airCellAt(s.p[0] + dx, s.p[1] + dy, s.p[2] + dz);
+            if (c < 0 || (reg >= 0 && w.region[c] !== reg)) continue;
+            if (w.airT[c] > hot) hot = w.airT[c];
+          }
+      if (hot < s.trigger) continue;
       s.fired = true;
       s.result = this.inertRoom(s.p);
       w.events.push({ type: 'inertSystem', pos: s.p.slice(), time: w.time, name: `${s.label ?? 'inert-gas system'} released${s.result.open ? ' (room open: the gas escapes)' : ''}` });
@@ -174,7 +188,9 @@ export class Simulation {
             const m = mat[i];
             if (!m) continue;
             const M = MATERIALS[m];
-            const intercept = y === 0 ? 1 : M.burnTime > 0 ? 0.45 : dens[i] < 0.2 ? 0.7 : 0.9;
+            // a roof, a wall top, a car body shed the rain (it does not soak through
+            // into the house); foliage, grass and loose fuel let part of it through
+            const intercept = y === 0 || M.burnTime === 0 ? 1 : 0.45;
             const take = water * intercept;
             this.addWater(i, take);
             water -= take;
@@ -193,6 +209,53 @@ export class Simulation {
         }
     }
     if (this.spray) this.applySpray(dt);
+  }
+
+  /**
+   * The air a flame on a surface draws from: the cell in front of it and its open
+   * neighbours (a flame entrains air from all around, not from one grid cell).
+   */
+  airNear(a) {
+    const w = this.world;
+    const { anx, any, anz, occ } = w;
+    const out = (this._near ??= new Int32Array(7));
+    const ax = a % anx;
+    const ay = ((a - ax) / anx) % any;
+    const az = (a - ax - ay * anx) / (anx * any);
+    let n = 0;
+    out[n++] = a;
+    const add = (b) => {
+      if (occ[b] < 0.95) out[n++] = b;
+    };
+    if (ax > 0) add(a - 1);
+    if (ax + 1 < anx) add(a + 1);
+    if (ay + 1 < any) add(a + anx);
+    if (ay > 0) add(a - anx);
+    if (az > 0) add(a - anx * any);
+    if (az + 1 < anz) add(a + anx * any);
+    this._nearN = n;
+    return out;
+  }
+
+  /** Oxygen available to a flame at cell a (the mean over the air it draws from). */
+  o2Near(a) {
+    const near = this.airNear(a);
+    const o2 = this.world.o2;
+    let s = 0;
+    for (let k = 0; k < this._nearN; k++) s += o2[near[k]];
+    return s / this._nearN;
+  }
+
+  /** Burning q watts: the oxygen comes from the cells around the flame, most from where most is left. */
+  consumeO2Near(a, q, dt) {
+    const near = this.airNear(a);
+    const n = this._nearN;
+    const o2 = this.world.o2;
+    let s = 0;
+    for (let k = 0; k < n; k++) s += Math.max(0, o2[near[k]] - 0.1);
+    if (s <= 0) return this.consumeO2(a, q, dt);
+    const ids = Array.from(near.subarray(0, n));
+    for (const b of ids) this.consumeO2(b, (q * Math.max(0, o2[b] - 0.1)) / s, dt);
   }
 
   /** Burning q watts uses q/13.1 MJ kg/s of oxygen from air cell a (Thornton's rule). */
@@ -817,6 +880,8 @@ export class Simulation {
         f |= F_FALLING;
         w.structureDirty = true;
         this.glassNoise(i);
+        // a cracked pane in a hot layer falls out as a whole: the window opens and the fire gets air
+        if (Thot > M.shatterTemp + 130) (this.paneOut ??= []).push(i);
       }
       // --- fire resistance breakdown: thin steel buckles, tile binder burns out,
       // calcined plasterboard crumbles: the part breaks away (and may bring
@@ -874,7 +939,7 @@ export class Simulation {
         // a dry skin can burn on a still-moist core
         const wetOk = Cs > 0 ? ws < 0.2 || mo < M.extinctionMoisture : mo < M.extinctionMoisture;
         // oxygen at the surface: flames weaken below fresh air and die below ~15 % by volume
-        const ox = oxygenFactor(w.o2[fa]);
+        const ox = oxygenFactor(this.o2Near(fa));
         if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk && sf > 0.5 && ox > 0.3) {
           f |= F_BURNING;
         }
@@ -945,7 +1010,8 @@ export class Simulation {
             }
             airQ[fc] += toAir;
             radSrc[fc] += q * RAD_FRACTION;
-            this.consumeO2(fc, q, dt);
+            if (M.wickIds) this.consumeO2(fc, q, dt);
+            else this.consumeO2Near(fc, q, dt);
             // a candle flame stands off the pool: its burning gas starts above the wick tip
             flameAcc[M.wickIds && y + 2 < ny ? (x >> 1) + w.anx * (((y + 2) >> 1) + w.any * (z >> 1)) : fa] += q;
             const sm = (q * dt * smokeYield) / Hc;
@@ -1028,6 +1094,32 @@ export class Simulation {
   }
 
   /** Breaking glass is loud: one noise (and sound) per spot and moment. */
+  /** The glass connected to voxel i (one pane, up to a few hundred voxels) falls out. */
+  dropPane(i) {
+    const w = this.world;
+    const { nx, ny, nz, mat, flags } = w;
+    const g = mat[i];
+    const seen = new Set([i]);
+    const q = [i];
+    while (q.length && seen.size < 600) {
+      const j = q.pop();
+      flags[j] |= F_FALLING;
+      const x = j % nx;
+      const y = ((j / nx) | 0) % ny;
+      const z = (j / (nx * ny)) | 0;
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const xx = x + dx, yy = y + dy, zz = z + dz;
+        if (xx < 0 || yy < 0 || zz < 0 || xx >= nx || yy >= ny || zz >= nz) continue;
+        const k = xx + nx * (yy + ny * zz);
+        if (mat[k] === g && !seen.has(k) && !(flags[k] & F_LIQUID)) {
+          seen.add(k);
+          q.push(k);
+        }
+      }
+    }
+    w.structureDirty = true;
+  }
+
   glassNoise(i) {
     const w = this.world;
     const p = w.center(...w.coords(i));
@@ -1162,6 +1254,10 @@ export class Simulation {
       }
     }
 
+    if (this.paneOut?.length) {
+      for (const i of this.paneOut) this.dropPane(i);
+      this.paneOut.length = 0;
+    }
     // collect movers
     const movers = this.movers;
     const seaMask = w.seaMask; // cells that are open sea (water must not leave the hull there)

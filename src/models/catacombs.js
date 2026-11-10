@@ -64,22 +64,47 @@ export default {
     if (!chambers.length) chambers.push([xs[1] ?? xs[0], zs[1] ?? zs[0]]);
     const cr = Math.min(C * 0.4, 2.2);
     for (const [x, z] of chambers) prims.push({ shape: 'box', min: [x - cr - T, 0, z - cr - T], max: [x + cr + T, H + 0.8 + T, z + cr + T], ...stone, mode: 'fill' });
+    // entrance: a stair up to the surface at one corner. Built before the passages are
+    // carved, so its shell does not wall off the junction at its foot. The ceiling rises
+    // with the steps (headroom everywhere), and the top runs out of the domain: open air.
+    const ex = xs[0];
+    const ez = zs[0];
+    const HEAD = 2.3;
+    for (let k = 0; k < 10; k++) {
+      const z0 = ez - 6 + k * 0.6; // ten 0.6 m treads, 0.3 m risers, down to the passage
+      const z1 = z0 + 0.6;
+      const top = (H + T) * (1 - (k + 1) / 10);
+      prims.push({ shape: 'box', min: [ex - cw - T, 0, z0 - (k ? 0 : T)], max: [ex + cw + T, top + HEAD + T, z1], ...stone, mode: 'fill' });
+      prims.push({ shape: 'box', min: [ex - cw, h * 0.5, z0], max: [ex + cw, top + HEAD, z1], mode: 'carve' });
+      if (top > 0) prims.push({ shape: 'box', min: [ex - cw, 0, z0], max: [ex + cw, top, z1], ...stone });
+    }
+    if (p.entranceOpen) prims.push({ shape: 'box', min: [ex - cw, H, ez - 6 - T - 0.01], max: [ex + cw, 99, ez - 5], mode: 'carve' });
+    else prims.push({ shape: 'box', min: [ex - cw - T, 0, ez - 6 - T], max: [ex + cw + T, 99, ez - 5.8], ...stone });
     for (const r of runs) carve(...r);
     for (const [x, z] of chambers) {
       prims.push(
         { shape: 'box', min: [x - cr, h * 0.5, z - cr], max: [x + cr, H - 0.3, z + cr], mode: 'carve' },
         { shape: 'ellipsoid', c: [x, H - 0.3, z], r: [cr, 1.1, cr], mode: 'carve' },
-        // coffins along two walls, with shrouds inside
-        { shape: 'box', min: [x - cr + 0.2, h * 0.5, z - 0.45], max: [x - cr + 2.1, 0.6, z + 0.45], material: 'wood', density: 0.25, color: [0.38, 0.27, 0.17] },
-        { shape: 'box', min: [x - cr + 0.3, 0.6, z - 0.35], max: [x - cr + 2.0, 0.7, z + 0.35], material: 'fabric', color: [0.6, 0.55, 0.45] },
-        { shape: 'box', min: [x + cr - 2.1, h * 0.5, z - 0.45], max: [x + cr - 0.2, 0.6, z + 0.45], material: 'wood', density: 0.25, color: [0.38, 0.27, 0.17] },
       );
+      // coffins in two opposite corners (clear of the passages crossing the chamber), a shroud on one
+      const cl = Math.max(0.7, cr - cw - 0.25); // length that fits the corner
+      for (const sg of [-1, 1]) {
+        const xa = sg < 0 ? x - cr + 0.1 : x + cr - 0.1 - cl;
+        const za = sg < 0 ? z - cr + 0.1 : z + cr - 0.7;
+        prims.push({ shape: 'box', min: [xa, h * 0.5, za], max: [xa + cl, 0.6, za + 0.6], material: 'wood', density: 0.25, color: [0.38, 0.27, 0.17] });
+        if (sg < 0) prims.push({ shape: 'box', min: [xa + 0.05, 0.6, za + 0.05], max: [xa + cl - 0.05, 0.6 + Math.max(h, 0.1), za + 0.55], material: 'fabric', color: [0.6, 0.55, 0.45] });
+      }
     }
-    // burial niches in the passage walls: bones and rags
+    // burial niches in the passage walls: bones and rags. Only where there is a wall:
+    // not at crossings or inside chambers.
+    const walled = (pt) =>
+      !xs.some((x) => zs.some((z) => Math.abs(pt[0] - x) < cw + 0.6 && Math.abs(pt[2] - z) < cw + 0.6)) &&
+      !chambers.some(([x, z]) => Math.abs(pt[0] - x) < cr + 0.6 && Math.abs(pt[2] - z) < cr + 0.6);
     for (const [a, b, alongX] of runs) {
       const len = alongX ? b[0] - a[0] : b[2] - a[2];
       for (let s = 1.2; s < len - 1; s += 1.6) {
         if (rng() < 0.35) continue;
+        if (!walled(alongX ? [a[0] + s, 0, a[2]] : [a[0], 0, a[2] + s])) continue;
         for (const side of [-1, 1]) {
           if (rng() < 0.4) continue;
           const y0 = 0.5 + Math.floor(rng() * 2) * 0.7;
@@ -103,14 +128,24 @@ export default {
         }
       }
       // torches on the walls: wooden stick, pitch-soaked head, a small flame that lights up
-      for (let s = p.torchSpacing / 2; s < len; s += p.torchSpacing) {
+      // (every torchSpacing metres along the walled stretches; at least one per stretch)
+      let last = -Infinity;
+      for (let s = 0.3; s < len; s += 0.3) {
+        if (!walled(alongX ? [a[0] + s, 0, a[2]] : [a[0], 0, a[2] + s])) {
+          last = Math.max(last, s - p.torchSpacing + 1.1); // first torch ~1 m into the next stretch
+          continue;
+        }
+        if (s - last < p.torchSpacing) continue;
+        last = s;
         const side = rng() < 0.5 ? -1 : 1;
         const base = alongX ? [a[0] + s, 1.5, a[2] + side * cw] : [a[0] + side * cw, 1.5, a[2] + s];
         const out = alongX ? [0, 0, -side] : [-side, 0, 0];
         const tip = [base[0] + out[0] * 0.25, 1.85, base[2] + out[2] * 0.25];
+        const bw = Math.max(h, 0.08); // at least a voxel
         prims.push(
-          { shape: 'capsule', a: base, b: tip, r: 0.025, material: 'wood', density: 0.3, color: [0.3, 0.2, 0.12] },
-          { shape: 'sphere', c: tip, r: 0.06, material: 'twigs', color: [0.15, 0.1, 0.06] },
+          { shape: 'box', min: [base[0] - bw / 2 + Math.min(0, out[0]) * bw, 1.4, base[2] - bw / 2 + Math.min(0, out[2]) * bw], max: [base[0] + bw / 2 + Math.max(0, out[0]) * bw, 1.4 + 2 * bw, base[2] + bw / 2 + Math.max(0, out[2]) * bw], material: 'steel', color: [0.12, 0.11, 0.1], anchored: true },
+          { shape: 'capsule', a: base, b: tip, r: Math.max(0.025, h * 0.6), material: 'wood', density: 0.6, color: [0.3, 0.2, 0.12], anchored: true },
+          { shape: 'sphere', c: tip, r: Math.max(0.06, h * 0.8), material: 'wood', density: 0.9, moisture: 0, color: [0.12, 0.07, 0.04], anchored: true },
         );
         heaters.push({ pos: [tip[0], tip[1] + 0.05, tip[2]], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' });
       }
@@ -124,13 +159,6 @@ export default {
       );
     });
     prims.push(...doors);
-    // entrance: a stair up to the surface at one corner
-    const ex = xs[0];
-    const ez = zs[0];
-    prims.push({ shape: 'box', min: [ex - cw - T, 0, ez - 6 - T], max: [ex + cw + T, H + T, ez + T], ...stone, mode: 'fill' });
-    prims.push({ shape: 'box', min: [ex - cw, h * 0.5, ez - 6], max: [ex + cw, H, ez], mode: 'carve' });
-    for (let k = 0; k < 10; k++) prims.push({ shape: 'box', min: [ex - cw, 0, ez - 6 + k * 0.5], max: [ex + cw, H + T - (k + 1) * ((H + T) / 10), ez - 6 + (k + 1) * 0.5], ...stone });
-    if (!p.entranceOpen) prims.push({ shape: 'box', min: [ex - cw - T, 0, ez - 6 - T], max: [ex + cw + T, H + T, ez - 5.8], ...stone });
     return {
       prims,
       heaters,

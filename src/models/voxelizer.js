@@ -249,6 +249,9 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const group = p.group ? ++world.groupCounter : 0; // one rigid panel per primitive
     const pipe = p.gasPipe ? { voxels: [], power: p.gasPipe.power ?? 150000, jetHeight: p.gasPipe.jetHeight ?? 1, dir: dirToWorld(p.gasPipe.dir), failTemp: p.gasPipe.failTemp ?? 450, owner: ownerIndex } : null;
     if (pipe) world.gasPipes.push(pipe);
+    // a water main / sea-water line: bursts the same way (blast, heat at a joint) and floods
+    const wpipe = p.waterPipe ? { voxels: [], water: true, rate: p.waterPipe.rate ?? 15, failTemp: p.waterPipe.failTemp ?? 250, label: p.waterPipe.label ?? 'water pipe', owner: ownerIndex } : null;
+    if (wpipe) world.gasPipes.push(wpipe);
     // doors and pick-up items: voxels tagged with their registry index
     let doorTag = 0;
     if (p.door) {
@@ -308,6 +311,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
           if (pickupTag) world.pickups[pickupTag - 1].voxels.push(i);
           if (p.hull) hullCandidates.push(i);
           if (pipe) pipe.voxels.push(i);
+          if (wpipe) wpipe.voxels.push(i);
         }
   }
 

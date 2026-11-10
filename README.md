@@ -41,11 +41,17 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
     3D textures of the air grid, with absorption, self-shadowing, fire-lit smoke and
     emissive flames, clipped by the scene depth. *Volume quality* sets the number of
     ray-march steps.
-- **Fire start**: every fire start (and a pending gas-pipe burst) is shown with a marker. The
-  *Set fire start* tool picks your own (Shift+click adds more). You can return to the
-  scenario's own start, or start without any fire and light it yourself.
+- **Fire start**: every fire start (and a pending gas-pipe burst) is shown with a marker.
+  *Choose where it starts* switches to the *Set fire start* tool: click the spot (Shift+click
+  adds more) and the scene restarts with the fire there. You can return to the scenario's own
+  start, or start without any fire (the tool then switches to the lighter, so you can set it
+  alight yourself whenever you like).
+- **Walk-in start**: a green marker with an arrow shows where *Walk through as a firefighter*
+  puts you and which way you face. *Set the walk-in start* moves it: click a spot, and you
+  will face the way the camera looks.
 - **Tools** (click on a model; dragging still orbits the camera):
   - *Inspect*: material, core and surface temperature, fuel left, moisture, state.
+  - *Set fire start* / *Set walk-in start* / *Place new object*: see above and below.
   - *Ignite*: a lighter.
   - *Fire torch*: hold the left mouse button to play a flame on a spot.
   - *Hand grenade*: lobbed to the clicked spot, goes off after 2.5 s. The blast throws light
@@ -60,7 +66,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
     a realistic capacity, discharge rate and reach, and a refill button.
 - **Scene objects**: every object's parameters, position, rotation and "burning at start"
   can be edited, objects can be added and removed, and the world size and voxel size
-  can be changed. Edits restart the simulation. Scenes can be exported and imported as JSON.
+  can be changed. To add one, choose its type under *Add object*, press *Add: click the scene
+  to place it* and click where it should go (on the ground, a deck or a roof). Edits restart
+  the simulation. Scenes can be exported and imported as JSON.
 
 ## Firefighter walk-through
 
@@ -141,7 +149,9 @@ through flames, hot gas or smoke, from scraping a wing tip or the tail on someth
 from heavy landings. Hitting something nose first, flying into the sea or landing far too
 hard is a crash. A jet shot to pieces (both wings gone, or almost everything wrecked) breaks up
 in the air. Either way the fuel explodes (at least as hard as a rocket, more with a full tank)
-where it comes down, and starts fires there. You eject and are brought back to the ship.
+where it comes down, and starts fires there. As it goes, the seat fires on its own: you come
+down under the parachute (below), steering it as if you had pulled the handle yourself. Only
+in space, with no air for a parachute, are you brought back to the ship.
 
 **X ejects.** The rocket seat throws you clear, and it also works on the deck. The parachute
 opens after 1.2 s and you come down at about 5 m/s, drifting with the wind. W/S makes the
@@ -230,8 +240,8 @@ house and a campfire with dry grass around it. Only the top layers of the terrai
 voxels, which keeps it cheap. Objects can be put on any surface with `"y": "auto"`.
 
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
-and a locked glass door. A rack catches fire after 25 s (an electrical fault). A heat
-detector under the ceiling releases the **inert-gas system** at 57 °C. This floods the
+and a locked glass door. A rack catches fire after 25 s (an electrical fault). Heat
+detectors under the ceiling (the hottest gas within 3 m counts) release the **inert-gas system** at 57 °C. This floods the
 room down to ~3 % oxygen and puts the fire out, but only if the door is shut. With the door
 open (or the glass broken) the gas escapes and the fire keeps burning.
 
@@ -257,7 +267,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
-| Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
+| Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.
@@ -306,7 +316,9 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
    kindling) are single node.
 3. **Moisture.** Water must boil off (latent heat) before a surface passes 100 °C; only the
    skin's water has to go before it can ignite. Dead fuels exchange moisture with the
-   air humidity, and rain wets the topmost surfaces. Evaporated water becomes **steam**.
+   air humidity, and rain wets the topmost surfaces. A roof, a car body or any solid surface
+   sheds the rain; foliage, grass and loose fuel let part of it through. So it does not rain
+   inside a house. Evaporated water becomes **steam**.
 4. **Melting and solidifying** with latent heat (wax, plastics, aluminium, glass, steel).
    Molten voxels flow down and spread, convect heat, and solidify again (wax drips).
    Thermoplastics melt at the surface first, then pyrolyse and burn.
@@ -320,12 +332,18 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
    Bulk fuels burn per exposed area (kg/m²·s); fine fuels burn out in a residence time.
    Before ignition, hot material **smoulders** and gives off light-coloured smoke. Wood
    chars into glowing **charcoal embers** that burn slowly and leave **ash**, which
-   settles like sand. Glass breaks from thermal shock, venting rooms. A wick draws molten
+   settles like sand. Glass cracks from thermal shock (from about 150 °C at its surface), and a
+   pane in a hot layer (above about 280 °C) falls out as a whole, venting the room. A wick draws molten
    wax and burns it like a candle.
 6. **Air.** Velocity comes from buoyancy (√(gΔT/T)-like), wind with a height profile,
    plume entrainment and some turbulence. Solids block the flow and ceilings trap hot gas.
    Temperature, smoke (mass plus colour), steam and burning gas are advected
    semi-Lagrangian and mixed. Heat exchange with the solids is implicit.
+   - The wind blows in the open. Under a roof only a little of it gets through, and in a
+     closed room none; indoors the air moves with the fire, and with what comes in through
+     doors and windows.
+   - A flame draws its oxygen from all the air cells around it, not from one, and the
+     flames and hot gas stir fresh air in about a hundred times faster than still air mixes.
 7. **Fumes and weather.**
    - Smoke yield and colour depend on the material: rubber and plastics make black soot,
      grass and leaves make light grey smoke.
@@ -356,6 +374,9 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
      pressure rises by about 5 bar per K.
    - The shell weakens with temperature: steel loses most of its strength between 300 and
      700 °C, plastics soften towards their melting point.
+   - The liquid cools the wall it wets: the heat the flames put into the lower shell goes
+     straight into the liquid. The wall above the liquid has only vapour behind it, gets
+     red hot and loses its strength.
    - A working relief valve vents burning vapour as a jet flame; boiling cools the liquid.
    - A shell that melts or burns through, or fails below 1.5 bar, splits and leaks into a
      pool fire. This is what car fuel tanks do.
@@ -396,7 +417,11 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
       and ceiling tiles go soft and fall.
     - At sea, any missing hull plating below the waterline lets the sea in at
       √(2 g depth) (Torricelli). The sea pressure keeps water from running back out, so the
-      ship floods towards the waterline.
+      ship floods towards the waterline. This holds for every ship at sea: the ship section,
+      and the carrier's deck below the flight deck, which lies under the waterline.
+    - **Water pipes** (the hallway's copper pipe, the ships' sea-water mains) burst in a
+      blast or when the fire heats a joint. They pour water out (4 to 20 l/s) that runs down,
+      wets what is under it and collects on the floor.
 15. **Structure.** A flood fill from the ground finds parts that are no longer supported
    (a burnt-through trunk, a roof whose beams are gone), and they fall.
 
@@ -410,13 +435,15 @@ Calibration targets used during development (`npm run headless`):
 | Car fire | slow growth over ~10 min, spreads to nearby buildings | ~0.1 → 0.6 MW in 11 min, then the house next to it |
 | Metal bars | copper spreads heat furthest, steel keeps a steep gradient | yes |
 | Campfire in 50 mm/h rain | dies down, core keeps glowing | −55 % in 4 min, still dropping |
-| 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst | vents at 17.5 bar after ~13 min; bursts at ~99 bar after ~17 min |
+| 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst within minutes | vents at 17.5 bar after ~1.5 min; bursts at ~90 bar after ~2 min |
 | Car fuel tank in a car fire | thin tank fails and leaks; explosions are very rare | splits, pool fire to ~10 MW |
 
 ### Limitations
 
 This is a real-time, approximate model, not a CFD fire code like FDS. The air flow is not
-pressure-projected. Radiation is a blurred field without real shadowing, corrected by a
+pressure-projected, so the exchange through a doorway or a broken window is too weak: a room
+fire becomes short of oxygen sooner than a real one, and a house fire with the door open
+levels off at a few hundred kW where a real one would reach a few MW. Radiation is a blurred field without real shadowing, corrected by a
 view factor. A voxel stands for its material, so geometry finer than the voxel size is
 represented through effective density and surface factors. Results are qualitatively
 right and of the right order of magnitude, but should not be used for engineering.

@@ -122,7 +122,8 @@ export class World {
     this.heaters = [];
     this.vessels = []; // pressure vessels (fuel tanks, gas cylinders), see vessels.js
     this.debris = []; // flying fragments after an explosion
-    this.gasPipes = []; // { voxels, power }: gas lines that can burst (blast, heat)
+    this.gasPipes = []; // { voxels, power }: gas lines that can burst (blast, heat); also water pipes ({ water: true, rate })
+    this.leaks = []; // burst water pipes: { p, rate (l/s), acc }
     this.projectiles = []; // thrown grenades, arrows, rockets
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock

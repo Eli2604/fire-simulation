@@ -94,6 +94,14 @@ export function burstPipeNear(sim, gp, p, range) {
 export function burstPipeAt(sim, gp, i) {
   const w = sim.world;
   const c = w.center(...w.coords(i));
+  if (gp.water) {
+    // a water pipe: it gushes, and the water runs down and collects on the floor
+    if (w.leaks.some((l) => l.gp === gp && Math.hypot(l.p[0] - c[0], l.p[1] - c[1], l.p[2] - c[2]) < 1)) return;
+    gp.bursts = (gp.bursts ?? 0) + 1;
+    w.leaks.push({ p: c, rate: gp.rate, acc: 0, gp });
+    w.events.push({ type: 'waterBurst', pos: c, time: w.time, name: gp.label });
+    return;
+  }
   // not twice at (nearly) the same spot
   for (const ht of w.heaters) if (ht.gasPipe === gp && Math.hypot(ht.pos[0] - c[0], ht.pos[1] - c[1], ht.pos[2] - c[2]) < 1) return;
   gp.bursts = (gp.bursts ?? 0) + 1;

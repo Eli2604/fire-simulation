@@ -221,7 +221,7 @@ export const SCENARIOS = {
       },
       below: {
         name: 'Below deck',
-        world: { size: [32, 3.6, 17], h: 0.2 },
+        world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
         view: { camera: [16, 14, -8], walk: true },
         objects: [
           { type: 'carrierBelow', params: {}, x: 16, z: 8.5 },
@@ -281,7 +281,7 @@ export const SCENARIOS = {
     view: { camera: [-2, 8, 14] },
     objects: [
       { type: 'grass', params: { width: 13, depth: 11, height: 0.15, density: 0.7, moisture: 0.6 }, x: 7, z: 6 },
-      { type: 'house', params: { width: 7, depth: 5, roofMaterial: 'wood shingles' }, x: 7, z: 6, ignite: true },
+      { type: 'house', params: { width: 7, depth: 5, roofMaterial: 'wood shingles', doorOpen: true }, x: 7, z: 6, ignite: true },
       { type: 'tree', params: { height: 5, crownRadius: 1.6 }, x: 12, z: 2.5 },
     ],
   },

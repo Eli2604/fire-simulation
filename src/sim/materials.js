@@ -167,7 +167,7 @@ const DEFS = {
   },
   glass: {
     label: 'Glass', color: [0.62, 0.78, 0.85], density: 2500, specificHeat: 840, conductivity: 1.0,
-    emissivity: 0.9, meltingPoint: 800, latentHeat: 0, fluidity: 0.15, shatterTemp: 230,
+    emissivity: 0.9, meltingPoint: 800, latentHeat: 0, fluidity: 0.15, shatterTemp: 150, // surface temperature that stands for the ~70-100 K hot-centre / cool-edge difference that cracks a pane
     liquidColor: [0.95, 0.75, 0.4],
   },
   ceramic: {

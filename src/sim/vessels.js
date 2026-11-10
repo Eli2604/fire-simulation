@@ -26,6 +26,7 @@ import { F_BURNING, F_LIQUID, F_FALLING, F_ANCHOR } from './world.js';
 
 const P_ATM = 101325;
 const R_HEAT_KIN = 0.25;
+const U_WET = 3000; // W/(m²·K): wetted wall to boiling liquid
 const SPLIT_PRESSURE = 1.5e5; // Pa gauge: failures below this tear the shell open instead of exploding // share of the burst energy that becomes kinetic energy of fragments
 
 export function vaporPressure(fluid, T) {
@@ -62,7 +63,7 @@ export function stepVessels(sim, dt) {
   const { solids, vesselTag, mat, temp, skin, flags, fuel, dens, nx, ny } = w;
   const V = w.h ** 3;
   // gather per-vessel state in one pass
-  const acc = w.vessels.map(() => ({ shell: [], contents: [], maxShellT: -Infinity, broken: false, mass: 0, heat: 0, cap: 0, top: -1, topY: -1, shellMat: null }));
+  const acc = w.vessels.map(() => ({ shell: [], contents: [], maxShellT: -Infinity, liqTopY: -1, broken: false, mass: 0, heat: 0, cap: 0, top: -1, topY: -1, shellMat: null }));
   for (let k = 0; k < w.solidCount; k++) {
     const i = solids[k];
     const tag = vesselTag[i];
@@ -82,6 +83,8 @@ export function stepVessels(sim, dt) {
       }
     } else {
       a.contents.push(i);
+      const yc = ((i / nx) | 0) % ny;
+      if (yc > a.liqTopY) a.liqTopY = yc;
       const M = MATERIALS[mat[i]];
       const m = M.density * dens[i] * V * fuel[i];
       a.mass += m;
@@ -102,7 +105,34 @@ export function stepVessels(sim, dt) {
     }
     const fluid = MATERIALS[w.mat[a.contents[0]]];
     v.fluid = fluid;
-    const Tf = a.heat / a.mass;
+    let Tf = a.heat / a.mass;
+    // The liquid cools the wall it wets: through a few mm of steel into a boiling
+    // liquid the heat flows fast, so the heat the flames put into the lower shell
+    // goes into the contents (the thin-sheet voxels would otherwise hold it back).
+    // The wall above the liquid has only vapour behind it: that is the part that
+    // gets red hot and loses its strength.
+    {
+      let q = 0;
+      const A = 2 * w.h * w.h;
+      for (const i of a.shell) {
+        const y = ((i / nx) | 0) % ny;
+        if (y > a.liqTopY) continue;
+        const Ts = Math.max(temp[i], skin[i]);
+        if (Ts <= Tf) continue;
+        const M = MATERIALS[mat[i]];
+        const mC = M.density * dens[i] * V * M.specificHeat;
+        const dQ = Math.min(U_WET * A * (Ts - Tf) * dt, mC * (Ts - Tf) * 0.8);
+        const dT = dQ / mC;
+        temp[i] -= dT;
+        skin[i] = Math.max(Tf, skin[i] - dT);
+        q += dQ;
+      }
+      if (q > 0 && a.cap > 0) {
+        const dT = q / a.cap;
+        for (const c of a.contents) temp[c] += dT;
+        Tf += dT;
+      }
+    }
     v.T0 ??= Tf;
     v.pAir0 ??= Math.max(0, P_ATM - vaporPressure(fluid, v.T0));
     v.volume ??= (a.contents.length * V) / (1 - (v.ullage ?? 0.15));

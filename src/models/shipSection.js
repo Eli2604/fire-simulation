@@ -116,7 +116,9 @@ export default {
     // fuel line along the lower corridor, under its ceiling
     const gy = floor1 + deckH - 0.25;
     const gz = -cw + 0.1;
-    prims.push({ shape: 'cylinder', a: [-hx + 1, gy, gz], b: [hx - 1, gy, gz], r: 0.03, material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, jetHeight: 1.6, dir: [0.2, -0.6, 0.78] } });
+    prims.push({ shape: 'cylinder', a: [-hx + 1, gy, gz], b: [hx - 1, gy, gz], r: Math.max(0.03, h * 0.6), material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.burstPower, jetHeight: 1.6, dir: [0.2, -0.6, 0.78] } });
+    // the sea-water fire main along the other side: a blast or the fire breaks it, and it floods the corridor
+    prims.push({ shape: 'cylinder', a: [-hx + 1, gy, -gz], b: [hx - 1, gy, -gz], r: Math.max(0.04, h * 0.6), material: 'steel', color: [0.2, 0.45, 0.25], density: thin(0.004), anchored: true, waterPipe: { rate: 20, label: 'sea-water main' } });
     bursts.push({ pos: [-L / 8, gy, gz + 0.06], power: p.burstPower, radius: 0.2, height: 1.6, dir: [0.2, -0.6, 0.78], start: p.burstAfter, label: 'fuel line', event: 'pipeBurst', jet: true, smokeYield: 0.01 });
 
     const sprinklers = [];
