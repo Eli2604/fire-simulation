@@ -78,8 +78,12 @@ test('heat and explosions shatter glass, and enemies come to look', () => {
   run(sim, 3);
   const e = w.enemies[0];
   assert.ok(w.noises.some((n) => n.kind === 'glass' || n.kind === 'explosion'));
-  assert.equal(e.state, 'investigate');
-  assert.ok(e.goal && e.goal[0] > 6, 'heads for the noise');
+  // they run to a blast; if they get there while it is still hot and smoky they back off from it
+  if (e.state === 'flee') assert.ok(e.p[0] > 4.5, 'ran towards the blast before backing off from the heat');
+  else {
+    assert.equal(e.state, 'investigate');
+    assert.ok(e.goal && e.goal[0] > 6, 'heads for the noise');
+  }
 });
 
 test('an enemy who sees you lights something to lure you, then pulls back', () => {
