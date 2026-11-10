@@ -54,6 +54,12 @@ export class Walkthrough {
       down: document.getElementById('walkDown'),
     };
     this.lamp = new THREE.SpotLight(0xfff1d6, 0, 25, Math.PI / 6.5, 0.75, 1.6);
+    this.lamp.castShadow = true; // the lamp's light throws shadows behind what it hits
+    this.lamp.shadow.mapSize.set(1024, 1024);
+    this.lamp.shadow.camera.near = 0.1;
+    this.lamp.shadow.camera.far = 25;
+    this.lamp.shadow.bias = -0.0015;
+    this.lamp.shadow.normalBias = 0.02;
     this.lamp.position.set(0.15, 0.1, 0);
     this.lamp.target.position.set(0, 0, -1);
     this.lampOn = true;

@@ -211,6 +211,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
+  for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   for (const br of built.barrels ?? []) {
     const c = toWorld(br.c[0], 0, br.c[1]);

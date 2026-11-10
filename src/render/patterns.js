@@ -19,7 +19,7 @@ import { MATERIALS } from '../sim/materials.js';
  * heat glow still show on it. Bones in ossuary walls are real geometry (render/ossuary.js).
  */
 
-export const PATTERNS = ['limestone', 'rock', 'gravel'];
+export const PATTERNS = ['limestone', 'rock', 'gravel', 'deck'];
 const TILE = 1024; // px per tile
 export const PATTERN_SIZE = 2.4; // metres covered by one tile
 const RELIEF = 0.03; // m: depth of the deepest joint
@@ -321,6 +321,45 @@ function gravelHeight(ctx, ox) {
   }
 }
 
+/** A carrier flight deck: dark non-skid grit, tyre marks, oil and fuel stains, weld seams of the plates. */
+function deckColour(ctx, ox) {
+  const r = rng(61);
+  ctx.fillStyle = '#5a5d60';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  grain(ctx, ox, r, 60000, 0.35);
+  mottle(ctx, ox, r, 300, 'rgba(120,124,128,0.25)', 'rgba(30,30,32,0.35)', 60);
+  // tyre marks: long dark streaks along the deck (x)
+  for (let k = 0; k < 40; k++) {
+    const y = r() * TILE;
+    const g = ctx.createLinearGradient(ox, 0, ox + TILE, 0);
+    g.addColorStop(0, 'rgba(15,15,15,0)');
+    g.addColorStop(0.3 + r() * 0.4, `rgba(15,15,15,${0.15 + r() * 0.25})`);
+    g.addColorStop(1, 'rgba(15,15,15,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(ox, y, TILE, 4 + r() * 8);
+  }
+  // oil and fuel stains
+  mottle(ctx, ox, r, 30, 'rgba(0,0,0,0)', 'rgba(20,18,15,0.5)', 70);
+  // plate seams every 1.2 m
+  ctx.fillStyle = 'rgba(30,30,32,0.6)';
+  for (let k = 0; k < 2; k++) {
+    ctx.fillRect(ox + k * (TILE / 2), 0, 3, TILE);
+    ctx.fillRect(ox, k * (TILE / 2), TILE, 3);
+  }
+}
+
+function deckHeight(ctx, ox) {
+  const r = rng(67);
+  ctx.fillStyle = 'rgb(150,150,150)';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  grain(ctx, ox, r, 90000, 0.6, 60, 230); // the grit
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  for (let k = 0; k < 2; k++) {
+    ctx.fillRect(ox + k * (TILE / 2), 0, 3, TILE);
+    ctx.fillRect(ox, k * (TILE / 2), TILE, 3);
+  }
+}
+
 /** Build the two atlas textures (in a browser; in Node there is no canvas and no relief). */
 export function patternAtlas() {
   if (atlas || typeof document === 'undefined' || typeof document.createElement('canvas').getContext !== 'function') return atlas;
@@ -354,6 +393,9 @@ export function patternAtlas() {
     } else if (name === 'gravel') {
       clip(cc, () => gravelColour(cc, ox));
       clip(hc, () => gravelHeight(hc, ox));
+    } else if (name === 'deck') {
+      clip(cc, () => deckColour(cc, ox));
+      clip(hc, () => deckHeight(hc, ox));
     }
     // the mean colour (linear): the texture is applied relative to it
     const d = cc.getImageData(ox, 0, TILE, TILE).data;

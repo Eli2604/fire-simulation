@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { VoxelRenderer } from './voxels.js';
 import { FlameRenderer } from './flames.js';
 import { SmokeRenderer } from './smoke.js';
@@ -12,6 +16,9 @@ import { MarkerRenderer } from './markers.js';
 import { PuddleRenderer } from './puddles.js';
 import { TorchRenderer } from './torches.js';
 import { OssuaryRenderer } from './ossuary.js';
+import { VehicleRenderer } from './vehicles.js';
+import { PropsRenderer } from './props.js';
+import { DoorRenderer } from './doors.js';
 import { EnemyRenderer } from './enemies.js';
 import { deriveWeather } from '../sim/weather.js';
 
@@ -55,6 +62,8 @@ export class View {
       this.torchLights.push(l);
     }
     this.dark = false;
+    this.aoOn = true; // ambient occlusion
+    this.torchShadows = true;
 
     // pushed back in depth so it never fights with the ground surface of the grid (flicker)
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x5b5236, roughness: 1, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 });
@@ -66,6 +75,9 @@ export class View {
     this.voxels = new VoxelRenderer(this.root);
     this.torches = new TorchRenderer(this.root); // wall torches as objects
     this.ossuary = new OssuaryRenderer(this.root); // walls built of skulls and bones
+    this.vehicles = new VehicleRenderer(this.root); // the parked jet
+    this.props = new PropsRenderer(this.root); // masts, radars, deck detail
+    this.doors = new DoorRenderer(this.root); // doors drawn as doors
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
     this.overlay = new THREE.Scene();
@@ -100,6 +112,37 @@ export class View {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.composer?.setSize(w, h);
+  }
+
+  /**
+   * Ambient occlusion (GTAO, screen space): the light that reaches a crevice, a corner,
+   * the gaps between stacked bones is less than on an open face. Rendered through a
+   * composer (scene -> AO -> tone mapping); its depth buffer lets the flames and sparks
+   * of the overlay pass still hide behind walls.
+   */
+  ensureComposer() {
+    if (this.composer) return;
+    const r = this.renderer;
+    const size = r.getSize(new THREE.Vector2());
+    const composer = new EffectComposer(r);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const ao = new GTAOPass(this.scene, this.camera, size.x, size.y);
+    ao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.5, thickness: 1.2, distanceFallOff: 1, scale: 1.4, samples: 16 });
+    ao.blendIntensity = 0.85;
+    // flames, glows and other see-through billboards are no surfaces: keep them out of the AO
+    ao.overrideVisibility = function () {
+      const cache = this._visibilityCache;
+      this.scene.traverse((o) => {
+        cache.set(o, o.visible);
+        if (o.isPoints || o.isLine || o.isSprite || o.userData.noAO) o.visible = false;
+      });
+    };
+    composer.addPass(ao);
+    composer.addPass(new OutputPass());
+    composer.setSize(size.x, size.y);
+    this.composer = composer;
+    this.ao = ao;
   }
 
   /** Point size scale: pixels per metre at distance 1. */
@@ -116,6 +159,9 @@ export class View {
     this.voxels.setWorld(world);
     this.torches.setWorld(world);
     this.ossuary.setWorld(world);
+    this.vehicles.setWorld(world);
+    this.props.setWorld(world);
+    this.doors.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -207,7 +253,7 @@ export class View {
     if (this.space) this.setSpaceBlend(1);
     else if (this.stars) this.stars.visible = false;
     this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog);
-    this.hemi.intensity = this.dark ? 0.12 : 0.9 + 0.3 * light;
+    this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
   }
@@ -309,6 +355,9 @@ export class View {
     const smooth = this.surfaceMode === 'smooth';
     const volumetric = this.smokeMode === 'volumetric';
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
+    // underground the torches and the lamp cast the shadows; the whole voxel world going into
+    // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
+    if (this.voxels.mesh) this.voxels.mesh.castShadow = !(this.dark && this.torchShadows);
     if (!smooth) this.voxels.update(this.time);
     if (smooth !== this.surface.visible) this.surface.setVisible(smooth);
     this.surface.mode = this.voxels.mode;
@@ -330,18 +379,26 @@ export class View {
     this.updateFireLight(stats);
     this.updateTorchLights();
     this.torches.update(this.time);
+    this.vehicles.update(this.time);
+    this.props.update(dt);
+    this.doors.update(dt);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
     const r = this.renderer;
     const useVolume = volumetric && this.smoke.enabled;
+    let aoDepth = null;
     if (useVolume) {
       this.volume.showSteam = this.smoke.showSteam;
       this.volume.density = this.smoke.density;
       this.volume.render(this.scene, this.camera, this);
+    } else if (this.aoOn) {
+      this.ensureComposer();
+      this.composer.render();
+      aoDepth = this.ao.depthTexture;
     } else r.render(this.scene, this.camera);
-    // overlay: flames, sparks, spray. After the volume pass the screen has no depth buffer,
-    // so the particles test against the scene depth texture themselves.
-    const depth = useVolume ? this.volume.target.depthTexture : null;
+    // overlay: flames, sparks, spray. After the volume (or AO) pass the screen has no depth
+    // buffer, so the particles test against the scene depth texture themselves.
+    const depth = useVolume ? this.volume.target.depthTexture : aoDepth;
     const res = r.getDrawingBufferSize(this._res ?? (this._res = new THREE.Vector2()));
     for (const m of [this.flames.material, this.spray.material]) {
       m.uniforms.uUseDepth.value = depth ? 1 : 0;
@@ -368,7 +425,18 @@ export class View {
       const o2 = w.o2[this.flames.world ? Math.max(0, Math.min(w.NA - 1, w.airIdx(Math.floor(s.h.pos[0] / w.ah), Math.floor((s.h.pos[1] + 0.2) / w.ah), Math.floor(s.h.pos[2] / w.ah)))) : 0] ?? 0.232;
       const f = Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)); // a torch dims and dies as the oxygen goes
       l.position.set(s.h.pos[0], s.h.pos[1] + 0.25, s.h.pos[2]);
-      l.intensity = 4.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
+      // the nearest two cast shadows (bones, skulls, people in the light of a torch)
+      const shadow = this.torchShadows && k < 2;
+      if (l.castShadow !== shadow) {
+        l.castShadow = shadow;
+        l.shadow.mapSize.set(512, 512);
+        l.shadow.camera.near = 0.05;
+        l.shadow.camera.far = 7;
+        l.shadow.bias = -0.003;
+        l.shadow.normalBias = 0.02;
+        l.shadow.radius = 3;
+      }
+      l.intensity = 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
     });
   }
 

@@ -30,39 +30,64 @@ export const carrierDeck = {
     const D = p.deckHeight;
     const hx = L / 2;
     const hz = B / 2;
-    const steel = { material: 'steel', anchored: true };
+    const steel = { material: 'steel', anchored: true, variation: 0.02 };
+    const deck = { material: 'deckSteel', anchored: true, variation: 0.015 };
     const prims = [
       // hull sides and the flight deck (the space below it is another zone)
       { shape: 'box', min: [-hx, 0, -hz], max: [hx, D, hz], ...steel, density: thin(0.02), color: [0.42, 0.44, 0.46], hull: true },
       { shape: 'box', min: [-hx + h, h, -hz + h], max: [hx - h, D - h, hz - h], mode: 'carve' },
       { shape: 'box', min: [-hx - 0.01, -0.01, -hz - 0.01], max: [hx + 0.01, p.draft, hz + 0.01], material: 'steel', mode: 'replace', density: thin(0.02), anchored: true, color: [0.5, 0.15, 0.12], hull: true },
-      // deck surface: non-skid grey with yellow and white markings
-      { shape: 'box', min: [-hx, D - h, -hz], max: [hx, D, hz], ...steel, density: thin(0.03), color: [0.3, 0.31, 0.32] },
-      { shape: 'box', min: [-hx, D - h, -0.12], max: [hx, D, 0.12], ...steel, density: thin(0.03), color: [0.9, 0.9, 0.85], mode: 'replace' },
-      { shape: 'box', min: [-hx, D - h, hz - 3.2], max: [hx, D, hz - 3.0], ...steel, density: thin(0.03), color: [0.95, 0.8, 0.1], mode: 'replace' },
+      // deck surface: non-skid grey; the markings painted on it
+      { shape: 'box', min: [-hx, D - h, -hz], max: [hx, D, hz], ...deck, density: thin(0.03), color: [0.36, 0.37, 0.38] },
+      // edge lines (white), a dashed centre line, yellow taxi lines
+      { shape: 'box', min: [-hx, D - h, -hz + 0.4], max: [hx, D, -hz + 0.6], ...deck, density: thin(0.03), color: [0.88, 0.88, 0.84], mode: 'replace' },
+      { shape: 'box', min: [-hx, D - h, hz - 0.6], max: [hx, D, hz - 0.4], ...deck, density: thin(0.03), color: [0.88, 0.88, 0.84], mode: 'replace' },
+      ...Array.from({ length: Math.floor(L / 6) }, (_, k) => ({ shape: 'box', min: [-hx + k * 6, D - h, -0.15], max: [-hx + k * 6 + 3.5, D, 0.15], ...deck, density: thin(0.03), color: [0.9, 0.9, 0.86], mode: 'replace' })),
+      { shape: 'box', min: [-hx, D - h, hz - 4.4], max: [hx * 0.55, D, hz - 4.2], ...deck, density: thin(0.03), color: [0.95, 0.78, 0.1], mode: 'replace' },
     ];
-    // the island on the starboard side: a steel tower with a glazed bridge
+    // the island on the starboard side (+z), as on a Nimitz: a tall stepped steel tower
+    // with the navigation bridge (windows all round) on top of the main block, the
+    // flight-control tier above it, a lattice mast and the radars (drawn as props)
     const ix = hx * 0.25;
-    const iz = -hz + 3;
-    const IL = 10;
+    const iz = hz - 3;
+    const IL = 11;
     const IW = 4.5;
     const top = D + 6;
+    const grey = [0.55, 0.57, 0.6];
     prims.push(
-      { shape: 'box', min: [ix - IL / 2, D, iz - IW / 2], max: [ix + IL / 2, top, iz + IW / 2], ...steel, density: thin(0.01), color: [0.55, 0.57, 0.6] },
+      { shape: 'box', min: [ix - IL / 2, D, iz - IW / 2], max: [ix + IL / 2, top, iz + IW / 2], ...steel, density: thin(0.01), color: grey },
       { shape: 'box', min: [ix - IL / 2 + h, D, iz - IW / 2 + h], max: [ix + IL / 2 - h, top - h, iz + IW / 2 - h], mode: 'carve' },
+      // the upper tiers: flag bridge / flight control, smaller, set back
+      { shape: 'box', min: [ix - IL / 2 + 1.2, top, iz - IW / 2 + 0.4], max: [ix + IL / 2 - 2.5, top + 2.2, iz + IW / 2 - 0.3], ...steel, density: thin(0.01), color: grey },
+      { shape: 'box', min: [ix - IL / 2 + 1.2, top + 1.0, iz - IW / 2 + 0.39], max: [ix + IL / 2 - 2.5, top + 1.8, iz + IW / 2 - 0.29], material: 'glass', mode: 'replace', density: thin(0.012), variation: 0.02 },
+      { shape: 'box', min: [ix - 1.5, top + 2.2, iz - 1.2], max: [ix + 1.2, top + 3.4, iz + 1.4], ...steel, density: thin(0.01), color: grey },
       { shape: 'box', min: [ix - IL / 2 + h, D + 3, iz - IW / 2 + h], max: [ix + IL / 2 - h, D + 3 + h, iz + IW / 2 - h], ...steel, density: thin(0.008), color: [0.5, 0.5, 0.5] },
       // bridge windows all round
-      { shape: 'box', min: [ix - IL / 2 - 0.01, top - 2, iz - IW / 2 - 0.01], max: [ix + IL / 2 + 0.01, top - 0.8, iz + IW / 2 + 0.01], material: 'glass', mode: 'replace', density: thin(0.012) },
+      { shape: 'box', min: [ix - IL / 2 - 0.01, top - 2, iz - IW / 2 - 0.01], max: [ix + IL / 2 + 0.01, top - 0.8, iz + IW / 2 + 0.01], material: 'glass', mode: 'replace', density: thin(0.012), variation: 0.02 },
       // consoles and chairs on the bridge, papers
       { shape: 'box', min: [ix - IL / 2 + 0.6, D + 3 + h, iz + IW / 2 - 1.2], max: [ix + IL / 2 - 0.6, D + 4.2, iz + IW / 2 - 0.6], material: 'plastic', density: 0.2, color: [0.2, 0.22, 0.25] },
       { shape: 'box', min: [ix - 1, D + 3 + h, iz - 0.5], max: [ix + 1, D + 3.6, iz + 0.5], material: 'paper', density: 0.4, color: [0.85, 0.85, 0.8] },
       // a door into the island and a mast
       { shape: 'box', min: [ix + IL / 2 - 0.01, D + h, iz - 0.5], max: [ix + IL / 2 + 0.01, D + 2.1, iz + 0.5], mode: 'carve' },
       { shape: 'box', min: [ix + IL / 2 - h / 2, D + h, iz - 0.5], max: [ix + IL / 2 + h / 2, D + 2.1, iz + 0.5], material: 'steel', density: thin(0.01), color: [0.7, 0.7, 0.68], door: 'island door' },
-      { shape: 'cylinder', a: [ix, top, iz], b: [ix, top + 4, iz], r: 0.15, ...steel, density: thin(0.01) },
     );
+    // drawn detail: mast, radars, antennas; catapults, arresting wires, deck-edge nets, the hull number
+    const props = [
+      { type: 'mast', p: [ix - 0.2, top + 3.4, iz + 0.1], h: 6.5 },
+      { type: 'radarArray', p: [ix + 1.6, top + 2.2, iz - 0.6], w: 3.6, h: 1.4, rate: 1.4 },
+      { type: 'radarDish', p: [ix - 1.0, top + 7.0, iz + 0.1], r: 2.0, rate: -0.9 },
+      { type: 'radarArray', p: [ix - 3.2, top + 2.2, iz + 0.4], w: 1.6, h: 0.9, rate: 2.4 },
+      { type: 'whip', p: [ix + IL / 2 - 0.4, top, iz - IW / 2 + 0.3], h: 5 },
+      { type: 'whip', p: [ix - IL / 2 + 0.4, top, iz + IW / 2 - 0.3], h: 4 },
+      { type: 'catapult', p: [-hx * 0.15, D, -3.0], len: hx * 1.12 },
+      { type: 'catapult', p: [-hx * 0.15, D, 3.2], len: hx * 1.1 },
+      { type: 'wires', p: [-hx + 2.5, D, 0], n: 3, step: 2.6, w: B * 0.75 },
+      { type: 'net', p: [-hx, D, -hz], len: L, heading: Math.PI },
+      { type: 'net', p: [-hx, D, hz], len: L },
+      { type: 'number', p: [hx - 5, D, 0], text: '68', w: 5, h: 3.5, turn: -Math.PI / 2 },
+    ];
     // the hatch down below deck, next to the island
-    const hatch = [ix - IL / 2 - 2.5, D, iz + 1];
+    const hatch = [ix - IL / 2 - 2.5, D, iz - 1];
     prims.push(
       // (the hatch itself is a painted cover with a coaming: E takes you below)
       { shape: 'box', min: [hatch[0] - 0.6, D - h, hatch[2] - 0.6], max: [hatch[0] + 0.6, D, hatch[2] + 0.6], ...steel, density: thin(0.03), color: [0.85, 0.75, 0.1], mode: 'replace' },
@@ -73,6 +98,7 @@ export const carrierDeck = {
     );
     return {
       prims,
+      props,
       sea: { level: p.draft, box: [-hx, -hz, hx, hz] },
       spawn: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 },
       portals: [
@@ -129,6 +155,7 @@ export const jet = {
         { shape: 'box', min: [-3, 1.2, -0.45], max: [1, 2.0, 0.45], material: 'aluminium', density: thin(0.003), vessel: 'fuel' },
         { shape: 'box', min: [-2.8, 1.3, -0.35], max: [0.8, 1.9, 0.35], material: 'gasoline', vessel: 'fuel', vesselRole: 'contents' },
       );
+    for (const pr of prims) if (pr.mode !== 'carve') pr.hidden = true; // drawn as the aircraft (render/vehicles.js)
     return {
       prims,
       vessels: p.fuelLiters > 0 ? { fuel: { burstPressure: 3e5, ventPressure: 3e4, ventRate: 0.01, ullage: 0.1, volume: p.fuelLiters / 1000 / 0.9 } } : {},

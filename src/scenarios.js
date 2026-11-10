@@ -218,7 +218,7 @@ export const SCENARIOS = {
         proxy: { color: '#6d7175', height: 8, fill: 0.9, sea: 2.9 },
         objects: [
           { type: 'carrierDeck', params: { length: 40, beam: 18, deckHeight: 7, boatTo: 'island' }, x: 22, z: 10.5 },
-          { type: 'jet', params: {}, x: 13, z: 13.5, y: 7, rotation: 0 },
+          { type: 'jet', params: {}, x: 13, z: 7.5, y: 7, rotation: 0 },
         ],
       },
       below: {

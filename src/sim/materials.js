@@ -216,6 +216,14 @@ const DEFS = {
     brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
     pattern: 'limestone', // drawn as dressed blocks with carved inscriptions
   },
+  deckSteel: {
+    // a carrier's flight deck: steel plate under a non-skid coating
+    // (it behaves as steel; only the look differs)
+    label: 'Flight deck (non-skid steel)', color: [0.36, 0.37, 0.38], density: 7850, specificHeat: 490, conductivity: 45,
+    emissivity: 0.9, meltingPoint: 1450, latentHeat: 270e3, fluidity: 0.5, oxidizeTemp: 350,
+    charColor: [0.17, 0.12, 0.1], liquidColor: [0.95, 0.6, 0.2],
+    pattern: 'deck',
+  },
   bedrock: {
     // the limestone the quarries were cut into: natural rock faces and ceilings
     label: 'Limestone bedrock', color: [0.5, 0.48, 0.43], density: 2300, specificHeat: 900, conductivity: 1.3,

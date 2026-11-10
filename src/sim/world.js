@@ -129,6 +129,7 @@ export class World {
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock
     this.plaques = []; // { p, n, w, h, text }: engraved stone tablets on the walls (drawn only)
+    this.props = []; // drawn-only detail (masts, radars, catapult tracks, nets...): render/props.js
     this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
@@ -217,7 +218,7 @@ export class World {
     this.flags[i] = (liquid ? F_LIQUID : 0) | (o.anchored ? F_ANCHOR : 0) | (o.hidden ? F_HIDDEN : 0);
     this.owner[i] = o.owner ?? -1;
     const col = o.color ?? m.color;
-    const v = o.variation ?? 0.08;
+    const v = o.variation ?? (m.name === 'glass' ? 0.01 : 0.08); // glass is not mottled
     const n = 1 + (hash3(i) - 0.5) * 2 * v;
     this.tint[i * 3] = clamp255(col[0] * n * 255);
     this.tint[i * 3 + 1] = clamp255(col[1] * n * 255);

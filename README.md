@@ -62,6 +62,24 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
     - **Wall torches** are objects (an iron bracket, a wooden handle, a pitch-soaked head and
       a flickering flame) over the hidden voxels that simulate them.
     - The surface colour still darkens with soot and charring, gets wet and glows with heat.
+    - **Doors** (render/doors.js) are drawn as doors over their simulated voxels, by what they
+      are made of: plank doors with wrought-iron straps, rivets, strap hinges and a ring pull;
+      office doors with a vision panel and lever handles; a ship's watertight steel doors with
+      a stiffening frame and dog levers; framed glass doors. They swing open on their hinges,
+      darken as they char, lose their glass when it breaks, and give way to the voxels once
+      mostly burnt or blown away.
+    - **The jet** (render/jetMesh.js) is a twin-engine fighter in the manner of the MiG-29/35
+      "Fulcrum": pointed nose with a darker radome, bubble canopy, flat centre body between
+      widely spaced nacelles, wedge intakes under the wing-root extensions, swept wings,
+      all-moving tailplanes, twin fins on the nacelles, two nozzles, rockets on pylons. Parked
+      on deck it is drawn over its (hidden) voxels; flying, it is the same model.
+    - **The carrier deck** has a non-skid deck with tyre marks, painted lines, two catapult
+      tracks, arresting wires, safety nets along the edges and its hull number; the island
+      stands to starboard as on a Nimitz-class carrier, stepped, with the bridge, the flight
+      control tier, a lattice mast and turning radars (drawn-only "props", render/props.js).
+  - *Ambient occlusion* (GTAO, View folder): crevices, corners and the gaps between bones get
+    less light. *Torch & lamp shadows*: the two nearest wall torches and the helmet lamp cast
+    shadows (underground only the objects, not the voxel walls, go into their shadow maps).
   - *Smoke & flames*: **particles** (fast) or **volumetric**: ray-marched in a shader through
     3D textures of the air grid, with absorption, self-shadowing, fire-lit smoke and
     emissive flames, clipped by the scene depth. *Volume quality* sets the number of

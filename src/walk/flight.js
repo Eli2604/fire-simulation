@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { explode } from '../sim/explosions.js';
+import { buildJetMesh } from '../render/jetMesh.js';
 import { placeObject } from '../models/voxelizer.js';
 import { MAT } from '../sim/materials.js';
 import { deriveWeather } from '../sim/weather.js';
@@ -200,48 +201,16 @@ export class Flight {
 
   // ------------------------------------------------------------------ visuals
   buildMesh(color) {
-    const g = new THREE.Group();
-    const paint = () => new THREE.MeshStandardMaterial({ color: new THREE.Color(color), metalness: 0.5, roughness: 0.45 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.6, roughness: 0.5 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x223344, metalness: 0.9, roughness: 0.1, transparent: true, opacity: 0.8 });
-    const add = (geo, mat, x, y, z, rz = 0) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.rotation.set(0, 0, rz);
-      m.castShadow = true;
-      g.add(m);
-      return m;
-    };
-    this.parts = {};
-    add(new THREE.CylinderGeometry(0.75, 0.6, 11, 16), paint(), -0.5, 1.6, 0, Math.PI / 2);
-    add(new THREE.ConeGeometry(0.6, 2.4, 16), paint(), 6.2, 1.6, 0, -Math.PI / 2);
-    this.canopy = add(new THREE.SphereGeometry(0.5, 16, 10).scale(2.8, 0.9, 1), glass, 3, 2.3, 0);
-    this.parts.wingL = add(new THREE.BoxGeometry(3.5, 0.15, 4.4), paint(), -0.75, 1.48, -2.9);
-    this.parts.wingR = add(new THREE.BoxGeometry(3.5, 0.15, 4.4), paint(), -0.75, 1.48, 2.9);
-    this.parts.tail = add(new THREE.BoxGeometry(1.5, 0.1, 4.4), paint(), -5.75, 1.55, 0);
-    this.parts.fin = add(new THREE.BoxGeometry(1.7, 2.6, 0.12), paint(), -5.65, 2.9, 0);
-    this.parts.engine = add(new THREE.CylinderGeometry(0.5, 0.45, 1.2, 14), dark.clone(), -6.6, 1.6, 0, Math.PI / 2);
-    this.flame = add(new THREE.ConeGeometry(0.42, 2.5, 12), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.7, depthWrite: false }), -8.4, 1.6, 0, Math.PI / 2);
-    this.gear = new THREE.Group();
-    for (const [x, z] of [[3.5, 0], [-1.5, -1.4], [-1.5, 1.4]]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.2, 12).rotateX(Math.PI / 2), dark);
-      wheel.position.set(x, 0.33, z);
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1, 0.1), dark);
-      leg.position.set(x, 0.85, z);
-      this.gear.add(wheel, leg);
-    }
-    g.add(this.gear);
-    this.racks = [];
-    for (let k = 0; k < (this.vehicle.rockets ?? 0); k++) {
-      const side = k % 2 ? 1 : -1;
-      const r = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2, 8).rotateZ(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xd8d8d0 }));
-      r.position.set(-0.5, 1.2, side * (1.8 + Math.floor(k / 2) * 0.7));
-      g.add(r);
-      this.racks.push(r);
-    }
-    this.rocketGeo = new THREE.CylinderGeometry(0.09, 0.09, 1.8, 8).rotateZ(Math.PI / 2);
+    // a Fulcrum-style twin-engine fighter (render/jetMesh.js)
+    const jet = buildJetMesh(color, this.vehicle.rockets ?? 0);
+    this.parts = jet.parts;
+    this.canopy = jet.canopy;
+    this.flame = jet.flame;
+    this.gear = jet.gear;
+    this.racks = jet.racks;
+    this.rocketGeo = new THREE.CylinderGeometry(0.085, 0.085, 1.8, 8).rotateZ(Math.PI / 2);
     this.rocketMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d0, emissive: 0x331100 });
-    return g;
+    return jet.group;
   }
 
   /** Smoke trail from a damaged / burning jet and from rockets (grey points in the shared sea). */

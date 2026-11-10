@@ -39,6 +39,8 @@ const state = {
   smokeStyle: 'particles',
   volumeSteps: 96,
   markers: true,
+  ao: true,
+  torchShadows: true,
 };
 
 let scene = null; // editable scene description
@@ -251,6 +253,11 @@ fV.add(state, 'smoke').name('Smoke').onChange((v) => (view.smoke.enabled = v));
 fV.add(state, 'steam').name('Steam').onChange((v) => (view.smoke.showSteam = v));
 fV.add(state, 'smokeDensity', 0.1, 3, 0.05).name('Smoke opacity').onChange((v) => (view.smoke.density = v));
 fV.add(state, 'fireLight').name('Fire light').onChange((v) => (view.fireLightOn = v));
+fV.add(state, 'ao').name('Ambient occlusion').onChange((v) => (view.aoOn = v));
+fV.add(state, 'torchShadows').name('Torch & lamp shadows').onChange((v) => {
+  view.torchShadows = v;
+  walk.lamp.castShadow = v;
+});
 fV.add(state, 'section', 0.05, 1, 0.01)
   .name('Section cut (Z)')
   .onChange((v) => {
