@@ -3,29 +3,38 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MATERIALS } from '../sim/materials.js';
 
 /**
- * Ossuary walls built of bones, laid out as in the catacombs of Paris: the
- * facade of each wall is long bones (femurs, tibias, humeri) stacked end-on, their
- * knobbly heads facing out, crossed by horizontal bands of skulls, and crowned at
- * the top with a row of skulls; set into the bone face are crosses and hearts of
- * skulls, and engraved stone tablets. Behind the facade (on top of the wall) lie
- * loose bones. All of it is real geometry, lit by the torches and the lamp.
+ * Ossuary walls built of bones, as in the catacombs of Paris: the facade of each
+ * wall is long bones stacked end-on, so tightly that only their ends show (ball
+ * heads, double knuckles, broken shafts, knobbly ends, every size, each a little
+ * in or out, tilted, brown with age and grime), crossed by bands of skulls and
+ * crowned at the top with a row of skulls (many turned so the back of the cranium
+ * shows), with loose bones heaped on top. Round pillars of bones ("tonneaux")
+ * are laid the same way on a curve. Here and there a cross or a heart of skulls
+ * and engraved tablets, some on a white-washed pedestal. All real geometry, lit
+ * by the torches and the lamp.
  *
  * The layout is computed per wall column from its floor and its top, so the bands
- * sit at the same heights along a wall and the crown follows its top; each skull
- * and bone belongs to the voxel whose face it sits on. Blast a wall and the bones
- * with the voxels are gone; char it and they blacken. The voxels themselves are
- * the dark mass behind (the gaps between the bones).
+ * run at one height along a wall; each bone belongs to the voxel whose face it
+ * sits on: blast a wall and its bones are gone, char it and they blacken. The
+ * voxels are the dark mass behind (the gaps).
  *
  * Cost: instanced meshes in 4 m chunks; chunks out of view or further than
  * DRAW_DIST are not drawn, and a chunk is only rebuilt when its voxels change.
  */
 const CHUNK = 4; // m
 const DRAW_DIST = 14; // m (the torches light ~9 m; the lamp further, but only where you look)
-const SKULL = 0.165; // m between skulls in a row
-const BONE_X = 0.068; // m between bone ends in a row
-const BONE_Y = 0.064; // m between rows of bone ends
-const BANDS = [0.56, 1.12]; // heights (above the floor) of the skull bands
-const MOTIF = 3.2; // m between the crosses / hearts on a wall
+const SKULL = 0.15; // m between skulls in a band (they touch)
+const BONE_X = 0.05; // m between bone ends in a row
+const BONE_Y = 0.046; // m between rows of bone ends
+const MOTIF = 6.4; // m between the crosses / hearts on a wall
+// kinds of instance
+const K_SKULL = 0;
+const K_BALL = 1;
+const K_KNUCKLE = 2;
+const K_LYING = 3;
+const K_BROKEN = 4;
+const K_KNOB = 5;
+const KINDS = 6;
 
 function hash(a, b, c) {
   let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
@@ -33,20 +42,35 @@ function hash(a, b, c) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+/** Push every vertex in or out a little (old bone is not smooth). */
+function rough(g, amount, seed) {
+  const p = g.attributes.position;
+  for (let k = 0; k < p.count; k++) {
+    const x = p.getX(k);
+    const y = p.getY(k);
+    const z = p.getZ(k);
+    const n = Math.sin(x * 7.1 + seed) * Math.sin(y * 6.3 - seed) * Math.sin(z * 5.7 + seed * 2) + 0.5 * Math.sin(x * 15 + y * 13 + z * 11 + seed);
+    const s = 1 + n * amount;
+    p.setXYZ(k, x * s, y * s, z * s);
+  }
+  return g;
+}
+
 /** A skull, about 1 unit in radius, face towards +z; vertex colours darken the cavities. */
 function skullGeometry() {
-  const g = new THREE.SphereGeometry(1, 16, 12);
+  const g = new THREE.SphereGeometry(1, 18, 14);
   const p = g.attributes.position;
   const col = new Float32Array(p.count * 3);
   const gauss = (d, c, s) => Math.exp(-((d.x - c[0]) ** 2 + (d.y - c[1]) ** 2 + (d.z - c[2]) ** 2) / (s * s));
   const v = new THREE.Vector3();
   for (let k = 0; k < p.count; k++) {
     const d = v.fromBufferAttribute(p, k).clone();
-    let sx = 0.78;
-    let sy = 0.9;
-    let sz = 1.0;
+    let sx = 0.8;
+    let sy = 0.86;
+    let sz = 1.02;
     if (d.y < -0.1) sx *= 1 - 0.38 * Math.min(1, (-d.y - 0.1) / 0.8); // the face narrows to the jaw
-    if (d.z > 0.4 && d.y < 0.25) sz *= 0.9;
+    if (d.z > 0.4 && d.y < 0.25) sz *= 0.88;
+    if (d.z < -0.3) sz *= 1.05; // the occiput bulges at the back
     const s = Math.max(gauss(d, [-0.36, 0, 0.93], 0.27), gauss(d, [0.36, 0, 0.93], 0.27)); // eye sockets
     const n = gauss(d, [0, -0.36, 0.93], 0.17) * (d.y < -0.2 ? 1 : 0.5); // nose cavity
     const brow = gauss(d, [0, 0.3, 0.92], 0.35) * 0.06;
@@ -55,10 +79,12 @@ function skullGeometry() {
     const temple = Math.max(gauss(d, [-0.9, 0.05, 0.3], 0.3), gauss(d, [0.9, 0.05, 0.3], 0.3)) * 0.06;
     const r = 1 - 0.42 * s - 0.35 * n + brow + cheek + teeth - temple;
     p.setXYZ(k, d.x * sx * r, d.y * sy * r, d.z * sz * r);
-    const ao = 1 - 0.85 * Math.min(1, s * 1.4 + n * 1.3) - 0.15 * gauss(d, [0, -0.45, 0.6], 0.5);
+    // bone, darker in the cavities and the cheek hollows; grime in the sutures at the back
+    const suture = gauss(d, [0, 0.55, -0.6], 0.25) * 0.25 + Math.abs(Math.sin(d.x * 9 + d.y * 4)) * (d.z < 0 ? 0.08 : 0);
+    const ao = 1 - 0.85 * Math.min(1, s * 1.4 + n * 1.3) - 0.15 * gauss(d, [0, -0.45, 0.6], 0.5) - suture;
     col[k * 3] = ao;
-    col[k * 3 + 1] = ao * 0.97;
-    col[k * 3 + 2] = ao * 0.9;
+    col[k * 3 + 1] = ao * 0.95;
+    col[k * 3 + 2] = ao * 0.86;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.computeVertexNormals();
@@ -71,8 +97,8 @@ function withAO(g, f) {
   for (let k = 0; k < p.count; k++) {
     const ao = f(p.getX(k), p.getY(k), p.getZ(k));
     col[k * 3] = ao;
-    col[k * 3 + 1] = ao * 0.97;
-    col[k * 3 + 2] = ao * 0.9;
+    col[k * 3 + 1] = ao * 0.95;
+    col[k * 3 + 2] = ao * 0.85;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.computeVertexNormals();
@@ -84,61 +110,95 @@ function merged(parts) {
   return mergeGeometries(parts.map((q) => q.toNonIndexed()));
 }
 
-/** The end of a long bone stacked end-on (the shaft goes into the wall, along -z). */
-function boneEndGeometry(condyles) {
-  const parts = [];
-  const shaft = new THREE.CylinderGeometry(0.55, 0.6, 1.6, 6, 1, true);
-  shaft.rotateX(Math.PI / 2);
-  shaft.translate(0, 0, -0.75);
-  parts.push(shaft);
-  if (condyles) {
+/** The shaft going into the wall (along -z). */
+function shaft(r = 0.55) {
+  const s = new THREE.CylinderGeometry(r, r * 1.08, 1.6, 6, 1, true);
+  s.rotateX(Math.PI / 2);
+  s.translate(0, 0, -0.75);
+  return s;
+}
+
+/** Bone ends stacked end-on, facing +z, about 1 unit across. */
+function boneEndGeometry(kind) {
+  const parts = [shaft()];
+  if (kind === K_KNUCKLE) {
+    // a femur's lower end: two condyles side by side
     for (const s of [-1, 1]) {
       const k = new THREE.SphereGeometry(0.62, 7, 5);
-      k.scale(1, 1.1, 0.85);
-      k.translate(s * 0.45, 0, 0.08);
-      parts.push(k);
+      k.scale(1, 1.15, 0.8);
+      k.translate(s * 0.46, 0, 0.05);
+      parts.push(rough(k, 0.08, s * 3));
     }
+  } else if (kind === K_BROKEN) {
+    // a broken-off shaft: a ring with the dark marrow hollow in it
+    const ring = new THREE.CylinderGeometry(0.62, 0.62, 0.18, 9, 1, true);
+    ring.rotateX(Math.PI / 2);
+    const cap = new THREE.RingGeometry(0.3, 0.62, 9);
+    cap.translate(0, 0, 0.09);
+    const hole = new THREE.CircleGeometry(0.3, 8);
+    hole.translate(0, 0, -0.05);
+    parts.push(ring, cap, hole);
+    return withAO(merged(parts), (x, y, z) => (Math.hypot(x, y) < 0.31 && z < 0.08 ? 0.12 : Math.max(0.2, Math.min(1, 0.8 + z * 0.6))));
+  } else if (kind === K_KNOB) {
+    // a humerus head: lopsided, with a knob beside it
+    const k = new THREE.SphereGeometry(0.8, 8, 6);
+    k.scale(1.1, 0.9, 0.75);
+    parts.push(rough(k, 0.12, 5));
+    const t = new THREE.SphereGeometry(0.35, 6, 4);
+    t.translate(0.55, 0.35, -0.05);
+    parts.push(t);
   } else {
     const k = new THREE.SphereGeometry(0.85, 8, 6);
     k.scale(1, 1, 0.8);
     k.translate(0, 0, 0.05);
-    parts.push(k);
+    parts.push(rough(k, 0.1, 1));
   }
-  return withAO(merged(parts), (x, y, z) => Math.max(0.15, Math.min(1, 0.85 + z * 0.6)));
+  return withAO(merged(parts), (x, y, z) => Math.max(0.15, Math.min(1, 0.82 + z * 0.65)));
 }
 
 /** A whole long bone lying down (along x): shaft with a head at one end, condyles at the other. */
 function longBoneGeometry() {
-  const shaft = new THREE.CylinderGeometry(0.5, 0.55, 14, 8, 1, true);
-  shaft.rotateZ(Math.PI / 2);
-  const head = new THREE.SphereGeometry(0.85, 10, 8);
+  const s = new THREE.CylinderGeometry(0.5, 0.55, 14, 7, 1, true);
+  s.rotateZ(Math.PI / 2);
+  const head = rough(new THREE.SphereGeometry(0.85, 8, 6), 0.1, 2);
   head.translate(7.2, 0, 0);
-  const parts = [shaft, head];
-  for (const s of [-1, 1]) {
-    const k = new THREE.SphereGeometry(0.6, 9, 7);
-    k.translate(-7.1, 0, s * 0.45);
+  const parts = [s, head];
+  for (const sg of [-1, 1]) {
+    const k = new THREE.SphereGeometry(0.6, 7, 5);
+    k.translate(-7.1, 0, sg * 0.45);
     parts.push(k);
   }
   return withAO(merged(parts), (x, y) => Math.max(0.35, Math.min(1, 0.8 + y * 0.25)));
 }
 
-/** The skulls of the motif (a cross or a heart) centred at u, at height yc above the floor. */
+/** The skulls of a motif (a cross or a heart) centred at u, height yc. */
 function motifSkulls(kind, u, yc) {
   const out = [];
   if (kind === 0) {
-    // a cross: upright of five skulls, arms of one each side, a little above the middle
     for (let k = -2; k <= 2; k++) out.push([u, yc + k * SKULL]);
     for (const s of [-1, 1]) out.push([u + s * SKULL, yc + SKULL * 0.9]);
   } else {
-    // a heart
     for (let k = 0; k < 12; k++) {
       const t = (k / 12) * Math.PI * 2;
       const x = 16 * Math.sin(t) ** 3;
       const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
-      out.push([u + x * 0.016, yc + y * 0.016]);
+      out.push([u + x * 0.015, yc + y * 0.015]);
     }
   }
   return out;
+}
+
+/** Heights (above the floor) of the skull bands of a wall `height` tall, and of its crown. */
+function bandsFor(height) {
+  const bands = [];
+  if (height > 0.9) bands.push(height * 0.34);
+  if (height > 1.5) bands.push(height * 0.66);
+  return { bands, crown: height - 0.085 };
+}
+
+/** A bone end of a random kind (most are ball heads and knuckles). */
+function boneKind(r) {
+  return r < 0.38 ? K_BALL : r < 0.66 ? K_KNUCKLE : r < 0.84 ? K_KNOB : K_BROKEN;
 }
 
 export class OssuaryRenderer {
@@ -147,7 +207,7 @@ export class OssuaryRenderer {
     scene.add(this.group);
     this.chunks = new Map();
     this.plaques = [];
-    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0 });
+    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0 });
     this.geo = null;
     this.lastScan = -1e9;
     this.version = -1;
@@ -175,66 +235,98 @@ export class OssuaryRenderer {
     }
   }
 
+  geometries() {
+    this.geo ??= [skullGeometry(), boneEndGeometry(K_BALL), boneEndGeometry(K_KNUCKLE), longBoneGeometry(), boneEndGeometry(K_BROKEN), boneEndGeometry(K_KNOB)];
+    return this.geo;
+  }
+
   // ------------------------------------------------------------------ tablets
   buildPlaques() {
     const w = this.world;
     if (!w.plaques?.length || typeof document === 'undefined' || typeof document.createElement('canvas').getContext !== 'function') return;
+    const whitewash = new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.95 });
     for (const pq of w.plaques) {
       const c = document.createElement('canvas');
       c.width = 512;
       c.height = Math.round((512 * pq.h) / pq.w);
       const ctx = c.getContext('2d');
-      // white limestone, a carved border, black-filled engraved capitals
+      // weathered limestone, black-filled engraved capitals, a carved border
       const g = ctx.createLinearGradient(0, 0, c.width, c.height);
-      g.addColorStop(0, '#e4ddcc');
-      g.addColorStop(1, '#cfc6b2');
+      g.addColorStop(0, '#a99f8a');
+      g.addColorStop(1, '#8f8572');
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, c.width, c.height);
-      for (let k = 0; k < 900; k++) {
-        ctx.fillStyle = `rgba(90,80,60,${Math.random() * 0.12})`;
-        ctx.fillRect(Math.random() * c.width, Math.random() * c.height, 2, 2);
+      for (let k = 0; k < 2500; k++) {
+        ctx.fillStyle = `rgba(${Math.random() < 0.5 ? '40,34,26' : '200,190,170'},${Math.random() * 0.14})`;
+        ctx.fillRect(Math.random() * c.width, Math.random() * c.height, 2 + Math.random() * 3, 2 + Math.random() * 3);
       }
-      ctx.strokeStyle = 'rgba(70,62,50,0.8)';
-      ctx.lineWidth = 6;
-      ctx.strokeRect(18, 18, c.width - 36, c.height - 36);
-      ctx.lineWidth = 2;
-      ctx.strokeRect(30, 30, c.width - 60, c.height - 60);
+      ctx.strokeStyle = 'rgba(40,34,26,0.6)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(14, 14, c.width - 28, c.height - 28);
       const lines = pq.text.split('|');
-      const size = Math.min(54, (c.height - 90) / lines.length);
+      const size = Math.min(50, (c.height - 70) / lines.length);
       ctx.font = `600 ${size}px "Times New Roman", Georgia, serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       lines.forEach((t, k) => {
-        const y = c.height / 2 + (k - (lines.length - 1) / 2) * size * 1.15;
-        ctx.fillStyle = 'rgba(255,250,235,0.6)';
-        ctx.fillText(t, c.width / 2 + 1.5, y + 1.5);
-        ctx.fillStyle = '#1b1712';
+        const y = c.height / 2 + (k - (lines.length - 1) / 2) * size * 1.18;
+        ctx.fillStyle = 'rgba(220,210,190,0.45)';
+        ctx.fillText(t, c.width / 2 + 1.2, y + 1.2);
+        ctx.fillStyle = '#16120d';
         ctx.fillText(t, c.width / 2, y);
       });
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = 4;
-      const stone = new THREE.MeshStandardMaterial({ color: 0xc9c0ac, roughness: 0.9 });
+      const stone = new THREE.MeshStandardMaterial({ color: 0x9c927e, roughness: 0.9 });
       const face = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
-      // a slab: the engraved face towards +z
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(pq.w, pq.h, 0.05), [stone, stone, stone, stone, face, stone]);
-      // on the wall's actual surface: out from inside the wall until the air
+      // where the wall's surface is: out from inside the wall until the air
       let d = -0.3;
       while (d < 0.4) {
         const i = w.voxelAt(pq.p[0] + pq.n[0] * d, pq.p[1], pq.p[2] + pq.n[2] * d);
         if (i < 0 || !w.mat[i]) break;
         d += 0.02;
       }
-      slab.position.set(pq.p[0] + pq.n[0] * (d + 0.02), pq.p[1], pq.p[2] + pq.n[2] * (d + 0.02));
-      slab.rotation.y = Math.atan2(pq.n[0], pq.n[2]);
-      slab.castShadow = true;
-      slab.receiveShadow = true;
-      this.group.add(slab);
-      this.plaques.push(slab);
+      const out = d + (pq.pedestal ? 0.09 : 0.02); // a pedestal stands proud of the bones
+      const obj = new THREE.Group();
+      obj.position.set(pq.p[0] + pq.n[0] * out, pq.p[1], pq.p[2] + pq.n[2] * out);
+      obj.rotation.y = Math.atan2(pq.n[0], pq.n[2]);
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(pq.w, pq.h, 0.05), [stone, stone, stone, stone, face, stone]);
+      obj.add(slab);
+      // a shaped top: a low gable with stepped shoulders
+      const crest = new THREE.Shape();
+      crest.moveTo(-pq.w / 2, 0);
+      crest.lineTo(-pq.w / 2, 0.05);
+      crest.lineTo(-pq.w * 0.3, 0.05);
+      crest.lineTo(0, 0.11);
+      crest.lineTo(pq.w * 0.3, 0.05);
+      crest.lineTo(pq.w / 2, 0.05);
+      crest.lineTo(pq.w / 2, 0);
+      const cg = new THREE.ExtrudeGeometry(crest, { depth: 0.05, bevelEnabled: false });
+      cg.translate(0, pq.h / 2, -0.025);
+      obj.add(new THREE.Mesh(cg, stone));
+      if (pq.pedestal) {
+        // a white-washed pillar under it, down to the floor
+        const base = pq.p[1] - pq.h / 2;
+        const ph = base - w.h;
+        const ped = new THREE.Mesh(new THREE.BoxGeometry(0.24, ph, 0.12), whitewash);
+        ped.position.set(0, -pq.h / 2 - ph / 2, -0.04);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.05, 0.16), whitewash);
+        cap.position.set(0, -pq.h / 2 - 0.025, -0.04);
+        obj.add(ped, cap);
+      }
+      obj.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      this.group.add(obj);
+      this.plaques.push(obj);
     }
   }
 
-  /** Is (u, y) on a wall plane covered by a tablet? (No bones there.) */
+  /** Is (u, y) on a wall plane covered by a tablet (or its pedestal)? No bones there. */
   underPlaque(axis, plane, u, y) {
     for (const pq of this.world.plaques ?? []) {
       const pAxis = Math.abs(pq.n[0]) > 0.5 ? 0 : 2;
@@ -242,13 +334,19 @@ export class OssuaryRenderer {
       const pPlane = axis === 0 ? pq.p[0] : pq.p[2];
       if (Math.abs(pPlane - plane) > 0.15) continue;
       const pu = axis === 0 ? pq.p[2] : pq.p[0];
-      if (Math.abs(u - pu) < pq.w / 2 + 0.03 && Math.abs(y - pq.p[1]) < pq.h / 2 + 0.03) return true;
+      if (Math.abs(u - pu) < pq.w / 2 + 0.02 && Math.abs(y - pq.p[1]) < pq.h / 2 + 0.12) return true;
+      if (pq.pedestal && Math.abs(u - pu) < 0.14 && y < pq.p[1]) return true;
     }
     return false;
   }
 
+  inBarrel(x, z) {
+    for (const b of this.world.barrels ?? []) if (Math.hypot(x - b.c[0], z - b.c[1]) < b.r + this.world.h * 1.2) return true;
+    return false;
+  }
+
   // ------------------------------------------------------------------ layout
-  /** Every face of a bone wall that faces the air, by chunk; and each wall column's floor and top. */
+  /** Every face of a bone wall that faces a covered space, by chunk; each wall column's floor and top. */
   scan() {
     const w = this.world;
     const { nx, ny, nz, mat, solids } = w;
@@ -262,15 +360,15 @@ export class OssuaryRenderer {
       const r = (i - x) / nx;
       const y = r % ny;
       const z = (r - y) / ny;
-      // only faces towards a covered space (a passage, a chamber): not the backs of the walls,
-      // which face the empty rock between the passages
+      if (this.inBarrel((x + 0.5) * h, (z + 0.5) * h)) continue; // drawn as a round pillar
+      // only faces towards a covered space (a passage, a chamber): not the backs of the walls
       const inside = (j, xx, zz) => !mat[j] && w.colTop[xx + nx * zz] > y;
       const faces = [];
       if (x + 1 < nx && inside(i + 1, x + 1, z)) faces.push(0, 1);
       if (x > 0 && inside(i - 1, x - 1, z)) faces.push(0, -1);
       if (z + 1 < nz && inside(i + nx * ny, x, z + 1)) faces.push(2, 1);
       if (z > 0 && inside(i - nx * ny, x, z - 1)) faces.push(2, -1);
-      if (y + 1 < ny && !mat[i + nx]) faces.push(1, 1); // top of the wall
+      if (y + 1 < ny && !mat[i + nx] && w.colTop[x + nx * z] > y + 1) faces.push(1, 1); // top of the wall
       if (!faces.length) continue;
       const key = Math.floor((x * h) / CHUNK) + ',' + Math.floor((z * h) / CHUNK);
       let list = byChunk.get(key);
@@ -291,15 +389,19 @@ export class OssuaryRenderer {
     return byChunk;
   }
 
-  /** The skulls and bones on one voxel face: [kind, u, y, rand] (0 skull, 1 ball bone, 2 condyles, 3 lying bone). */
+  /**
+   * The skulls and bones on one voxel face, appended to `out` as
+   * [kind, u, y, rand, out, flip] (out: m proud of the face; flip: a skull turned to show its back).
+   * Top faces append [kind, x, y, rand, z, 0].
+   */
   features(w, i, axis, sign, out) {
     const h = w.h;
     const [x, y, z] = w.coords(i);
     if (axis === 1) {
-      // on top of the wall: loose long bones lying every which way
-      for (let k = 0; k < 2; k++) {
+      // on top of the wall: loose long bones heaped every which way, now and then a skull
+      for (let k = 0; k < 4; k++) {
         const r = hash(i, k, 91);
-        out.push(3, x * h + h * (0.2 + 0.6 * hash(i, k, 3)), (y + 1) * h, r, z * h + h * (0.2 + 0.6 * hash(i, k, 5)));
+        out.push(r < 0.06 ? K_SKULL : K_LYING, x * h + h * hash(i, k, 3), (y + 1) * h + hash(i, k, 8) * 0.05, r, z * h + h * hash(i, k, 5), 0);
       }
       return;
     }
@@ -311,130 +413,185 @@ export class OssuaryRenderer {
     const u1 = u0 + h;
     const y0 = y * h;
     const y1 = y0 + h;
-    const vx = axis === 0 ? x + (sign > 0 ? 1 : 0) : z + (sign > 0 ? 1 : 0); // the wall plane (voxel lines)
+    const vx = axis === 0 ? x + (sign > 0 ? 1 : 0) : z + (sign > 0 ? 1 : 0);
     const plane = vx * h;
-    const off = hash(vx, axis, sign + 7) * 3; // each wall its own phase
+    const off = hash(vx, axis, sign + 7) * 6; // each wall its own phase
     const inFace = (u, yy) => u >= u0 && u < u1 && yy >= y0 && yy < y1;
-    // the motifs on this wall near this face: crosses and hearts in turn
+    const free = (u, yy) => !this.underPlaque(axis, plane, u, yy);
+    const { bands, crown } = bandsFor(height);
+    // the motifs near this face (rare: a cross or a heart now and then)
     const motif = [];
-    if (height > 1.0)
+    if (height > 1.2)
       for (let j = Math.floor((u0 + off) / MOTIF) - 1; j <= Math.floor((u1 + off) / MOTIF) + 1; j++) {
+        if (hash(j, vx, 77) < 0.5) continue;
         const uc = (j + 0.5) * MOTIF - off;
-        const kind = ((j % 2) + 2) % 2;
-        for (const pt of motifSkulls(kind, uc, floor + Math.min(0.85, height * 0.5))) motif.push(pt);
+        const yc = floor + (bands[0] + (bands[1] ?? crown)) / 2;
+        for (const pt of motifSkulls(hash(j, vx, 78) < 0.5 ? 0 : 1, uc, yc)) motif.push(pt);
       }
     const nearMotif = (u, yy, d) => motif.some(([mu, my]) => Math.abs(mu - u) < d && Math.abs(my - yy) < d * 1.15);
-    const free = (u, yy) => !this.underPlaque(axis, plane, u, yy);
-    for (const [mu, my] of motif) if (inFace(mu, my) && free(mu, my)) out.push(0, mu, my, hash(Math.round(mu * 100), Math.round(my * 100), 17));
-    // the crown: a row of skulls along the top
-    const crownY = top - 0.095;
-    const bandYs = BANDS.map((b) => floor + b).filter((b) => b < top - 0.3);
-    for (const ys of [...bandYs, crownY]) {
-      if (ys < y0 - 0.1 || ys >= y1 + 0.1 || ys < y0 || ys >= y1) continue;
+    for (const [mu, my] of motif) if (inFace(mu, my) && free(mu, my)) out.push(K_SKULL, mu, my, hash(Math.round(mu * 100), Math.round(my * 100), 17), 0.04, 0);
+    // the skull bands and the crown
+    for (const ys of [...bands.map((b) => floor + b), floor + crown]) {
+      if (ys < y0 || ys >= y1) continue;
       for (let j = Math.floor((u0 + off) / SKULL) - 1; j <= Math.ceil((u1 + off) / SKULL); j++) {
         const r = hash(j, Math.round(ys * 50), vx * 3 + axis);
-        const u = (j + 0.5) * SKULL - off + (r - 0.5) * 0.015;
-        if (!inFace(u, ys) || r < 0.03 || nearMotif(u, ys, 0.13) || !free(u, ys)) continue;
-        out.push(0, u, ys + (hash(j, 3, vx) - 0.5) * 0.012, r);
+        const u = (j + 0.5) * SKULL - off + (r - 0.5) * 0.02;
+        if (!inFace(u, ys) || nearMotif(u, ys, 0.12) || !free(u, ys)) continue;
+        out.push(K_SKULL, u, ys + (hash(j, 3, vx) - 0.5) * 0.02, r, 0.035 + hash(j, 4, vx) * 0.025, hash(j, 5, vx) < 0.4 ? 1 : 0);
       }
     }
-    // the rest: long-bone ends, row upon row, staggered
+    // everything else: bone ends, row upon row, irregular
     const r0 = Math.floor((y0 - floor) / BONE_Y) - 1;
-    for (let row = r0; row <= r0 + 4; row++) {
-      const yb = floor + 0.035 + row * BONE_Y;
-      if (yb < y0 || yb >= y1 || yb > top - 0.2) continue;
-      if (bandYs.some((b) => Math.abs(b - yb) < 0.1)) continue;
-      const stagger = (((row % 2) + 2) % 2) * BONE_X * 0.5;
+    for (let row = r0; row <= r0 + 6; row++) {
+      const yb = floor + 0.025 + row * BONE_Y;
+      if (yb < y0 || yb >= y1 || yb > floor + crown - 0.08) continue;
+      if (bands.some((b) => Math.abs(floor + b - yb) < 0.085)) continue;
+      const stagger = (((row % 2) + 2) % 2) * BONE_X * 0.5 + hash(row, vx, 1) * 0.02;
       for (let j = Math.floor((u0 + off - stagger) / BONE_X) - 1; j <= Math.ceil((u1 + off) / BONE_X); j++) {
         const r = hash(j, row, vx * 5 + axis);
-        const u = j * BONE_X + stagger - off + (r - 0.5) * 0.01;
-        if (!inFace(u, yb) || nearMotif(u, yb, 0.1) || !free(u, yb)) continue;
-        out.push(r < 0.4 ? 2 : 1, u, yb + (hash(j, row, 9) - 0.5) * 0.01, r);
+        const u = j * BONE_X + stagger - off + (r - 0.5) * 0.026;
+        const yy = yb + (hash(j, row, 9) - 0.5) * 0.022;
+        if (!inFace(u, yy) || nearMotif(u, yy, 0.09) || !free(u, yy)) continue;
+        out.push(boneKind(hash(j, row, 13)), u, yy, r, (hash(j, row, 21) - 0.4) * 0.035, 0);
       }
     }
   }
 
-  buildChunk(list) {
-    const w = this.world;
-    this.geo ??= [skullGeometry(), boneEndGeometry(false), boneEndGeometry(true), longBoneGeometry()];
-    const feats = [];
-    const tmp = [];
-    for (let k = 0; k < list.length; k += 3) {
-      tmp.length = 0;
-      this.features(w, list[k], list[k + 1], list[k + 2], tmp);
-      const axis = list[k + 1];
-      const stride = axis === 1 ? 5 : 4;
-      for (let f = 0; f < tmp.length; f += stride) feats.push(tmp[f], tmp[f + 1], tmp[f + 2], tmp[f + 3], axis, list[k + 2], list[k], axis === 1 ? tmp[f + 4] : 0);
+  /** The bones of a round pillar: the same courses, on a circle. Appends [kind, x, y, z, nx, nz, rand, out, flip]. */
+  barrelFeatures(b, out) {
+    const height = b.y1 - b.y0;
+    const { bands, crown } = bandsFor(height);
+    const put = (kind, a, y, r, o, flip) => out.push(kind, b.c[0] + Math.cos(a) * b.r, y, b.c[1] + Math.sin(a) * b.r, Math.cos(a), Math.sin(a), r, o, flip);
+    const circ = 2 * Math.PI * b.r;
+    for (const ys of [...bands, crown]) {
+      const n = Math.floor(circ / SKULL);
+      for (let j = 0; j < n; j++) put(K_SKULL, (j / n) * Math.PI * 2, b.y0 + ys, hash(j, Math.round(ys * 50), 3), 0.035, hash(j, 7, 1) < 0.4 ? 1 : 0);
     }
-    const counts = [0, 0, 0, 0];
-    for (let f = 0; f < feats.length; f += 8) counts[feats[f]]++;
-    const meshes = counts.map((c, kind) => {
-      const m = new THREE.InstancedMesh(this.geo[kind], this.material, Math.max(1, c));
+    for (let row = 0; b.y0 + 0.025 + row * BONE_Y < b.y0 + crown - 0.08; row++) {
+      const yb = 0.025 + row * BONE_Y;
+      if (bands.some((bb) => Math.abs(bb - yb) < 0.085)) continue;
+      const n = Math.floor(circ / BONE_X);
+      for (let j = 0; j < n; j++) {
+        const a = ((j + (row % 2) * 0.5) / n) * Math.PI * 2 + (hash(j, row, 3) - 0.5) * 0.02;
+        put(boneKind(hash(j, row, 13)), a, b.y0 + yb + (hash(j, row, 9) - 0.5) * 0.02, hash(j, row, 5), (hash(j, row, 21) - 0.4) * 0.03, 0);
+      }
+    }
+    // the top of the pillar: a heap of loose bones
+    for (let k = 0; k < Math.round(b.r * b.r * 60); k++) {
+      const a = hash(k, 1, 9) * Math.PI * 2;
+      const rr = Math.sqrt(hash(k, 2, 9)) * b.r * 0.85;
+      out.push(K_LYING, b.c[0] + Math.cos(a) * rr, b.y1 + hash(k, 3, 9) * 0.06, b.c[1] + Math.sin(a) * rr, 0, 0, hash(k, 4, 9), 0, 0);
+    }
+  }
+
+  makeMeshes(counts) {
+    const geo = this.geometries();
+    return counts.map((c, kind) => {
+      const m = new THREE.InstancedMesh(geo[kind], this.material, Math.max(1, c));
       m.count = 0;
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, c) * 3), 3);
       m.castShadow = true;
       m.receiveShadow = true;
       m.userData.voxels = new Int32Array(Math.max(1, c));
-      m.userData.tone = new Float32Array(Math.max(1, c));
+      m.userData.tone = new Float32Array(Math.max(1, c) * 3);
       return m;
     });
-    const h = w.h;
-    const pos = new THREE.Vector3();
+  }
+
+  /** Put one bone / skull: at p, facing along the horizontal normal (nx, nz) (or lying, for K_LYING). */
+  place(meshes, kind, p, nx, nz, r, outward, flip, voxel, salt) {
+    const pos = new THREE.Vector3(p[0] + nx * outward, p[1], p[2] + nz * outward);
     const scl = new THREE.Vector3();
-    for (let f = 0; f < feats.length; f += 8) {
-      const kind = feats[f];
-      const u = feats[f + 1];
-      const y = feats[f + 2];
-      const r = feats[f + 3];
-      const axis = feats[f + 4];
-      const sign = feats[f + 5];
-      const i = feats[f + 6];
-      if (kind === 3) {
-        // lying on top: random direction, a little tilted
-        this.e.set((r - 0.5) * 0.3, r * 6.28, (hash(i, 7, 7) - 0.5) * 0.2, 'YXZ');
-        const sc = 0.022 * (0.8 + r * 0.4);
-        scl.set(sc, sc, sc);
-        pos.set(u, y + sc * 0.6, feats[f + 7]);
+    if (kind === K_LYING) {
+      this.e.set((r - 0.5) * 0.6, r * 6.28, (hash(voxel, salt, 7) - 0.5) * 0.4, 'YXZ');
+      const sc = 0.02 * (0.75 + r * 0.5);
+      scl.set(sc, sc, sc);
+      pos.y += sc * 0.6;
+    } else {
+      const yaw = Math.atan2(nx, nz) + (kind === K_SKULL && flip ? Math.PI : 0);
+      if (kind === K_SKULL) {
+        this.e.set((r - 0.5) * 0.35, yaw + (hash(voxel, salt, 2) - 0.5) * 0.6, (hash(voxel, salt, 4) - 0.5) * 0.35, 'YXZ');
+        const k = 0.9 + r * 0.22;
+        scl.set(0.075 * k, 0.078 * k, 0.088 * k);
       } else {
-        const [vx, , vz] = w.coords(i);
-        const plane = (axis === 0 ? vx : vz) * h + (sign > 0 ? h : 0);
-        const yaw = axis === 0 ? (sign > 0 ? Math.PI / 2 : -Math.PI / 2) : sign > 0 ? 0 : Math.PI;
-        let out;
-        if (kind === 0) {
-          this.e.set((r - 0.5) * 0.22, yaw + (hash(i, Math.round(u * 97), 2) - 0.5) * 0.45, (hash(i, 3, 4) - 0.5) * 0.25, 'YXZ');
-          const k = 0.92 + r * 0.16;
-          scl.set(0.072 * k, 0.085 * k, 0.09 * k);
-          out = 0.022;
-        } else {
-          this.e.set((r - 0.5) * 0.18, yaw + (hash(i, 5, Math.round(u * 89)) - 0.5) * 0.22, r * 6.28, 'YXZ');
-          const sc = 0.025 * (0.8 + r * 0.45);
-          scl.set(sc, sc, sc);
-          out = 0.004;
-        }
-        if (axis === 0) pos.set(plane + sign * out, y, u);
-        else pos.set(u, y, plane + sign * out);
+        this.e.set((r - 0.5) * 0.45, yaw + (hash(voxel, salt, 6) - 0.5) * 0.5, r * 6.28, 'YXZ');
+        const sc = 0.023 * (0.7 + 0.65 * hash(voxel, salt, 11));
+        scl.set(sc, sc, sc);
       }
-      this.q.setFromEuler(this.e);
-      this.m.compose(pos, this.q, scl);
-      const mesh = meshes[kind];
-      const n = mesh.count++;
-      mesh.setMatrixAt(n, this.m);
-      mesh.userData.voxels[n] = i;
-      mesh.userData.tone[n] = 0.7 + 0.32 * hash(i, kind, Math.floor(u * 100));
     }
+    this.q.setFromEuler(this.e);
+    this.m.compose(pos, this.q, scl);
+    const mesh = meshes[kind];
+    const n = mesh.count++;
+    mesh.setMatrixAt(n, this.m);
+    mesh.userData.voxels[n] = voxel;
+    // colour: brown-ochre bone of every shade, some dark with grime, skulls a little paler
+    const t = 0.55 + 0.5 * hash(voxel, salt, 31);
+    const warm = hash(voxel, salt, 33);
+    const tone = mesh.userData.tone;
+    const pale = kind === K_SKULL ? 1.12 : 1;
+    tone[n * 3] = (0.62 + 0.12 * warm) * t * pale;
+    tone[n * 3 + 1] = (0.5 + 0.08 * warm) * t * pale;
+    tone[n * 3 + 2] = (0.34 + 0.04 * warm) * t * pale;
+  }
+
+  buildChunk(list) {
+    const w = this.world;
+    const h = w.h;
+    const feats = [];
+    const tmp = [];
+    for (let k = 0; k < list.length; k += 3) {
+      tmp.length = 0;
+      this.features(w, list[k], list[k + 1], list[k + 2], tmp);
+      for (let f = 0; f < tmp.length; f += 6) feats.push(list[k], list[k + 1], list[k + 2], ...tmp.slice(f, f + 6));
+    }
+    const counts = new Array(KINDS).fill(0);
+    for (let f = 0; f < feats.length; f += 9) counts[feats[f + 3]]++;
+    const meshes = this.makeMeshes(counts);
+    for (let f = 0; f < feats.length; f += 9) {
+      const [i, axis, sign, kind, a, y, r, o, flip] = feats.slice(f, f + 9);
+      if (axis === 1) {
+        this.place(meshes, kind, [a, y, o], 0, 0, r, 0, 0, i, f);
+        continue;
+      }
+      const [vx, , vz] = w.coords(i);
+      const plane = (axis === 0 ? vx : vz) * h + (sign > 0 ? h : 0);
+      const p = axis === 0 ? [plane, y, a] : [a, y, plane];
+      this.place(meshes, kind, p, axis === 0 ? sign : 0, axis === 2 ? sign : 0, r, o, flip, i, Math.round(a * 1000));
+    }
+    return this.finish(meshes, list.length + ':' + list[0] + ':' + list[list.length - 3]);
+  }
+
+  buildBarrel(b) {
+    const w = this.world;
+    const tmp = [];
+    this.barrelFeatures(b, tmp);
+    const counts = new Array(KINDS).fill(0);
+    for (let f = 0; f < tmp.length; f += 9) counts[tmp[f]]++;
+    const meshes = this.makeMeshes(counts);
+    for (let f = 0; f < tmp.length; f += 9) {
+      const [kind, x, y, z, nx, nz, r, o, flip] = tmp.slice(f, f + 9);
+      // the voxel behind it (inside the pillar), for charring and for being blown away
+      const vi = w.voxelAt(x - nx * w.h * 0.6, Math.max(w.h * 1.5, y), z - nz * w.h * 0.6);
+      this.place(meshes, kind, [x, y, z], nx, nz, r, o, flip, Math.max(0, vi), f);
+    }
+    return this.finish(meshes, 'barrel');
+  }
+
+  finish(meshes, signature) {
     for (const m of meshes) {
       m.instanceMatrix.needsUpdate = true;
       m.computeBoundingSphere();
       this.group.add(m);
     }
-    const ch = { meshes, signature: list.length + ':' + list[0] + ':' + list[list.length - 3] };
+    const ch = { meshes, signature };
     const bs = meshes.find((m) => m.count)?.boundingSphere;
     ch.centre = bs ? bs.center.clone() : new THREE.Vector3();
     this.shade(ch);
     return ch;
   }
 
-  /** Bone colour, darkened where the wall is charred, sooted or wet. */
+  /** Bone colour, darkened where the wall is charred or sooted; gone where its voxel is gone. */
   shade(ch) {
     const w = this.world;
     for (const m of ch.meshes) {
@@ -442,10 +599,11 @@ export class OssuaryRenderer {
       const tone = m.userData.tone;
       const arr = m.instanceColor.array;
       for (let k = 0; k < m.count; k++) {
-        const t = tone[k] * (1 - 0.85 * w.char[vox[k]]);
-        arr[k * 3] = 0.8 * t;
-        arr[k * 3 + 1] = 0.72 * t;
-        arr[k * 3 + 2] = 0.58 * t;
+        const i = vox[k];
+        const c = w.mat[i] ? 1 - 0.85 * w.char[i] : 0;
+        arr[k * 3] = tone[k * 3] * c;
+        arr[k * 3 + 1] = tone[k * 3 + 1] * c;
+        arr[k * 3 + 2] = tone[k * 3 + 2] * c;
       }
       m.instanceColor.needsUpdate = true;
     }
@@ -459,8 +617,12 @@ export class OssuaryRenderer {
       this.version = w.geomVersion;
       this.lastScan = time;
       const byChunk = this.scan();
+      (w.barrels ?? []).forEach((b, k) => {
+        const key = 'barrel ' + k;
+        if (!this.chunks.has(key)) this.chunks.set(key, this.buildBarrel(b));
+      });
       for (const [key, ch] of this.chunks)
-        if (!byChunk.has(key)) {
+        if (!key.startsWith('barrel') && !byChunk.has(key)) {
           this.disposeChunk(ch);
           this.chunks.delete(key);
         }

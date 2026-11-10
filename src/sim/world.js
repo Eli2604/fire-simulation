@@ -129,6 +129,7 @@ export class World {
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock
     this.plaques = []; // { p, n, w, h, text }: engraved stone tablets on the walls (drawn only)
+    this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding

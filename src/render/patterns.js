@@ -19,7 +19,7 @@ import { MATERIALS } from '../sim/materials.js';
  * heat glow still show on it. Bones in ossuary walls are real geometry (render/ossuary.js).
  */
 
-export const PATTERNS = ['limestone'];
+export const PATTERNS = ['limestone', 'rock', 'gravel'];
 const TILE = 1024; // px per tile
 export const PATTERN_SIZE = 2.4; // metres covered by one tile
 const RELIEF = 0.03; // m: depth of the deepest joint
@@ -206,6 +206,121 @@ function limestoneHeight(ctx, ox, blocks) {
   for (const b of blocks) if (b.text) inscribe(ctx, ox, b, 'rgb(95,95,95)');
 }
 
+/** Quarried bedrock: brown-grey strata, cracks, pick marks; a rough, lumpy surface. */
+function rockColour(ctx, ox) {
+  const r = rng(41);
+  ctx.fillStyle = '#7d725f';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  // strata: horizontal bands of slightly different stone
+  for (let y = 0; y < TILE; ) {
+    const hgt = 30 + r() * 120;
+    const t = r() * 0.25 - 0.12;
+    ctx.fillStyle = t > 0 ? `rgba(190,178,150,${t})` : `rgba(40,34,26,${-t})`;
+    ctx.fillRect(ox, y, TILE, hgt);
+    y += hgt;
+  }
+  mottle(ctx, ox, r, 500, 'rgba(170,158,130,0.28)', 'rgba(45,38,28,0.32)', 70);
+  mottle(ctx, ox, r, 900, 'rgba(200,190,165,0.18)', 'rgba(30,25,18,0.25)', 18);
+  grain(ctx, ox, r, 16000, 0.3);
+  // cracks
+  ctx.strokeStyle = 'rgba(25,20,14,0.7)';
+  for (let k = 0; k < 26; k++) {
+    let x = ox + r() * TILE;
+    let y = r() * TILE;
+    ctx.lineWidth = 1 + r() * 2.5;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let s = 0; s < 8; s++) {
+      x += (r() - 0.3) * 60;
+      y += (r() - 0.5) * 30;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // soot from centuries of candles and lamps
+  mottle(ctx, ox, r, 40, 'rgba(0,0,0,0)', 'rgba(20,16,12,0.35)', 160);
+}
+
+function rockHeight(ctx, ox) {
+  const r = rng(43);
+  ctx.fillStyle = 'rgb(150,150,150)';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  // big lumps and hollows, then smaller ones
+  mottle(ctx, ox, r, 260, 'rgba(255,255,255,0.35)', 'rgba(0,0,0,0.35)', 120);
+  mottle(ctx, ox, r, 900, 'rgba(255,255,255,0.25)', 'rgba(0,0,0,0.25)', 35);
+  mottle(ctx, ox, r, 2500, 'rgba(255,255,255,0.2)', 'rgba(0,0,0,0.2)', 10);
+  // ledges along the strata
+  for (let y = 0; y < TILE; ) {
+    const hgt = 40 + r() * 140;
+    const g = ctx.createLinearGradient(0, y, 0, y + 12);
+    g.addColorStop(0, 'rgba(0,0,0,0.45)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(ox, y, TILE, 12);
+    y += hgt;
+  }
+  ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+  for (let k = 0; k < 26; k++) {
+    let x = ox + r() * TILE;
+    let y = r() * TILE;
+    ctx.lineWidth = 2 + r() * 3;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let s = 0; s < 8; s++) {
+      x += (r() - 0.3) * 60;
+      y += (r() - 0.5) * 30;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // pick marks: short gouges
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 3;
+  for (let k = 0; k < 900; k++) {
+    const x = ox + r() * TILE;
+    const y = r() * TILE;
+    const a = r() * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * 14, y + Math.sin(a) * 14);
+    ctx.stroke();
+  }
+}
+
+/** The sandy, gravelly floor of the quarries: pale, trodden, with small stones. */
+function gravelColour(ctx, ox) {
+  const r = rng(53);
+  ctx.fillStyle = '#b9ac93';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  mottle(ctx, ox, r, 400, 'rgba(220,210,190,0.3)', 'rgba(120,108,88,0.3)', 60);
+  grain(ctx, ox, r, 30000, 0.35);
+  for (let k = 0; k < 2600; k++) {
+    const v = 120 + r() * 100;
+    ctx.fillStyle = `rgb(${v},${v * 0.93},${v * 0.8})`;
+    ctx.beginPath();
+    ctx.ellipse(ox + r() * TILE, r() * TILE, 2 + r() * 6, 2 + r() * 5, r() * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function gravelHeight(ctx, ox) {
+  const r = rng(53); // same stones as the colour
+  ctx.fillStyle = 'rgb(140,140,140)';
+  ctx.fillRect(ox, 0, TILE, TILE);
+  for (let k = 0; k < 400; k++) r(), r(), r(), r(), r(); // keep in step with the mottle of the colour map (roughly)
+  mottle(ctx, ox, r, 300, 'rgba(255,255,255,0.15)', 'rgba(0,0,0,0.15)', 80);
+  for (let k = 0; k < 2600; k++) {
+    const x = ox + r() * TILE;
+    const y = r() * TILE;
+    const rad = 2 + r() * 6;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+}
+
 /** Build the two atlas textures (in a browser; in Node there is no canvas and no relief). */
 export function patternAtlas() {
   if (atlas || typeof document === 'undefined' || typeof document.createElement('canvas').getContext !== 'function') return atlas;
@@ -233,6 +348,12 @@ export function patternAtlas() {
       const blocks = limestoneLayout();
       clip(cc, () => limestoneColour(cc, ox, blocks));
       clip(hc, () => limestoneHeight(hc, ox, blocks));
+    } else if (name === 'rock') {
+      clip(cc, () => rockColour(cc, ox));
+      clip(hc, () => rockHeight(hc, ox));
+    } else if (name === 'gravel') {
+      clip(cc, () => gravelColour(cc, ox));
+      clip(hc, () => gravelHeight(hc, ox));
     }
     // the mean colour (linear): the texture is applied relative to it
     const d = cc.getImageData(ox, 0, TILE, TILE).data;

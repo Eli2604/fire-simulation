@@ -188,7 +188,7 @@ export class EnemyRenderer {
         f.armR.upper.rotation.set(-0.2, 0, -0.5);
         return;
       }
-      const run = e.state === 'flee' || e.state === 'retreat';
+      const run = e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent);
       const ph = e.walkPhase ?? 0;
       const amp = e.moving ? (run ? 0.8 : 0.5) : 0;
       const s = Math.sin(ph);

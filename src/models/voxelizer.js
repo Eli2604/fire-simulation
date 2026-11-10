@@ -212,6 +212,10 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
+  for (const br of built.barrels ?? []) {
+    const c = toWorld(br.c[0], 0, br.c[1]);
+    world.barrels.push({ ...br, c: [c[0], c[2]], y0: c[1] + br.y0, y1: c[1] + br.y1 });
+  }
   if (built.docks) for (const d of built.docks) world.docks.push({ ...d, p: toWorld(...d.p), dir: dirToWorld(d.dir), arrive: d.arrive ? toWorld(...d.arrive) : undefined });
   if (built.sea) {
     const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);

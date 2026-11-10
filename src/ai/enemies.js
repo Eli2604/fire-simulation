@@ -190,6 +190,12 @@ export class EnemyAI {
           e.state = 'investigate';
           e.goal = n.p.slice();
           e.repath = 0;
+          // an explosion: they run there, and search the place for a while
+          if (n.kind === 'explosion') {
+            e.urgent = true;
+            e.searchAt = n.p.slice();
+            e.searchUntil = w.time + 20;
+          }
         }
       }
       // --- danger first: get out of heat and smoke
@@ -246,9 +252,17 @@ export class EnemyAI {
           e.goal = this.awayFrom(e.p, e.fuel.p, 10, pl?.p);
           e.fuel = null;
           e.repath = 0;
+        } else if (e.state === 'investigate' && e.urgent && w.time < e.searchUntil) {
+          // searching round the place of the blast
+          const s = e.searchAt;
+          const a = Math.random() * Math.PI * 2;
+          const rr = 1 + Math.random() * 3.5;
+          e.goal = [s[0] + Math.cos(a) * rr, e.p[1], s[2] + Math.sin(a) * rr];
+          e.repath = 0;
         } else if (e.state === 'investigate' || e.state === 'retreat') {
           // back to the patrol area after a short look around
           e.state = 'patrol';
+          e.urgent = false;
           e.timer = 3 + Math.random() * 3;
         } else if (e.state === 'patrol' && e.area?.mode === 'route') {
           // a guard round: straight on to the next corner
@@ -258,7 +272,7 @@ export class EnemyAI {
         }
       }
       // --- walk along the route
-      this.move(e, dt, e.state === 'flee' || e.state === 'retreat' ? RUN : SPEED);
+      this.move(e, dt, e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED);
       this.closeBehind(e);
     }
   }

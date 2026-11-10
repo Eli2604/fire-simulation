@@ -1,6 +1,11 @@
 /**
- * Catacombs: vaulted limestone passages on a grid, domed burial chambers at
- * some crossings, niches in the walls with bones and old cloth, wooden coffins,
+ * Catacombs (after the quarries under Paris): galleries cut into the limestone
+ * bedrock on a grid, low and flat-ceilinged (or vaulted), with a sandy floor and
+ * the black guide line along the ceiling. Long stretches are lined with ossuary
+ * walls of stacked bones up to just under the ceiling (drawn as bones by
+ * render/ossuary.js), others with masonry or bare rock; engraved tablets, some on
+ * white pedestals; burial chambers at some crossings with bone walls, a round
+ * pillar of bones ("tonneau") and coffins, niches in the walls with bones and old cloth, wooden coffins,
  * wooden doors (one locked), and burning torches on the walls every few metres
  * (each a small flame that lights its surroundings and uses oxygen: with the
  * entrance closed, the air slowly goes bad and the torches dim).
@@ -16,7 +21,9 @@ export default {
     cell: { value: 5, min: 3, max: 8, step: 0.5, label: 'Spacing (m)' },
     width: { value: 1.8, min: 1, max: 3, step: 0.1, label: 'Passage width (m)' },
     ossuary: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Share of walls of stacked bones (ossuary)' },
-    height: { value: 2.6, min: 2, max: 4, step: 0.1, label: 'Height (m)' },
+    height: { value: 2.3, min: 2, max: 4, step: 0.1, label: 'Height (m)' },
+    ceiling: { value: 'flat', options: ['flat', 'vaulted'], label: 'Ceiling' },
+    masonry: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Share of the other walls in masonry (else bare rock)' },
     torchSpacing: { value: 4, min: 2, max: 10, step: 0.5, label: 'Torch spacing (m)' },
     entranceOpen: { value: true, label: 'Entrance open to the surface' },
     seed: { value: 3, min: 1, max: 999, step: 1, label: 'Random seed' },
@@ -33,7 +40,8 @@ export default {
     const T = Math.max(2 * h, 0.35); // wall thickness
     const sx = (nxC * C) / 2;
     const sz = (nzC * C) / 2;
-    const stone = { material: 'stone', anchored: true, variation: 0.12 };
+    const stone = { material: 'bedrock', anchored: true, variation: 0.12 };
+    const flat = p.ceiling === 'flat';
     const xs = Array.from({ length: nxC + 1 }, (_, k) => -sx + k * C);
     const zs = Array.from({ length: nzC + 1 }, (_, k) => -sz + k * C);
     // passages: a stone shell, then the vaulted void
@@ -45,6 +53,12 @@ export default {
       }
     };
     const carve = (a, b, alongX) => {
+      if (flat) {
+        // a gallery cut square into the rock, a flat ceiling
+        if (alongX) prims.push({ shape: 'box', min: [a[0] - cw, h * 0.5, a[2] - cw], max: [b[0] + cw, H, a[2] + cw], mode: 'carve' });
+        else prims.push({ shape: 'box', min: [a[0] - cw, h * 0.5, a[2] - cw], max: [a[0] + cw, H, b[2] + cw], mode: 'carve' });
+        return;
+      }
       const yv = H - cw; // springing line of the vault
       if (alongX) {
         prims.push({ shape: 'box', min: [a[0] - cw, h * 0.5, a[2] - cw], max: [b[0] + cw, yv, a[2] + cw], mode: 'carve' });
@@ -88,10 +102,12 @@ export default {
       else prims.push({ shape: 'box', min: [a[0] - h * 0.6, H - h * 0.9, a[2] - cw], max: [a[0] + h * 0.6, H + h, b[2] + cw], ...line });
     }
     for (const [x, z] of chambers) {
-      prims.push(
-        { shape: 'box', min: [x - cr, h * 0.5, z - cr], max: [x + cr, H - 0.3, z + cr], mode: 'carve' },
-        { shape: 'ellipsoid', c: [x, H - 0.3, z], r: [cr, 1.1, cr], mode: 'carve' },
-      );
+      if (flat) prims.push({ shape: 'box', min: [x - cr, h * 0.5, z - cr], max: [x + cr, H + 0.3, z + cr], mode: 'carve' });
+      else
+        prims.push(
+          { shape: 'box', min: [x - cr, h * 0.5, z - cr], max: [x + cr, H - 0.3, z + cr], mode: 'carve' },
+          { shape: 'ellipsoid', c: [x, H - 0.3, z], r: [cr, 1.1, cr], mode: 'carve' },
+        );
       // coffins in two opposite corners (clear of the passages crossing the chamber), a shroud on one
       const cl = Math.max(0.6, cr - cw - 0.5); // length that fits the corner (clear of the bone walls)
       for (const sg of [-1, 1]) {
@@ -103,16 +119,24 @@ export default {
     }
     // ossuary walls: in some stretches (and round every chamber) the lower walls are skulls
     // and long bones stacked in rows, the rest dressed limestone with carved inscriptions
-    const OSS = 1.8; // height of the bone walls
+    const OSS = Math.min(2.0, H - 0.3); // height of the bone walls: up to just under the ceiling
     const bones = { material: 'ossuary', anchored: true, variation: 0.06, mode: 'replace' };
     const ossStretch = [];
     for (const [a, b, alongX] of runs) {
       const ends = alongX ? xs : zs;
       for (let k = 0; k + 1 < ends.length; k++) {
-        if (rng() >= p.ossuary) continue;
         const s0 = ends[k] + cw + 0.2;
         const s1 = ends[k + 1] - cw - 0.2;
         if (s1 <= s0) continue;
+        if (rng() >= p.ossuary) {
+          // no bones here: dressed masonry, or the bare rock
+          if (rng() < p.masonry) {
+            const mason = { material: 'stone', anchored: true, variation: 0.08, mode: 'replace' };
+            if (alongX) prims.push({ shape: 'box', min: [s0, h * 1.01, a[2] - cw - T], max: [s1, OSS, a[2] + cw + T], ...mason });
+            else prims.push({ shape: 'box', min: [a[0] - cw - T, h * 1.01, s0], max: [a[0] + cw + T, OSS, s1], ...mason });
+          }
+          continue;
+        }
         ossStretch.push([alongX, alongX ? a[2] : a[0], s0, s1]);
         if (alongX) prims.push({ shape: 'box', min: [s0, h * 1.01, a[2] - cw - T], max: [s1, OSS, a[2] + cw + T], ...bones });
         else prims.push({ shape: 'box', min: [a[0] - cw - T, h * 1.01, s0], max: [a[0] + cw + T, OSS, s1], ...bones });
@@ -127,6 +151,14 @@ export default {
         { shape: 'box', min: [x - cr - T, h * 1.01, z - cr - T], max: [x + cr + T, OSS + 0.2, z - cr + e], ...bones },
         { shape: 'box', min: [x - cr - T, h * 1.01, z + cr - e], max: [x + cr + T, OSS + 0.2, z + cr + T], ...bones },
       );
+    // a round pillar of bones in a free corner of each chamber (a "tonneau")
+    const barrels = [];
+    for (const [x, z] of chambers) {
+      const r = Math.max(0.3, (cr - cw - 0.35) / 2); // clear of the passages crossing the chamber
+      const c = [x - cr + 0.15 + r, z + cr - 0.15 - r];
+      barrels.push({ c, r, y0: h, y1: OSS });
+      prims.push({ shape: 'cylinder', a: [c[0], h * 1.01, c[1]], b: [c[0], OSS, c[1]], r, material: 'ossuary', anchored: true, variation: 0.06 });
+    }
     // engraved stone tablets set into the bone walls (one per stretch, and one in each chamber)
     // (lines separated by |)
     const VERSES = [
@@ -144,9 +176,12 @@ export default {
       const mid = (s0 + s1) / 2;
       const p = alongX ? [mid, 0.95, line + side * cw] : [line + side * cw, 0.95, mid];
       const n = alongX ? [0, 0, -side] : [-side, 0, 0];
-      plaques.push({ p, n, w: 0.56, h: 0.4, text: VERSES[k % VERSES.length] });
+      // some on a white-washed pedestal standing against the wall
+      const ped = k % 3 === 0;
+      if (ped) p[1] = 1.25;
+      plaques.push({ p, n, w: 0.62, h: 0.42, text: VERSES[k % VERSES.length], pedestal: ped });
     });
-    chambers.forEach(([x, z], k) => plaques.push({ p: [x + cr, 1.05, z - cr * 0.7], n: [-1, 0, 0], w: 0.6, h: 0.44, text: VERSES[(k + 3) % VERSES.length] }));
+    chambers.forEach(([x, z], k) => plaques.push({ p: [x + cr, 1.3, z - cr * 0.7], n: [-1, 0, 0], w: 0.66, h: 0.46, text: VERSES[(k + 3) % VERSES.length], pedestal: true }));
     const inOssuary = (pt) => ossStretch.some(([alongX, line, s0, s1]) => {
       const along = alongX ? pt[0] : pt[2];
       const across = alongX ? pt[2] : pt[0];
@@ -226,6 +261,7 @@ export default {
       heaters,
       spawn: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 },
       plaques,
+      barrels,
       portals: p.exitTo ? [{ p: [ex, 0, ez - 2.5], r: 1.0, to: p.exitTo, label: 'Stairs: up to the surface', arrive: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 } }] : [],
       ignite: { p: [chambers[0][0] - cr + 1, 0.65, chambers[0][1]], radius: 0.4, power: 3000, materials: ['fabric', 'wood'] },
     };

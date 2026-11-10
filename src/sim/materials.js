@@ -216,6 +216,18 @@ const DEFS = {
     brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
     pattern: 'limestone', // drawn as dressed blocks with carved inscriptions
   },
+  bedrock: {
+    // the limestone the quarries were cut into: natural rock faces and ceilings
+    label: 'Limestone bedrock', color: [0.55, 0.5, 0.42], density: 2300, specificHeat: 900, conductivity: 1.3,
+    brittle: true, maxMoisture: 0.06, moisture: 0.04, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
+    pattern: 'rock',
+  },
+  quarrySand: {
+    // the trodden sandy floor of the quarries
+    label: 'Quarry floor (sand and gravel)', color: [0.7, 0.65, 0.55], density: 1700, specificHeat: 830, conductivity: 0.6,
+    maxMoisture: 0.15, moisture: 0.05, charColor: [0.25, 0.23, 0.2],
+    pattern: 'gravel',
+  },
   ossuary: {
     // an ossuary wall: skulls and long bones stacked in rows, set in lime mortar. The voxels
     // are the dark mass behind; the bones are drawn as geometry on it (render/ossuary.js)

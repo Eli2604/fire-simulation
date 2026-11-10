@@ -38,6 +38,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   - *Surfaces*: **voxels** (exactly what is simulated) or **smooth**, a surface-nets mesh of
     the voxel field, rebuilt chunk by chunk as things burn, melt and collapse.
   - *Relief*: some surfaces are more than a colour per voxel.
+    - **Bedrock** (the rough quarried rock of the catacomb ceilings and bare walls: strata,
+      cracks, pick marks, soot) and the **quarry floor** (pale sand and gravel) are drawn the
+      same way.
     - **Limestone** (render/patterns.js) is drawn as dressed blocks with mortar joints, chipped
       arrises and carved inscriptions, from a colour map and a height map painted on a canvas
       and mapped in world space over the whole wall. The height has real depth in the shader:
@@ -45,10 +48,13 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
       in it and shift with the angle), and normals from the height field let the torches,
       the lamp and the fire light the relief correctly.
     - **Ossuary walls** (render/ossuary.js) are built of bones, as real geometry, laid out as
-      in the catacombs of Paris: a facade of long bones stacked end-on (knobbly heads and
-      condyles facing out, row upon row), crossed by two bands of skulls and crowned with a row
-      of skulls along the top; crosses and hearts of skulls set into the bone face; engraved
-      stone tablets in the wall (ossuary origins, Latin verses); loose bones lying on top. Lit
+      in the catacombs of Paris: a facade of long bones stacked end-on, so tightly that only
+      their ends show (ball heads, double knuckles, broken shafts, knobbly ends; every size,
+      each a little in or out and tilted, brown with age), crossed by bands of skulls and
+      crowned with a row of skulls along the top, many turned to show the back of the cranium;
+      round pillars of bones ("tonneaux") laid the same way; crosses and hearts of skulls set into the bone face; engraved
+      stone tablets in the wall (ossuary origins, Latin verses), some on white-washed
+      pedestals; loose bones heaped on top. Lit
       and shadowed like any object. Each bone sits on the voxel face it belongs to: blast the
       wall and they go with it, char it and they blacken. They are drawn in 4 m chunks, only
       near you and in view. The black guide line runs along the top of the vaults.
@@ -141,7 +147,8 @@ look, red once they have seen you. They:
   area width and depth, offset) and shown as red outlines with the markers. After
   investigating or luring they go back to their area.
 - **hear noises**: breaking glass, doors, explosions, arrows hitting, rockets.
-  They go to look where a noise came from. Loud noises carry further.
+  They go to look where a noise came from. Loud noises carry further. An explosion brings
+  them running, and they search round the place for a while before going back.
 - **see you** unless smoke or walls are in the way. They shout, keep their distance, and
   try to **lure you** by lighting something nearby (rags, coffins, boxes) with a torch, out
   of your reach, and then pull back.
@@ -293,7 +300,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
 | Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
-| Catacombs | passages along x and z (default 4 × 4), spacing, width and height, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
+| Catacombs | passages along x and z (default 4 × 4), spacing, width and height, flat or vaulted ceiling, share of masonry walls, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |

@@ -83,7 +83,9 @@ test('catacombs: you can walk from the stairs through every passage and crossing
   assert.ok(hidden >= torches.length * 3, `${hidden} hidden torch voxels`);
   // walls of stacked bones, and limestone
   assert.ok(count(w, MAT.ossuary) > 1000, `ossuary walls (${count(w, MAT.ossuary)})`);
-  assert.ok(count(w, MAT.stone) > count(w, MAT.ossuary), 'limestone');
+  assert.ok(count(w, MAT.bedrock) > count(w, MAT.ossuary), 'the rock they are cut into');
+  assert.ok(count(w, MAT.stone) > 100, 'masonry walls');
+  assert.ok(w.barrels.length >= 1, 'round pillars of bones');
 });
 
 test('catacombs: the guards walk their rounds through the passages, opening (and closing) doors', () => {
@@ -267,4 +269,18 @@ test('catacombs: a lamp lighting up a dark spot draws the guard who sees it; a s
   ai.lamp = { from: [1, 1.8, 1], spot, time: w.time };
   ai.step(0.2);
   assert.notEqual(e2.state === 'investigate' && Math.hypot(e2.goal[0] - spot[0], e2.goal[2] - spot[2]) < 0.5, true);
+});
+
+test('catacombs: a blast brings the guards running, and they search the place', () => {
+  const sim = createSimulation(cloneScene(SCENARIOS.catacombs));
+  const w = sim.world;
+  run(sim, 1);
+  const at = [2, 1, 22];
+  explode(sim, at, 6e5, { name: 'grenade' });
+  run(sim, 0.6);
+  const coming = w.enemies.filter((e) => e.state === 'investigate' && e.urgent);
+  assert.ok(coming.length >= 3, `${coming.length} guards on their way`);
+  run(sim, 12);
+  const there = w.enemies.filter((e) => Math.hypot(e.p[0] - at[0], e.p[2] - at[2]) < 5);
+  assert.ok(there.length >= 2, `${there.length} guards searching round the blast`);
 });

@@ -191,7 +191,7 @@ export const SCENARIOS = {
   catacombs: {
     name: 'Catacombs',
     description: 'Vaulted limestone passages with carved inscriptions and walls of stacked skulls and bones, lit by torches on the walls; burial niches, and chambers with coffins behind wooden doors. Guards make their rounds, opening and closing the doors. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
-    world: { size: [24, 4.2, 29], h: 0.2, ground: 'stone' },
+    world: { size: [24, 4.2, 29], h: 0.2, ground: 'quarrySand' },
     weather: w({ ambient: 12, humidity: 0.8 }),
     timeScale: 1,
     view: { dark: true, camera: [12, 16, -5] },
@@ -264,7 +264,7 @@ export const SCENARIOS = {
       },
       catacombs: {
         name: 'Catacombs under the island',
-        world: { size: [24, 4.2, 29], h: 0.2, ground: 'stone' },
+        world: { size: [24, 4.2, 29], h: 0.2, ground: 'quarrySand' },
         view: { dark: true, camera: [12, 16, -5], walk: true },
         objects: [
           { type: 'catacombs', params: { exitTo: 'island' }, x: 12, z: 17 },
