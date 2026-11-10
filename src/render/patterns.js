@@ -332,7 +332,7 @@ export function patternAtlas() {
   };
   const col = make();
   const hgt = make();
-  const cc = col.getContext('2d');
+  const cc = col.getContext('2d', { willReadFrequently: true });
   const hc = hgt.getContext('2d');
   PATTERNS.forEach((name, k) => {
     const ox = k * TILE;
