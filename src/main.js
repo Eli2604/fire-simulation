@@ -679,7 +679,6 @@ if (qs.get('walk')) {
   if (at.length >= 5) walk.pitch = (at[4] * Math.PI) / 180;
   if (qs.get('lamp') === '0') walk.lampOn = false;
   if (qs.get('freeze')) state.running = false; // a still: everything where it starts
-  walk.resume?.();
 }
 updateToolHint();
 requestAnimationFrame(frame);

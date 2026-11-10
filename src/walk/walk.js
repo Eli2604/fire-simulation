@@ -596,7 +596,9 @@ export class Walkthrough {
 
   /** Click on the start card: lock the pointer and start the sound (needs a user gesture). */
   resume() {
-    this.view.renderer.domElement.requestPointerLock();
+    // (needs a click: from a deep link the browser refuses until you click, which is fine)
+    const lock = this.view.renderer.domElement.requestPointerLock();
+    lock?.catch?.(() => {});
     this.sound.start();
   }
 
