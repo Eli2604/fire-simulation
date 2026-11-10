@@ -280,7 +280,12 @@ test('catacombs: a blast brings the guards running, and they search the place', 
   run(sim, 0.6);
   const coming = w.enemies.filter((e) => e.state === 'investigate' && e.urgent);
   assert.ok(coming.length >= 3, `${coming.length} guards on their way`);
-  run(sim, 12);
-  const there = w.enemies.filter((e) => Math.hypot(e.p[0] - at[0], e.p[2] - at[2]) < 5);
-  assert.ok(there.length >= 2, `${there.length} guards searching round the blast`);
+  // how close each one gets while they search (they pick random spots round it)
+  const closest = w.enemies.map(() => Infinity);
+  for (let t = 0; t < 14; t += 0.5) {
+    run(sim, 0.5);
+    w.enemies.forEach((e, k) => (closest[k] = Math.min(closest[k], Math.hypot(e.p[0] - at[0], e.p[2] - at[2]))));
+  }
+  const there = closest.filter((d) => d < 4).length;
+  assert.ok(there >= 2, `${there} guards reached the blast`);
 });

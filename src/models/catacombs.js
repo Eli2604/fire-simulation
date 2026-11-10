@@ -40,7 +40,7 @@ export default {
     const T = Math.max(2 * h, 0.35); // wall thickness
     const sx = (nxC * C) / 2;
     const sz = (nzC * C) / 2;
-    const stone = { material: 'bedrock', anchored: true, variation: 0.12 };
+    const stone = { material: 'bedrock', anchored: true, variation: 0.02 }; // the texture carries the variation, not the voxels
     const flat = p.ceiling === 'flat';
     const xs = Array.from({ length: nxC + 1 }, (_, k) => -sx + k * C);
     const zs = Array.from({ length: nzC + 1 }, (_, k) => -sz + k * C);
@@ -131,7 +131,7 @@ export default {
         if (rng() >= p.ossuary) {
           // no bones here: dressed masonry, or the bare rock
           if (rng() < p.masonry) {
-            const mason = { material: 'stone', anchored: true, variation: 0.08, mode: 'replace' };
+            const mason = { material: 'stone', anchored: true, variation: 0.02, mode: 'replace' };
             if (alongX) prims.push({ shape: 'box', min: [s0, h * 1.01, a[2] - cw - T], max: [s1, OSS, a[2] + cw + T], ...mason });
             else prims.push({ shape: 'box', min: [a[0] - cw - T, h * 1.01, s0], max: [a[0] + cw + T, OSS, s1], ...mason });
           }

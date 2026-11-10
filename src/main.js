@@ -620,6 +620,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (walk.active) walk.update(dt);
+  view.markers.visible = state.markers && !walk.active; // no labels and patrol outlines in the walk-through
   if (torching && torchPoint) sim.holdTorch(torchPoint, state.torchPower, Math.max(sim.world.h, state.toolRadius * 0.5));
   if (state.running && sim) {
     // the walk-through runs in real time
@@ -656,7 +657,30 @@ function startWalk() {
   walk.enter();
 }
 
-load(cloneScene(SCENARIOS[state.scenario]));
+// deep links: ?scenario=catacombs&zone=catacombs&walk=1&at=x,y,z,yaw,pitch opens a scene
+// (and a zone of it) straight in the walk-through, standing at a given spot
+const qs = new URLSearchParams(location.search);
+if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
+{
+  const sc = cloneScene(SCENARIOS[state.scenario]);
+  if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
+  load(sc);
+}
+if (qs.get('shot')) {
+  // for screenshots: only the 3D view
+  const st = document.createElement('style');
+  st.textContent = 'body > *:not(#view):not(#mask) { display: none !important } #mask > *:not(canvas) { display: none !important } .lil-gui { display: none !important }';
+  document.head.appendChild(st);
+}
+if (qs.get('walk')) {
+  const at = (qs.get('at') ?? '').split(',').map(Number);
+  if (at.length >= 3 && at.every(Number.isFinite)) sim.spawn = { p: [at[0], at[1], at[2]], yaw: ((at[3] ?? 0) * Math.PI) / 180 };
+  startWalk();
+  if (at.length >= 5) walk.pitch = (at[4] * Math.PI) / 180;
+  if (qs.get('lamp') === '0') walk.lampOn = false;
+  if (qs.get('freeze')) state.running = false; // a still: everything where it starts
+  walk.resume?.();
+}
 updateToolHint();
 requestAnimationFrame(frame);
 

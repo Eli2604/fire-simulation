@@ -2,28 +2,119 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 /**
- * The guards: armoured sci-fi soldiers, built from procedural parts on a small
- * skeleton (hips, torso, head, two arms and two legs with elbows and knees), so
- * they walk, run, aim and burn instead of sliding about as boxes.
+ * The guards: soldiers in armour, with human proportions (1.8 m), built from
+ * shaped parts on a small skeleton (hips, torso, head, arms and legs with elbows
+ * and knees) so they walk, run, aim and burn.
  *
- *  - A domed helmet with a wrap-around visor that glows (cyan on patrol, amber
- *    when they look into something, red once they have seen you), ear pods, an
- *    antenna and a rebreather under the chin.
- *  - Layered plates: chest, collar, abdomen segments, shoulder pauldrons, a power
- *    pack on the back with a glowing cell, thigh and knee plates, shin greaves,
- *    segmented boots, gauntlets; a dark undersuit between them.
- *  - A bullpup rifle with sight, magazine and emitter, held at low ready while
- *    walking, raised while investigating; a burning torch held up when they set a
- *    lure fire.
- *  - They burn when on fire, and lie on their back when they are down.
+ *  - Body: a lathed torso (broad chest, narrow waist), tapered limbs with rounded
+ *    joints, gloves and boots with a proper profile; olive fatigues.
+ *  - Armour: a plate carrier with curved front and back plates, side panels,
+ *    shoulder straps and pouches; layered shoulder plates, elbow and knee pads,
+ *    shin guards, a belt with holster and pouches; a small power pack.
+ *  - Helmet: a shell over the head with a brow, ear guards and a dark glass visor
+ *    over the face; a thin light strip under the visor and a status light show
+ *    what they are up to: cyan on patrol, amber when they come to look, red once
+ *    they have seen you; dark when they are down.
+ *  - A bullpup rifle (a proper outline: stock, grip, magazine, optic, barrel),
+ *    held at low ready, raised to look; a torch when they set a lure fire.
  */
-const ARMOR = 0x3c4436;
-const ARMOR_DARK = 0x262b24;
-const SUIT = 0x131518;
-const METAL = 0x5a5f66;
+const C = {
+  fatigue: 0x4b5240, // olive
+  fatigueDark: 0x353a2e,
+  plate: 0x55595c, // painted grey armour
+  plateDark: 0x34373a,
+  webbing: 0x3d4232,
+  rubber: 0x1c1d1e,
+  metal: 0x808589,
+  gun: 0x222427,
+};
 
 function rbox(w, h, d, r = 0.02) {
-  return new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2.2, h / 2.2, d / 2.2));
+  return new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2.2, h / 2.2, d / 2.2));
+}
+
+/** A tapered limb segment along -y, length len, radius r0 at the top and r1 at the bottom. */
+function segment(r0, r1, len) {
+  const g = new THREE.CylinderGeometry(r1, r0, len, 14, 1, false);
+  g.translate(0, -len / 2, 0);
+  return g;
+}
+
+/** A curved armour plate: part of a cylinder shell, thickness t, around +z. */
+function curvedPlate(r, h, arc, t = 0.012) {
+  const pts = [];
+  const n = 12;
+  for (let k = 0; k <= n; k++) {
+    const a = -arc / 2 + (arc * k) / n;
+    pts.push(new THREE.Vector2(Math.sin(a) * (r + t), Math.cos(a) * (r + t)));
+  }
+  for (let k = n; k >= 0; k--) {
+    const a = -arc / 2 + (arc * k) / n;
+    pts.push(new THREE.Vector2(Math.sin(a) * r, Math.cos(a) * r));
+  }
+  const shape = new THREE.Shape(pts);
+  const g = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 2, curveSegments: 4 });
+  g.rotateX(Math.PI / 2); // the arc's front (shape +y) to +z; the extrusion runs downwards
+  g.translate(0, h / 2, 0);
+  return g;
+}
+
+/** The torso: a lathe from the waist to the shoulders, flattened front to back. */
+function torsoGeometry() {
+  const prof = [
+    [0.0, 0.0],
+    [0.135, 0.0],
+    [0.14, 0.06],
+    [0.15, 0.16],
+    [0.175, 0.28],
+    [0.19, 0.36],
+    [0.185, 0.42],
+    [0.15, 0.47],
+    [0.07, 0.5],
+    [0.0, 0.5],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const g = new THREE.LatheGeometry(prof, 24);
+  g.scale(1, 1, 0.66);
+  return g;
+}
+
+/** A boot from its side profile, extruded to its width. */
+function bootGeometry() {
+  const s = new THREE.Shape();
+  s.moveTo(-0.055, 0.0);
+  s.lineTo(0.17, 0.0);
+  s.quadraticCurveTo(0.2, 0.0, 0.2, 0.035);
+  s.quadraticCurveTo(0.19, 0.075, 0.1, 0.085);
+  s.lineTo(0.05, 0.14);
+  s.lineTo(0.05, 0.2);
+  s.lineTo(-0.05, 0.2);
+  s.lineTo(-0.06, 0.06);
+  s.lineTo(-0.055, 0.0);
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.1, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 3, curveSegments: 6 });
+  g.translate(0, 0, -0.05);
+  g.rotateY(-Math.PI / 2); // toes towards +z
+  return g;
+}
+
+/** The rifle from its side outline (x along the barrel → +z after rotation). */
+function rifleBodyGeometry() {
+  const s = new THREE.Shape();
+  s.moveTo(-0.3, 0.02); // butt
+  s.lineTo(-0.3, -0.1);
+  s.lineTo(-0.2, -0.09);
+  s.lineTo(-0.05, -0.04);
+  s.lineTo(0.02, -0.04); // grip in front of the magazine
+  s.lineTo(0.05, -0.13);
+  s.lineTo(0.09, -0.13);
+  s.lineTo(0.08, -0.04);
+  s.lineTo(0.3, -0.035); // handguard
+  s.lineTo(0.3, 0.035);
+  s.lineTo(-0.2, 0.04);
+  s.lineTo(-0.3, 0.02);
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.055, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 2 });
+  g.translate(0, 0, -0.0275);
+  g.rotateY(-Math.PI / 2);
+  return g;
 }
 
 export class EnemyRenderer {
@@ -31,13 +122,23 @@ export class EnemyRenderer {
     this.scene = scene;
     this.flames = flames;
     this.figures = [];
+    const std = (color, roughness, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
     this.mats = {
-      armor: new THREE.MeshStandardMaterial({ color: ARMOR, roughness: 0.45, metalness: 0.55 }),
-      armorDark: new THREE.MeshStandardMaterial({ color: ARMOR_DARK, roughness: 0.5, metalness: 0.5 }),
-      suit: new THREE.MeshStandardMaterial({ color: SUIT, roughness: 0.92, metalness: 0 }),
-      metal: new THREE.MeshStandardMaterial({ color: METAL, roughness: 0.35, metalness: 0.9 }),
-      gun: new THREE.MeshStandardMaterial({ color: 0x1b1d20, roughness: 0.4, metalness: 0.7 }),
-      torch: new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.9 }),
+      fatigue: std(C.fatigue, 0.92),
+      fatigueDark: std(C.fatigueDark, 0.92),
+      plate: std(C.plate, 0.55, 0.25),
+      plateDark: std(C.plateDark, 0.55, 0.3),
+      webbing: std(C.webbing, 0.95),
+      rubber: std(C.rubber, 0.8),
+      metal: std(C.metal, 0.35, 0.85),
+      gun: std(C.gun, 0.45, 0.6),
+      glass: new THREE.MeshStandardMaterial({ color: 0x0b1014, roughness: 0.08, metalness: 0.9 }),
+      torch: std(0x5a3a20, 0.9),
+    };
+    this.geo = {
+      torso: torsoGeometry(),
+      boot: bootGeometry(),
+      rifle: rifleBodyGeometry(),
     };
   }
 
@@ -50,122 +151,172 @@ export class EnemyRenderer {
     return m;
   }
 
-  /** An arm or a leg: upper part and lower part, with a joint between (the lower part swings at it). */
-  limb(parent, x, y, len1, len2, r, armored) {
+  /** A leg: thigh, knee, shin, boot. */
+  leg(parent, x) {
     const M = this.mats;
     const upper = new THREE.Group();
-    upper.position.set(x, y, 0);
+    upper.position.set(x, 0, 0);
     parent.add(upper);
-    this.mesh(new THREE.CapsuleGeometry(r, len1 - 2 * r, 4, 10), M.suit, upper, 0, -len1 / 2, 0);
+    this.mesh(new THREE.SphereGeometry(0.085, 14, 10), M.fatigue, upper); // hip
+    this.mesh(segment(0.085, 0.06, 0.44), M.fatigue, upper);
+    // thigh armour on the front, a pocket on the side
+    const tp = this.mesh(curvedPlate(0.085, 0.2, 1.6, 0.01), M.plate, upper, 0, -0.18, 0);
+    tp.scale.set(1, 1, 1);
+    this.mesh(rbox(0.035, 0.12, 0.09, 0.015), M.fatigueDark, upper, x > 0 ? 0.085 : -0.085, -0.22, 0);
     const lower = new THREE.Group();
-    lower.position.set(0, -len1, 0);
+    lower.position.set(0, -0.44, 0);
     upper.add(lower);
-    this.mesh(new THREE.CapsuleGeometry(r * 0.88, len2 - 2 * r, 4, 10), M.suit, lower, 0, -len2 / 2, 0);
-    this.mesh(new THREE.SphereGeometry(r * 1.1, 10, 8), M.metal, lower, 0, 0, 0); // the joint
-    if (armored === 'leg') {
-      this.mesh(rbox(r * 2.3, len1 * 0.6, r * 1.6, 0.03), M.armor, upper, 0, -len1 * 0.45, r * 0.55); // thigh plate
-      const knee = this.mesh(rbox(r * 1.9, r * 1.7, r * 1.0, 0.025), M.armorDark, lower, 0, -0.01, r * 0.95);
-      knee.rotation.x = -0.15;
-      this.mesh(rbox(r * 2.1, len2 * 0.62, r * 1.3, 0.03), M.armor, lower, 0, -len2 * 0.45, r * 0.6); // greave
-      // the boot: sole, toe cap, heel
-      const boot = new THREE.Group();
-      boot.position.set(0, -len2, 0);
-      lower.add(boot);
-      this.mesh(rbox(r * 2.4, 0.09, r * 4.2, 0.025), M.armorDark, boot, 0, -0.03, r * 0.9);
-      this.mesh(rbox(r * 2.2, 0.05, r * 1.6, 0.02), M.metal, boot, 0, 0.03, r * 2.0);
-      this.mesh(rbox(r * 2.5, 0.025, r * 4.4, 0.01), M.gun, boot, 0, -0.08, r * 0.9);
-    } else {
-      // pauldron over the shoulder, a bracer on the forearm, an armoured glove
-      const pd = this.mesh(new THREE.SphereGeometry(r * 2.1, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), M.armor, upper, 0, 0.03, 0);
-      pd.scale.set(1.05, 0.8, 1.1);
-      this.mesh(rbox(r * 2.3, r * 0.5, r * 2.5, 0.01), M.armorDark, upper, 0, -0.04, 0);
-      this.mesh(rbox(r * 2.0, len2 * 0.55, r * 2.0, 0.025), M.armor, lower, 0, -len2 * 0.45, 0);
-      this.mesh(rbox(r * 1.8, r * 2.0, r * 1.6, 0.02), M.armorDark, lower, 0, -len2 - r * 0.6, 0);
+    this.mesh(new THREE.SphereGeometry(0.06, 12, 10), M.fatigue, lower);
+    this.mesh(segment(0.058, 0.042, 0.4), M.fatigue, lower);
+    // knee pad and shin guard
+    const kp = this.mesh(new THREE.SphereGeometry(0.06, 12, 8, -Math.PI / 2, Math.PI, 0, Math.PI), M.plateDark, lower, 0, -0.01, 0.022);
+    kp.scale.set(1.05, 1.2, 0.8);
+    this.mesh(curvedPlate(0.05, 0.22, 1.7, 0.009), M.plate, lower, 0, -0.2, 0);
+    // boot
+    const foot = new THREE.Group();
+    foot.position.set(0, -0.4, 0);
+    lower.add(foot);
+    this.mesh(this.geo.boot, M.rubber, foot, 0, -0.07, -0.02);
+    return { upper, lower, foot };
+  }
+
+  /** An arm: shoulder plates, upper arm, elbow pad, forearm, glove. */
+  arm(parent, x) {
+    const M = this.mats;
+    const s = Math.sign(x);
+    const upper = new THREE.Group();
+    upper.position.set(x, 0, 0);
+    parent.add(upper);
+    this.mesh(new THREE.SphereGeometry(0.06, 12, 10), M.fatigue, upper);
+    this.mesh(segment(0.055, 0.044, 0.3), M.fatigue, upper);
+    // layered shoulder plates
+    for (let k = 0; k < 2; k++) {
+      const pl = this.mesh(curvedPlate(0.058 + k * 0.004, 0.055, 2.2, 0.007), M.plate, upper, 0, -0.01 - k * 0.045, 0);
+      pl.rotation.y = s * Math.PI / 2;
     }
-    return { upper, lower };
+    const lower = new THREE.Group();
+    lower.position.set(0, -0.3, 0);
+    upper.add(lower);
+    this.mesh(new THREE.SphereGeometry(0.045, 12, 8), M.fatigue, lower);
+    const ep = this.mesh(new THREE.SphereGeometry(0.045, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.plateDark, lower, 0, 0, -0.018);
+    ep.rotation.x = -Math.PI / 2;
+    this.mesh(segment(0.043, 0.033, 0.26), M.fatigue, lower);
+    this.mesh(curvedPlate(0.042, 0.12, 2.0, 0.008), M.plateDark, lower, 0, -0.15, 0).rotation.y = Math.PI; // bracer on the outside
+    // glove: palm and curled fingers
+    const hand = new THREE.Group();
+    hand.position.set(0, -0.27, 0);
+    lower.add(hand);
+    this.mesh(rbox(0.07, 0.085, 0.035, 0.012), M.rubber, hand, 0, -0.045, 0);
+    this.mesh(rbox(0.07, 0.04, 0.05, 0.015), M.rubber, hand, 0, -0.095, 0.01);
+    this.mesh(rbox(0.022, 0.05, 0.022, 0.009), M.rubber, hand, -s * 0.04, -0.05, 0.02); // thumb
+    return { upper, lower, hand };
   }
 
   figure() {
     const M = this.mats;
     const g = new THREE.Group();
-    // own glowing materials (their colour shows the guard's state)
-    const glow = new THREE.MeshStandardMaterial({ color: 0x0a1a20, emissive: 0x30d8ff, emissiveIntensity: 2.2, roughness: 0.15, metalness: 0.2 });
-    const visorMat = new THREE.MeshStandardMaterial({ color: 0x061015, emissive: 0x30d8ff, emissiveIntensity: 1.6, roughness: 0.05, metalness: 0.6 });
+    // own lights: their colour shows the guard's state
+    const glow = new THREE.MeshStandardMaterial({ color: 0x061014, emissive: 0x30d8ff, emissiveIntensity: 2.5, roughness: 0.3 });
     // --- hips
     const hips = new THREE.Group();
-    hips.position.y = 0.96;
+    hips.position.y = 0.93;
     g.add(hips);
-    this.mesh(rbox(0.34, 0.14, 0.22, 0.04), M.armorDark, hips, 0, 0.02, 0);
-    this.mesh(rbox(0.36, 0.05, 0.24, 0.015), M.metal, hips, 0, 0.1, 0); // belt
-    for (const s of [-1, 1]) this.mesh(rbox(0.08, 0.07, 0.06, 0.015), M.armor, hips, s * 0.12, 0.1, 0.13); // pouches
+    const pelvis = this.mesh(new THREE.SphereGeometry(0.15, 18, 12), M.fatigue, hips, 0, 0.03, 0);
+    pelvis.scale.set(1.05, 0.62, 0.72);
+    // belt with buckle, holster, pouches
+    this.mesh(new THREE.TorusGeometry(0.15, 0.022, 6, 24), M.webbing, hips, 0, 0.09, 0).scale.set(1.0, 0.7, 1);
+    hips.children[hips.children.length - 1].rotation.x = Math.PI / 2;
+    this.mesh(rbox(0.06, 0.04, 0.02, 0.006), M.metal, hips, 0, 0.09, 0.115);
+    for (const sx of [-0.1, 0.1]) this.mesh(rbox(0.06, 0.08, 0.05, 0.012), M.fatigueDark, hips, sx, 0.05, 0.09);
+    this.mesh(rbox(0.045, 0.16, 0.08, 0.015), M.webbing, hips, 0.16, -0.02, 0); // holster
     // --- torso
     const torso = new THREE.Group();
-    torso.position.y = 0.12;
+    torso.position.y = 0.1;
     hips.add(torso);
-    this.mesh(rbox(0.36, 0.42, 0.22, 0.05), M.suit, torso, 0, 0.24, 0);
-    const chest = this.mesh(rbox(0.42, 0.26, 0.27, 0.06), M.armor, torso, 0, 0.34, 0.015);
-    chest.scale.z = 1.05;
-    this.mesh(rbox(0.3, 0.12, 0.06, 0.02), M.armorDark, torso, 0, 0.31, 0.15); // chest ridge
-    this.mesh(rbox(0.12, 0.025, 0.01, 0.005), glow, torso, -0.08, 0.38, 0.165); // status light
-    for (let k = 0; k < 3; k++) this.mesh(rbox(0.3 - k * 0.02, 0.05, 0.22, 0.02), M.armorDark, torso, 0, 0.17 - k * 0.055, 0.02); // abdomen segments
-    this.mesh(new THREE.TorusGeometry(0.1, 0.035, 8, 16), M.armorDark, torso, 0, 0.5, 0).rotation.x = Math.PI / 2; // collar
-    // power pack on the back with its cell
-    this.mesh(rbox(0.32, 0.36, 0.13, 0.04), M.armorDark, torso, 0, 0.3, -0.17);
-    this.mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.26, 12), glow, torso, 0.09, 0.3, -0.24);
-    this.mesh(rbox(0.06, 0.3, 0.05, 0.01), M.metal, torso, -0.08, 0.3, -0.24);
-    // --- head
-    const head = new THREE.Group();
-    head.position.y = 0.6;
-    torso.add(head);
-    this.mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.08, 10), M.suit, head, 0, -0.04, 0); // neck
-    const helm = this.mesh(new THREE.SphereGeometry(0.135, 20, 16), M.armor, head, 0, 0.1, -0.005);
-    helm.scale.set(0.95, 1.0, 1.08);
-    this.mesh(rbox(0.25, 0.04, 0.2, 0.015), M.armorDark, head, 0, 0.165, 0.04); // brow ridge
-    const visor = this.mesh(new THREE.SphereGeometry(0.128, 20, 10, -Math.PI * 0.42, Math.PI * 0.84, Math.PI * 0.38, Math.PI * 0.22), visorMat, head, 0, 0.1, 0.012);
-    visor.scale.set(0.98, 1.0, 1.12);
-    for (const s of [-1, 1]) {
-      this.mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.035, 12), M.armorDark, head, s * 0.13, 0.08, 0).rotation.z = Math.PI / 2; // ear pods
-      this.mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.01, 8), glow, head, s * 0.15, 0.08, 0).rotation.z = Math.PI / 2;
+    this.mesh(this.geo.torso, M.fatigue, torso);
+    // plate carrier: front and back plates, side panels, shoulder straps
+    const front = this.mesh(curvedPlate(0.13, 0.3, 1.9, 0.016), M.plate, torso, 0, 0.3, 0);
+    front.scale.set(1.25, 1, 1);
+    const back = this.mesh(curvedPlate(0.13, 0.31, 1.9, 0.016), M.plate, torso, 0, 0.3, 0);
+    back.scale.set(1.25, 1, 1);
+    back.rotation.y = Math.PI;
+    for (const sx of [-1, 1]) {
+      const side = this.mesh(curvedPlate(0.135, 0.17, 0.9, 0.01), M.plateDark, torso, 0, 0.22, 0);
+      side.rotation.y = (sx * Math.PI) / 2;
+      side.scale.set(0.75, 1, 1.2);
+      this.mesh(rbox(0.06, 0.03, 0.26, 0.01), M.webbing, torso, sx * 0.1, 0.455, 0); // strap over the shoulder
     }
-    this.mesh(rbox(0.11, 0.06, 0.08, 0.02), M.armorDark, head, 0, -0.01, 0.1); // rebreather
-    for (const s of [-1, 1]) this.mesh(new THREE.CylinderGeometry(0.02, 0.022, 0.04, 10), M.metal, head, s * 0.05, -0.02, 0.13).rotation.x = Math.PI / 2;
-    this.mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.16, 5), M.metal, head, -0.1, 0.25, -0.05); // antenna
-    // --- legs (hip joints)
-    const legL = this.limb(hips, -0.1, -0.02, 0.44, 0.44, 0.065, 'leg');
-    const legR = this.limb(hips, 0.1, -0.02, 0.44, 0.44, 0.065, 'leg');
-    // --- arms (shoulder joints)
-    const armL = this.limb(torso, -0.25, 0.44, 0.3, 0.28, 0.05, 'arm');
-    const armR = this.limb(torso, 0.25, 0.44, 0.3, 0.28, 0.05, 'arm');
+    // pouches on the front: magazines, a radio with an antenna
+    // webbing strips across the front plate, and pouches on them
+    for (let k = 0; k < 3; k++) this.mesh(rbox(0.26, 0.018, 0.01, 0.004), M.webbing, torso, 0, 0.36 - k * 0.05, 0.158);
+    for (let k = 0; k < 3; k++) this.mesh(rbox(0.065, 0.1, 0.045, 0.012), M.webbing, torso, -0.08 + k * 0.08, 0.2, 0.175);
+    this.mesh(rbox(0.05, 0.06, 0.03, 0.01), M.fatigueDark, torso, 0.07, 0.36, 0.172); // admin pouch
+    this.mesh(rbox(0.06, 0.1, 0.05, 0.012), M.fatigueDark, torso, -0.2, 0.26, 0.04);
+    this.mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.22, 5), M.rubber, torso, -0.2, 0.42, 0.04);
+    this.mesh(rbox(0.035, 0.012, 0.006, 0.003), glow, torso, 0.07, 0.38, 0.165); // status light
+    // power pack on the back
+    this.mesh(rbox(0.22, 0.24, 0.08, 0.025), M.plateDark, torso, 0, 0.3, -0.17);
+    this.mesh(rbox(0.012, 0.18, 0.012, 0.004), glow, torso, 0.08, 0.3, -0.212);
+    this.mesh(new THREE.TorusGeometry(0.06, 0.008, 6, 12, Math.PI), M.rubber, torso, -0.06, 0.43, -0.14).rotation.y = Math.PI / 2; // cable
+    // --- head and helmet
+    const head = new THREE.Group();
+    head.position.y = 0.5;
+    torso.add(head);
+    this.mesh(segment(0.05, 0.055, 0.09), M.fatigueDark, head, 0, 0.08, 0); // neck
+    this.mesh(new THREE.TorusGeometry(0.075, 0.025, 8, 20), M.plateDark, head, 0, 0.0, 0).rotation.x = Math.PI / 2; // collar
+    const skull = this.mesh(new THREE.SphereGeometry(0.105, 18, 14), M.fatigueDark, head, 0, 0.14, 0.005); // balaclava
+    skull.scale.set(0.9, 1.05, 1);
+    const shell = this.mesh(new THREE.SphereGeometry(0.128, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.55), M.plate, head, 0, 0.15, -0.01);
+    shell.scale.set(1.0, 1.0, 1.08);
+    this.mesh(new THREE.TorusGeometry(0.124, 0.008, 6, 28, Math.PI * 1.25), M.plateDark, head, 0, 0.16, -0.01).rotation.set(Math.PI / 2, 0, Math.PI * 0.62); // rim
+    for (const sx of [-1, 1]) {
+      const ear = this.mesh(rbox(0.03, 0.08, 0.09, 0.012), M.plateDark, head, sx * 0.118, 0.12, 0); // ear guards
+      ear.rotation.z = sx * 0.08;
+    }
+    // the visor: dark glass over the face, a light strip under it
+    const visor = this.mesh(new THREE.SphereGeometry(0.112, 22, 10, -Math.PI * 0.38, Math.PI * 0.76, Math.PI * 0.4, Math.PI * 0.25), M.glass, head, 0, 0.14, 0.012);
+    visor.scale.set(1, 1, 1.12);
+    const strip = this.mesh(new THREE.TorusGeometry(0.108, 0.003, 4, 24, Math.PI * 0.62), glow, head, 0, 0.105, 0.012);
+    strip.rotation.set(Math.PI / 2, 0, Math.PI * 0.19 + Math.PI * 0.0);
+    strip.rotation.z = -Math.PI * 0.81;
+    this.mesh(rbox(0.08, 0.05, 0.05, 0.015), M.rubber, head, 0, 0.065, 0.085); // breathing filter
+    this.mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.03, 12), M.metal, head, 0, 0.06, 0.115).rotation.x = Math.PI / 2;
+    this.mesh(rbox(0.03, 0.03, 0.05, 0.008), M.rubber, head, 0.1, 0.22, 0.04); // helmet lamp mount
+    // --- legs and arms
+    const legL = this.leg(hips, -0.095);
+    const legR = this.leg(hips, 0.095);
+    const shoulders = new THREE.Group();
+    shoulders.position.y = 0.42;
+    torso.add(shoulders);
+    const armL = this.arm(shoulders, -0.215);
+    const armR = this.arm(shoulders, 0.215);
     // --- rifle (on the torso, so it follows the body; the arms are posed to it)
     const rifle = new THREE.Group();
-    rifle.position.set(0.06, 0.3, 0.24);
+    rifle.position.set(0.05, 0.27, 0.22);
     torso.add(rifle);
-    this.mesh(rbox(0.06, 0.09, 0.5, 0.012), M.gun, rifle, 0, 0, 0.05); // receiver
-    this.mesh(rbox(0.05, 0.12, 0.13, 0.01), M.gun, rifle, 0, -0.02, -0.25); // stock
-    this.mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 10), M.metal, rifle, 0, 0.005, 0.41).rotation.x = Math.PI / 2; // barrel
-    this.mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 12), M.armorDark, rifle, 0, 0.005, 0.32).rotation.x = Math.PI / 2; // shroud
-    this.mesh(rbox(0.04, 0.12, 0.06, 0.01), M.armorDark, rifle, 0, -0.1, -0.07); // magazine
-    this.mesh(rbox(0.035, 0.04, 0.12, 0.01), M.armorDark, rifle, 0, 0.07, 0.05); // sight
-    this.mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.004, 10), glow, rifle, 0, 0.07, 0.112).rotation.x = Math.PI / 2;
-    this.mesh(rbox(0.015, 0.015, 0.2, 0.004), glow, rifle, 0.032, 0, 0.12); // emitter strip
+    this.mesh(this.geo.rifle, M.gun, rifle);
+    this.mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.2, 10), M.metal, rifle, 0, 0.0, 0.4).rotation.x = Math.PI / 2; // barrel
+    this.mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.05, 10), M.gun, rifle, 0, 0, 0.5).rotation.x = Math.PI / 2; // muzzle brake
+    this.mesh(rbox(0.035, 0.12, 0.05, 0.01), M.gun, rifle, 0, -0.1, -0.12).rotation.x = 0.2; // magazine (behind the grip)
+    this.mesh(rbox(0.04, 0.045, 0.11, 0.012), M.plateDark, rifle, 0, 0.07, 0.05); // optic
+    this.mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.004, 10), glow, rifle, 0, 0.075, 0.106).rotation.x = Math.PI / 2;
+    this.mesh(rbox(0.016, 0.01, 0.4, 0.003), M.metal, rifle, 0, 0.045, 0.08); // rail
     // --- torch (for setting lure fires), in the left hand
-    const torch = this.mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.42, 8), M.torch, armL.lower, 0, -0.33, 0.1);
+    const torch = this.mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.42, 8), M.torch, armL.hand, 0, -0.08, 0.12);
     torch.rotation.x = 1.2;
     torch.visible = false;
     this.scene.add(g);
-    return { g, hips, torso, head, legL, legR, armL, armR, rifle, torch, glow, visorMat, state: '' };
+    return { g, hips, torso, head, legL, legR, armL, armR, rifle, torch, glow, visorMat: glow, state: '' };
   }
 
-  /** Visor and lights: cyan on patrol, amber investigating, red when they have seen you, off when down. */
+  /** Lights: cyan on patrol, amber investigating, red when they have seen you, off when down. */
   setMood(f, e) {
     const mood = e.dead ? 'dead' : e.state === 'investigate' ? 'look' : e.alerted || ['lure', 'retreat'].includes(e.state) ? 'alert' : 'calm';
     if (mood === f.state) return;
     f.state = mood;
     const c = { calm: 0x30d8ff, look: 0xffb020, alert: 0xff2a1a, dead: 0x000000 }[mood];
     f.glow.emissive.setHex(c);
-    f.visorMat.emissive.setHex(c);
-    f.glow.emissiveIntensity = mood === 'dead' ? 0 : 2.2;
-    f.visorMat.emissiveIntensity = mood === 'dead' ? 0 : 1.6;
+    f.glow.emissiveIntensity = mood === 'dead' ? 0 : 2.5;
   }
 
   update(world, time) {
@@ -179,9 +330,8 @@ export class EnemyRenderer {
       f.g.position.set(e.p[0], e.p[1], e.p[2]);
       f.g.rotation.set(0, e.yaw ?? 0, 0);
       if (e.dead) {
-        // on their back
         f.g.rotation.set(-Math.PI / 2, e.yaw ?? 0, 0, 'YXZ');
-        f.g.position.y = e.p[1] + 0.2;
+        f.g.position.y = e.p[1] + 0.16;
         f.legL.upper.rotation.set(0.1, 0, 0.1);
         f.legR.upper.rotation.set(0.1, 0, -0.15);
         f.armL.upper.rotation.set(-0.3, 0, 0.6);
@@ -190,32 +340,33 @@ export class EnemyRenderer {
       }
       const run = e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent);
       const ph = e.walkPhase ?? 0;
-      const amp = e.moving ? (run ? 0.8 : 0.5) : 0;
-      const s = Math.sin(ph);
-      // legs: swing at the hip, the knee bends as the foot comes forward
+      const amp = e.moving ? (run ? 0.75 : 0.45) : 0;
+      // legs: swing at the hip, the knee bends as the foot comes through, the foot stays level
       for (const [leg, o] of [[f.legL, 0], [f.legR, Math.PI]]) {
         const sw = Math.sin(ph + o);
-        leg.upper.rotation.set(-sw * amp, 0, 0);
-        leg.lower.rotation.set(Math.max(0, Math.cos(ph + o)) * amp * 1.3 + (e.moving ? 0.1 : 0.02), 0, 0);
+        const hip = -sw * amp;
+        const knee = Math.max(0, Math.cos(ph + o)) * amp * 1.4 + (e.moving ? 0.08 : 0.03);
+        leg.upper.rotation.set(hip, 0, 0);
+        leg.lower.rotation.set(knee, 0, 0);
+        leg.foot.rotation.set(-(hip + knee) * 0.6, 0, 0);
       }
-      // body: bob and a lean into the run
-      f.hips.position.y = 0.96 - (e.moving ? Math.abs(s) * 0.03 + (run ? 0.03 : 0) : 0);
-      f.torso.rotation.set(run ? 0.22 : 0.04, Math.sin(ph) * amp * 0.15, 0);
-      // arms and rifle: low ready walking, raised looking, on the back... the torch when luring
+      f.hips.position.y = 0.93 - (e.moving ? Math.abs(Math.sin(ph)) * 0.025 + (run ? 0.03 : 0) : 0);
+      f.torso.rotation.set(run ? 0.2 : 0.03, Math.sin(ph) * amp * 0.12, 0);
+      // arms to the rifle: low ready walking, raised to the shoulder when looking
       const look = e.state === 'investigate';
       const lure = e.state === 'lure';
-      f.rifle.rotation.set(look ? -0.05 : 0.55, look ? 0 : -0.25, 0);
-      f.rifle.position.set(0.06, look ? 0.36 : 0.27, look ? 0.26 : 0.22);
-      f.armR.upper.rotation.set(look ? -1.1 : -0.55, 0, -0.15);
-      f.armR.lower.rotation.set(look ? -0.6 : -1.0, 0, 0);
+      f.rifle.rotation.set(look ? -0.02 : 0.5, look ? 0 : -0.3, look ? 0 : 0.15);
+      f.rifle.position.set(0.05, look ? 0.33 : 0.24, look ? 0.24 : 0.2);
+      f.armR.upper.rotation.set(look ? -0.9 : -0.35, 0, -0.18);
+      f.armR.lower.rotation.set(look ? -1.0 : -1.25, 0, 0);
       if (lure) {
-        f.armL.upper.rotation.set(-2.2, 0, 0.2); // torch held up
+        f.armL.upper.rotation.set(-2.2, 0, 0.2);
         f.armL.lower.rotation.set(-0.3, 0, 0);
       } else {
-        f.armL.upper.rotation.set(look ? -1.35 : -0.85, 0, 0.45);
-        f.armL.lower.rotation.set(look ? -0.55 : -0.9, 0, 0);
+        f.armL.upper.rotation.set(look ? -1.25 : -0.7, 0, 0.42);
+        f.armL.lower.rotation.set(look ? -0.75 : -1.1, 0, 0);
       }
-      f.head.rotation.set(0, look ? Math.sin(time * 1.3 + k) * 0.5 : 0, 0); // scanning
+      f.head.rotation.set(look ? 0.05 : 0.08, look ? Math.sin(time * 1.3 + k) * 0.5 : 0, 0);
       f.torch.visible = lure;
       if (lure && this.flames) {
         const p = new THREE.Vector3();

@@ -50,7 +50,7 @@ export class View {
     // lights for wall torches and similar small flames (the nearest few get one)
     this.torchLights = [];
     for (let k = 0; k < 6; k++) {
-      const l = new THREE.PointLight(0xff9a4a, 0, 9, 1.8);
+      const l = new THREE.PointLight(0xffd2a0, 0, 10, 1.7);
       this.root.add(l);
       this.torchLights.push(l);
     }
@@ -224,12 +224,20 @@ export class View {
     let sy = 0;
     let sz = 0;
     let s = 0;
+    // wall torches have lights of their own: their flames do not count towards the fire's light
+    const torches = w.heaters.filter((h) => h.light).map((h) => h.pos);
     for (let a = 0; a < NA; a++) {
       const f = flame[a];
       if (f < 0.1) continue;
       const ax = a % anx;
       const ay = ((a - ax) / anx) % any;
       const az = (a - ax - ay * anx) / (anx * any);
+      if (torches.length) {
+        const px = (ax + 0.5) * ah;
+        const py = (ay + 0.5) * ah;
+        const pz = (az + 0.5) * ah;
+        if (torches.some((t) => Math.abs(t[0] - px) < 0.8 && Math.abs(t[2] - pz) < 0.8 && py > t[1] - 0.6 && py < t[1] + 1.2)) continue;
+      }
       sx += f * ax;
       sy += f * ay;
       sz += f * az;
@@ -242,7 +250,8 @@ export class View {
     this.fireLight.position.set(((sx / s) + 0.5) * ah, ((sy / s) + 1) * ah, ((sz / s) + 0.5) * ah);
     // flicker, and scale so a fire filling ~1/3 of the scene lights it like daylight
     const ref = 1e5 * (this.diag / 10) ** 2;
-    const k = Math.min(3, Math.sqrt(stats.hrr / ref + s * 0.002));
+    const torchW = w.heaters.reduce((q, h) => q + (h.light && h.on ? h.power : 0), 0);
+    const k = Math.min(3, Math.sqrt(Math.max(0, stats.hrr - torchW) / ref + s * 0.002));
     const flick = 0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3);
     this.fireLight.intensity = 6 * k * flick * (this.diag / 3) ** 2;
   }

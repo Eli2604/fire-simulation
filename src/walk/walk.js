@@ -53,7 +53,7 @@ export class Walkthrough {
       burn: document.querySelector('#mask .burn'),
       down: document.getElementById('walkDown'),
     };
-    this.lamp = new THREE.SpotLight(0xfff1d6, 0, 25, Math.PI / 7, 0.5, 1.2);
+    this.lamp = new THREE.SpotLight(0xfff1d6, 0, 25, Math.PI / 6.5, 0.75, 1.6);
     this.lamp.position.set(0.15, 0.1, 0);
     this.lamp.target.position.set(0, 0, -1);
     this.lampOn = true;
@@ -801,7 +801,7 @@ export class Walkthrough {
     cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     cam.updateMatrixWorld();
-    this.lamp.intensity = this.lampOn ? 40 : 0;
+    this.lamp.intensity = this.lampOn ? 8 : 0;
 
     // --- the arm: swinging a strike, or reaching through broken glass to the handle
     if (this.arm) {

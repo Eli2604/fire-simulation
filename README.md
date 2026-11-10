@@ -56,8 +56,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
       stone tablets in the wall (ossuary origins, Latin verses), some on white-washed
       pedestals; loose bones heaped on top. Lit
       and shadowed like any object. Each bone sits on the voxel face it belongs to: blast the
-      wall and they go with it, char it and they blacken. They are drawn in 4 m chunks, only
-      near you and in view. The black guide line runs along the top of the vaults.
+      wall and they go with it, char it and they blacken. Up close the bone surface has pores,
+      pits and stains (procedural bump and colour in the shader). They are drawn in 4 m chunks,
+      only near you and in view. The black guide line runs along the ceiling.
     - **Wall torches** are objects (an iron bracket, a wooden handle, a pitch-soaked head and
       a flickering flame) over the hidden voxels that simulate them.
     - The surface colour still darkens with soot and charring, gets wet and glows with heat.
@@ -93,6 +94,11 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   can be changed. To add one, choose its type under *Add object*, press *Add: click the scene
   to place it* and click where it should go (on the ground, a deck or a roof). Edits restart
   the simulation. Scenes can be exported and imported as JSON.
+
+**Deep links** open a scene directly: `?scenario=catacombs` (a key of src/scenarios.js),
+`&zone=…` (a zone of it), `&walk=1` (in the walk-through), `&at=x,y,z,yaw,pitch` (standing
+there, degrees), `&lamp=0` (helmet lamp off), `&freeze=1` (paused), `&shot=1` (only the 3D
+view, for screenshots).
 
 ## Firefighter walk-through
 
@@ -136,10 +142,12 @@ scene). You walk in first person wearing breathing apparatus:
 ### Enemies
 
 Some scenes (the catacombs, below deck on the carrier, the island, the spaceship) have guards
-in them: armoured soldiers in layered plate (render/enemies.js) with a domed helmet, a glowing
-visor, a power pack and a bullpup rifle. They walk and run with knees and elbows, carry the
+in them: soldiers with human proportions (render/enemies.js) in olive fatigues and grey armour:
+a plate carrier with webbing and pouches, shoulder plates, elbow and knee pads, shin guards,
+gloves and boots; a helmet with ear guards, a dark glass visor and a breathing filter; a power
+pack and a bullpup rifle. They walk and run with knees and elbows, carry the
 rifle at low ready and raise it when they investigate, hold up a torch to set a lure fire,
-burn, and fall. The visor shows what they are up to: cyan on patrol, amber when they come to
+burn, and fall. A light strip under the visor shows what they are up to: cyan on patrol, amber when they come to
 look, red once they have seen you. They:
 
 - **patrol**: around where they start, at random spots inside a **patrol area**, or along a

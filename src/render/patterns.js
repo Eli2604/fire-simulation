@@ -430,9 +430,10 @@ if (patOn) {
   vec3 T;
   vec3 B;
   vec3 Ng;
-  if (an.x >= an.y && an.x >= an.z) { q = vPatPos.zy; T = vec3(0.0, 0.0, 1.0); B = vec3(0.0, 1.0, 0.0); Ng = vec3(sign(Nw.x), 0.0, 0.0); }
+  // u runs to the right for someone facing the wall (so carved text is not mirrored)
+  if (an.x >= an.y && an.x >= an.z) { float sx = sign(Nw.x); q = vec2(-sx * vPatPos.z, vPatPos.y); T = vec3(0.0, 0.0, -sx); B = vec3(0.0, 1.0, 0.0); Ng = vec3(sx, 0.0, 0.0); }
   else if (an.y >= an.z) { q = vPatPos.xz; T = vec3(1.0, 0.0, 0.0); B = vec3(0.0, 0.0, 1.0); Ng = vec3(0.0, sign(Nw.y), 0.0); }
-  else { q = vPatPos.xy; T = vec3(1.0, 0.0, 0.0); B = vec3(0.0, 1.0, 0.0); Ng = vec3(0.0, 0.0, sign(Nw.z)); }
+  else { float sz = sign(Nw.z); q = vec2(sz * vPatPos.x, vPatPos.y); T = vec3(sz, 0.0, 0.0); B = vec3(0.0, 1.0, 0.0); Ng = vec3(0.0, 0.0, sz); }
   q /= ${S};
   vec2 gx = dFdx(q) / vec2(${n}, 1.0);
   vec2 gy = dFdy(q) / vec2(${n}, 1.0);

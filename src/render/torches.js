@@ -66,7 +66,7 @@ export class TorchRenderer {
     scene.add(this.group);
     this.items = new Map();
     this.iron = new THREE.MeshStandardMaterial({ color: 0x1c1a18, roughness: 0.55, metalness: 0.8 });
-    this.pitch = new THREE.MeshStandardMaterial({ color: 0x1a120b, roughness: 0.95, emissive: 0xff5a10, emissiveIntensity: 0 });
+    this.pitch = new THREE.MeshStandardMaterial({ color: 0x140e09, roughness: 0.95, emissive: 0x9a2a05, emissiveIntensity: 0 });
   }
 
   setWorld(world) {
@@ -170,7 +170,7 @@ export class TorchRenderer {
       it.core.position.set(0, -0.05 + hgt * 0.25, 0);
       it.core.scale.set(0.08 * f, hgt * 0.55, 1);
       it.flame.material.opacity = 0.9 * flick;
-      it.head.material.emissiveIntensity = 0.6 * f * flick + 0.15;
+      it.head.material.emissiveIntensity = 0.22 * f * flick + 0.03;
     }
     for (const [ht, it] of this.items)
       if (!live.has(ht)) {
