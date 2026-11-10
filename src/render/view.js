@@ -20,6 +20,7 @@ import { VehicleRenderer } from './vehicles.js';
 import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
+import { BloodRenderer } from './blood.js';
 import { EnemyRenderer } from './enemies.js';
 import { deriveWeather } from '../sim/weather.js';
 
@@ -80,6 +81,7 @@ export class View {
     this.props = new PropsRenderer(this.root); // masts, radars, deck detail
     this.doors = new DoorRenderer(this.root); // doors drawn as doors
     this.trees = new TreeRenderer(this.root); // trees: bark and leaves
+    this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
     this.overlay = new THREE.Scene();
@@ -162,9 +164,12 @@ export class View {
     this.torches.setWorld(world);
     this.ossuary.setWorld(world);
     this.vehicles.setWorld(world);
+    this.props.sunLight = this.sun; // stained glass: where its light falls, and how bright
+    this.props.sunDir = new THREE.Vector3(...(this.sunDir ?? [0.6, 1.2, 0.4])).normalize();
     this.props.setWorld(world);
     this.doors.setWorld(world);
     this.trees.setWorld(world);
+    this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -230,7 +235,9 @@ export class View {
     s.near = 0.01;
     s.far = diag * 4;
     s.updateProjectionMatrix();
-    this.sun.position.set(sx * 0.5 + diag * 0.6, diag * 1.2, sz * 0.5 + diag * 0.4);
+    // the direction the sunlight comes from: the scene's own (view.sun), or a high sun from the south-east
+    const sd = new THREE.Vector3(...(this.sunDir ?? [0.6, 1.2, 0.4])).normalize();
+    this.sun.position.set(sx * 0.5 + sd.x * diag * 1.4, sd.y * diag * 1.4, sz * 0.5 + sd.z * diag * 1.4);
     this.sun.target.position.set(sx / 2, 0, sz / 2);
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = world.h * 0.5;
@@ -404,6 +411,7 @@ export class View {
     this.props.update(dt);
     this.doors.update(dt);
     this.trees.update(this.time);
+    this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
     const r = this.renderer;

@@ -8,6 +8,7 @@ import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
+import { shoot } from '../sim/wounds.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -85,12 +86,14 @@ export class Walkthrough {
         if (this.flight) this.flight.fireRequested = true;
         else if (this.tool === 'grenade') this.throwRequested = true;
         else if (this.tool === 'bow') this.draw = 0;
+        else if (this.tool === 'rifle') this.trigger = true;
         else this.spraying = true;
       }
     });
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) {
         this.spraying = false;
+        this.trigger = false;
         if (this.draw !== undefined) this.loose = true;
       }
     });
@@ -112,6 +115,11 @@ export class Walkthrough {
       if (e.code === 'Digit4' && this.ext) this.tool = 'ext';
       if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
       if (e.code === 'Digit6') this.tool = 'bow';
+      if (e.code === 'Digit7') this.tool = 'rifle';
+      if (e.code === 'KeyR' && this.tool === 'rifle' && !this.reloading && (this.ammo ?? 30) < 30) {
+        this.reloading = 2;
+        this.say('Reloading…', 2);
+      }
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
       if (e.code === 'KeyF') this.strike();
@@ -914,7 +922,37 @@ export class Walkthrough {
       this.draw = undefined;
     }
     // where you are, for the enemies (they see your head)
-    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head };
+    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving };
+    // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine, R reloads
+    this.ammo ??= 30;
+    this.shotCd = Math.max(0, (this.shotCd ?? 0) - dt);
+    if (this.reloading) {
+      this.reloading = Math.max(0, this.reloading - dt);
+      if (!this.reloading) this.ammo = 30;
+    }
+    if (this.trigger && locked && this.tool === 'rifle' && !this.downed && !this.reloading && this.shotCd <= 0) {
+      if (this.ammo <= 0) {
+        this.trigger = false;
+        this.say('Magazine empty – R to reload', 2);
+      } else {
+        this.ammo--;
+        this.shotCd = 0.11;
+        const muzzle = [head[0] + aimFwd.x * 0.6, head[1] - 0.12 + aimFwd.y * 0.6, head[2] + aimFwd.z * 0.6];
+        const s = 0.006;
+        shoot(sim, muzzle, [aimFwd.x + (Math.random() - 0.5) * s, aimFwd.y + (Math.random() - 0.5) * s, aimFwd.z + (Math.random() - 0.5) * s]);
+        this.pitch = Math.min(1.45, this.pitch + 0.012); // recoil
+        const snd = this.sound;
+        if (snd.running) snd.burst(snd.ctx.currentTime, 0.12, 'bandpass', 1600, 1.2, 0.9);
+      }
+    }
+    // shots that hit you
+    for (const hit of w.playerHits.splice(0)) {
+      if (this.downed) continue;
+      const dmg = { head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20;
+      this.hurt(dmg);
+      if (hit.zone === 'head') this.damageMask(0.35, 0.5, 0.4);
+      this.say(`You are hit – ${hit.zone}!`, 2);
+    }
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
     if (this.lampOn && !this.downed) {
       if (!sim.ai.lamp || w.time - sim.ai.lamp.time > 0.3) {
@@ -955,7 +993,7 @@ export class Walkthrough {
       <div class="bars"><span>AIR</span><div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
       <span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div>
       <span>VISOR</span><div class="air"><div class="fill" style="width:${(this.mask * 100).toFixed(0)}%;background:${this.mask < 0.3 ? '#ff4a3a' : '#c8c8c8'}"></div></div></div>
-      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}` }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
+      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'}` }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
       ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
       ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
     if (this.el.burn) this.el.burn.style.opacity = this.onFire > 0 ? String(0.55 + 0.25 * Math.sin(w.time * 20)) : '0';

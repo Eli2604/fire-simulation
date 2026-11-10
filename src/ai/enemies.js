@@ -1,5 +1,6 @@
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
+import { hitZone, wound, shoot } from '../sim/wounds.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -271,8 +272,9 @@ export class EnemyAI {
           e.repath = 0;
         }
       }
-      // --- walk along the route
-      this.move(e, dt, e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED);
+      // --- they fire back while they see you; otherwise walk along the route (limping if a leg is hit)
+      e.aiming = seesPlayer && this.fireAt(e, pl, dt);
+      if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * (e.speedFactor ?? 1));
       this.closeBehind(e);
     }
   }
@@ -486,17 +488,52 @@ export class EnemyAI {
   }
 
   /** A projectile at p: did it hit someone? */
-  hit(p, type) {
+  hit(p, type, g) {
     for (const e of this.world.enemies) {
       if (e.dead) continue;
+      if (Math.abs(p[0] - e.p[0]) > 0.45 || Math.abs(p[2] - e.p[2]) > 0.45) continue;
+      if (type === 'arrow') {
+        // where it lands decides what it does (head, torso, an arm, a leg)
+        const zone = hitZone(e, p);
+        if (!zone) continue;
+        wound(this.sim, e, zone, 'arrow', p, g?.v ?? [0, 0, 1]);
+        if (zone === 'torso' || zone === 'head') e.onFire = 10; // the burning rag
+        e.state = 'flee';
+        return true;
+      }
       if (Math.hypot(p[0] - e.p[0], p[2] - e.p[2]) < 0.35 && p[1] > e.p[1] && p[1] < e.p[1] + 1.85) {
-        this.damage(e, type === 'arrow' ? 45 : 200);
-        if (type === 'arrow') e.onFire = 10;
+        this.damage(e, 200);
         e.state = 'flee';
         return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Firing at the player: short bursts while they can see you and still have the use
+   * of their arms; less accurate further away, when they are wounded, or running.
+   * Returns true while aiming (they stand still to shoot).
+   */
+  fireAt(e, pl, dt) {
+    const w = this.world;
+    if (e.canFire === false || e.dead || ['lure', 'flee'].includes(e.state)) return false;
+    const d = Math.hypot(pl.head[0] - e.p[0], pl.head[2] - e.p[2]);
+    if (d > 28) return false;
+    e.yaw = Math.atan2(pl.p[0] - e.p[0], pl.p[2] - e.p[2]);
+    e.fireCd = (e.fireCd ?? 0.6 + Math.random()) - dt;
+    if (e.fireCd > 0) return true;
+    e.burst = (e.burst ?? 3) - 1;
+    e.fireCd = e.burst > 0 ? 0.12 : 1.4 + Math.random() * 1.6;
+    if (e.burst <= 0) e.burst = 3;
+    const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.5, e.p[1] + 1.45, e.p[2] + Math.cos(e.yaw) * 0.5];
+    const target = [pl.p[0], pl.p[1] + 1.2, pl.p[2]];
+    const spread = 0.025 + d * 0.003 + (e.bleed ? 0.04 : 0) + (pl.moving ? 0.03 : 0);
+    const dir = [0, 1, 2].map((k) => target[k] - muzzle[k] + (Math.random() - 0.5) * 2 * spread * d);
+    e.flashUntil = w.time + 0.06;
+    const hit = shoot(this.sim, muzzle, dir, { shooter: e, player: pl });
+    if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle });
+    return true;
   }
 
   /** A blast: hurts everyone in range. */

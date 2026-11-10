@@ -129,6 +129,10 @@ export class World {
     this.noises = []; // { p, loud (m of hearing range), time, kind } for enemies to hear
     this.docks = []; // { p, dir, label }: where a spacecraft can dock
     this.plaques = []; // { p, n, w, h, text }: engraved stone tablets on the walls (drawn only)
+    this.decals = []; // blood on walls and floors, bullet and arrow holes: { p, n, r, kind }
+    this.drops = []; // falling drops of blood
+    this.tracers = []; // shots fired (for a muzzle flash / tracer): { a, b, t }
+    this.playerHits = []; // shots that hit the player (the walk-through takes them)
     this.trees = []; // tree skeletons (owner, species, segments) for drawing the bark: render/trees.js
     this.props = []; // drawn-only detail (masts, radars, catapult tracks, nets...): render/props.js
     this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones

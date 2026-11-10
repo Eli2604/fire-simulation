@@ -1,4 +1,5 @@
 import { MATERIALS } from './materials.js';
+import { raySolid, bulletHole } from './wounds.js';
 import { F_FALLING, F_ANCHOR } from './world.js';
 import { launchVoxel } from './vessels.js';
 
@@ -174,6 +175,10 @@ export function stepProjectiles(sim, dt) {
             continue;
           }
           g.hitPos = g.p.slice();
+          if (type === 'arrow') {
+            const hh = raySolid(w, prev, g.v, Math.hypot(...g.v) * sdt + h);
+            if (hh) bulletHole(sim, hh, 'arrow');
+          }
           g.p = prev;
           g.dir = g.v.slice();
           g.v = [0, 0, 0];

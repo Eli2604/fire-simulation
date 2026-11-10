@@ -94,6 +94,7 @@ function activateZone(name) {
   sim.weather = zoneWeather(zd);
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
+  view.sunDir = zd.view?.sun;
   view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
   view.markers.visible = state.markers;
   view.applyWeather(sim.weather);
@@ -169,6 +170,7 @@ function load(desc, fresh = true) {
   if (walk?.active) walk.exit();
   view.dark = !!scene.view?.dark;
   view.space = !!scene.view?.space;
+  view.sunDir = scene.view?.sun;
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
   updateProxies(true);
   view.markers.visible = state.markers;

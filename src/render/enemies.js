@@ -301,12 +301,28 @@ export class EnemyRenderer {
     this.mesh(rbox(0.04, 0.045, 0.11, 0.012), M.plateDark, rifle, 0, 0.07, 0.05); // optic
     this.mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.004, 10), glow, rifle, 0, 0.075, 0.106).rotation.x = Math.PI / 2;
     this.mesh(rbox(0.016, 0.01, 0.4, 0.003), M.metal, rifle, 0, 0.045, 0.08); // rail
+    const flash = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.22, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+    flash.rotation.x = Math.PI / 2;
+    flash.position.set(0, 0, 0.64);
+    flash.visible = false;
+    rifle.add(flash);
     // --- torch (for setting lure fires), in the left hand
     const torch = this.mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.42, 8), M.torch, armL.hand, 0, -0.08, 0.12);
     torch.rotation.x = 1.2;
     torch.visible = false;
     this.scene.add(g);
-    return { g, hips, torso, head, legL, legR, armL, armR, rifle, torch, glow, visorMat: glow, state: '' };
+    return { g, hips, torso, head, legL, legR, armL, armR, rifle, torch, glow, visorMat: glow, state: '', flash, stains: 0 };
+  }
+
+  /** A blood stain soaking into the clothes at a wound (on the part that was hit). */
+  stain(f, zone) {
+    this.stainMat ??= new THREE.MeshStandardMaterial({ color: 0x3a0505, roughness: 0.55 });
+    const part = { head: f.head, torso: f.torso, armL: f.armL.upper, armR: f.armR.upper, legL: f.legL.upper, legR: f.legR.upper }[zone] ?? f.torso;
+    const at = { head: [0, 0.12, 0.1], torso: [0, 0.18 + Math.random() * 0.2, 0.16], armL: [0, -0.15, 0.05], armR: [0, -0.15, 0.05], legL: [0, -0.2, 0.07], legR: [0, -0.2, 0.07] }[zone] ?? [0, 0.2, 0.16];
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.05 + Math.random() * 0.03, 10, 6), this.stainMat);
+    m.scale.set(1, 1.3, 0.35);
+    m.position.set(at[0] + (Math.random() - 0.5) * 0.06, at[1], at[2]);
+    part.add(m);
   }
 
   /** Lights: cyan on patrol, amber investigating, red when they have seen you, off when down. */
@@ -327,6 +343,8 @@ export class EnemyRenderer {
       f.g.visible = !!e;
       if (!e) return;
       this.setMood(f, e);
+      while (f.stains < (e.stains?.length ?? 0)) this.stain(f, e.stains[f.stains++].zone);
+      f.flash.visible = (e.flashUntil ?? -1) > (world.time ?? 0);
       f.g.position.set(e.p[0], e.p[1], e.p[2]);
       f.g.rotation.set(0, e.yaw ?? 0, 0);
       if (e.dead) {
@@ -342,9 +360,16 @@ export class EnemyRenderer {
       const ph = e.walkPhase ?? 0;
       const amp = e.moving ? (run ? 0.75 : 0.45) : 0;
       // legs: swing at the hip, the knee bends as the foot comes through, the foot stays level
-      for (const [leg, o] of [[f.legL, 0], [f.legR, Math.PI]]) {
+      const W = e.wounds ?? {};
+      for (const [leg, o, hurt] of [[f.legL, 0, W.legL], [f.legR, Math.PI, W.legR]]) {
         const sw = Math.sin(ph + o);
-        const hip = -sw * amp;
+        const hip = -sw * amp * (hurt ? 0.35 : 1); // a wounded leg is dragged
+        if (e.crawling) {
+          leg.upper.rotation.set(-0.2, 0, 0);
+          leg.lower.rotation.set(0.3 + Math.max(0, sw) * 0.6, 0, 0);
+          leg.foot.rotation.set(0, 0, 0);
+          continue;
+        }
         const knee = Math.max(0, Math.cos(ph + o)) * amp * 1.4 + (e.moving ? 0.08 : 0.03);
         leg.upper.rotation.set(hip, 0, 0);
         leg.lower.rotation.set(knee, 0, 0);
@@ -353,8 +378,13 @@ export class EnemyRenderer {
       f.hips.position.y = 0.93 - (e.moving ? Math.abs(Math.sin(ph)) * 0.025 + (run ? 0.03 : 0) : 0);
       f.torso.rotation.set(run ? 0.2 : 0.03, Math.sin(ph) * amp * 0.12, 0);
       // arms to the rifle: low ready walking, raised to the shoulder when looking
-      const look = e.state === 'investigate';
+      const look = e.state === 'investigate' || e.aiming;
       const lure = e.state === 'lure';
+      if (e.crawling) {
+        // both legs hit: dragging themselves along the floor
+        f.g.rotation.set(-1.35, e.yaw ?? 0, 0, 'YXZ');
+        f.g.position.y = e.p[1] + 0.22;
+      }
       f.rifle.rotation.set(look ? -0.02 : 0.5, look ? 0 : -0.3, look ? 0 : 0.15);
       f.rifle.position.set(0.05, look ? 0.33 : 0.24, look ? 0.24 : 0.2);
       f.armR.upper.rotation.set(look ? -0.9 : -0.35, 0, -0.18);
@@ -366,6 +396,13 @@ export class EnemyRenderer {
         f.armL.upper.rotation.set(look ? -1.25 : -0.7, 0, 0.42);
         f.armL.lower.rotation.set(look ? -0.75 : -1.1, 0, 0);
       }
+      // an arm that is hit hangs; the rifle points at the floor
+      for (const [arm, hurt] of [[f.armL, W.armL], [f.armR, W.armR]]) {
+        if (!hurt) continue;
+        arm.upper.rotation.set(0.05, 0, arm === f.armL ? 0.12 : -0.12);
+        arm.lower.rotation.set(-0.15, 0, 0);
+      }
+      if (e.canFire === false) f.rifle.rotation.set(1.25, -0.2, 0.2);
       f.head.rotation.set(look ? 0.05 : 0.08, look ? Math.sin(time * 1.3 + k) * 0.5 : 0, 0);
       f.torch.visible = lure;
       if (lure && this.flames) {
