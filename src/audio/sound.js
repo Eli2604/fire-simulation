@@ -217,6 +217,18 @@ export class SoundScape {
         this.burst(t, 0.05, 'lowpass', 700, 0.8, 0.5 / Math.max(1, d / 2));
       }
     }
+    // the dragon: its feet coming down (heavier the faster it goes, all four when it lands) and its wingbeats
+    for (const d of state.dragons ?? []) {
+      for (const f of d.footfalls ?? []) {
+        if (f.t <= (d.heardStep ?? -1)) continue;
+        d.heardStep = f.t;
+        this.stomp(f.p, Math.min(1.6, 0.35 + 0.5 * (f.weight ?? 1)));
+      }
+      if ((d.beats ?? 0) > (d.heardBeat ?? 0)) {
+        d.heardBeat = d.beats;
+        this.whoosh(d.chest ?? d.p, Math.min(1.2, 0.4 + 0.5 * (d.flapAmp ?? 1)));
+      }
+    }
     // breathing
     if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
@@ -247,6 +259,14 @@ export class SoundScape {
         // the roar of air rushing out, then (in the vacuum) silence
         this.burst(this.ctx.currentTime, 3, 'lowpass', 500, 0.5, 1.2);
         this.burst(this.ctx.currentTime, 1.5, 'bandpass', 2500, 0.7, 0.5);
+      } else if (e.type === 'roar') {
+        this.roar(e.pos);
+      } else if (e.type === 'gulp' || e.type === 'dragonSnap') {
+        this.stomp(e.pos, 0.5);
+        this.burst(t, 0.12, 'bandpass', 900, 1.5, 0.5);
+      } else if (e.type === 'dragonDown') {
+        this.stomp(e.pos, 2);
+        this.burst(t, 1.2, 'lowpass', 250, 0.7, 1.0);
       } else if (e.type === 'shout' || e.type === 'lightSeen') {
         this.shout(e.pos); // "who's there?"
       } else if (e.type === 'glass') {
@@ -279,6 +299,110 @@ export class SoundScape {
     o.start(t);
     o.stop(t + 0.16);
     this.burst(t, 0.3, 'bandpass', 1500, 1, 0.2);
+  }
+
+  /** A panner at p (in the listener's space), for the dragon's sounds. */
+  at(p, ref = 3) {
+    const pan = this.ctx.createPanner();
+    pan.panningModel = 'HRTF';
+    pan.distanceModel = 'inverse';
+    pan.refDistance = ref;
+    if (pan.positionX && p) {
+      pan.positionX.value = p[0];
+      pan.positionY.value = p[1];
+      pan.positionZ.value = p[2];
+    }
+    pan.connect(this.master);
+    return pan;
+  }
+
+  /** A shaped noise burst into `out`. */
+  noiseTo(out, t, dur, type, freq, Q, level) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.6 + Math.random() * 0.3;
+    const f = this.ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = Q;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(level, t + Math.min(0.04, dur * 0.2));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f).connect(g).connect(out);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + dur + 0.05);
+  }
+
+  /** A dragon's foot coming down: a deep thud through the ground, and the crunch of what is under it. */
+  stomp(p, level = 1) {
+    if (!this.running) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = this.at(p, 4);
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(58, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.25);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.9 * level, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + 0.4);
+    this.noiseTo(out, t, 0.18, 'lowpass', 380, 0.8, 0.45 * level);
+    this.noiseTo(out, t + 0.01, 0.08, 'bandpass', 2200, 1.2, 0.08 * level); // claws on stone, gravel
+  }
+
+  /** A downstroke of the wings: a deep whoosh of air. */
+  whoosh(p, level = 1) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    const out = this.at(p, 6);
+    this.noiseTo(out, t, 0.55, 'lowpass', 260, 0.6, 0.7 * level);
+    this.noiseTo(out, t + 0.05, 0.35, 'bandpass', 700, 0.8, 0.15 * level);
+  }
+
+  /** The dragon's roar: a growl from deep in the chest rising to a rasping bellow. */
+  roar(p) {
+    if (!this.running) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = this.at(p, 8);
+    const dur = 2.2;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.9, t + 0.35);
+    env.gain.setValueAtTime(0.9, t + 1.3);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    // a rough throat: the voice tremor modulates the level
+    const trem = ctx.createOscillator();
+    trem.frequency.value = 23;
+    const tg = ctx.createGain();
+    tg.gain.value = 0.35;
+    trem.connect(tg).connect(env.gain);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(500, t);
+    lp.frequency.linearRampToValueAtTime(1400, t + 0.8);
+    lp.frequency.linearRampToValueAtTime(600, t + dur);
+    lp.Q.value = 3;
+    for (const [f0, f1, type, lvl] of [[48, 74, 'sawtooth', 0.5], [97, 140, 'sawtooth', 0.3], [36, 52, 'square', 0.25]]) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.linearRampToValueAtTime(f1, t + 0.9);
+      o.frequency.linearRampToValueAtTime(f0 * 0.85, t + dur);
+      const g = ctx.createGain();
+      g.gain.value = lvl;
+      o.connect(g).connect(lp);
+      o.start(t);
+      o.stop(t + dur);
+    }
+    trem.start(t);
+    trem.stop(t + dur);
+    lp.connect(env).connect(out);
+    this.noiseTo(out, t + 0.1, dur - 0.2, 'bandpass', 900, 0.9, 0.35); // the breath in it
   }
 
   /** A short voiced shout ("hey!") from p. */

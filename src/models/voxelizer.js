@@ -12,7 +12,8 @@ import { MODELS, resolveParams } from './index.js';
  *  { shape: 'sphere', c, r }
  *  { shape: 'ellipsoid', c, r: [rx,ry,rz] }
  *  { shape: 'cone', base: [x,y,z], r, height }            vertical
- *  { shape: 'gable', x0, x1, y0, half, rise, shell? }    roof prism along x
+ *  { shape: 'gable', x0, x1, y0, half, rise, shell?, along? }  roof prism along x (or z)
+ *  { shape: 'prism', poly: [[x,z],...], y0, y1, hole? } polygon extruded upwards
  *
  * Common options:
  *  material   material name
@@ -116,18 +117,38 @@ function insideFn(p, h) {
       const shell = p.shell ?? 0;
       const slope = half / rise; // horizontal per vertical
       const halfAt = (y) => half - (y - y0) * slope;
+      const alongZ = p.along === 'z'; // ridge along z (x0, x1 are then z bounds)
+      const test = (x, y, z) => {
+        if (x < x0 - EPS || x > x1 + EPS || y < y0 - EPS) return false;
+        const hw = halfAt(y);
+        const az = Math.abs(z);
+        if (az > hw + EPS) return false;
+        return !(shell > 0 && az < hw - shell && y > y0 + shell * 0.25);
+      };
+      return alongZ
+        ? { bounds: [[-half, y0, x0], [half, y0 + rise, x1]], test: (x, y, z) => test(z, y, x) }
+        : { bounds: [[x0, y0, -half], [x1, y0 + rise, half]], test };
+    }
+    case 'prism': {
+      // a polygon in the x-z plane (poly: [[x, z], ...]) extruded from y0 to y1, minus an
+      // optional inner polygon (hole)
+      const inPoly = (poly, x, z) => {
+        let c = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+          const [xi, zi] = poly[i];
+          const [xj, zj] = poly[j];
+          if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c;
+        }
+        return c;
+      };
+      const xs = p.poly.map((q) => q[0]);
+      const zs = p.poly.map((q) => q[1]);
       return {
         bounds: [
-          [x0, y0, -half],
-          [x1, y0 + rise, half],
+          [Math.min(...xs), p.y0, Math.min(...zs)],
+          [Math.max(...xs), p.y1, Math.max(...zs)],
         ],
-        test: (x, y, z) => {
-          if (x < x0 - EPS || x > x1 + EPS || y < y0 - EPS) return false;
-          const hw = halfAt(y);
-          const az = Math.abs(z);
-          if (az > hw + EPS) return false;
-          return !(shell > 0 && az < hw - shell && y > y0 + shell * 0.25);
-        },
+        test: (x, y, z) => y >= p.y0 - EPS && y <= p.y1 + EPS && inPoly(p.poly, x, z) && !(p.hole && inPoly(p.hole, x, z)),
       };
     }
     default:
@@ -206,6 +227,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
     world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4 });
   }
+  for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const s of built.inertSystems ?? []) world.inertSystems.push({ ...s, p: toWorld(...s.p), fired: false });
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });

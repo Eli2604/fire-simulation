@@ -23,6 +23,10 @@ test('every model builds voxels with its default parameters', () => {
       assert.ok(world.enemies.length > 0, 'enemies are characters, not voxels');
       continue;
     }
+    if (type === 'dragon') {
+      assert.ok(world.dragons.length > 0, 'a dragon is a creature, not voxels');
+      continue;
+    }
     assert.ok(countOwned(world, 0) > 0, `${type} produced voxels`);
   }
 });

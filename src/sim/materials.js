@@ -344,6 +344,12 @@ const DEFS = {
     label: 'Ash', color: [0.55, 0.54, 0.52], density: 150, specificHeat: 1000, conductivity: 0.08,
     granular: true, fluidity: 0.1, maxMoisture: 1.0, charColor: [0.55, 0.54, 0.52],
   },
+  ashlar: {
+    // dressed limestone in a built wall (a church): behaves as limestone, laid in courses, no inscriptions
+    label: 'Dressed limestone (ashlar)', color: [0.7, 0.66, 0.57], density: 2300, specificHeat: 900, conductivity: 1.3,
+    brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
+    pattern: 'ashlar',
+  },
 };
 
 /** id -> material definition. id 0 is air/empty. */

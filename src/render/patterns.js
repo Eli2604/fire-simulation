@@ -19,7 +19,7 @@ import { MATERIALS } from '../sim/materials.js';
  * heat glow still show on it. Bones in ossuary walls are real geometry (render/ossuary.js).
  */
 
-export const PATTERNS = ['limestone', 'rock', 'gravel', 'deck'];
+export const PATTERNS = ['limestone', 'rock', 'gravel', 'deck', 'ashlar'];
 const TILE = 1024; // px per tile
 export const PATTERN_SIZE = 2.4; // metres covered by one tile
 const RELIEF = 0.03; // m: depth of the deepest joint
@@ -78,7 +78,7 @@ const INSCRIPTIONS = ['MEMENTO MORI', 'HIC REQVIESCVNT', 'QVOD TV ES EGO FVI', '
 const JOINT = 7; // px
 
 /** The block layout of the limestone tile: courses of 0.3 m, blocks 0.4 - 0.95 m, some carved. */
-function limestoneLayout() {
+function limestoneLayout(plain = false) {
   const r = rng(7);
   const course = TILE / 8;
   const blocks = [];
@@ -92,7 +92,8 @@ function limestoneLayout() {
       x = end;
     }
   }
-  const carved = blocks.filter((b) => b.w > 300 && b.row % 2 === 1).slice(0, 6);
+  // (ashlar: the same coursed blocks, none carved)
+  const carved = plain ? [] : blocks.filter((b) => b.w > 300 && b.row % 2 === 1).slice(0, 6);
   carved.forEach((b, k) => (b.text = INSCRIPTIONS[(k * 5 + 3) % INSCRIPTIONS.length]));
   return blocks;
 }
@@ -383,8 +384,8 @@ export function patternAtlas() {
       fn();
       ctx.restore();
     };
-    if (name === 'limestone') {
-      const blocks = limestoneLayout();
+    if (name === 'limestone' || name === 'ashlar') {
+      const blocks = limestoneLayout(name === 'ashlar');
       clip(cc, () => limestoneColour(cc, ox, blocks));
       clip(hc, () => limestoneHeight(hc, ox, blocks));
     } else if (name === 'rock') {

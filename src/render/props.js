@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ChurchDrawing } from './church.js';
 
 /**
  * Detail that is drawn but not simulated (`props` of a model): the mast, radars
@@ -42,6 +43,7 @@ export class PropsRenderer {
   setWorld(world) {
     this.group.clear();
     this.spin = [];
+    this.drawings = []; // props with a life of their own (the church: glass, timber that burns)
     this.world = world;
     for (const pr of world.props ?? []) {
       const o = this.build(pr);
@@ -50,8 +52,9 @@ export class PropsRenderer {
       o.rotation.y = pr.heading ?? 0;
       o.traverse((c) => {
         if (c.isMesh) {
-          c.castShadow = true;
-          c.receiveShadow = true;
+          // (light patches and shafts neither cast nor take shadows)
+          c.castShadow = !c.userData.noShadow;
+          c.receiveShadow = !c.userData.noShadow;
         }
       });
       this.group.add(o);
@@ -177,6 +180,12 @@ export class PropsRenderer {
         m.rotation.z = pr.turn ?? 0;
         return g;
       }
+      case 'church': {
+        // the gothic church: everything that is more than its voxels (render/church.js)
+        const d = new ChurchDrawing(pr.spec, this.world, pr, this.sunDir, this.sunLight);
+        this.drawings.push(d);
+        return d.group;
+      }
       default:
         return null;
     }
@@ -184,5 +193,6 @@ export class PropsRenderer {
 
   update(dt) {
     for (const s of this.spin) s.o.rotation.y += s.rate * dt;
+    for (const d of this.drawings ?? []) d.update(dt);
   }
 }

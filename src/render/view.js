@@ -22,6 +22,7 @@ import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
 import { BloodRenderer } from './blood.js';
 import { EnemyRenderer } from './enemies.js';
+import { DragonRenderer } from './dragon.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -96,6 +97,7 @@ export class View {
     this.markers.flames = this.flames;
     this.puddles = new PuddleRenderer(this.root);
     this.enemies = new EnemyRenderer(this.root, this.flames);
+    this.dragons = new DragonRenderer(this.root, this.flames);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
@@ -404,6 +406,7 @@ export class View {
     this.debris.update(this.world);
     this.puddles.update();
     this.enemies.update(this.world, this.time);
+    this.dragons.update(this.world, this.time, dt);
     this.updateFireLight(stats);
     this.updateTorchLights();
     this.torches.update(this.time);

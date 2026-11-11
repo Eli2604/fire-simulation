@@ -205,7 +205,7 @@ export const SCENARIOS = {
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a campfire and a house on a plateau, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -234,21 +234,27 @@ export const SCENARIOS = {
       island: {
         name: 'Island',
         origin: [105, 0, -30],
-        world: { size: [40, 17, 36], h: 0.4, ground: 'none' },
-        view: { camera: [-10, 22, 40], walk: true },
+        world: { size: [40, 22, 36], h: 0.4, ground: 'none' },
+        // a late-morning sun from the south-east: through the south windows of the nave its light falls on the rosette in the crossing
+        view: { camera: [42, 19, 46], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 38, depth: 34, seaLevel: 2.5, catacombs: 'catacombs', boatTo: 'deck' }, x: 20, z: 18 },
-          { type: 'house', params: { width: 6, depth: 5 }, x: 10.5, z: 25, y: 'auto' },
-          { type: 'grass', params: { width: 5, depth: 4, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 17, z: 20.5, y: 'auto' },
-          { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 17, z: 20.5, y: 'auto', ignite: true },
+          { type: 'island', params: { width: 38, depth: 34, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: 'catacombs', boatTo: 'deck' }, x: 20, z: 18 },
+          // a gothic church being built on the plateau: tower and south arm still in scaffolding
+          { type: 'church', params: {}, x: 14.2, z: 24.6, y: 'auto' },
+          { type: 'house', params: { width: 5, depth: 4 }, x: 29.0, z: 27.4, y: 'auto' },
+          { type: 'grass', params: { width: 3.4, depth: 3, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 30.6, z: 22.2, y: 'auto' },
+          { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 30.6, z: 22.2, y: 'auto', ignite: true },
           { type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 23.5, z: 8, y: 'auto' },
-          // a volcano on the main hill: asleep until a dragon passes
+          // a volcano on the main hill: asleep until the dragon crawls over it
           { type: 'volcano', params: { radius: 4.5, height: 5.5 }, x: 28.5, z: 11.2, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 6.5, crownRadius: 1.8, seed: 3 }, x: 33, z: 8, y: 'auto' },
           { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 24, z: 16, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 13.5, z: 8.5, y: 'auto' },
-          { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 12, patrolDepth: 9 }, x: 12, z: 24, y: 'auto' },
+          { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 7, patrolDepth: 7 }, x: 27.5, z: 24.5, y: 'auto' },
+          // a dragon: it rests on the terrace on the hillside, crawls up to the hilltop, over to the
+          // church and up its walls, over the roof, down to the catacomb stairs, and flies back
+          { type: 'dragon', params: { route: '18,12 rest; 30,12.5 climb; 14.2,24.6 climb; 23,29 sniff; 18,12 fly rest' }, x: 18, z: 12, rotation: 90 },
         ],
       },
       spaceship: {

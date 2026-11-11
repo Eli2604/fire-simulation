@@ -187,7 +187,7 @@ export class EnemyAI {
       }
       for (const n of noises) {
         const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
-        if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy') {
+        if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy' && n.kind !== 'dragon') {
           e.state = 'investigate';
           e.goal = n.p.slice();
           e.repath = 0;
@@ -201,12 +201,22 @@ export class EnemyAI {
       }
       // --- danger first: get out of heat and smoke
       const hz = this.hazard(...e.p);
+      let dragon = null;
       if (hz > 1) {
         e.state = 'flee';
         if (e.repath <= 0) {
           e.goal = this.coolerSpot(e.p);
           e.repath = 1.5;
           e.route = e.goal ? this.path(e.p, e.goal, 1200) : null;
+        }
+      } else if ((dragon = this.sim.dragonAI?.threat(e.p))) {
+        // a dragon close by: run (away from it, into cover if there is some)
+        if (e.state !== 'flee' || e.repath <= 0) {
+          if (e.state !== 'flee') w.events.push({ type: 'shout', pos: head, time: w.time, name: 'enemy' });
+          e.state = 'flee';
+          e.goal = this.awayFrom(e.p, dragon, 10);
+          e.repath = 1.5;
+          e.route = this.path(e.p, e.goal, 1200);
         }
       } else if (e.state === 'flee' && !(e.onFire > 0)) e.state = 'patrol';
       // --- decide

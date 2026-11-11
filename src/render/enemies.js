@@ -347,6 +347,21 @@ export class EnemyRenderer {
       f.flash.visible = (e.flashUntil ?? -1) > (world.time ?? 0);
       f.g.position.set(e.p[0], e.p[1], e.p[2]);
       f.g.rotation.set(0, e.yaw ?? 0, 0);
+      // seized by the dragon: held crosswise in its jaws, limbs flailing; gone once swallowed
+      if (e.devoured) {
+        f.g.visible = false;
+        return;
+      }
+      if (e.held) {
+        f.g.rotation.set(-(e.heldPitch ?? 0), (e.heldYaw ?? 0) + Math.PI / 2, Math.PI / 2, 'YXZ');
+        f.g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(f.g.rotation));
+        const fl = Math.sin(time * 9 + k);
+        f.legL.upper.rotation.set(0.6 * fl, 0, 0.2);
+        f.legR.upper.rotation.set(-0.6 * fl, 0, -0.2);
+        f.armL.upper.rotation.set(-1.8 + 0.7 * fl, 0, 0.5);
+        f.armR.upper.rotation.set(-1.6 - 0.7 * fl, 0, -0.5);
+        return;
+      }
       if (e.dead) {
         f.g.rotation.set(-Math.PI / 2, e.yaw ?? 0, 0, 'YXZ');
         f.g.position.y = e.p[1] + 0.16;

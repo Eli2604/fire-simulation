@@ -360,12 +360,62 @@ export class Walkthrough {
     this.lastHit = 0;
     this.message = '';
     this.messageUntil = 0;
-    if (this.el.down) this.el.down.hidden = true;
+    if (this.el.down) {
+      this.el.down.hidden = true;
+      // the text of the last death (a dragon's meal has its own)
+      if (this.downText) {
+        this.el.down.querySelector('h2').textContent = this.downText[0];
+        this.el.down.querySelector('p').textContent = this.downText[1];
+      }
+    }
+    if (this.el.jaws) this.el.jaws.style.opacity = '0';
+  }
+
+  /** Seized by a dragon: the view from its mouth, past its teeth, while it chews; then dark. */
+  inJaws(h, sim, dt) {
+    const cam = this.view.camera;
+    cam.position.set(h.eye[0], h.eye[1], h.eye[2]);
+    cam.up.set(h.up[0], h.up[1], h.up[2]);
+    cam.lookAt(h.eye[0] + h.dir[0], h.eye[1] + h.dir[1] - 0.15, h.eye[2] + h.dir[2]);
+    cam.up.set(0, 1, 0);
+    cam.updateMatrixWorld();
+    this.pos.set(h.eye[0], h.eye[1] - 1.6, h.eye[2]);
+    if (sim.ai) {
+      sim.ai.player = null;
+      sim.ai.lamp = null;
+    }
+    this.spraying = false;
+    this.health = Math.max(1, this.health - dt * 25); // its teeth
+    if (!this.el.jaws && this.el.mask) {
+      const div = document.createElement('div');
+      div.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;background:radial-gradient(ellipse at 50% 55%, rgba(120,0,0,0.15), rgba(40,0,0,0.75) 60%, rgba(0,0,0,0.97))';
+      this.el.mask.appendChild(div);
+      this.el.jaws = div;
+    }
+    if (this.el.jaws) this.el.jaws.style.opacity = String(Math.min(1, 0.35 + (h.t / 2.8) * 0.65));
+    if (Math.random() < dt * 3) this.sound.crack?.();
+    if (this.el.hud) this.el.hud.innerHTML = `<div class="warn">THE DRAGON HAS YOU</div><div class="msg">Its teeth close round you, row behind row…</div>`;
+  }
+
+  /** Swallowed. */
+  devoured() {
+    if (this.downed) return;
+    this.hurt(1e9);
+    const el = this.el.down;
+    if (!el) return;
+    const h2 = el.querySelector('h2');
+    const p = el.querySelector('p');
+    if (!h2 || !p) return;
+    this.downText ??= [h2.textContent, p.textContent];
+    h2.textContent = 'You were devoured';
+    p.textContent = 'The dragon caught you in its jaws and swallowed you. On the ground it outruns you: keep your distance, get under a roof (it cannot reach you there, it can only burn you out), or hurt it: fire arrows and rockets, better in the head. Fire does not harm it.';
+    if (this.el.jaws) this.el.jaws.style.opacity = '1';
   }
 
   respawn() {
     const sim = this.hooks.getSim();
     const w = sim.world;
+    w.playerHeld = null;
     const sp = sim.spawn ?? defaultSpawn(w);
     this.pos.set(sp.p[0], spawnFloor(w, sp.p), sp.p[2]);
     this.yaw = -Math.PI / 2 - (sp.yaw ?? 0);
@@ -721,6 +771,12 @@ export class Walkthrough {
       if (sim.ai) sim.ai.player = null;
       return;
     }
+    // in a dragon's jaws: you look out past its teeth, and then it swallows
+    if (w.playerHeld && !this.downed) {
+      this.inJaws(w.playerHeld, sim, dt);
+      return;
+    }
+    if (this.el.jaws) this.el.jaws.style.opacity = '0';
     // hints when you stand at a hatch or next to the jet
     {
       const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
@@ -961,8 +1017,19 @@ export class Walkthrough {
       }
     } else sim.ai.lamp = null;
     // a guard noticed the light
-    for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++)
-      if (sim.world.events[this.seenEv].type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
+    for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++) {
+      const ev = sim.world.events[this.seenEv];
+      if (ev.type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
+      // the dragon
+      else if (ev.type === 'roar' && !this.downed) this.say('A DRAGON ROARS', 2.5);
+      else if (ev.type === 'dragonFire' && !this.downed) {
+        // its fire is a burning liquid: it sticks to the gear
+        this.onFire = Math.max(this.onFire, 25);
+        this.hurt(10);
+        this.damageMask(0.06);
+        this.say('DRAGON FIRE – your gear is burning: crawl (C) to roll it out, or get water on you', 3);
+      } else if (ev.type === 'devoured') this.devoured();
+    }
     if (this.throwRequested) {
       this.throwRequested = false;
       const from = [head[0] + aimFwd.x * 0.4, head[1] - 0.1, head[2] + aimFwd.z * 0.4];
@@ -1019,6 +1086,7 @@ export class Walkthrough {
       onFire: this.onFire > 0,
       maskLeak: this.maskBurst,
       enemies: w.enemies,
+      dragons: w.dragons,
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });

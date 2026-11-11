@@ -27,7 +27,7 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
-  and an island nearby (hills, a canal, a campfire, a house, and the catacombs under it), and a
+  and an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
@@ -77,6 +77,28 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
       tracks, arresting wires, safety nets along the edges and its hull number; the island
       stands to starboard as on a Nimitz-class carrier, stepped, with the bridge, the flight
       control tier, a lattice mast and turning radars (drawn-only "props", render/props.js).
+    - **The gothic church** on the island (models/church.js, render/church.js) is still being
+      built. Finished: the nave (three rib-vaulted bays), the north transept arm and the
+      polygonal apse, in dressed ashlar (the limestone blocks without inscriptions) under a
+      slate roof, with buttresses and pinnacles, a carved west portal, pews, an altar and an
+      inlaid marble rosette in the crossing ("LVX IN TENEBRIS LVCET..."). Its windows have bar
+      tracery (two lancets and a quatrefoil, single lancets, a rose of twelve petals) and
+      stained glass painted on a canvas: blue grounds, ruby medallions, borders, leading, iron
+      saddle bars. From inside the glass glows, from outside it is dark and glossy. The glass
+      casts the sun's shadow, so the sun only comes in coloured: every light of a window
+      facing the sun is projected along the sunlight onto the floor and the walls behind
+      (clipped to the room, the openings left out), with faint shafts of light in the air. The
+      island's sun (`view.sun` of a scene or zone) is set so that the light through the south
+      windows falls on the rosette. Still under construction: the tower and the south arm.
+      Their masonry stops at stepped, ragged tops and their inner structure is complete and in
+      view: the tower's timber frame, floors, bell and spire skeleton (with the topping-out
+      fir), the south arm's roof trusses, iron tie rods and straps, the wooden centering for
+      its vault ribs, and the iron armatures of windows still waiting for their glass. Pole
+      scaffolding with putlogs, plank decks on every other lift and ladders stands round both,
+      and a treadwheel crane lifts a block to the top of the tower. The south arm is boarded
+      off from the crossing. Timber, boards, glass, pews and the altar are hidden voxels: a part
+      chars with them and disappears once most of them have burnt, shattered or been blown
+      away (burnt timber leaves its remains as voxels; broken glass lets the plain sun in).
   - *Ambient occlusion* (GTAO, View folder): crevices, corners and the gaps between bones get
     less light. *Torch & lamp shadows*: the two nearest wall torches and the helmet lamp cast
     shadows (underground only the objects, not the voxel walls, go into their shadow maps).
@@ -189,6 +211,78 @@ look, red once they have seen you. They:
 - are hurt by arrows, rockets, blasts, heat and **falling debris**. A branch or ceiling
   part hits with its real mass and speed (½·m·v²), so a burnt-off oak limb is dangerous.
   The same applies to you.
+
+### The dragon (island)
+
+A dragon lives on the island (models/dragon.js for its lair and route, ai/dragon.js for how it
+moves and hunts, render/dragon.js for how it looks). It is about 9 m from nose to tail, with a
+13 m wingspan, and is built from real animals:
+
+- **Skin like a fish.** Overlapping cycloid scales cover it, each free edge facing the tail,
+  with growth rings and a lip where the scale lifts over the next row (painted and bump
+  mapped). It is countershaded like a tarpon or a carp: a dark back, metallic flanks and a pale
+  belly, with a lateral line. A wet clearcoat and thin-film iridescence make the scales shine
+  the way real ones do. A fin of bony rays runs along its back, its tail ends in a fin above
+  and below, and gill covers sit behind its jaws. The *Scales* option picks bronze, tarpon or
+  koi colours.
+- **Teeth after the great white shark.** They are flat, serrated triangular blades, broad in
+  the upper jaw and narrower and more pointed in the lower. They stand in two rows: the
+  working row upright and the replacement row folded back behind it.
+- **The head** is that of a big monitor lizard: slit-pupilled eyes under bony brows, swept-back
+  horns, and a forked tongue that flicks out to taste the air. Before it breathes fire its
+  throat glows through the scales.
+- **It crawls like a lizard.** Its legs sprawl out to the sides, and the diagonal pairs (left
+  front with right hind) step together. Its trunk swings side to side in a standing wave and
+  a travelling wave runs down its tail. It lies down to rest, chin and belly on the ground.
+  It runs at up to 5.5 m/s, faster than you. It swims across the canal, and it climbs walls
+  and roofs, belly to the wall, its body draping over the edge behind it.
+- **It flies like a bird.** Its wings are built like a bird's, with an arm, a forearm and a
+  hand. Long bony fin rays stand in for the flight feathers, and the outer ones part at the
+  tips like an eagle's primaries. On the ground the wings fold in a Z against its flanks. To
+  take off it crouches and leaps. It flaps to climb and glides to come down, and banks into
+  its turns (tan bank = v·ω/g). On the upstroke the wrist flexes and the wing shortens. It
+  flares with deep wingbeats to land. It cannot hover, so from the air it attacks in passes.
+- **Fire.** A gland in its throat feeds a jet of burning liquid (with a wind-up: the throat
+  glows and the jaws open). In the simulation this is a real directional jet flame of about
+  3.5 MW. It burns oxygen, heats the air, radiates, stops at the first solid it meets and sets
+  that alight, and the splashed fuel burns on there. Whoever is in it catches fire, you
+  included. The gland empties after a few bursts and slowly refills.
+- **It devours.** It lunges and the jaws snap shut. The prey, a guard or you, is held crosswise
+  in its jaws and then swallowed. In the walk-through you see out past its teeth until it
+  swallows. Afterwards it is sated for a minute and goes back to its round.
+- **Senses.** It sees far further than a guard, but walls, smoke and foliage block its view.
+  Resting, it only notices what comes close. Blasts wake it, and it remembers who hurt it.
+- **Its feet are heard.** Every time a diagonal pair of feet comes down there is a thud, heavier
+  when it runs and heaviest when it lands on all four. The guards hear it too, and its
+  wingbeats, its roar and its swallowing are heard as well. Guards run from it.
+- **Wounds.** Fire does not hurt it. Fire arrows do (double in the head), and so do rockets
+  and blasts. Badly hurt, it flies back to its lair to rest and heal. Killed, it falls out of
+  the sky and lies on its side.
+
+**Its route** is set on the dragon object (*Route*) as waypoints in the zone's metres:
+`"x,z action; x,z action; …"`. The actions are:
+
+- `rest`: lie down for a while.
+- `climb`: crawl up and over whatever is there (walls, a roof, a steep hilltop). It goes round
+  trees.
+- `sniff`: stop and taste the air. At a stairway it looks in.
+- `fly`: fly there and land.
+
+Without one of these it crawls. Where there is no way on foot, it flies. On the island the
+default round is:
+
+`18,12 rest; 30,12.5 climb; 14.2,24.6 climb; 23,29 sniff; 18,12 fly rest`
+
+1. It rests on the terrace on the hillside.
+2. It crawls up to the hilltop.
+3. It swims the canal to the church, climbs its east wall, crawls over the roof to the crossing
+   and climbs down the far side.
+4. At the stairs down to the catacombs it stops and looks in.
+5. It flies back to the hill and lies down again.
+
+Seeing prey, a noise or a wound interrupts the round, and afterwards it goes on. With an
+empty route it rests in its lair, now and then flies round the island, lands somewhere to
+crawl about, and goes home.
 
 ### Flying the jet (carrier scenario)
 
@@ -341,6 +435,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
+| Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable

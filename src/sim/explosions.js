@@ -70,6 +70,7 @@ export function explode(sim, center, E, opts = {}) {
   w.events.push({ type: 'explosion', pos: center, time: w.time, energy: E, radius: blastR, name: opts.name ?? 'grenade' });
   w.noises.push({ p: center.slice(), loud: 80, time: w.time, kind: 'explosion' });
   sim.ai?.blast(center, blastR);
+  sim.dragonAI?.blast(center, blastR);
 }
 
 /** Burst a gas pipe at its voxel closest to `p`, if within `range`. */

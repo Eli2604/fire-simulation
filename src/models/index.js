@@ -15,6 +15,8 @@ import catacombs from './catacombs.js';
 import { carrierDeck, jet, carrierBelow } from './carrier.js';
 import island from './island.js';
 import spaceship from './spaceship.js';
+import dragon from './dragon.js';
+import church from './church.js';
 import volcano from './volcano.js';
 
 /**
@@ -26,7 +28,7 @@ import volcano from './volcano.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, volcano };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano };
 
 export function resolveParams(model, given = {}) {
   const out = {};

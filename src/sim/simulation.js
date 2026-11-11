@@ -9,6 +9,7 @@ import { stepVolcanoes } from './volcano.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
+import { DragonAI } from '../ai/dragon.js';
 import { stepVacuum } from './vacuum.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
@@ -69,6 +70,7 @@ export class Simulation {
     this.movers = [];
     if (world.listDirty) world.rebuildLists();
     this.ai = new EnemyAI(this);
+    this.dragonAI = new DragonAI(this); // after the guards: it wraps their hit test
   }
 
   rand() {
@@ -162,6 +164,7 @@ export class Simulation {
       this.ai.step(dt);
       this.ai.debrisHits();
     }
+    if (w.dragons.length) this.dragonAI.step(dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     // jet flames from vents and fireballs count as heat release too
     let extra = this.stats.ventHrr;

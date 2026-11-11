@@ -16,6 +16,8 @@ export default {
     seaLevel: { value: 2.5, min: 0.5, max: 6, step: 0.1, label: 'Sea level (m)' },
     hill: { value: 6, min: 0, max: 12, step: 0.5, label: 'Main hill height (m)' },
     plateau: { value: 1.2, min: 0.4, max: 3, step: 0.1, label: 'Plateau above the sea (m)' },
+    plateauEast: { value: 0.1, min: -0.3, max: 0.7, step: 0.05, label: 'Plateau reaches east to (share of half width)' },
+    pierLength: { value: 6, min: 3, max: 10, step: 0.5, label: 'Pier length (m)' },
     canal: { value: true, label: 'Canal from the hills to the sea' },
     pond: { value: true, label: 'Pond on the hillside' },
     catacombs: { value: 'catacombs', label: 'Zone the catacomb stairs lead to' },
@@ -28,7 +30,7 @@ export default {
     const sea = p.seaLevel;
     const top0 = sea + p.plateau;
     // plateau (buildings, campfire) in the south-west, hills in the north-east
-    const plat = { x0: -W * 0.75, x1: W * 0.1, z0: -D * 0.05, z1: D * 0.7 };
+    const plat = { x0: -W * 0.75, x1: W * p.plateauEast, z0: -D * 0.05, z1: D * 0.7 };
     const hills = [
       { x: W * 0.45, z: -D * 0.4, r: Math.min(W, D) * 0.32, hgt: p.hill },
       { x: -W * 0.35, z: -D * 0.55, r: Math.min(W, D) * 0.22, hgt: p.hill * 0.55 },
@@ -92,8 +94,8 @@ export default {
     const pz = D * 0.35;
     const ph = sea + 0.6;
     prims.push(
-      { shape: 'box', min: [px, ph - 0.1, pz - 0.8], max: [px + 6, ph, pz + 0.8], material: 'wood', density: 0.3, color: [0.5, 0.38, 0.24] },
-      ...[0, 2, 4].flatMap((k) => [
+      { shape: 'box', min: [px, ph - 0.1, pz - 0.8], max: [px + p.pierLength, ph, pz + 0.8], material: 'wood', density: 0.3, color: [0.5, 0.38, 0.24] },
+      ...[0, 2, 4].filter((k) => k < p.pierLength - 0.5).flatMap((k) => [
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz - 0.7], b: [px + k + 0.3, ph, pz - 0.7], r: 0.1, material: 'wood' },
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz + 0.7], b: [px + k + 0.3, ph, pz + 0.7], r: 0.1, material: 'wood' },
       ]),
@@ -116,7 +118,7 @@ export default {
     );
     const portals = [];
     if (p.catacombs) portals.push({ p: [ex, ey, ez - 0.3], r: 1.0, to: p.catacombs, label: 'Stairs: down into the catacombs', arrive: { p: [ex, ey, ez - 2.6], yaw: -Math.PI / 2 } });
-    if (p.boatTo) portals.push({ p: [px + 1.5, ph, pz], r: 1.6, to: p.boatTo, label: 'Boat: back to the ship', arrive: { p: [px + 4, ph, pz], yaw: 0 } });
+    if (p.boatTo) portals.push({ p: [px + 1.5, ph, pz], r: 1.6, to: p.boatTo, label: 'Boat: back to the ship', arrive: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 } });
     return {
       prims,
       sea: { level: sea, box: [0, 0, 0, 0] },
@@ -125,7 +127,7 @@ export default {
         { pos: [ex + 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
       ],
       portals,
-      spawn: { p: [px + 4, ph, pz], yaw: 0 },
+      spawn: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 },
     };
   },
 };

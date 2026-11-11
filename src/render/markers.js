@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { groundAt } from '../ai/dragon.js';
 
 /**
  * Markers for fire starts and pending sources (a pipe that will burst):
@@ -120,6 +121,34 @@ export class MarkerRenderer {
       obj.add(line, lbl);
       this.group.add(obj);
       this.items.push({ obj, cone: null, ring: null, lbl, mk: { kind: 'area', p: [0, 0, 0] } });
+    }
+    // a dragon's route: a line over the ground through its waypoints, each with what it does there
+    for (const d of world.dragons ?? []) {
+      const R = d.routePts;
+      if (!R) continue;
+      const obj = new THREE.Group();
+      const at = (p) => new THREE.Vector3(p[0], groundAt(world, p[0], p[2]).y + 0.15, p[2]);
+      const pts = [];
+      R.forEach((wp, i) => {
+        const a = at(wp.p);
+        const b = at(R[(i + 1) % R.length].p);
+        for (let t = 0; t < 1; t += 0.05) {
+          const q = new THREE.Vector3().lerpVectors(a, b, t);
+          q.y = groundAt(world, q.x, q.z).y + 0.15;
+          pts.push(q);
+        }
+        const lbl = this.label(`Dragon ${i + 1}${wp.acts.size ? ': ' + [...wp.acts].join(', ') : ''}`, '#d8a040');
+        lbl.scale.set(s * 3.4, s * 0.56, 1);
+        lbl.position.set(a.x, a.y + s * 1.2, a.z);
+        obj.add(lbl);
+      });
+      pts.push(pts[0].clone());
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: '#e0a030', dashSize: s * 0.8, gapSize: s * 0.4, depthTest: false, transparent: true }));
+      line.computeLineDistances();
+      line.renderOrder = 6;
+      obj.add(line);
+      this.group.add(obj);
+      this.items.push({ obj, cone: null, ring: null, lbl: null, mk: { kind: 'area', p: [0, 0, 0] } });
     }
   }
 

@@ -141,6 +141,7 @@ export class World {
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding
     this.enemies = []; // AI characters (see ai/enemies.js)
+    this.dragons = []; // dragons (see ai/dragon.js): flying, crawling, fire-breathing predators
     this.sprinklers = []; // { p, bulb, actT, rti, rate, radius, active }
     this.pickups = []; // { type, agent?, capacity?, length?, p, taken }
     this.doors = []; // { name, voxels, center, open }
