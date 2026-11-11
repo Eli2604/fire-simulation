@@ -242,7 +242,9 @@ export const SCENARIOS = {
           { type: 'house', params: { width: 6, depth: 5 }, x: 10.5, z: 25, y: 'auto' },
           { type: 'grass', params: { width: 5, depth: 4, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 17, z: 20.5, y: 'auto' },
           { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 17, z: 20.5, y: 'auto', ignite: true },
-          { type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 29, z: 12, y: 'auto' },
+          { type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 23.5, z: 8, y: 'auto' },
+          // a volcano on the main hill: asleep until a dragon passes
+          { type: 'volcano', params: { radius: 4.5, height: 5.5 }, x: 28.5, z: 11.2, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 6.5, crownRadius: 1.8, seed: 3 }, x: 33, z: 8, y: 'auto' },
           { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 24, z: 16, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 13.5, z: 8.5, y: 'auto' },

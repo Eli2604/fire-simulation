@@ -212,6 +212,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
   if (built.tree) world.trees.push({ owner: ownerIndex, species: built.tree.species, segs: built.tree.skeleton.map((s) => ({ ...s, a: toWorld(...s.a), b: toWorld(...s.b) })) });
+  if (built.volcano) world.volcanoes.push({ ...built.volcano, crater: toWorld(...built.volcano.crater), rim: oy + built.volcano.rim, state: 'dormant' });
   for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   for (const br of built.barrels ?? []) {

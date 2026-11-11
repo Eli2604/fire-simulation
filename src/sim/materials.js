@@ -156,6 +156,13 @@ const DEFS = {
     emissivity: 0.75, meltingPoint: 1450, latentHeat: 270e3, fluidity: 0.5, oxidizeTemp: 350,
     charColor: [0.17, 0.12, 0.1], liquidColor: [0.95, 0.6, 0.2],
   },
+  basalt: {
+    // volcanic rock; molten above ~1100 °C it is lava: it flows (thickly), glows,
+    // sets what it touches alight, and sets again into dark rock as it cools
+    label: 'Basalt / lava', color: [0.17, 0.16, 0.15], density: 2900, specificHeat: 840, conductivity: 1.7,
+    emissivity: 0.95, meltingPoint: 1100, latentHeat: 400e3, fluidity: 0.35, brittle: true,
+    charColor: [0.14, 0.13, 0.12], liquidColor: [0.95, 0.42, 0.08],
+  },
   aluminium: {
     label: 'Aluminium', color: [0.78, 0.79, 0.82], density: 2700, specificHeat: 900, conductivity: 205,
     emissivity: 0.25, meltingPoint: 660, latentHeat: 397e3, fluidity: 0.8, oxidizeTemp: 450,

@@ -305,6 +305,13 @@ canal from the hills to the sea, and a pond on a terrace on the hillside. A plat
 house and a campfire with dry grass around it. Only the top layers of the terrain are
 voxels, which keeps it cheap. Objects can be put on any surface with `"y": "auto"`.
 
+A **volcano** (models/volcano.js, sim/volcano.js) stands on the island's main hill. It sleeps
+until a dragon moves within 6 m of its crater; then it erupts: a blast in the crater (heard
+far off), lava welling up in the vent at 1.5 m³/s (molten basalt at 1200 °C, which fills the
+crater, runs over the rim and down the flanks as a liquid, sets grass, trees and houses alight
+and sets into dark rock as it cools), glowing lava bombs thrown out of the crater, and a hot
+ash column over it. After three minutes it calms down.
+
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
 and a locked glass door. A rack catches fire after 25 s (an electrical fault). Heat
 detectors under the ceiling (the hottest gas within 3 m counts) release the **inert-gas system** at 57 °C. This floods the
@@ -330,6 +337,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
+| Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |

@@ -5,6 +5,7 @@ import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepProjectiles, stepGasPipes, explode } from './explosions.js';
 import { updateActivity } from './activity.js';
 import { stepWounds } from './wounds.js';
+import { stepVolcanoes } from './volcano.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
@@ -129,6 +130,7 @@ export class Simulation {
     stepDebris(this, dt);
     stepProjectiles(this, dt);
     stepWounds(this, dt); // bleeding, drops of blood
+    if (w.volcanoes.length) stepVolcanoes(this, dt);
     stepWater(this, dt);
     stepFlood(this, dt);
     stepLeaks(this, dt);
