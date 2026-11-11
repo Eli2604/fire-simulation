@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { MAT } from '../sim/materials.js';
 import { F_FALLING, F_LIQUID, F_HIDDEN } from '../sim/world.js';
 import { loadPolyHavenModel } from './assets.js';
+import { buildLaundry } from './laundry.js';
+
+// objects built here rather than loaded (the wash on a line)
+const PROCEDURAL = { laundry: buildLaundry };
 
 /**
  * A scanned object (a stone statue, brass candelabra: models/statue.js, candelabra.js)
@@ -26,19 +30,27 @@ export class StatueDrawing {
     this.pr = pr;
     this.ready = false;
     this.t = 0;
-    this.matId = MAT[pr.material ?? 'sandstone'];
+    this.matIds = new Set((pr.materials ?? [pr.material ?? 'sandstone']).map((n) => MAT[n]));
     // its voxels, as they are now (before anything can happen to them): the scan is tied to these
     this.own = [];
     const R = pr.radius ?? 2.5;
     for (let k = 0; k < world.solidCount; k++) {
       const i = world.solids[k];
-      if (world.mat[i] !== this.matId || !(world.flags[i] & F_HIDDEN)) continue;
+      if (!this.matIds.has(world.mat[i]) || !(world.flags[i] & F_HIDDEN)) continue;
       const c = world.center(...world.coords(i));
-      if (Math.hypot(c[0] - pr.p[0], c[2] - pr.p[2]) < R) this.own.push(i);
+      if (Math.hypot(c[0] - pr.p[0], c[2] - pr.p[2]) >= R) continue;
+      // (and within its height, when it says: not the deck under an oil drum)
+      if (pr.height && (c[1] < pr.p[1] - world.h || c[1] > pr.p[1] + pr.height + world.h)) continue;
+      this.own.push(i);
     }
     // the flames standing on it (they go out with their part)
     this.flames = pr.tag ? world.heaters.filter((h) => h.tag === pr.tag) : [];
     if (typeof document === 'undefined') return;
+    if (pr.procedural) {
+      // (once its group is in the scene: right after this returns)
+      Promise.resolve().then(() => this.build(PROCEDURAL[pr.procedural](pr)));
+      return;
+    }
     loadPolyHavenModel(pr.polyhaven)
       .then((scene) => this.build(scene))
       .catch((e) => {
@@ -57,7 +69,7 @@ export class StatueDrawing {
     this.group.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(this.group.parent.matrixWorld).invert();
     const meshes = [];
-    o.traverse((c) => c.isMesh && meshes.push(c));
+    o.traverse((c) => c.isMesh && !c.userData.unbound && meshes.push(c));
     // the centres of its voxels: every triangle goes with the nearest
     const C = this.own.map((i) => w.center(...w.coords(i)));
     const nearest = (p) => {
@@ -72,7 +84,7 @@ export class StatueDrawing {
       }
       return best;
     };
-    this.uniforms = { uState: { value: null }, uSlots: { value: 1 } };
+    this.uniforms = { uState: { value: null }, uSlots: { value: 1 }, uRows: { value: 1 }, uTime: { value: 0 }, uLineY: { value: pr.line?.H ?? 0 } };
     this.src = [];
     this.pieces = new Map(); // slot -> the mesh of its piece, once it has broken off
     const v = new THREE.Vector3();
@@ -104,11 +116,15 @@ export class StatueDrawing {
       m.receiveShadow = true;
     }
     this.slots = this.own;
+    // (in rows of 1024: some graphics cards take no textures wider than 4096)
     const n = Math.max(1, this.slots.length);
-    this.data = new Float32Array(n * 4);
-    this.tex = new THREE.DataTexture(this.data, n, 1, THREE.RGBAFormat, THREE.FloatType);
+    const W = Math.min(n, 1024);
+    const H = Math.ceil(n / W);
+    this.data = new Float32Array(W * H * 4);
+    this.tex = new THREE.DataTexture(this.data, W, H, THREE.RGBAFormat, THREE.FloatType);
     this.uniforms.uState.value = this.tex;
-    this.uniforms.uSlots.value = n;
+    this.uniforms.uSlots.value = W;
+    this.uniforms.uRows.value = H;
     // which part each flame stands on
     for (const f of this.flames) f.statueSlot = nearest(new THREE.Vector3(...f.pos));
     this.ready = true;
@@ -128,13 +144,14 @@ export class StatueDrawing {
       sh.vertexShader = sh.vertexShader
         .replace(
           '#include <common>',
-          whole ? '#include <common>\nattribute float aSlot;\nuniform sampler2D uState;\nuniform float uSlots;\nvarying vec4 vState;' : '#include <common>\nuniform vec2 uPiece;\nvarying vec4 vState;',
+          whole ? '#include <common>\nattribute float aSlot;\nuniform sampler2D uState;\nuniform float uSlots;\nuniform float uRows;\nuniform float uTime;\nuniform float uLineY;\nvarying vec4 vState;' : '#include <common>\nuniform vec2 uPiece;\nvarying vec4 vState;',
         )
         .replace(
           '#include <begin_vertex>',
           whole
             ? `#include <begin_vertex>
-vState = texture2D(uState, vec2((aSlot + 0.5) / uSlots, 0.5));
+vState = texture2D(uState, vec2((mod(aSlot, uSlots) + 0.5) / uSlots, (floor(aSlot / uSlots) + 0.5) / uRows));
+${this.pr.sway ? '// hanging cloth sways in the breeze, more lower down\nfloat hang = clamp(uLineY - transformed.y, 0.0, 1.5);\ntransformed.z += hang * hang * (0.06 * sin(uTime * 1.6 + transformed.x * 1.3) + 0.025 * sin(uTime * 4.1 + transformed.x * 5.0));' : ''}
 // its voxel gone (blown off, fallen, molten): this part is not drawn here
 if (vState.r < 0.5) transformed = vec3(0.0);`
             : '#include <begin_vertex>\nvState = vec4(1.0, uPiece.x, uPiece.y, 0.0);',
@@ -144,14 +161,14 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
         .replace('#include <color_fragment>', '#include <color_fragment>\n// soot where it has been hot\ndiffuseColor.rgb *= 1.0 - 0.88 * vState.g;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n// glowing hot: dull red to orange\ntotalEmissiveRadiance += vec3(1.0, 0.33, 0.08) * vState.b * vState.b * 2.5;');
     };
-    mat.customProgramCacheKey = () => (whole ? 'scan-whole-v2' : 'scan-piece-v2');
+    mat.customProgramCacheKey = () => (whole ? `scan-whole-v4${this.pr.sway ? '-sway' : ''}` : 'scan-piece-v2');
     return mat;
   }
 
   /** Is voxel i (of this object) in place: its material, not falling, not molten, not a piece lying there? */
   inPlace(i) {
     const w = this.world;
-    return w.mat[i] === this.matId && !(w.flags[i] & (F_FALLING | F_LIQUID)) && !w.pieceOf?.has(i);
+    return this.matIds.has(w.mat[i]) && !(w.flags[i] & (F_FALLING | F_LIQUID)) && !w.pieceOf?.has(i);
   }
 
   /** The piece of the object that was voxel slot k: its triangles, round that voxel's centre. */
@@ -192,7 +209,7 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
     const flying = new Map();
     for (const d of w.debris) if (d.meshPiece) flying.set(d.origin, d);
     const lying = new Map();
-    if (w.pieceOf) for (const [j, i] of w.pieceOf) if (w.mat[j] === this.matId) lying.set(i, j);
+    if (w.pieceOf) for (const [j, i] of w.pieceOf) if (this.matIds.has(w.mat[j])) lying.set(i, j);
     this.slots.forEach((i, k) => {
       if (this.inPlace(i)) {
         if (this.pieces.has(k)) this.pieces.get(k).visible = false;
@@ -240,6 +257,7 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
 
   update(dt) {
     if (!this.ready) return;
+    this.uniforms.uTime.value += dt;
     this.placePieces();
     this.t += dt;
     if (this.t < 0.25) return;

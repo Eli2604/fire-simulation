@@ -363,6 +363,22 @@ const DEFS = {
     brittle: true, maxMoisture: 0.04, moisture: 0.02, oxidizeTemp: 700, charColor: [0.2, 0.19, 0.18],
     photo: 'rocks',
   },
+  cotton: {
+    // cotton cloth (laundry): drying in the sun and the wind it takes up to burn; light, it burns
+    // fast once it is dry, and falls apart in glowing shreds
+    label: 'Cotton (laundry)', color: [0.92, 0.92, 0.9], density: 1500, specificHeat: 1300, conductivity: 0.06,
+    surfaceFactor: 7, burnTime: 15, combustible: true, ignitionTemp: 255, pyrolysisTemp: 210, heatOfCombustion: 16.5e6,
+    burnRate: 0.06, selfHeating: 0.3, residue: 0.03, smokeYield: 0.02, smokeColor: [0.35, 0.35, 0.33],
+    moisture: 0.05, maxMoisture: 2.0, deadFuel: true, dries: true, timeLag: 450, extinctionMoisture: 0.3, charColor: [0.08, 0.07, 0.06], // (thin cloth in the sun and wind: dry in half an hour)
+  },
+  polyester: {
+    // a synthetic shirt: it shrinks and melts (drips) before it burns, with sooty black smoke
+    label: 'Polyester', color: [0.3, 0.45, 0.7], density: 1380, specificHeat: 1200, conductivity: 0.1,
+    meltingPoint: 255, latentHeat: 60e3, fluidity: 0.5, liquidColor: [0.15, 0.13, 0.12],
+    surfaceFactor: 4, burnTime: 30, combustible: true, ignitionTemp: 430, pyrolysisTemp: 350, heatOfCombustion: 24e6,
+    burnRate: 0.04, selfHeating: 0.2, residue: 0.02, smokeYield: 0.08, smokeColor: [0.08, 0.08, 0.08],
+    moisture: 0.01, maxMoisture: 0.2, deadFuel: true, dries: true, timeLag: 300, charColor: [0.06, 0.05, 0.05],
+  },
   brass: {
     // cast brass (candlesticks): melts at ~930 °C, tarnishes dark when hot
     label: 'Brass', color: [0.75, 0.6, 0.3], density: 8500, specificHeat: 380, conductivity: 110, emissivity: 0.1,

@@ -448,7 +448,7 @@ export class Simulation {
         ht.started = true;
         w.events.push({ type: ht.event ?? 'ignition', pos: ht.pos.slice(), time: w.time, name: ht.label ?? 'source' });
         // an electrical fault sets what it touches alight
-        if (ht.igniteRadius) this.ignite(ht.pos, ht.igniteRadius);
+        if (ht.igniteRadius) this.ignite(ht.pos, ht.igniteRadius, null, !!ht.igniteDry);
         // a burst that goes off as an explosion (fuel vapour): a blast where it is
         if (ht.blast) explode(this, ht.blast.p, ht.blast.energy, { name: ht.label ?? 'explosion' });
       }
@@ -1453,13 +1453,15 @@ export class Simulation {
   }
 
   /** Light everything combustible within `radius` metres of a point (a match / lighter). */
-  ignite(p, radius, materials = null) {
+  ignite(p, radius, materials = null, dryOnly = false) {
     const w = this.world;
     let count = 0;
     this.forSphere(p, radius, (i) => {
       const M = MATERIALS[w.mat[i]];
       if (!M.combustible) return;
       if (materials && !materials.includes(w.mat[i])) return;
+      // (a spark, an ember: it catches only on fuel dry enough to burn)
+      if (dryOnly && w.moist[i] > M.extinctionMoisture * 0.8) return;
       w.moist[i] = Math.min(w.moist[i], M.extinctionMoisture * 0.3);
       // a flame heats the surface; the core only warms (and must not melt)
       w.temp[i] = M.burnTime > 0 ? Math.max(w.temp[i], M.ignitionTemp + 150) : Math.max(w.temp[i], Math.min(M.ignitionTemp, M.meltingPoint - 10) * 0.6);

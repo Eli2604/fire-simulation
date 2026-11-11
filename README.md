@@ -434,6 +434,28 @@ models are loaded from Poly Haven (and the Khronos samples) when a scene needs t
 solid shape as voxel cells, models/data/). Without a connection the scenes still work,
 with plain surfaces and the objects shown as their voxels.
 
+**Laundry on the line** (a scene; models/clothesline.js, render/laundry.js): the wash hangs
+in the garden on a warm, breezy afternoon, wet from the machine: a sheet folded over the
+line, towels, polyester shirts, jeans, a pillowcase, socks. Cotton holds a lot of water and
+dries in the sun and the wind (a dead fuel's moisture, about half an hour; it will not burn
+while it is wet); after a quarter of an hour a spark from the barbecue lands at the foot of
+the sheet and catches only if it has dried. Then the fire runs along the line; the shirts
+shrink, melt and drip before they burn; garments burnt through at the top fall; the lawn
+scorches under them. The cloth is drawn as cloth (folds, weave, stripes, seams, pegs),
+swaying in the breeze, and tied to its voxels: it chars, glows and burns through to holes.
+
+**More ready-made objects** (models/scannedProp.js: any CC0 Poly Haven model over voxels of
+its material, holding its real weight): in the underground church a brass vase on the
+altar and a tall gothic chair in the apse; in the garden a painted bench and a jerrycan;
+on the flight deck two oil drums. They burn, char, melt and are thrown about with their
+voxels, like the statue. (Poly Haven has no people: the guards are still our own figures.)
+
+**Adaptive quality** (View: on by default): when frames are slow (rendering without a
+graphics card, in software) the view steps its resolution, ambient occlusion and shadows
+down, and back up when there is time to spare; a software renderer is recognised at the
+start and begins a step down. The scanned skulls in the ossuary are used up to ~7 m, the
+light procedural ones beyond.
+
 **Blasts and the ground**: a blast at the ground digs a crater in loose ground (soil,
 sand, grass, gravel), ~0.8 m · (TNT kg)^(1/3) across (0.4 m for a grenade), throwing the
 earth up and out into a rim; the island's ground is at least 0.6 m deep, so it is never

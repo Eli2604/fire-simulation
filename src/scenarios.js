@@ -39,6 +39,9 @@ function catacombObjects(exitTo = '') {
     { type: 'statue', params: { shape: 'gothic', scale: 0.85 }, x: 27.4, z: 21.1, rotation: 90 },
     // brass candelabra at the back of the altar, their candles burning (models/candelabra.js)
     { type: 'candelabra', params: { scale: 0.8 }, x: 30, z: 23.2, y: 1.2, rotation: 180 },
+    // a brass vase on the altar, the celebrant's gothic chair in the apse (models/scannedProp.js)
+    { type: 'scannedProp', params: { asset: 'vase', scale: 0.8 }, x: 30.8, z: 23.0, y: 1.2 },
+    { type: 'scannedProp', params: { asset: 'throne', scale: 0.85 }, x: 28.6, z: 24.4, y: 0, rotation: 150 },
     { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 29.35, z: 23.0, y: 1.2, ignite: true },
     { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 29.75, z: 23.1, y: 1.2, ignite: true },
     { type: 'candle', params: { height: 0.2, radius: 0.025, wax: 'beeswax', color: '#e8c060' }, x: 30.25, z: 23.1, y: 1.2, ignite: true },
@@ -50,6 +53,25 @@ function catacombObjects(exitTo = '') {
 
 export const SCENARIOS = {
 
+  laundry: {
+    name: 'Laundry on the line',
+    description: 'A warm, breezy afternoon: the wash hangs on the line in the garden, wet from the machine (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks). It dries in the sun and the wind (cotton holds a lot of water; it will not burn while it is wet). The barbecue on the lawn is going. After a quarter of an hour a spark from it lands at the foot of the sheet: if the sheet has dried by then it catches, and the fire runs along the line; the shirts shrink, melt and drip before they burn, garments burnt through at the top fall.',
+    world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
+    weather: w({ ambient: 27, humidity: 0.35, windSpeed: 3, windDir: 20 }),
+    timeScale: 15,
+    view: { camera: [1.2, 2.4, 6.4] },
+    objects: [
+      // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
+      { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
+      // (a spark from the barbecue lands at the foot of the sheet after 15 minutes, simulated time)
+      { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.8, sparkAfter: 900 }, x: 3.5, z: 2.6 },
+      // the barbecue on the lawn, burning (its sparks)
+      { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
+      // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
+      { type: 'scannedProp', params: { asset: 'bench' }, x: 5.5, z: 4.2, rotation: 15 },
+      { type: 'scannedProp', params: { asset: 'jerrycan' }, x: 1.1, z: 3.7, rotation: 30 },
+    ],
+  },
   metalBars: {
     name: 'Metal bars on burners',
     description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
@@ -239,6 +261,9 @@ export const SCENARIOS = {
           { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 20, z: 15.5, y: 'auto', rotation: 90 },
           { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 23.2, z: 18.6, y: 'auto' },
           { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 23.9, z: 18.7, y: 'auto' },
+          // two oil drums by the island (models/scannedProp.js)
+          { type: 'scannedProp', params: { asset: 'drum' }, x: 25.4, z: 18.4, y: 'auto' },
+          { type: 'scannedProp', params: { asset: 'drum' }, x: 26.1, z: 18.5, y: 'auto', rotation: 40 },
         ],
       },
       below: {

@@ -349,10 +349,10 @@ diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(-0.4, 0.5, boneHeight(vBoneP));`,
         g.setAttribute('color', new THREE.BufferAttribute(col, 3));
         g.setIndex(new THREE.BufferAttribute(I.slice(), 1));
         g.computeBoundingSphere();
-        const old = this.geo[K_SKULL];
+        // (kept: the walls further off show the light procedural skull, 3k triangles each is a lot)
+        this.lightSkull = this.geo[K_SKULL];
+        this.scanSkull = g;
         this.geo[K_SKULL] = g;
-        for (const ch of this.chunks.values()) if (ch.meshes?.[K_SKULL]) ch.meshes[K_SKULL].geometry = g;
-        old.dispose();
       })
       .catch(() => {});
   }
@@ -765,8 +765,15 @@ diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(-0.4, 0.5, boneHeight(vBoneP));`,
     const shadeNow = Math.floor(time * 2) !== this.lastShade;
     this.lastShade = Math.floor(time * 2);
     for (const ch of this.chunks.values()) {
-      const near = !cameraLocal || ch.centre.distanceTo(cameraLocal) < DRAW_DIST;
+      const d = cameraLocal ? ch.centre.distanceTo(cameraLocal) : 0;
+      const near = !cameraLocal || d < DRAW_DIST;
       for (const m of ch.meshes) m.visible = near && m.count > 0;
+      // level of detail: the scanned skull up to ~7 m, the light one beyond
+      const sk = ch.meshes?.[K_SKULL];
+      if (sk && this.scanSkull) {
+        const g = d < 7 ? this.scanSkull : this.lightSkull;
+        if (sk.geometry !== g) sk.geometry = g;
+      }
       if (near && shadeNow) this.shade(ch);
     }
     for (const p of this.plaques) p.visible = !cameraLocal || p.position.distanceTo(cameraLocal) < DRAW_DIST;

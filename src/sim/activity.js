@@ -1,4 +1,8 @@
 import { F_BURNING, F_SMOLDER, F_LIQUID, F_FALLING, O2_AIR } from './world.js';
+import { MATERIALS } from './materials.js';
+
+// materials that are drying (wet laundry): awake while they are still wet
+const DRIES = Uint8Array.from(MATERIALS, (m) => (m.dries ? 1 : 0));
 
 /**
  * Sleeping parts of the world.
@@ -79,7 +83,7 @@ export function updateActivity(sim, D) {
     }
   }
   // solids
-  const { solids, temp, skin, flags, waterIn, coat, nx, ny } = w;
+  const { solids, temp, skin, flags, waterIn, coat, nx, ny, mat, moist } = w;
   const n = w.solidCount;
   const V = 2 * AB; // voxels per block edge
   for (let k = 0; k < n; k++) {
@@ -90,7 +94,8 @@ export function updateActivity(sim, D) {
     if (
       f & (F_BURNING | F_SMOLDER | F_LIQUID | F_FALLING) ||
       dT > T_SOLID || dT < -T_SOLID || dS > T_SOLID || dS < -T_SOLID ||
-      waterIn[i] > 0 || coat[i] > 0.001
+      waterIn[i] > 0 || coat[i] > 0.001 ||
+      (DRIES[mat[i]] && moist[i] > 0.1)
     ) {
       const x = i % nx;
       const r = (i - x) / nx;

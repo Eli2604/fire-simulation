@@ -73,6 +73,17 @@ export class View {
     }
     this.dark = false;
     this.aoOn = true; // ambient occlusion
+    // adaptive quality: slow frames (no graphics card: rendering in software) step the
+    // resolution, ambient occlusion and shadows down, fast ones step them back up
+    this.adaptive = true;
+    this.quality = { level: 0, t0: 0, frames: 0, slowFor: 0, fastFor: 0, base: Math.min(window.devicePixelRatio || 1, 2) };
+    {
+      const gl = this.renderer.getContext();
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+      this.softwareGpu = /swiftshader|llvmpipe|software|basic render/i.test(name);
+      if (this.softwareGpu) this.setQuality(1); // start a step down: there is no graphics card
+    }
     this.torchShadows = true;
 
     // pushed back in depth so it never fights with the ground surface of the grid (flicker)
@@ -420,8 +431,61 @@ export class View {
     this.hemi.intensity = (this.dark ? 0.12 : 1.1) * (1 - 0.6 * t);
   }
 
+  /**
+   * Quality level 0 (full) .. 3: 1 = 75 % resolution, no ambient occlusion; 2 = half
+   * resolution, no shadows; 3 = a third of the resolution.
+   */
+  setQuality(level) {
+    const q = this.quality;
+    q.level = Math.max(0, Math.min(3, level));
+    const scale = [1, 0.75, 0.5, 0.35][q.level];
+    const r = q.base * scale;
+    this.renderer.setPixelRatio(r);
+    const c = this.renderer.domElement;
+    const w = c.clientWidth || c.width;
+    const h = c.clientHeight || c.height;
+    this.renderer.setSize(w, h, false);
+    if (this.composer) {
+      this.composer.setPixelRatio?.(r);
+      this.composer.setSize?.(w, h);
+    }
+    const shadows = q.level < 2;
+    this.sun.castShadow = shadows;
+    this.qualityNoShadows = !shadows;
+  }
+
+  /** Watch the frame time and step the quality down (or back up). */
+  governQuality() {
+    if (!this.adaptive) return;
+    const q = this.quality;
+    const now = performance.now();
+    if (!q.t0) q.t0 = now;
+    q.frames++;
+    const span = now - q.t0;
+    if (span < 1500) return;
+    const ms = span / q.frames;
+    q.t0 = now;
+    q.frames = 0;
+    // slow: under ~18 frames a second for a few seconds; fast: over ~45 for longer
+    if (ms > 55) {
+      q.slowFor++;
+      q.fastFor = 0;
+    } else if (ms < 22) {
+      q.fastFor++;
+      q.slowFor = 0;
+    } else q.slowFor = q.fastFor = 0;
+    if (q.slowFor >= 2 && q.level < 3) {
+      this.setQuality(q.level + 1);
+      q.slowFor = 0;
+    } else if (q.fastFor >= 5 && q.level > (this.softwareGpu ? 1 : 0)) {
+      this.setQuality(q.level - 1);
+      q.fastFor = 0;
+    }
+  }
+
   render(dt, sim) {
     const stats = sim.stats;
+    this.governQuality();
     this.time += dt;
     if (this.controls.enabled) this.controls.update();
     this.markers.update(this.time, this.world);
@@ -471,7 +535,7 @@ export class View {
       this.volume.showSteam = this.smoke.showSteam;
       this.volume.density = this.smoke.density;
       this.volume.render(this.scene, this.camera, this);
-    } else if (this.aoOn) {
+    } else if (this.aoOn && this.quality.level < 1) {
       this.ensureComposer();
       this.composer.render();
       aoDepth = this.ao.depthTexture;
@@ -506,7 +570,7 @@ export class View {
       const f = Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)); // a torch dims and dies as the oxygen goes
       l.position.set(s.h.pos[0], s.h.pos[1] + (s.h.kind === 'candle' ? 0.04 : 0.25), s.h.pos[2]);
       // the nearest two cast shadows (bones, skulls, people in the light of a torch)
-      const shadow = this.torchShadows && k < 2;
+      const shadow = this.torchShadows && !this.qualityNoShadows && k < 2;
       if (l.castShadow !== shadow) {
         l.castShadow = shadow;
         l.shadow.mapSize.set(512, 512);
