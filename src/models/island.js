@@ -84,8 +84,11 @@ export default {
         const n = rng() * 0.08;
         const rock = y > sea + p.plateau + p.hill * 0.55;
         const sand = y < sea + 0.45;
-        const color = rock ? [0.5 + n, 0.48 + n, 0.45 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
-        prims.push({ shape: 'box', min: [x, Math.max(0, y - 2.2 * h), z], max: [x + step, y, z + step], material: rock ? 'stone' : 'soil', anchored: true, color, variation: 0.05 });
+        const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
+        // the green slopes are grass (it burns: a lighter or a spark sets it going), on soil
+        const sward = !rock && !sand && !(p.pond && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r);
+        prims.push({ shape: 'box', min: [x, Math.max(0, y - 2.2 * h), z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
+        if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
         if (p.pond && y < pondLevel && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r)
           prims.push({ shape: 'box', min: [x, y, z], max: [x + step, pondLevel, z + step], material: 'water' });
       }

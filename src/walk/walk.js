@@ -106,7 +106,7 @@ export class Walkthrough {
         if (e.code === 'Space') this.flight.fireRequested = true;
         return;
       }
-      if (e.code === 'KeyC' || e.code === 'ControlLeft') this.toggleCrawl();
+      if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
       if (e.code === 'Digit1') this.tool = 'hose';
@@ -722,7 +722,25 @@ export class Walkthrough {
   isWater(x, y, z) {
     const w = this.hooks.getSim().world;
     const i = w.voxelAt(x, y, z);
-    return i >= 0 && w.mat[i] !== 0 && MATERIALS[w.mat[i]].fluidity >= 0.95;
+    return (i >= 0 && w.mat[i] !== 0 && MATERIALS[w.mat[i]].fluidity >= 0.95) || this.inSea(x, y, z);
+  }
+
+  /** In the open sea (not a voxel: the sea round an island or a ship, with its waves)? */
+  inSea(x, y, z) {
+    const w = this.hooks.getSim().world;
+    const s = w.sea;
+    if (!s || w.vacuum) return false;
+    const [x0, z0, x1, z1] = s.box;
+    if (x > x0 && x < x1 && z > z0 && z < z1) return false; // inside the hull
+    if (y >= this.seaSurface(x, z)) return false;
+    const i = w.voxelAt(x, y, z);
+    return !(i >= 0 && w.mat[i] !== 0);
+  }
+
+  /** The sea surface at (x, z): the still level and the waves on it. */
+  seaSurface(x, z) {
+    const w = this.hooks.getSim().world;
+    return w.sea.level + (this.view?.ocean?.heightAt?.(x, z) ?? 0);
   }
 
   /** Water standing over the floor at (x, z): depth, its surface, and whether there is air above it. */
@@ -731,7 +749,9 @@ export class Walkthrough {
     const h = w.h;
     let y = floor + h * 0.5;
     while (y < w.size[1] && this.isWater(x, y, z)) y += h;
-    const surface = Math.floor((y - h * 0.5) / h) * h;
+    let surface = Math.floor((y - h * 0.5) / h) * h;
+    // the open sea: its surface is the waves', not a voxel's top
+    if (this.inSea(x, floor + h * 0.5, z)) surface = this.seaSurface(x, z);
     const depth = Math.max(0, surface - floor);
     const air = y < w.size[1] && !this.solidAt(x, y, z) && !this.solidAt(x, y + h, z);
     return { depth, surface, air };
@@ -866,8 +886,24 @@ export class Walkthrough {
     // with the space full to the ceiling your gear takes you down and you walk the bottom
     this.water = this.waterAt(this.pos.x, this.pos.z, floor);
     this.swimming = this.water.depth > 1.3 && this.water.air;
-    const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12)) : floor;
-    this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
+    // swimming: at the surface you float with your head out (riding the waves); hold C / Ctrl
+    // to dive, Space to come up; under water you swim where you look (W, the mouse). Your
+    // gear is about neutral: you drift slowly up when you stop swimming.
+    if (this.swimming) {
+      if (this.crawl) this.crawl = false;
+      let vy = 0.25; // drifting up
+      if (locked && (this.keys.has('KeyC') || this.keys.has('ControlLeft') || this.keys.has('ControlRight'))) vy -= 1.1;
+      if (locked && this.keys.has('Space')) vy += 1.2;
+      if (this.dive > 0.2 && fz !== 0) vy += Math.sin(this.pitch) * speed * fz * 1.6;
+      const maxDive = Math.max(0, this.water.surface - floor - eye - 0.05);
+      this.dive = Math.min(maxDive, Math.max(0, (this.dive ?? 0) - vy * dt));
+      if (this.dive > 0.05 && !this.diveSaid) {
+        this.say('Diving – Space to come up, C / Ctrl to go deeper, W to swim where you look', 4);
+        this.diveSaid = true;
+      }
+    } else this.dive = 0;
+    const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12) - this.dive) : floor;
+    this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
     cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);

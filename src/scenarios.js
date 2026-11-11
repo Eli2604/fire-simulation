@@ -209,16 +209,41 @@ export const SCENARIOS = {
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
+    // the island group round the ship and the island (drawn: models/archipelago.js): a large
+    // high island, a long one, volcanic cones, islets, a sand cay, a sunken reef ring, each
+    // with its fringing reef and lagoon; the simulated island on a shelf of its own
+    archipelago: {
+      seed: 7,
+      extent: 2600,
+      zones: [{ box: [107, -28, 171, 30], floor: -1.7 }], // the island's voxel terrain (its zone is 2 m larger all round)
+      islands: [
+        { c: [950, -700], rx: 600, rz: 330, rot: 0.35, peak: 140, reef: 1.35 },
+        { c: [-700, -1000], rx: 700, rz: 170, rot: -0.45, peak: 80, reef: 1.5 },
+        { c: [560, 420], rx: 110, peak: 30, reef: 1.8 },
+        { c: [-320, 440], rx: 70, peak: 20, reef: 2.0 },
+        { c: [820, 250], rx: 160, peak: 75, reef: 1.45, cone: true },
+        { c: [1450, 120], rx: 90, rz: 60, rot: 0.8, peak: 25, reef: 1.9 },
+        { c: [-1100, 150], rx: 130, peak: 45, reef: 1.6 },
+        { c: [330, -390], rx: 35, rz: 22, peak: 2.5, reef: 2.6 },
+        { c: [-220, -320], rx: 80, peak: -1.2, reef: 1.5 },
+        { c: [1250, 900], rx: 200, rz: 140, rot: -0.3, peak: 60, reef: 1.5 },
+        { c: [-450, 1200], rx: 150, peak: 35, reef: 1.7 },
+      ],
+    },
     zones: {
       deck: {
         name: 'Flight deck',
         origin: [0, 0, 0],
         world: { size: [44, 19, 21], h: 0.4, ground: 'none' },
         view: { camera: [-14, 20, 30], walk: true },
-        proxy: { color: '#6d7175', height: 8, fill: 0.9, sea: 2.9 },
+        proxy: { shape: 'carrier', length: 40, beam: 18, deck: 7, draft: 2.5, at: [22, 0, 10.5], color: '#6d7175', height: 8, fill: 0.9, sea: 2.9 },
         objects: [
           { type: 'carrierDeck', params: { length: 40, beam: 18, deckHeight: 7, boatTo: 'island' }, x: 22, z: 10.5 },
           { type: 'jet', params: {}, x: 13, z: 7.5, y: 7, rotation: 0 },
+          // a tow tractor, oxygen and propane bottles by the island
+          { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 20, z: 15.5, y: 'auto', rotation: 90 },
+          { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 23.2, z: 18.6, y: 'auto' },
+          { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 23.9, z: 18.7, y: 'auto' },
         ],
       },
       below: {
@@ -234,27 +259,37 @@ export const SCENARIOS = {
       island: {
         name: 'Island',
         origin: [105, 0, -30],
-        world: { size: [40, 22, 36], h: 0.4, ground: 'none' },
+        world: { size: [68, 22, 62], h: 0.4, ground: 'none' },
         // a late-morning sun from the south-east: through the south windows of the nave its light falls on the rosette in the crossing
-        view: { camera: [42, 19, 46], walk: true, sun: [0.544, 0.64, 0.544] },
+        view: { camera: [71.4, 30, 78.6], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 38, depth: 34, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: 'catacombs', boatTo: 'deck' }, x: 20, z: 18 },
+          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: 'catacombs', boatTo: 'deck' }, x: 34, z: 31 },
           // a gothic church being built on the plateau: tower and south arm still in scaffolding
-          { type: 'church', params: {}, x: 14.2, z: 24.6, y: 'auto' },
-          { type: 'house', params: { width: 5, depth: 4 }, x: 29.0, z: 27.4, y: 'auto' },
-          { type: 'grass', params: { width: 3.4, depth: 3, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 30.6, z: 22.2, y: 'auto' },
-          { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 30.6, z: 22.2, y: 'auto', ignite: true },
-          { type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 23.5, z: 8, y: 'auto' },
+          { type: 'church', params: {}, x: 24.1, z: 42.2, y: 'auto' },
+          { type: 'house', params: { width: 5, depth: 4 }, x: 49.3, z: 47, y: 'auto' },
+          { type: 'grass', params: { width: 3.4, depth: 3, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 52, z: 38.1, y: 'auto' },
+          { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 52, z: 38.1, y: 'auto', ignite: true },
+          { type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 40, z: 14, y: 'auto' },
           // a volcano on the main hill: asleep until the dragon crawls over it
-          { type: 'volcano', params: { radius: 4.5, height: 5.5 }, x: 28.5, z: 11.2, y: 'auto' },
-          { type: 'tree', params: { species: 'pine', height: 6.5, crownRadius: 1.8, seed: 3 }, x: 33, z: 8, y: 'auto' },
-          { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 24, z: 16, y: 'auto' },
-          { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 13.5, z: 8.5, y: 'auto' },
-          { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 7, patrolDepth: 7 }, x: 27.5, z: 24.5, y: 'auto' },
+          { type: 'volcano', params: { radius: 4.5, height: 5.5 }, x: 48.5, z: 19.4, y: 'auto' },
+          { type: 'tree', params: { species: 'pine', height: 6.5, crownRadius: 1.8, seed: 3 }, x: 56.1, z: 14, y: 'auto' },
+          { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 40.8, z: 27.6, y: 'auto' },
+          { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 23, z: 14.9, y: 'auto' },
+          { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.8, seed: 11 }, x: 58, z: 41, y: 'auto' },
+          { type: 'tree', params: { species: 'pine', height: 7.5, crownRadius: 1.9, seed: 12 }, x: 16, z: 22, y: 'auto' },
+          { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.6, seed: 13 }, x: 29, z: 9.5, y: 'auto' },
+          { type: 'tree', params: { species: 'willow', height: 5.5, crownRadius: 2.2, seed: 14 }, x: 42.5, z: 56, y: 'auto' },
+          { type: 'tree', params: { species: 'oak', height: 5.5, crownRadius: 2.2, seed: 15 }, x: 8.5, z: 31, y: 'auto' },
+          // round the house: a car (fuel in its tank), a propane bottle at the wall, a garden fence, a log stack
+          { type: 'car', params: { bodyColor: '#7a2b25' }, x: 43.6, z: 44.5, y: 'auto', rotation: 90 },
+          { type: 'gasCylinder', params: { capacity: 11, fill: 0.7 }, x: 52.6, z: 46.2, y: 'auto' },
+          { type: 'fence', params: { length: 8, style: 'rails' }, x: 49.3, z: 42.4, y: 'auto' },
+          { type: 'woodPile', params: { arrangement: 'stack', logs: 12, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 46, z: 50.2, y: 'auto' },
+          { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 12, patrolDepth: 12 }, x: 46.8, z: 42, y: 'auto' },
           // a dragon: it rests on the terrace on the hillside, crawls up to the hilltop, over to the
           // church and up its walls, over the roof, down to the catacomb stairs, and flies back
-          { type: 'dragon', params: { route: '18,12 rest; 30,12.5 climb; 14.2,24.6 climb; 23,29 sniff; 18,12 fly rest' }, x: 18, z: 12, rotation: 90 },
+          { type: 'dragon', params: { route: '30.6,20.8 rest; 51,21.6 climb; 24.1,42.2 climb; 39.1,49.7 sniff; 30.6,20.8 fly rest' }, x: 30.6, z: 20.8, rotation: 90 },
         ],
       },
       spaceship: {

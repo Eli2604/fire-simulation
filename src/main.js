@@ -95,6 +95,8 @@ function activateZone(name) {
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
   view.sunDir = zd.view?.sun;
+  view.archSpec = scene.archipelago ?? null;
+  view.zoneOrigin = zd.origin ?? null;
   view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
   view.markers.visible = state.markers;
   view.applyWeather(sim.weather);
@@ -171,6 +173,8 @@ function load(desc, fresh = true) {
   view.dark = !!scene.view?.dark;
   view.space = !!scene.view?.space;
   view.sunDir = scene.view?.sun;
+  view.archSpec = scene.archipelago ?? null;
+  view.zoneOrigin = scene.zones?.[scene.zone]?.origin ?? (scene.archipelago ? [0, 0, 0] : null);
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
   updateProxies(true);
   view.markers.visible = state.markers;
@@ -227,12 +231,21 @@ const fW = gui.addFolder('Weather');
 const wc = [
   fW.add(weather, 'ambient', -20, 45, 0.5).name('Air temperature (°C)'),
   fW.add(weather, 'humidity', 0, 1, 0.01).name('Relative humidity'),
-  fW.add(weather, 'windSpeed', 0, 15, 0.1).name('Wind speed (m/s)'),
+  fW.add(weather, 'windSpeed', 0, 35, 0.1).name('Wind speed (m/s)'),
   fW.add(weather, 'windDir', 0, 360, 5).name('Wind towards (°)'),
   fW.add(weather, 'rain', 0, 50, 0.5).name('Rain (mm/h)'),
   fW.add(weather, 'fog', 0, 1, 0.01).name('Fog'),
 ];
 wc.forEach((c) => c.onChange(() => view.applyWeather(weather)));
+// weather presets: a gale with driving rain and a high sea, or a calm
+const setWeather = (o) => {
+  Object.assign(weather, o);
+  if (sim.weather !== weather) Object.assign(sim.weather, o);
+  wc.forEach((c) => c.updateDisplay());
+  view.applyWeather(weather);
+};
+fW.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 }) }, 'storm').name('Storm (gale, rain, high sea)');
+fW.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
 
 const fV = gui.addFolder('View');
 fV.add(state, 'mode', { Realistic: 'realistic', 'Thermal camera': 'thermal' })
@@ -309,10 +322,25 @@ function buildObjectsFolder() {
   if (fObjects) fObjects.destroy();
   fObjects = fS.addFolder('Objects');
   const ws = scene.world;
+  // a scene of several zones (the carrier: flight deck, below deck, the island, the catacombs,
+  // the spaceship): pick one to go there and see (and edit) its objects
+  if (scene.zones) {
+    const zs = { zone: scene.zone };
+    const names = Object.fromEntries(Object.entries(scene.zones).map(([k, z]) => [`${z.name} (${z.objects.length} objects)`, k]));
+    fObjects
+      .add(zs, 'zone', names)
+      .name('Zone (go there)')
+      .onChange((name) =>
+        setTimeout(() => {
+          if (walk?.active) walk.exit();
+          activateZone(name);
+        }, 0),
+      );
+  }
   const fWorld = fObjects.addFolder('World').close();
-  fWorld.add(ws.size, '0', 0.2, 60, 0.1).name('Size X (m)').onFinishChange(scheduleRestart);
-  fWorld.add(ws.size, '1', 0.2, 30, 0.1).name('Size Y (m)').onFinishChange(scheduleRestart);
-  fWorld.add(ws.size, '2', 0.2, 60, 0.1).name('Size Z (m)').onFinishChange(scheduleRestart);
+  fWorld.add(ws.size, '0', 0.2, 120, 0.1).name('Size X (m)').onFinishChange(scheduleRestart);
+  fWorld.add(ws.size, '1', 0.2, 40, 0.1).name('Size Y (m)').onFinishChange(scheduleRestart);
+  fWorld.add(ws.size, '2', 0.2, 120, 0.1).name('Size Z (m)').onFinishChange(scheduleRestart);
   fWorld.add(ws, 'h', 0.004, 0.5, 0.001).name('Voxel size (m)').onFinishChange(scheduleRestart);
   if (!ws.ground) ws.ground = 'soil';
   fWorld.add(ws, 'ground', MATERIAL_NAMES).name('Ground material').onFinishChange(scheduleRestart);
@@ -675,7 +703,8 @@ if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
   if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
   load(sc);
 }
-// ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
+// ...&storm=1: a gale with rain; ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
+if (qs.get('storm')) for (const [k, v] of Object.entries({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 })) weather[k] = sim.weather[k] = v;
 for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog']]) {
   const v = Number(qs.get(k));
   if (qs.get(k) !== null && Number.isFinite(v)) weather[key] = sim.weather[key] = v;
@@ -697,6 +726,12 @@ if (qs.get('walk')) {
   if (qs.get('lamp') === '0') walk.lampOn = false;
   if (qs.get('freeze')) state.running = false; // a still: everything where it starts
 }
+// F1: show / hide the information pane (the scene, its description and the figures)
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'F1') return;
+  e.preventDefault();
+  document.getElementById('hud').classList.toggle('shown');
+});
 updateToolHint();
 requestAnimationFrame(frame);
 

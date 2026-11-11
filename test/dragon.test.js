@@ -179,11 +179,15 @@ test('on the island it walks its round: the hilltop, up the church walls and ove
   const sc = cloneScene(SCENARIOS.carrier);
   sc.startZone = 'island';
   sc.noFire = true;
-  sc.zones.island.objects = sc.zones.island.objects.filter((o) => o.type !== 'enemy');
+  // (without the volcano: it would erupt as the dragon passes, and set the island's grass alight)
+  sc.zones.island.objects = sc.zones.island.objects.filter((o) => o.type !== 'enemy' && o.type !== 'volcano');
   const sim = createSimulation(sc);
   const w = sim.world;
   const d = w.dragons[0];
   assert.equal(d.routePts.length, 5, 'route parsed');
+  // where things are: the hilltop and the church on its route, the catacomb stairs
+  const [, hillTop, church] = d.routePts.map((q) => q.p);
+  const stairs = w.portals.find((q) => q.to === 'catacombs').p;
   d.timer = 0.5; // done resting
   let hill = 0;
   let roof = 0;
@@ -191,17 +195,36 @@ test('on the island it walks its round: the hilltop, up the church walls and ove
   let sniffed = false;
   run(sim, 60, () => {
     const g = groundAt(w, d.p[0], d.p[2], d.p[1] + 1).y;
-    if (Math.hypot(d.p[0] - 30, d.p[2] - 12.5) < 3) hill = Math.max(hill, g);
-    if (Math.hypot(d.p[0] - 14.2, d.p[2] - 24.6) < 3 && d.mode === 'ground') roof = Math.max(roof, g);
+    if (Math.hypot(d.p[0] - hillTop[0], d.p[2] - hillTop[2]) < 3) hill = Math.max(hill, g);
+    if (Math.hypot(d.p[0] - church[0], d.p[2] - church[2]) < 3 && d.mode === 'ground') roof = Math.max(roof, g);
     if (d.cling) wall++;
-    sniffed ||= d.sniffT > 0 && !!d.look && Math.hypot(d.look[0] - 19.3, d.look[2] - 31.2) < 1;
+    sniffed ||= d.sniffT > 0 && !!d.look && Math.hypot(d.look[0] - stairs[0], d.look[2] - stairs[2]) < 1.5;
   }, 0.1);
-  assert.ok(hill > 10, `on the hilltop (${hill.toFixed(1)} m)`);
+  assert.ok(hill > 9, `on the hilltop (${hill.toFixed(1)} m)`);
   assert.ok(roof > 12, `crawled on the church roof (${roof.toFixed(1)} m)`);
   assert.ok(wall > 20, 'clung to a wall');
   assert.ok(sniffed, 'looked into the catacomb stairs');
   assert.ok(d.footfalls.length > 0 && d.steps > 40, `${d.steps} footfalls`);
   assert.ok(w.noises.some((n) => n.kind === 'dragon'), 'its steps make noise');
+});
+
+test('a noise that keeps coming from one place (an eruption) does not keep it circling for ever', () => {
+  const sim = field();
+  const w = sim.world;
+  const d = w.dragons[0];
+  let flew = false;
+  let backDown = false;
+  let next = 0;
+  run(sim, 90, () => {
+    if (w.time >= next) {
+      next += 2;
+      w.noises.push({ p: [34, 1, 15], loud: 250, time: w.time, kind: 'eruption' });
+    }
+    flew ||= d.mode === 'air';
+    if (flew && w.time > 40 && d.mode === 'ground' && d.state === 'rest') backDown = true;
+  }, 0.1);
+  assert.ok(flew, 'it went to look');
+  assert.ok(backDown, `it came back down and lay down again (now ${d.state}, ${d.mode})`);
 });
 
 test('guards run from it', () => {

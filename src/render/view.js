@@ -22,6 +22,7 @@ import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
 import { BloodRenderer } from './blood.js';
 import { Ocean } from './ocean.js';
+import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
@@ -30,11 +31,14 @@ import { deriveWeather } from '../sim/weather.js';
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
 const SKY_GREY = new THREE.Color(0x8d939a);
 const SKY_FOG = new THREE.Color(0xb9bec2);
+const SKY_STORM = new THREE.Color(0x3b434c);
 
 /** Owns the three.js scene and all renderers of the simulation state. */
 export class View {
   constructor(canvas) {
     this.ocean = new Ocean();
+    this.archSpec = null; // the island group round the zone (set by main.js), and the zone's place in it
+    this.zoneOrigin = null;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -200,6 +204,9 @@ export class View {
       this.sea.position.y = world.sea.level;
       this.root.add(this.sea);
     }
+    // the island group round it: the sea floor and the other islands (render/archipelago.js)
+    this.archipelago ??= new ArchipelagoRenderer(this.root);
+    this.ocean.setBathy(this.archipelago.set(world.sea && !world.vacuum ? this.archSpec : null, this.zoneOrigin, world));
     this.ground.scale.set(diag * 12, diag * 12, 1);
     this.ground.position.set(sx / 2, world.h * 0.9, sz / 2);
 
@@ -246,13 +253,16 @@ export class View {
 
   applyWeather(weather) {
     const D = deriveWeather(weather);
-    const grey = Math.min(1, weather.rain / 12 + weather.fog * 0.6);
-    const sky = SKY_CLEAR.clone().lerp(SKY_GREY, grey).lerp(SKY_FOG, weather.fog * 0.7);
+    // a storm: a gale with rain under a low, dark sky (lightning flashes in render())
+    const storm = Math.min(1, Math.max(0, (weather.windSpeed - 11) / 11)) * Math.min(1, 0.4 + weather.rain / 15);
+    this.storm = storm;
+    const grey = Math.min(1, weather.rain / 12 + weather.fog * 0.6 + storm);
+    const sky = SKY_CLEAR.clone().lerp(SKY_GREY, grey).lerp(SKY_FOG, weather.fog * 0.7).lerp(SKY_STORM, storm * 0.85);
     this.scene.background = sky;
     const fogDensity = weather.fog > 0 ? (weather.fog * 3.5) / this.diag : 0.02 / this.diag;
     this.scene.fog = new THREE.FogExp2(sky, fogDensity);
     // underground / indoor scenes: hardly any daylight
-    const light = (1 - 0.55 * grey) * (this.dark ? 0.06 : 1);
+    const light = (1 - 0.55 * grey) * (1 - 0.45 * storm) * (this.dark ? 0.06 : 1);
     if (this.dark) {
       this.scene.background = new THREE.Color(0x050505);
       this.scene.fog = new THREE.FogExp2(0x050505, 0.02 / this.diag);
@@ -267,6 +277,7 @@ export class View {
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
     this.ocean.setWeather(weather, this.scene.background, grey);
+    this.trees.setWind(D.windX, D.windZ); // the grass bends in it
   }
 
   /** The sea against a ship that settles, lists and trims (water aboard): its level and tilt. */
@@ -284,6 +295,30 @@ export class View {
     this.sea.quaternion.copy(tilt).multiply(flat);
     // its origin (x = 0, z = 0) lies on that plane
     this.sea.position.set(0, s.level - sx * cx - sz * cz, 0);
+  }
+
+  /** In a storm, now and then lightning: the sky and everything under it flash white. */
+  lightning(dt) {
+    if (!(this.storm > 0.35) || this.dark || this.space || !this.skyBase) {
+      if (this.bolt) this.endBolt();
+      return;
+    }
+    if (!this.bolt && Math.random() < dt * 0.06 * this.storm) this.bolt = { t: 0, len: 0.12 + Math.random() * 0.25, hemi: this.hemi.intensity };
+    const b = this.bolt;
+    if (!b) return;
+    b.t += dt;
+    // a double flicker
+    const on = b.t < b.len && (b.t < b.len * 0.35 || b.t > b.len * 0.6);
+    this.hemi.intensity = b.hemi + (on ? 5 : 0);
+    this.scene.background = on ? this.skyBase.clone().lerp(new THREE.Color(0xdfe6f2), 0.7) : this.skyBase;
+    if (b.t > b.len) this.endBolt();
+  }
+
+  endBolt() {
+    if (!this.bolt) return;
+    this.hemi.intensity = this.bolt.hemi;
+    this.scene.background = this.skyBase;
+    this.bolt = null;
   }
 
   /** Put the fire light at the centre of the flames, brightness from the heat release. */
@@ -388,6 +423,7 @@ export class View {
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
     this.updateSea();
     if (this.sea) this.ocean.update(this.time);
+    this.lightning(dt);
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
     if (this.voxels.mesh) this.voxels.mesh.castShadow = !(this.dark && this.torchShadows);

@@ -30,6 +30,10 @@ body {
   border-radius: 8px;
   pointer-events: none;
 }
+/* the information pane: only while F1 is toggled on */
+#hud:not(.shown) {
+  display: none;
+}
 #title {
   font-weight: 600;
   font-size: 15px;

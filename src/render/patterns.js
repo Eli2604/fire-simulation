@@ -24,8 +24,27 @@ const TILE = 1024; // px per tile
 export const PATTERN_SIZE = 2.4; // metres covered by one tile
 const RELIEF = 0.03; // m: depth of the deepest joint
 
-/** Pattern id (1-based, 0 = none) of every material id. */
-export const PATTERN_OF_MAT = Uint8Array.from(MATERIALS, (m) => (m.pattern ? PATTERNS.indexOf(m.pattern) + 1 : 0));
+/**
+ * Photographed surfaces (CC0 scans from Poly Haven, polyhaven.com; files in render/photo/):
+ * the colour and the normal map of each, mapped in world space on all three axes
+ * (triplanar), size metres per tile (about the scan's real size, smaller where the
+ * scene is seen close up). Loaded in the background; until then the voxels keep their
+ * plain colours.
+ */
+export const PHOTOS = [
+  { name: 'grass', file: 'aerial_grass_rock', size: 7 }, // Rob Tuytel
+  { name: 'sand', file: 'coast_sand_01', size: 6 }, // Rob Tuytel
+  { name: 'rocks', file: 'aerial_rocks_02', size: 12 }, // Rob Tuytel
+  { name: 'basalt', file: 'dark_rock', size: 2.4 }, // Amal Kumar
+  { name: 'ash', file: 'burned_ground_01', size: 2 }, // Rob Tuytel
+];
+export const PHOTO = Object.fromEntries(PHOTOS.map((p, k) => [p.name, k]));
+const PHOTO_COLS = 4;
+const PHOTO_ROWS = 2;
+const PHOTO_TILE = 1024;
+
+/** Pattern id (1-based, 0 = none) of every material id; the photos come after the patterns. */
+export const PATTERN_OF_MAT = Uint8Array.from(MATERIALS, (m) => (m.pattern ? PATTERNS.indexOf(m.pattern) + 1 : m.photo ? PATTERNS.length + 1 + PHOTO[m.photo] : 0));
 
 // shared by every material that uses the patterns (switched off in thermal view)
 export const PATTERN_UNIFORMS = {
@@ -33,7 +52,120 @@ export const PATTERN_UNIFORMS = {
   uPatHeight: { value: null },
   uPatOn: { value: 1 },
   uPatBase: { value: PATTERNS.map(() => new THREE.Vector3(0.5, 0.5, 0.5)) },
+  uPhotoMap: { value: null },
+  uPhotoNrm: { value: null },
+  uPhotoOn: { value: 0 },
+  uPhotoBase: { value: PHOTOS.map(() => new THREE.Vector3(0.216, 0.216, 0.216)) }, // (mid grey, linear)
+  uPhotoSize: { value: PHOTOS.map((p) => p.size) },
 };
+
+let photos = null;
+
+/** The photo atlases (colour, normal map), filled in as the images arrive. */
+export function photoAtlas() {
+  if (photos || typeof document === 'undefined' || typeof Image === 'undefined') return photos;
+  const make = () => {
+    const c = document.createElement('canvas');
+    c.width = PHOTO_TILE * PHOTO_COLS;
+    c.height = PHOTO_TILE * PHOTO_ROWS;
+    return c;
+  };
+  const col = make();
+  const nrm = make();
+  const cc = col.getContext('2d', { willReadFrequently: true });
+  const nc = nrm.getContext('2d');
+  nc.fillStyle = 'rgb(128,128,255)';
+  nc.fillRect(0, 0, nrm.width, nrm.height);
+  // neutral until a photo arrives (its colour relative to its mean: 1)
+  cc.fillStyle = 'rgb(128,128,128)';
+  cc.fillRect(0, 0, col.width, col.height);
+  const tex = (c, srgb) => {
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    t.anisotropy = 8;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    return t;
+  };
+  photos = { col: tex(col, true), nrm: tex(nrm, false) };
+  PATTERN_UNIFORMS.uPhotoMap.value = photos.col;
+  PATTERN_UNIFORMS.uPhotoNrm.value = photos.nrm;
+  let left = PHOTOS.length * 2;
+  PHOTOS.forEach((p, k) => {
+    const ox = (k % PHOTO_COLS) * PHOTO_TILE;
+    const oy = Math.floor(k / PHOTO_COLS) * PHOTO_TILE;
+    for (const kind of ['diff', 'nor']) {
+      const img = new Image();
+      img.onload = () => {
+        if (kind === 'diff') {
+          cc.drawImage(img, ox, oy, PHOTO_TILE, PHOTO_TILE);
+          // its mean colour (linear): the photo is applied relative to it, on the voxel's own colour
+          const d = cc.getImageData(ox, oy, PHOTO_TILE, PHOTO_TILE).data;
+          const sum = [0, 0, 0];
+          let n = 0;
+          for (let i = 0; i < d.length; i += 4 * 41, n++) for (let j = 0; j < 3; j++) sum[j] += (d[i + j] / 255) ** 2.2;
+          PATTERN_UNIFORMS.uPhotoBase.value[k].set(sum[0] / n, sum[1] / n, sum[2] / n);
+          photos.col.needsUpdate = true;
+        } else {
+          nc.drawImage(img, ox, oy, PHOTO_TILE, PHOTO_TILE);
+          photos.nrm.needsUpdate = true;
+        }
+        // on as soon as the first one is there (the others are neutral grey until they come)
+        PATTERN_UNIFORMS.uPhotoOn.value = 1;
+        left--;
+      };
+      img.onerror = () => left--;
+      img.src = new URL(`./photo/${p.file}_${kind}.jpg`, import.meta.url).href;
+    }
+  });
+  return photos;
+}
+
+/**
+ * GLSL: triplanar sampling of photo pid at world position P (m), world normal N:
+ * photoColour (relative to the photo's mean) and photoNormal. Uses PATTERN_UNIFORMS.
+ */
+export const PHOTO_GLSL = /* glsl */ `
+uniform sampler2D uPhotoMap;
+uniform sampler2D uPhotoNrm;
+uniform float uPhotoOn;
+uniform vec3 uPhotoBase[${PHOTOS.length}];
+uniform float uPhotoSize[${PHOTOS.length}];
+vec2 photoUV(vec2 q, int pid) {
+  vec2 f = 0.004 + 0.992 * fract(q);
+  float cx = float(pid - (pid / ${PHOTO_COLS}) * ${PHOTO_COLS});
+  float cy = float(pid / ${PHOTO_COLS});
+  // canvas row 0 is at the top of the texture (v = 1)
+  return vec2((cx + f.x) / ${PHOTO_COLS}.0, 1.0 - (cy + f.y) / ${PHOTO_ROWS}.0);
+}
+vec3 photoW(vec3 N) { vec3 w = pow(abs(N), vec3(4.0)); return w / (w.x + w.y + w.z); }
+vec4 photoTap(sampler2D t, vec2 q, int pid) {
+  vec2 gx = dFdx(q) / vec2(${PHOTO_COLS}.0, ${PHOTO_ROWS}.0);
+  vec2 gy = dFdy(q) / vec2(${PHOTO_COLS}.0, ${PHOTO_ROWS}.0);
+  return textureGrad(t, photoUV(q, pid), gx, gy);
+}
+float photoSizeOf(int pid) { float s = uPhotoSize[0]; for (int k = 1; k < ${PHOTOS.length}; k++) if (k == pid) s = uPhotoSize[k]; return s; }
+vec3 photoBaseOf(int pid) { vec3 b = uPhotoBase[0]; for (int k = 1; k < ${PHOTOS.length}; k++) if (k == pid) b = uPhotoBase[k]; return b; }
+// linear colour of the photo relative to its mean (1 = average)
+vec3 photoColour(int pid, vec3 P, vec3 N) {
+  vec3 w = photoW(N);
+  vec3 q = P / photoSizeOf(pid);
+  vec3 c = photoTap(uPhotoMap, q.zy, pid).rgb * w.x + photoTap(uPhotoMap, q.xz, pid).rgb * w.y + photoTap(uPhotoMap, q.xy, pid).rgb * w.z;
+  return c / max(photoBaseOf(pid), vec3(0.02));
+}
+// the surface normal N (world) bent by the photo's normal map
+vec3 photoNormal(int pid, vec3 P, vec3 N, float strength) {
+  vec3 w = photoW(N);
+  vec3 q = P / photoSizeOf(pid);
+  vec2 nx = (photoTap(uPhotoNrm, q.zy, pid).xy * 2.0 - 1.0) * strength;
+  vec2 ny = (photoTap(uPhotoNrm, q.xz, pid).xy * 2.0 - 1.0) * strength;
+  vec2 nz = (photoTap(uPhotoNrm, q.xy, pid).xy * 2.0 - 1.0) * strength;
+  vec3 a = vec3(0.0, nx.y, nx.x) * sign(N.x);
+  vec3 b = vec3(ny.x, 0.0, ny.y);
+  vec3 c = vec3(nz.x, nz.y, 0.0) * sign(N.z);
+  return normalize(N + a * w.x + b * w.y + c * w.z);
+}
+`;
 
 let atlas = null;
 
@@ -425,6 +557,7 @@ export function patternAtlas() {
  */
 export function addPatterns(shader, instanced) {
   if (!patternAtlas()) return;
+  photoAtlas();
   Object.assign(shader.uniforms, PATTERN_UNIFORMS);
   const n = PATTERNS.length.toFixed(1);
   const S = PATTERN_SIZE.toFixed(3);
@@ -457,13 +590,23 @@ vec2 patUV(vec2 q, float id) {
 }
 float patH(vec2 q, float id, vec2 gx, vec2 gy) {
   return textureGrad(uPatHeight, patUV(q, id), gx, gy).r;
-}`,
+}
+${PHOTO_GLSL}`,
     )
     .replace(
       '#include <color_fragment>',
       `#include <color_fragment>
-bool patOn = vPat > 0.5 && uPatOn > 0.5;
+bool patOn = vPat > 0.5 && vPat < ${n} + 0.5 && uPatOn > 0.5;
+bool photoOn = vPat > ${n} + 0.5 && uPatOn > 0.5 && uPhotoOn > 0.5;
+
 vec3 patNw = vec3(0.0);
+if (photoOn) {
+  // a photographed surface: grass, sand, rock, basalt (on the voxel's own colour)
+  int pid = int(floor(vPat + 0.5)) - ${PATTERNS.length} - 1;
+  vec3 Nw = normalize(vPatN);
+  diffuseColor.rgb *= clamp(photoColour(pid, vPatWorld, Nw), 0.0, 2.5);
+  patNw = photoNormal(pid, vPatWorld, Nw, 1.0);
+}
 if (patOn) {
   float id = floor(vPat + 0.5) - 1.0;
   // the wall plane: the dominant axis of the surface normal, with its tangents (world axes)
@@ -524,6 +667,6 @@ if (patOn) {
     .replace(
       '#include <normal_fragment_maps>',
       `#include <normal_fragment_maps>
-if (patOn) normal = normalize((viewMatrix * vec4(patNw, 0.0)).xyz);`,
+if (patOn || photoOn) normal = normalize((viewMatrix * vec4(patNw, 0.0)).xyz);`,
     );
 }

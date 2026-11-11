@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildCarrierHull } from './hull.js';
 import { ChurchDrawing } from './church.js';
 
 /**
@@ -180,6 +181,9 @@ export class PropsRenderer {
         m.rotation.z = pr.turn ?? 0;
         return g;
       }
+      case 'carrierHull':
+        // the whole ship around the simulated slice of its deck (render/hull.js)
+        return buildCarrierHull(pr);
       case 'church': {
         // the gothic church: everything that is more than its voxels (render/church.js)
         const d = new ChurchDrawing(pr.spec, this.world, pr, this.sunDir, this.sunLight);

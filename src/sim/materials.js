@@ -76,6 +76,7 @@ const DEFAULTS = {
   charColor: [0.06, 0.05, 0.045],
   liquidColor: null,
   pattern: null, // texture drawn on the voxels ('limestone', 'ossuary', ...; see render/patterns.js)
+  photo: null, // a photographed texture drawn on the voxels ('grass', 'sand', ...; render/patterns.js PHOTOS)
   vapor: null, // liquid fuels: { refP Pa at refT °C, B (K, Clausius–Clapeyron), Tb boiling °C, Lv J/kg, beta thermal expansion 1/K }
 };
 
@@ -147,7 +148,7 @@ const DEFS = {
   grass: {
     label: 'Grass', color: [0.42, 0.55, 0.2], density: 4, burnTime: 10, specificHeat: 1800, conductivity: 0.04,
     surfaceFactor: 9, combustible: true, ignitionTemp: 250, pyrolysisTemp: 190, heatOfCombustion: 17e6,
-    burnRate: 0.04, selfHeating: 0.25, residue: 0.05, smokeYield: 0.012, smokeColor: [0.68, 0.66, 0.6],
+    burnRate: 0.04, selfHeating: 0.25, residue: 0.05, smokeYield: 0.012, smokeColor: [0.68, 0.66, 0.6], photo: 'grass',
     smolderColor: [0.9, 0.9, 0.86], moisture: 0.1, maxMoisture: 2.0, deadFuel: true, timeLag: 900,
     extinctionMoisture: 0.35, charColor: [0.1, 0.09, 0.07],
   },
@@ -161,7 +162,7 @@ const DEFS = {
     // sets what it touches alight, and sets again into dark rock as it cools
     label: 'Basalt / lava', color: [0.17, 0.16, 0.15], density: 2900, specificHeat: 840, conductivity: 1.7,
     emissivity: 0.95, meltingPoint: 1100, latentHeat: 400e3, fluidity: 0.35, brittle: true,
-    charColor: [0.14, 0.13, 0.12], liquidColor: [0.95, 0.42, 0.08], crust: true,
+    charColor: [0.14, 0.13, 0.12], liquidColor: [0.95, 0.42, 0.08], crust: true, photo: 'basalt',
   },
   aluminium: {
     label: 'Aluminium', color: [0.78, 0.79, 0.82], density: 2700, specificHeat: 900, conductivity: 205,
@@ -349,6 +350,18 @@ const DEFS = {
     label: 'Dressed limestone (ashlar)', color: [0.7, 0.66, 0.57], density: 2300, specificHeat: 900, conductivity: 1.3,
     brittle: true, maxMoisture: 0.06, moisture: 0.03, oxidizeTemp: 600, charColor: [0.2, 0.18, 0.16],
     pattern: 'ashlar',
+  },
+  beachSand: {
+    // the sand of a beach (the island's shores)
+    label: 'Beach sand', color: [0.78, 0.7, 0.5], density: 1600, specificHeat: 830, conductivity: 0.3,
+    maxMoisture: 0.25, moisture: 0.08, charColor: [0.3, 0.27, 0.22],
+    photo: 'sand',
+  },
+  hillRock: {
+    // weathered bedrock where it comes to the surface (the island's hilltops)
+    label: 'Rock (weathered)', color: [0.36, 0.34, 0.31], density: 2500, specificHeat: 850, conductivity: 2,
+    brittle: true, maxMoisture: 0.04, moisture: 0.02, oxidizeTemp: 700, charColor: [0.2, 0.19, 0.18],
+    photo: 'rocks',
   },
 };
 

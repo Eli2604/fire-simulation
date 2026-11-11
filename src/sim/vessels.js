@@ -38,6 +38,9 @@ export function vaporPressure(fluid, T) {
 
 /** Remaining strength fraction of a shell material at temperature T (°C). */
 export function strengthFactor(mat, T) {
+  // a vessel smaller than the voxels has no wall voxels of its own (a fuel tank or a gas
+  // bottle in a coarse scene): count it as a steel wall at the temperature of its contents
+  if (!mat) return T > 400 ? Math.max(0.1, 1 - (T - 400) / 500) : 1;
   switch (mat.name) {
     case 'steel':
       if (T < 300) return 1;

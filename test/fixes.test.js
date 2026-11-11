@@ -193,7 +193,7 @@ test('walk-through: water is no floor; deep water with air above it floats you, 
   const w = sim.world;
   const P = Walkthrough.prototype;
   const me = { hooks: { getSim: () => sim } };
-  for (const k of ['solidAt', 'isWater', 'floorAt', 'waterAt']) me[k] = P[k].bind(me);
+  for (const k of ['solidAt', 'isWater', 'inSea', 'seaSurface', 'floorAt', 'waterAt']) me[k] = P[k].bind(me);
   const [x, , z] = sim.spawn.p;
   const x2 = x + 3;
   const floor = me.floorAt(x2, z, 2);

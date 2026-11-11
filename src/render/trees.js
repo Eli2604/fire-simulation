@@ -2,6 +2,24 @@ import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
 import { F_HIDDEN, F_FALLING } from '../sim/world.js';
 
+// the wind in the grass (vertex shader, in place of three.js project_vertex)
+const WIND_GLSL = `vec4 mvPosition = vec4(transformed, 1.0);
+#ifdef USE_INSTANCING
+mvPosition = instanceMatrix * mvPosition;
+vec3 gBase = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+#else
+vec3 gBase = vec3(0.0);
+#endif
+// the wind bends the blades: more at the tips, in gusts that roll across the field
+float gH = clamp(position.y / uCardH, 0.0, 1.0);
+float gust = 0.65 + 0.35 * sin(dot(gBase.xz, uWindDir) * 0.45 - uTime * 1.9) + 0.18 * sin(gBase.x * 2.1 + uTime * 3.3) * sin(gBase.z * 1.7 - uTime * 2.7);
+float flutter = 0.06 * sin(uTime * 6.0 + gBase.x * 9.0 + gBase.z * 7.0);
+float bend = (uWindStr * gust + flutter) * gH * gH;
+mvPosition.xz += uWindDir * bend * uCardH;
+mvPosition.y -= 0.45 * bend * bend * uCardH;
+mvPosition = modelViewMatrix * mvPosition;
+gl_Position = projectionMatrix * mvPosition;`;
+
 /**
  * Trees drawn as trees. A tree is simulated as voxels (wood that chars and breaks
  * off, foliage that dries and burns); those voxels are hidden and this draws:
@@ -97,7 +115,7 @@ function barkTexture(species) {
 
 /** Leaf cards: a cluster drawn on a transparent canvas (white-ish: tinted per voxel). */
 function leafTexture(species) {
-  return canvas(256, species === 'willow' ? 512 : 256, (ctx, w, h) => {
+  return canvas(species === 'grass' ? 512 : 256, species === 'willow' || species === 'grass' ? 512 : 256, (ctx, w, h) => {
     const r = rnd(species.length * 31 + 7);
     ctx.clearRect(0, 0, w, h);
     const leafFill = () => {
@@ -105,17 +123,49 @@ function leafTexture(species) {
       return `rgb(${v * (0.85 + r() * 0.15)},${v},${v * (0.7 + r() * 0.2)})`;
     };
     if (species === 'grass') {
-      // a tuft of blades from the ground up, bending over
-      for (let k = 0; k < 90; k++) {
+      // a meadow tuft: many thin tapering blades from the ground up, of every length,
+      // some bending over, a few dry and straw-coloured, some seed heads on stalks;
+      // darker low down (in the shade of the others)
+      for (let k = 0; k < 120; k++) {
+        const x = w * (0.04 + 0.92 * r());
+        const hgt = h * (0.3 + 0.67 * r() ** 0.7);
+        const bend = (r() - 0.5) * (40 + hgt * 0.25);
+        const wd = 0.8 + r() * 1.6;
+        const dry = r() < 0.12;
+        const g = 120 + r() * 110;
+        const top = dry ? `rgb(${g * 1.05},${g * 0.95},${g * 0.55})` : `rgb(${g * (0.62 + r() * 0.2)},${g},${g * (0.38 + r() * 0.2)})`;
+        const grad = ctx.createLinearGradient(0, h, 0, h - hgt);
+        grad.addColorStop(0, 'rgb(40,52,24)');
+        grad.addColorStop(0.5, top);
+        grad.addColorStop(1, top);
+        ctx.fillStyle = grad;
+        // the blade: a thin curved sliver, wide at its foot, pointed
+        const tx = x + bend;
+        const ty = h - hgt;
+        const mx = x + bend * 0.35;
+        const my = h - hgt * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(x - wd, h);
+        ctx.quadraticCurveTo(mx - wd * 0.6, my, tx, ty);
+        ctx.quadraticCurveTo(mx + wd * 0.6, my, x + wd, h);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // seed heads
+      for (let k = 0; k < 9; k++) {
         const x = w * (0.1 + 0.8 * r());
-        const hgt = h * (0.45 + 0.55 * r());
-        const bend = (r() - 0.5) * 60;
-        ctx.strokeStyle = leafFill();
-        ctx.lineWidth = 1.5 + r() * 2.5;
+        const hgt = h * (0.75 + 0.22 * r());
+        const bend = (r() - 0.5) * 50;
+        ctx.strokeStyle = 'rgb(150,150,95)';
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(x, h);
-        ctx.quadraticCurveTo(x + bend * 0.3, h - hgt * 0.6, x + bend, h - hgt);
+        ctx.quadraticCurveTo(x + bend * 0.4, h - hgt * 0.5, x + bend, h - hgt);
         ctx.stroke();
+        ctx.fillStyle = 'rgb(170,160,110)';
+        ctx.beginPath();
+        ctx.ellipse(x + bend, h - hgt, 2.2, 9, bend * 0.01, 0, Math.PI * 2);
+        ctx.fill();
       }
       return;
     }
@@ -209,8 +259,67 @@ const tex = { bark: {}, leaf: {} };
 const barkTex = (s) => (tex.bark[s] ??= barkTexture(s));
 const leafTex = (s) => (tex.leaf[s] ??= leafTexture(s));
 
+/**
+ * A tuft of grass as real blades (not a picture on a card): thin tapering curved
+ * ribbons of three segments, of different lengths, leaning every way, spread over a
+ * voxel's footprint; dark at the foot, lighter towards the tip, a few dry ones.
+ * Vertex colours (multiplied by the voxel's colour); y from 0 at the ground up to H.
+ */
+function grassTuft(H, foot) {
+  const r = rnd(4242);
+  const pos = [];
+  const col = [];
+  const idx = [];
+  const blades = 36;
+  for (let b = 0; b < blades; b++) {
+    const x0 = (r() - 0.5) * foot * 0.95;
+    const z0 = (r() - 0.5) * foot * 0.95;
+    const len = H * (0.45 + 0.55 * r());
+    const a = r() * Math.PI * 2; // the way it leans
+    const lean = 0.15 + 0.5 * r();
+    const w0 = 0.016 + 0.018 * r();
+    const face = a + Math.PI / 2 + (r() - 0.5) * 0.8; // the blade's flat side
+    const dry = r() < 0.1;
+    const tip = dry ? [0.95, 0.85, 0.5] : [0.55 + 0.2 * r(), 0.9 + 0.1 * r(), 0.35 + 0.15 * r()];
+    const base = [0.25, 0.32, 0.16];
+    const n0 = pos.length / 3;
+    const segs = 3;
+    for (let k = 0; k <= segs; k++) {
+      const t = k / segs;
+      // a curve: rises, then bends over in the leaning direction
+      const out = lean * len * t * t;
+      const cx = x0 + Math.cos(a) * out;
+      const cz = z0 + Math.sin(a) * out;
+      const cy = len * (t - 0.18 * lean * t * t);
+      const hw = w0 * (1 - t * 0.92);
+      const ox = Math.cos(face) * hw;
+      const oz = Math.sin(face) * hw;
+      pos.push(cx - ox, cy, cz - oz, cx + ox, cy, cz + oz);
+      const c = base.map((v, j) => v + (tip[j] - v) * Math.min(1, t * 1.3));
+      col.push(...c, ...c);
+      if (k < segs) {
+        const q = n0 + k * 2;
+        idx.push(q, q + 1, q + 3, q, q + 3, q + 2);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // the blades are lit as the ground under them is (they mostly face up and out)
+  const n = g.getAttribute('normal');
+  for (let k = 0; k < n.count; k++) {
+    const v = new THREE.Vector3(n.getX(k), n.getY(k) + 1.2, n.getZ(k)).normalize();
+    n.setXYZ(k, v.x, v.y, v.z);
+  }
+  return g;
+}
+
 export class TreeRenderer {
   constructor(scene) {
+    this.windU = { uTime: { value: 0 }, uWindStr: { value: 0.2 }, uWindDir: { value: new THREE.Vector2(1, 0) }, uCardH: { value: 0.4 } };
     this.group = new THREE.Group();
     scene.add(this.group);
     this.items = [];
@@ -305,13 +414,33 @@ export class TreeRenderer {
     return it;
   }
 
-  /** Grass: crossed cards of blades standing on every grass voxel. */
+  /**
+   * Grass: crossed cards of blades standing on every grass voxel. The lowest grass voxels
+   * (the turf on the soil) stay visible as the ground, photographed grass on them, and the
+   * blades stand on top; higher up in a tall patch the voxels are only the blades. They
+   * bend in the wind (its strength and direction, gusts running through), more at their tips.
+   */
   buildGrass(w, voxels) {
     const h = w.h;
-    const cards = 2;
-    const geo = new THREE.PlaneGeometry(h * 1.6, h * 1.4);
-    geo.translate(0, h * 0.7, 0); // stands on its foot
-    const mat = new THREE.MeshStandardMaterial({ map: leafTex('grass'), color: 0xffffff, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9 });
+    const cards = 1;
+    const H = Math.min(h * 1.4, 0.55); // blades up to ~0.5 m
+    const geo = grassTuft(H, h);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xffffff, side: THREE.DoubleSide, roughness: 0.85 });
+    const U = this.windU;
+    U.uCardH.value = H;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, U);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime, uWindStr, uCardH;\nuniform vec2 uWindDir;')
+        .replace('#include <project_vertex>', () => WIND_GLSL);
+    };
+    mat.customProgramCacheKey = () => 'grass-wind-v1';
+    const turf = (i) => {
+      const [x, y, z] = w.coords(i);
+      if (y === 0) return true;
+      const b = w.idx(x, y - 1, z);
+      return !w.mat[b] || MATERIALS[w.mat[b]].name !== 'grass';
+    };
     const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, voxels.length * cards));
     mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, voxels.length * cards) * 3), 3);
     mesh.receiveShadow = true;
@@ -319,11 +448,14 @@ export class TreeRenderer {
     const pos = new THREE.Vector3();
     const one = new THREE.Vector3(1, 1, 1);
     let n = 0;
-    for (const i of voxels) {
+    const isTurf = voxels.map(turf);
+    for (const [j, i] of voxels.entries()) {
       const [x, y, z] = w.coords(i);
+      // on the turf the blades stand on its top; in a patch they fill the voxel
+      const y0 = isTurf[j] && H < h * 1.2 ? (y + 1) * h - h * 0.15 : y * h;
       for (let k = 0; k < cards; k++) {
-        e.set((hash(i, k, 1) - 0.5) * 0.2, hash(i, k, 2) * Math.PI + k * (Math.PI / 2), 0, 'YXZ');
-        pos.set((x + 0.2 + 0.6 * hash(i, k, 3)) * h, y * h, (z + 0.2 + 0.6 * hash(i, k, 4)) * h);
+        e.set((hash(i, k, 1) - 0.5) * 0.25, hash(i, k, 2) * Math.PI + k * (Math.PI / 3), 0, 'YXZ');
+        pos.set((x + 0.1 + 0.8 * hash(i, k, 3)) * h, y0, (z + 0.1 + 0.8 * hash(i, k, 4)) * h);
         this.m.compose(pos, this.q.setFromEuler(e), one.set(1, 0.7 + 0.6 * hash(i, k, 5), 1));
         mesh.setMatrixAt(n++, this.m);
       }
@@ -331,7 +463,11 @@ export class TreeRenderer {
     mesh.count = n;
     mesh.instanceMatrix.needsUpdate = true;
     this.group.add(mesh);
-    for (const i of voxels) w.flags[i] |= F_HIDDEN;
+    // the turf is the ground (drawn as a voxel); the rest is blades only
+    voxels.forEach((i, j) => {
+      if (isTurf[j]) w.flags[i] &= ~F_HIDDEN;
+      else w.flags[i] |= F_HIDDEN;
+    });
     const it = { grass: true, leaves: voxels, leafMesh: mesh, cards, meshes: [mesh], tick: -1, owner: null };
     this.shadeLeaves(it);
     return it;
@@ -404,7 +540,15 @@ export class TreeRenderer {
     leafMesh.instanceColor.needsUpdate = true;
   }
 
+  /** The wind the grass bends in (m/s, towards +x / +z). */
+  setWind(wx, wz) {
+    const U = Math.hypot(wx, wz);
+    this.windU.uWindStr.value = Math.min(1.25, U / 11);
+    if (U > 1e-3) this.windU.uWindDir.value.set(wx / U, wz / U);
+  }
+
   update(time) {
+    this.windU.uTime.value = time;
     if (!this.world) return;
     const tick = Math.floor(time * 2);
     for (const it of this.items) {

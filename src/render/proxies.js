@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildCarrierHull } from './hull.js';
 
 /**
  * Cheap stand-ins for the zones you are not in (seen from the jet): the other
@@ -50,6 +51,10 @@ export class ProxyRenderer {
     const { nx, nz, ny, h } = w;
     const base = seaLevel ?? 0;
     const cols = [];
+    // a ship drawn round its simulated slice (render/hull.js): drawn the same here, and only
+    // what stands above its deck (the island, aircraft) as columns
+    const ship = (w.props ?? []).find((q) => q.type === 'carrierHull');
+    const above = ship ? ship.p[1] + ship.D + 0.3 : -Infinity;
     for (let z = 0; z < nz; z += s)
       for (let x = 0; x < nx; x += s) {
         let top = -1;
@@ -62,7 +67,7 @@ export class ProxyRenderer {
               ti = w.idx(x + dx, t, z + dz);
             }
           }
-        if (top < 1 || (top + 1) * h <= base + 0.05) continue;
+        if (top < 1 || (top + 1) * h <= base + 0.05 || (top + 1) * h < above) continue;
         cols.push([x, z, (top + 1) * h, ti]);
       }
     const mesh = new THREE.InstancedMesh(this.box, this.mat, Math.max(1, cols.length));
@@ -78,12 +83,34 @@ export class ProxyRenderer {
     mesh.count = cols.length;
     mesh.castShadow = true;
     void ny;
-    return mesh;
+    if (!ship) return mesh;
+    const g = new THREE.Group();
+    g.add(mesh);
+    const hull = buildCarrierHull(ship);
+    hull.position.set(...ship.p);
+    hull.rotation.y = ship.heading ?? 0;
+    g.add(hull);
+    return g;
   }
 
   placeholder(z) {
     const [sx, , sz] = z.size;
     const hint = z.hint ?? {};
+    if (hint.shape === 'carrier') {
+      // a carrier not built yet: its hull and a block for its island
+      const g = new THREE.Group();
+      const L = hint.length ?? 40;
+      const B = hint.beam ?? 18;
+      const Dk = hint.deck ?? 7;
+      const hull = buildCarrierHull({ hx: L / 2, hz: B / 2, D: Dk, draft: hint.draft ?? 2.5 });
+      const at = hint.at ?? [sx / 2, 0, sz / 2];
+      hull.position.set(...at);
+      g.add(hull);
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(11, 9, 4.5), new THREE.MeshStandardMaterial({ color: 0x8a8f95, roughness: 0.7 }));
+      tower.position.set(at[0] + L * 0.125, at[1] + Dk + 4.5, at[2] + B / 2 - 3);
+      g.add(tower);
+      return g;
+    }
     const geo = hint.shape === 'hill' ? new THREE.ConeGeometry(0.5, 1, 24).translate(0.5, 0.5, 0.5) : this.box.clone();
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: new THREE.Color(hint.color ?? '#777777'), roughness: 1 }));
     mesh.scale.set(sx * (hint.fill ?? 0.9), hint.height ?? 4, sz * (hint.fill ?? 0.9));

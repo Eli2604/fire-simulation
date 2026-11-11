@@ -139,8 +139,12 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 `&zone=…` (a zone of it), `&walk=1` (in the walk-through), `&at=x,y,z,yaw,pitch` (standing
 there, degrees), `&lamp=0` (helmet lamp off), `&freeze=1` (paused), `&shot=1` (only the 3D
 view, for screenshots), `&wind=12&winddir=90&rain=8&fog=0.3` (the weather: m/s, degrees,
-mm/h, 0–1), `&erupt=1` (the island volcano erupts straight away). For example
-`?scenario=carrier&zone=island&wind=8&erupt=1`.
+mm/h, 0–1), `&storm=1` (a gale with rain), `&erupt=1` (the island volcano erupts straight
+away). For example `?scenario=carrier&zone=island&wind=8&erupt=1`.
+
+**F1** shows or hides the information pane (the scene, its description and the figures); it
+is hidden at the start. In a scene of several zones (the carrier), *Scene objects › Zone*
+takes you to any of them and lists its objects.
 
 ## Firefighter walk-through
 
@@ -424,6 +428,36 @@ up to date): clear turquoise over sand where it is shallow (you see the bottom),
 where it is deep, grey-green under a grey sky; the sky is mirrored in it by the Fresnel law.
 On the shore the waves shoal (lower and steeper) and break in lines of surf, with foam along
 the waterline; against a hull they are damped in its lee and slap against it in foam.
+
+**Storms** (Weather › Storm, or `&storm=1`): a gale (the wind goes up to 35 m/s) with
+driving rain under a low dark sky and lightning flashing over the sea. The sea builds with
+the wind: above ~10 m/s the waves keep growing (up to 4.5 m here) and lengthen, whitecaps
+break on most crests and the wind tears the foam off them into streaks (spindrift). The same
+wind drives any fire, and bends the grass flat.
+
+**The island group** (models/archipelago.js, render/archipelago.js): the ship and the island
+lie in a group of islands, drawn round whichever zone you are in: a large high island, a
+long one, volcanic cones, islets, a sand cay and a sunken reef ring, each with its fringing
+reef and lagoon, on a deep ocean floor with ridges and troughs. The sea floor runs on from
+the island's own voxels (a shelf sloping away from it), and the sea takes its depth from it:
+light and clear over the reefs and lagoons, deep blue beyond, surf on the other shores.
+
+**Photographed surfaces**: grass, beach sand, the hilltops' rock, basalt and burnt ground are
+photographs (CC0 scans from [Poly Haven](https://polyhaven.com): `aerial_grass_rock`,
+`coast_sand_01`, `aerial_rocks_02` and `burned_ground_01` by Rob Tuytel, `dark_rock` by
+Amal Kumar; src/render/photo/), colour and normal map, laid on all three axes in world
+space over the voxels' own colours (so charring, wetting and glow still show), and on the
+volcano and the other islands. **Grass** is real blades, a tuft on every grass voxel, bending
+in the wind (its strength and direction, gusts running across). A lighter sets it alight.
+
+**Swimming**: the open sea is water to the walk-through too. In deep water you float with
+your head out, riding the waves; hold C / Ctrl to dive and Space to come up; under water
+you swim where you look (W and the mouse) and breathe from your mask.
+
+The **carrier** is drawn whole round the simulated slice of its flight deck (render/hull.js):
+a flared hull narrowing to a raked stem under a broad bow, red antifouling and a black
+boot-top, the angled landing deck overhanging to port with its markings, deck-edge
+elevators, sponsons with catwalks and nets, the hull number.
 
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
 and a locked glass door. A rack catches fire after 25 s (an electrical fault). Heat

@@ -525,8 +525,13 @@ export class DragonAI {
       if (n.kind === 'dragon') continue;
       const dd = dist(n.p, d.chest);
       if (dd > n.loud * 1.6 + 8) continue;
+      // the same place again (an eruption rumbling on): it is already on its way, or has had a look
+      if (d.investigate && dist(n.p, d.investigate) < 10) continue;
+      if (d.lastLook && dist(n.p, d.lastLook) < 10 && (d.time ?? 0) - d.lastLookT < 60) continue;
       if (d.state === 'rest' || (d.state === 'roam' && n.kind === 'explosion')) {
         d.investigate = n.p.slice();
+        d.lastLook = n.p.slice();
+        d.lastLookT = d.time ?? 0;
         if (d.state === 'rest') this.roar(d, w);
         d.state = 'roam';
         d.roam = { phase: d.mode === 'air' ? 'fly' : 'takeoff', until: 20 };

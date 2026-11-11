@@ -169,8 +169,11 @@ test('stand-ins for the zones you are not in', () => {
     { name: 'deck', offset: [-105, 0, 30], world: c.deck.world, sea: c.deck.world.sea.level, size: c.deck.world.size },
     { name: 'island', offset: [0, 0, 0], hint: { shape: 'hill', color: '#5f7a3a' }, sea: 2.9, size: [40, 17, 36] },
   ]);
+  // the carrier: its drawn hull and flight deck, and columns for what stands on the deck
   const deck = r.items.get('deck').obj;
-  assert.ok(deck.count > 300, `${deck.count} deck columns`);
+  const cols = deck.children.find((o) => o.isInstancedMesh);
+  assert.ok(cols.count > 20, `${cols.count} columns above the deck (island, jet)`);
+  assert.ok(deck.children.length > 1, 'the hull drawn');
   assert.ok(r.items.get('island'), 'a placeholder for the unbuilt island');
 });
 

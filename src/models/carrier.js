@@ -34,9 +34,10 @@ export const carrierDeck = {
     const deck = { material: 'deckSteel', anchored: true, variation: 0.015 };
     const prims = [
       // hull sides and the flight deck (the space below it is another zone)
-      { shape: 'box', min: [-hx, 0, -hz], max: [hx, D, hz], ...steel, density: thin(0.02), color: [0.42, 0.44, 0.46], hull: true },
+      // (the hull's voxels are hidden: render/hull.js draws the whole ship round this slice)
+      { shape: 'box', min: [-hx, 0, -hz], max: [hx, D, hz], ...steel, density: thin(0.02), color: [0.42, 0.44, 0.46], hull: true, hidden: true },
       { shape: 'box', min: [-hx + h, h, -hz + h], max: [hx - h, D - h, hz - h], mode: 'carve' },
-      { shape: 'box', min: [-hx - 0.01, -0.01, -hz - 0.01], max: [hx + 0.01, p.draft, hz + 0.01], material: 'steel', mode: 'replace', density: thin(0.02), anchored: true, color: [0.5, 0.15, 0.12], hull: true },
+      { shape: 'box', min: [-hx - 0.01, -0.01, -hz - 0.01], max: [hx + 0.01, p.draft, hz + 0.01], material: 'steel', mode: 'replace', density: thin(0.02), anchored: true, color: [0.5, 0.15, 0.12], hull: true, hidden: true },
       // deck surface: non-skid grey; the markings painted on it
       { shape: 'box', min: [-hx, D - h, -hz], max: [hx, D, hz], ...deck, density: thin(0.03), color: [0.36, 0.37, 0.38] },
       // edge lines (white), a dashed centre line, yellow taxi lines
@@ -85,6 +86,7 @@ export const carrierDeck = {
       { type: 'net', p: [-hx, D, -hz], len: L, heading: Math.PI },
       { type: 'net', p: [-hx, D, hz], len: L },
       { type: 'number', p: [hx - 5, D, 0], text: '68', w: 5, h: 3.5, turn: -Math.PI / 2 },
+      { type: 'carrierHull', p: [0, 0, 0], hx, hz, D, draft: p.draft, number: '68' },
     ];
     // the hatch down below deck, next to the island
     const hatch = [ix - IL / 2 - 2.5, D, iz - 1];

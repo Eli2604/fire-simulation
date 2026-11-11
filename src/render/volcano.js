@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PATTERN_UNIFORMS, PHOTO_GLSL, PHOTO, photoAtlas } from './patterns.js';
 
 /**
  * Volcanoes drawn as mountains (models/volcano.js, sim/volcano.js). The cone's
@@ -112,11 +113,14 @@ export class VolcanoRenderer {
     };
     const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.93, metalness: 0 });
     m.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, uniforms);
+      photoAtlas();
+      Object.assign(shader.uniforms, PATTERN_UNIFORMS, uniforms);
       const common = /* glsl */ `
 uniform float uHeat, uTime, uVent, uSeed;
 uniform vec4 uBowl, uBase;
 varying vec3 vVW;
+varying vec3 vVN;
+${PHOTO_GLSL}
 float vHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float vNoise(vec3 p) {
   vec3 i = floor(p), f = fract(p);
@@ -138,8 +142,8 @@ float vClinker(vec3 p) {
 }
 `;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vVW;')
-        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvVW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+        .replace('#include <common>', '#include <common>\nvarying vec3 vVW;\nvarying vec3 vVN;')
+        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvVW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvVN = normalize(mat3(modelMatrix) * objectNormal);');
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', '#include <common>\n' + common)
         .replace(
@@ -168,6 +172,14 @@ float veg = smoothstep(0.32, 0.12, hf + 0.25 * (n1 - 0.5)) * smoothstep(0.45, 0.
 col = mix(col, vec3(0.035, 0.06, 0.015) * (0.7 + 0.5 * n2), veg * 0.8);
 // the crater floor: burnt, black and glassy
 col = mix(col, vec3(0.012, 0.011, 0.011), inBowl * 0.7);
+// the photographed rock over the bands: dark fissured basalt, burnt ash-covered ground
+if (uPhotoOn > 0.5) {
+  vec3 Nw = normalize(vVN);
+  vec3 pb = photoColour(${PHOTO.basalt}, vVW, Nw);
+  vec3 pa = photoColour(${PHOTO.ash}, vVW, Nw);
+  float ashy = clamp(streak * 0.8 + (1.0 - hf) * 0.3 * (1.0 - veg), 0.0, 1.0);
+  col *= mix(pb, pa, ashy) * 0.85 + 0.15;
+}
 diffuseColor.rgb = col;
 float vBumpH = n2 * 0.6 + (1.0 - cl) * 0.35 * (1.0 - veg);`,
         )
@@ -182,7 +194,9 @@ float vBumpH = n2 * 0.6 + (1.0 - cl) * 0.35 * (1.0 - veg);`,
   float det = dot(dpdx, R1);
   vec3 grad = sign(det) * (hx * R1 + hy * R2) * 0.06;
   normal = normalize(abs(det) * normal - grad);
-}`,
+}
+// the relief of the photographed rock (its normal map)
+if (uPhotoOn > 0.5) normal = normalize((viewMatrix * vec4(photoNormal(${PHOTO.basalt}, vVW, normalize(vVN), 1.3), 0.0)).xyz);`,
         )
         .replace(
           '#include <emissivemap_fragment>',
@@ -196,7 +210,7 @@ glow += uHeat * inBowl * smoothstep(0.12, 0.02, cl) * 1.2;
 totalEmissiveRadiance += vec3(1.0, 0.32, 0.06) * glow * 2.2;`,
         );
     };
-    m.customProgramCacheKey = () => 'volcano-v1';
+    m.customProgramCacheKey = () => 'volcano-v2';
     const mesh = new THREE.Mesh(g, m);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
