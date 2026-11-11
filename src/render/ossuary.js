@@ -308,8 +308,53 @@ diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(-0.4, 0.5, boneHeight(vBoneP));`,
   }
 
   geometries() {
-    this.geo ??= [skullGeometry(), boneEndGeometry(K_BALL), boneEndGeometry(K_KNUCKLE), longBoneGeometry(), boneEndGeometry(K_BROKEN), boneEndGeometry(K_KNOB)];
+    if (!this.geo) {
+      this.geo = [skullGeometry(), boneEndGeometry(K_BALL), boneEndGeometry(K_KNUCKLE), longBoneGeometry(), boneEndGeometry(K_BROKEN), boneEndGeometry(K_KNOB)];
+      this.loadScannedSkull();
+    }
     return this.geo;
+  }
+
+  /**
+   * TRIAL: a real skull model in place of the procedural one. CC0: the glTF sample asset
+   * "ScatteringSkull" by Vladimir Petkovic (KhronosGroup/glTF-Sample-Assets), reduced from
+   * 189k to 3k triangles (three.js SimplifyModifier) into render/models/skull.bin:
+   * [vertices u32][indices u32][index bytes u32], positions, normals (f32), indices;
+   * centred, 1 = its length, face towards +z. Swapped into every wall once loaded.
+   */
+  loadScannedSkull() {
+    if (typeof fetch === 'undefined' || typeof document === 'undefined') return;
+    fetch(new URL('./models/skull.bin', import.meta.url))
+      .then((r) => (r.ok ? r.arrayBuffer() : null))
+      .then((buf) => {
+        if (!buf) return;
+        const [nv, ni, ib] = new Uint32Array(buf, 0, 3);
+        const P = new Float32Array(buf, 12, nv * 3).slice();
+        const N = new Float32Array(buf, 12 + nv * 12, nv * 3);
+        const I = ib === 2 ? new Uint16Array(buf, 12 + nv * 24, ni) : new Uint32Array(buf, 12 + nv * 24, ni);
+        // the same size as the procedural skull (2 units long): the instances keep their scale
+        for (let k = 0; k < P.length; k++) P[k] *= 2;
+        // the cavities darker (eye sockets, nose, the foramen): where the surface faces in
+        const col = new Float32Array(nv * 3);
+        for (let k = 0; k < nv; k++) {
+          const px = P[k * 3], py = P[k * 3 + 1], pz = P[k * 3 + 2];
+          const l = Math.hypot(px, py, pz) || 1;
+          const d = (N[k * 3] * px + N[k * 3 + 1] * py + N[k * 3 + 2] * pz) / l;
+          const c = 0.3 + 0.7 * Math.min(1, Math.max(0, (d + 0.35) / 0.75));
+          col[k * 3] = col[k * 3 + 1] = col[k * 3 + 2] = c;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+        g.setAttribute('normal', new THREE.BufferAttribute(N.slice(), 3));
+        g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        g.setIndex(new THREE.BufferAttribute(I.slice(), 1));
+        g.computeBoundingSphere();
+        const old = this.geo[K_SKULL];
+        this.geo[K_SKULL] = g;
+        for (const ch of this.chunks.values()) if (ch.meshes?.[K_SKULL]) ch.meshes[K_SKULL].geometry = g;
+        old.dispose();
+      })
+      .catch(() => {});
   }
 
   // ------------------------------------------------------------------ tablets

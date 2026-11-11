@@ -95,7 +95,7 @@ export default {
         // down at least to its lowest neighbour's top: where the ground steps down (the shore,
         // the canal banks) there is no gap to see through under the thin shell of voxels
         const nb = Math.min(height(cx - step, cz), height(cx + step, cz), height(cx, cz - step), height(cx, cz + step));
-        const bottom = Math.max(0, Math.min(y - 2.2 * h, nb - h));
+        const bottom = Math.max(0, Math.min(y - Math.max(2.2 * h, 0.6), nb - h)); // (at least 0.6 m of ground: a blast digs a crater in it, not a hole through)
         prims.push({ shape: 'box', min: [x, bottom, z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
         if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
         if (p.pond && y < pondLevel && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r)

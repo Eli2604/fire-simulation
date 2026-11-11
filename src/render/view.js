@@ -370,6 +370,9 @@ export class View {
     // out in daylight a fire (an eruption) lights its surroundings orange, it does not outshine
     // the sun: at most about twice the daylight a third of the scene away
     if (!this.dark) this.fireLight.intensity = Math.min(this.fireLight.intensity, 2 * Math.max(0.2, this.sun.intensity) * (this.diag / 3) ** 1.6 * flick);
+    // underground / indoors: a big fire lights the space up strongly, but not white (a blast's
+    // fireball and the flames it starts would otherwise wash the whole place out)
+    else this.fireLight.intensity = Math.min(this.fireLight.intensity, 14 * flick);
   }
 
   /**
@@ -543,10 +546,14 @@ export class View {
       this.flashLight.intensity = 0;
       return;
     }
-    f.t += dt;
+    // (on the clock, not frame time: while a blast is being worked out the frames are slow,
+    // and the flash would last for seconds)
+    f.t0 ??= performance.now();
+    f.t = (performance.now() - f.t0) / 1000;
     const k = Math.max(0, 1 - f.t / 0.8);
     this.flashLight.position.set(...f.pos);
     this.flashLight.intensity = 400 * f.power * k * k * (this.diag / 3) ** 2;
+    if (this.dark) this.flashLight.intensity = Math.min(this.flashLight.intensity, 120 * k * k); // (a flash in a vault: bright, not white-out)
     if (k <= 0) this.flash = null;
   }
 

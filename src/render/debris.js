@@ -30,6 +30,11 @@ export class DebrisRenderer {
     const col = this.mesh.instanceColor.array;
     for (let k = 0; k < n; k++) {
       const d = list[k];
+      if (d.meshPiece) {
+        // drawn as its piece of the mesh (a statue: render/statue.js)
+        this.mesh.setMatrixAt(k, this.zero ??= new THREE.Matrix4().makeScale(0, 0, 0));
+        continue;
+      }
       this.e.set(d.age * 7 + k, d.age * 5 + k * 0.7, d.age * 3);
       this.q.setFromEuler(this.e);
       if (d.flake) this.s.set(h * 0.35, h * 0.04, h * 0.3);

@@ -363,7 +363,11 @@ export function launchVoxel(w, i, vel) {
     owner: w.owner[i],
     tint: [w.tint[i * 3], w.tint[i * 3 + 1], w.tint[i * 3 + 2]],
     age: 0,
+    // where it came from (through earlier landings), and whether a mesh draws it (a statue)
+    origin: w.pieceOf?.get(i) ?? i,
+    meshPiece: !!(w.flags[i] & 64) || w.pieceOf?.has(i),
   });
+  w.pieceOf?.delete(i);
   w.clearVoxel(i);
 }
 
@@ -450,4 +454,9 @@ function place(w, j, d) {
   w.tint[j * 3] = d.tint[0];
   w.tint[j * 3 + 1] = d.tint[1];
   w.tint[j * 3 + 2] = d.tint[2];
+  // a piece of something drawn by a mesh: it lies there as that piece (still hidden as a voxel)
+  if (d.meshPiece) {
+    (w.pieceOf ??= new Map()).set(j, d.origin);
+    w.flags[j] |= 64;
+  }
 }

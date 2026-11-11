@@ -34,6 +34,11 @@ function catacombObjects(exitTo = '') {
     // candles (a paraffin and a beeswax one, as in the old Candles scene, and two more), tall
     // candles on stands either side
     { type: 'cryptChapel', params: {}, x: 30, z: 17 },
+    // a scanned stone statue by the wall in front of the dais, facing the aisle: it scorches,
+    // cracks and breaks (models/statue.js)
+    { type: 'statue', params: { shape: 'gothic', scale: 0.85 }, x: 27.4, z: 21.1, rotation: 90 },
+    // brass candelabra at the back of the altar, their candles burning (models/candelabra.js)
+    { type: 'candelabra', params: { scale: 0.8 }, x: 30, z: 23.2, y: 1.2, rotation: 180 },
     { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 29.35, z: 23.0, y: 1.2, ignite: true },
     { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 29.75, z: 23.1, y: 1.2, ignite: true },
     { type: 'candle', params: { height: 0.2, radius: 0.025, wax: 'beeswax', color: '#e8c060' }, x: 30.25, z: 23.1, y: 1.2, ignite: true },

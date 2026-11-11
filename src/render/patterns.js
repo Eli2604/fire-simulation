@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
+import { polyHavenTexture } from './assets.js';
 
 /**
  * Surface relief for materials that are more than a colour (dressed limestone
@@ -25,7 +26,7 @@ export const PATTERN_SIZE = 2.4; // metres covered by one tile
 const RELIEF = 0.03; // m: depth of the deepest joint
 
 /**
- * Photographed surfaces (CC0 scans from Poly Haven, polyhaven.com; files in render/photo/):
+ * Photographed surfaces (CC0 scans from Poly Haven, polyhaven.com, loaded from there: render/assets.js):
  * the colour and the normal map of each, mapped in world space on all three axes
  * (triplanar), size metres per tile (about the scan's real size, smaller where the
  * scene is seen close up). Loaded in the background; until then the voxels keep their
@@ -96,6 +97,7 @@ export function photoAtlas() {
     const oy = Math.floor(k / PHOTO_COLS) * PHOTO_TILE;
     for (const kind of ['diff', 'nor']) {
       const img = new Image();
+      img.crossOrigin = 'anonymous'; // (from Poly Haven: the canvas must be able to read it)
       img.onload = () => {
         if (kind === 'diff') {
           cc.drawImage(img, ox, oy, PHOTO_TILE, PHOTO_TILE);
@@ -115,7 +117,7 @@ export function photoAtlas() {
         left--;
       };
       img.onerror = () => left--;
-      img.src = new URL(`./photo/${p.file}_${kind}.jpg`, import.meta.url).href;
+      img.src = polyHavenTexture(p.file, kind);
     }
   });
   return photos;

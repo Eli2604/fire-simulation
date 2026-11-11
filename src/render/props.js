@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { buildCarrierHull } from './hull.js';
 import { buildCryptVault } from './cryptVault.js';
+import { StatueDrawing } from './statue.js';
+import { loadPolyHavenModel } from './assets.js';
 import { ChurchDrawing } from './church.js';
 
 /**
@@ -180,6 +182,30 @@ export class PropsRenderer {
         const m = this.mesh(new THREE.PlaneGeometry(pr.w ?? 6, pr.h ?? 4), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }), g, 0, 0.02, 0);
         m.rotation.x = -Math.PI / 2;
         m.rotation.z = pr.turn ?? 0;
+        return g;
+      }
+      case 'statueMesh': {
+        // a scanned object over its voxels, losing what is blown off, sooted, glowing (render/statue.js)
+        this.drawings.push(new StatueDrawing(pr, this.world, g));
+        return g;
+      }
+      case 'gltf': {
+        // TRIAL: a ready-made model (a photo-scanned statue, brass candelabra: CC0, Poly Haven)
+        if (typeof document === 'undefined') return null;
+        loadPolyHavenModel(pr.polyhaven)
+          .then((scene) => {
+            const o = scene.clone(true);
+            o.scale.setScalar(pr.scale ?? 1);
+            o.traverse((c) => {
+              if (c.isMesh) {
+                c.castShadow = true;
+                c.receiveShadow = true;
+                if (pr.hideFlames && /flame/i.test(c.material?.name ?? '')) c.visible = false;
+              }
+            });
+            g.add(o);
+          })
+          .catch((e) => console.warn('model', pr.file, e));
         return g;
       }
       case 'cryptVault':

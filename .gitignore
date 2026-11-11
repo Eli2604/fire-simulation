@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# ready-made assets are loaded from where they are published (render/assets.js), not kept here
+src/render/models/*/
+src/render/photo/

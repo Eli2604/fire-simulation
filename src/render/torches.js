@@ -171,8 +171,10 @@ export class TorchRenderer {
     wax.position.y = -c.wick - c.height / 2;
     const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, c.wick, 4), new THREE.MeshStandardMaterial({ color: 0x1a1410 }));
     wick.position.y = -c.wick / 2;
+    // (flameOnly: the candle itself is drawn by a model, only its flame is ours)
+    wax.visible = wick.visible = !c.flameOnly;
     obj.add(wax, wick);
-    if (c.holder !== false) {
+    if (c.holder !== false && !c.flameOnly) {
       const dish = new THREE.Mesh(new THREE.CylinderGeometry(c.radius * 2.2, c.radius * 2.0, 0.012, 20), new THREE.MeshStandardMaterial({ color: 0xb8a888, roughness: 0.5, metalness: 0.4 }));
       dish.position.y = -c.wick - c.height - 0.006;
       obj.add(dish);

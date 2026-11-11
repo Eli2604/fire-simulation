@@ -1,4 +1,7 @@
-import { MATERIALS } from './materials.js';
+import { MATERIALS, MAT } from './materials.js';
+
+// loose ground a blast digs a crater in (soil, sand, grass, gravel; weathered rock only cracks)
+const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock'].map((n) => MAT[n]).filter(Boolean));
 import { raySolid, bulletHole } from './wounds.js';
 import { F_FALLING, F_ANCHOR } from './world.js';
 import { launchVoxel } from './vessels.js';
@@ -17,6 +20,8 @@ export function explode(sim, center, E, opts = {}) {
   const blastR = Math.max(3 * h, 0.4 * Math.cbrt(E / 1000));
   const v0 = Math.min(80, 8 + Math.sqrt(E / 2000));
   const r2 = blastR * blastR;
+  // the crater a blast at the ground digs: ~0.8 m · (TNT kg)^(1/3) (0.4 m for a grenade)
+  const craterR = 0.8 * Math.cbrt(E / 4.6e6);
   const glassR2 = (3 * blastR) ** 2;
   const victims = [];
   for (let k = 0; k < w.solidCount; k++) {
@@ -27,23 +32,42 @@ export function explode(sim, center, E, opts = {}) {
     const p = w.center(x, y, z);
     const d2 = (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2 + (p[2] - center[2]) ** 2;
     const M = MATERIALS[w.mat[i]];
+    // the crater: the ground round the blast is thrown up and out (it lands as a rim round the hole)
+    if (GROUND.has(w.mat[i])) {
+      const rc = M.name === 'hillRock' ? craterR * 0.5 : craterR;
+      // (never the last layer: the ground is only a shell of voxels, there must be no hole through it)
+      const below = y > 1 ? w.mat[w.idx(x, y - 1, z)] : 0;
+      if (d2 < rc * rc && below) victims.push([i, p, 3.5 + 4 * (1 - Math.sqrt(d2) / rc), true]);
+      // (the ground is dug only as a crater, however light its voxels are)
+      if (d2 < rc * rc * 4 && !(M.shatterTemp !== Infinity)) w.char[i] = Math.max(w.char[i], 0.4 * (1 - Math.sqrt(d2) / (2 * rc))); // scorched round it
+      continue;
+    }
     if (M.shatterTemp !== Infinity && d2 < glassR2) w.flags[i] |= F_FALLING;
     if (d2 > r2) continue;
     const d = Math.sqrt(d2);
     if (d < blastR * 0.4) {
-      w.skin[i] = Math.max(w.skin[i], 400 + 500 * (1 - d / (blastR * 0.4)));
+      // the fireball scorches what it touches; it heats only what can burn (thin, light
+      // stuff): stone and metal do not take that heat in a flash, and would glow for minutes
+      if (M.combustible) w.skin[i] = Math.max(w.skin[i], 400 + 500 * (1 - d / (blastR * 0.4)));
       w.char[i] = Math.max(w.char[i], 0.5);
     }
-    if (w.flags[i] & F_ANCHOR && d > blastR * 0.25) continue;
+    // (thin built-in sheets: deck and hull plating, floorboards, boards: blown out further off)
+    if (w.flags[i] & F_ANCHOR && d > blastR * (w.dens[i] < 0.15 ? 0.4 : 0.25)) continue;
     const m = M.density * w.dens[i] * V;
-    const speed = v0 * (1 - d / blastR) ** 2 * Math.min(1, Math.sqrt(2 / Math.max(m, 1e-3)));
-    if (speed > 3) victims.push([i, p, speed]);
+    let speed = v0 * (1 - d / blastR) ** 2 * Math.min(1, Math.sqrt(2 / Math.max(m, 1e-3)));
+    // carved stone (a statue): close to a blast it does not have to be thrown whole to break,
+    // the shock shatters it: pieces break off and fly (not too fast: they are heavy)
+    if (M.fragile && d < blastR * 0.32) speed = Math.max(speed, 3.5 + 4 * (1 - d / (blastR * 0.32)));
+    // steel plate is tough: a grenade dents a deck, it takes a rocket to hole it (thin hull plating
+    // is light enough to be torn out anyway)
+    if (speed > (M.name === 'steel' || M.name === 'deckSteel' ? 8 : 3)) victims.push([i, p, speed]);
   }
   // gas pipes caught in the blast burst (before their voxels are thrown away)
   for (const gp of w.gasPipes) burstPipeNear(sim, gp, center, blastR);
-  for (const [i, p, speed] of victims) {
+  for (const [i, p, speed, ejecta] of victims) {
     let dx = p[0] - center[0];
-    let dy = p[1] - center[1] + 0.1;
+    // (crater ejecta fly up and out, whatever side of the blast they were on)
+    let dy = ejecta ? Math.hypot(dx, p[2] - center[2]) * 0.9 + 0.25 : p[1] - center[1] + 0.1;
     let dz = p[2] - center[2];
     const l = Math.hypot(dx, dy, dz) || 1;
     dx = dx / l + (sim.rand() - 0.5) * 0.3;

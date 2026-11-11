@@ -363,6 +363,17 @@ const DEFS = {
     brittle: true, maxMoisture: 0.04, moisture: 0.02, oxidizeTemp: 700, charColor: [0.2, 0.19, 0.18],
     photo: 'rocks',
   },
+  brass: {
+    // cast brass (candlesticks): melts at ~930 °C, tarnishes dark when hot
+    label: 'Brass', color: [0.75, 0.6, 0.3], density: 8500, specificHeat: 380, conductivity: 110, emissivity: 0.1,
+    meltingPoint: 930, latentHeat: 170e3, fluidity: 0.8, oxidizeTemp: 300, charColor: [0.25, 0.2, 0.12],
+    liquidColor: [0.95, 0.62, 0.3],
+  },
+  sandstone: {
+    // carved sandstone (a statue): brittle, spalls in a fierce fire (flakes fly off), sooted black
+    label: 'Sandstone (carved)', color: [0.62, 0.58, 0.5], density: 2200, specificHeat: 880, conductivity: 1.5,
+    brittle: true, spalling: true, fragile: true, maxMoisture: 0.08, moisture: 0.03, oxidizeTemp: 150, charColor: [0.1, 0.09, 0.085], // (soot from the smoke blackens it well below that heat; this stands in for it)
+  },
 };
 
 /** id -> material definition. id 0 is air/empty. */

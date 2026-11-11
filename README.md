@@ -416,6 +416,32 @@ carrier's too: a ladder down from the corridor below deck. The **campfire** burn
 out on the reef (a second boat at the island's pier): a log-cabin fire lit from the kindling
 in a stone ring on dry grass, its logs charring into embers, then ash.
 
+**Scanned objects that burn and break** (models/statue.js, models/candelabra.js,
+render/statue.js): photo-scanned models (CC0, Poly Haven) are simulated as voxels of their
+material filling their shape, hidden, and the scan is drawn over them with every triangle
+tied to its nearest voxel. A part blown off leaves the object and flies, tumbles and lies
+as that piece of it (not a block); the rest stands or falls; it blackens with soot and
+glows where it is hot, and molten (brass) it is gone. In the underground church: a gothic
+statue (sandstone: a grenade within a metre wrecks it, at 1.5 m it chips) and brass
+candelabra on the altar (each candlestick a column of brass voxels holding its weight in
+metal; their candles burn with flames of ours, which go out when their part is gone).
+The skulls in the ossuary walls are a real skull model (CC0, Khronos glTF samples),
+reduced to 3,000 triangles (render/models/skull.bin).
+
+**Ready-made assets are not kept in the repository**: the photo textures and the scanned
+models are loaded from Poly Haven (and the Khronos samples) when a scene needs them
+(render/assets.js); only what is made from them is kept (the reduced skull, a statue's
+solid shape as voxel cells, models/data/). Without a connection the scenes still work,
+with plain surfaces and the objects shown as their voxels.
+
+**Blasts and the ground**: a blast at the ground digs a crater in loose ground (soil,
+sand, grass, gravel), ~0.8 m · (TNT kg)^(1/3) across (0.4 m for a grenade), throwing the
+earth up and out into a rim; the island's ground is at least 0.6 m deep, so it is never
+holed through. Thin built-in sheet (floorboards, boards, hull plating) is torn out further
+from a blast than solid construction; steel deck plate takes a rocket. The flash of a
+blast lasts 0.8 s on the clock and, indoors, lights the place up without washing it out.
+`&blast=x,y,z,energy` sets one off (for testing; a grenade is ~6e5 J).
+
 A **volcano** (models/volcano.js, sim/volcano.js) stands on the island's main hill. It sleeps
 until a dragon moves within 6 m of its crater; then it erupts: a blast in the crater (heard
 far off), lava welling up in the vent at 1.5 m³/s (molten basalt at 1200 °C, which fills the

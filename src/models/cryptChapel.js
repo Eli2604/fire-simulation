@@ -89,6 +89,7 @@ export default {
         );
         heaters.push({ pos: [tip[0], tip[1] + 0.05, tip[2]], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' });
       }
-    return { prims, heaters, props: [{ type: 'cryptVault', p: [0, 0, 0], W, L, spring: SPRING, rise: RISE, apseR, apseSpring: SA }] };
+    const props = [{ type: 'cryptVault', p: [0, 0, 0], W, L, spring: SPRING, rise: RISE, apseR, apseSpring: SA }];
+    return { prims, heaters, props };
   },
 };

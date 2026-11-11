@@ -710,6 +710,11 @@ for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 
   if (qs.get(k) !== null && Number.isFinite(v)) weather[key] = sim.weather[key] = v;
 }
 view.applyWeather(weather);
+// ...&blast=x,y,z,energy: an explosion there after a second (for testing: energy in J, a grenade ~6e5)
+if (qs.get('blast')) {
+  const [bx, by, bz, be] = qs.get('blast').split(',').map(Number);
+  if ([bx, by, bz].every(Number.isFinite)) setTimeout(() => import('./sim/explosions.js').then(({ explode }) => explode(sim, [bx, by, bz], Number.isFinite(be) ? be : 6e5)), 1000);
+}
 // ...&erupt=1: the volcano erupts straight away (without waiting for the dragon to pass)
 if (qs.get('erupt')) import('./sim/volcano.js').then(({ erupt }) => sim.world.volcanoes.forEach((v) => erupt(sim, v)));
 if (qs.get('shot')) {
