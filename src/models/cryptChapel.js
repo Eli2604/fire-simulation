@@ -22,6 +22,11 @@ export default {
     const W = p.width / 2;
     const apseR = Math.min(W * 0.62, 2.4);
     const rock = { material: 'stone', anchored: true, variation: 0.06 };
+    // the vault: an elliptical barrel from the tops of the walls (2.6 m) to the crown (3.9 m),
+    // cut in slices a little above that curve; the smooth vault is drawn on it
+    const SPRING = 2.6;
+    const RISE = 1.3;
+    const SA = 1.65; // the apse's half dome springs here (its crown stays inside the rock)
     const ashlar = { material: 'ashlar', anchored: true, color: [0.8, 0.76, 0.66], variation: 0.04 };
     const oak = { material: 'oak', color: [0.36, 0.25, 0.15], density: 0.6, anchored: true };
     const prims = [
@@ -30,10 +35,10 @@ export default {
       { shape: 'box', min: [-p.passage + 1.9, 0, -L - 1.4], max: [W + 1.6, 4.2, L + apseR + 0.8], ...rock, mode: 'fill' },
       // the nave: upright walls, then the barrel vault
       { shape: 'box', min: [-W, 0, -L], max: [W, 2.6, L], mode: 'carve' },
-      { shape: 'cylinder', a: [0, 0.3, -L], b: [0, 0.3, L], r: W, mode: 'carve' },
-      // the apse: a half-round end with a half dome
-      { shape: 'cylinder', a: [0, 0, L], b: [0, 1.85, L], r: apseR, mode: 'carve' },
-      { shape: 'sphere', c: [0, 1.85, L], r: apseR, mode: 'carve' }, // (its crown under the rock's top)
+      // the apse: a half-round end with a half dome (cut a little wider than it is drawn:
+      // render/cryptVault.js draws its smooth surface in front of the voxels' steps)
+      { shape: 'cylinder', a: [0, 0, L], b: [0, SA, L], r: apseR + 0.12, mode: 'carve' },
+      { shape: 'sphere', c: [0, SA, L], r: apseR + 0.12, mode: 'carve' },
       // the passage in from the catacombs, and its doorway into the nave
       { shape: 'box', min: [-p.passage - 0.2, 0, -0.9], max: [-W + 0.01, 2.3, 0.9], mode: 'carve' },
       // a dais in the apse, the altar on it, a white cloth on the altar
@@ -44,9 +49,14 @@ export default {
       { shape: 'box', min: [-1.9, 0, L - 0.9], max: [-1.5, 1.0, L - 0.5], ...ashlar },
       { shape: 'box', min: [1.5, 0, L - 0.9], max: [1.9, 1.0, L - 0.5], ...ashlar },
       // the cross on the apse wall
-      { shape: 'box', min: [-0.1, 1.3, L + apseR - 0.7], max: [0.1, 2.5, L + apseR - 0.5], ...oak },
-      { shape: 'box', min: [-0.45, 2.0, L + apseR - 0.7], max: [0.45, 2.2, L + apseR - 0.5], ...oak },
+      { shape: 'box', min: [-0.1, 1.2, L + apseR - 0.32], max: [0.1, 2.3, L + apseR - 0.14], ...oak },
+      { shape: 'box', min: [-0.42, 1.85, L + apseR - 0.32], max: [0.42, 2.02, L + apseR - 0.14], ...oak },
     ];
+    for (let x = -W; x < W - 1e-6; x += h) {
+      const xm = Math.min(Math.abs(x), Math.abs(x + h)); // the slice's inner edge: the highest point of the curve over it
+      const y = SPRING + RISE * Math.sqrt(Math.max(0, 1 - (xm / W) ** 2)) + h * 0.6;
+      prims.push({ shape: 'box', min: [x, SPRING - h, -L], max: [x + h, Math.min(y, 4.0), L], mode: 'carve' });
+    }
     // pillars along the walls, carrying the vault's ribs
     for (let z = -L + 1.6; z < L - 0.6; z += 3)
       for (const s of [-1, 1]) {
@@ -79,6 +89,6 @@ export default {
         );
         heaters.push({ pos: [tip[0], tip[1] + 0.05, tip[2]], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' });
       }
-    return { prims, heaters };
+    return { prims, heaters, props: [{ type: 'cryptVault', p: [0, 0, 0], W, L, spring: SPRING, rise: RISE, apseR, apseSpring: SA }] };
   },
 };

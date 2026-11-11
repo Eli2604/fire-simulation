@@ -452,6 +452,7 @@ export default {
 
     // the stair down to the crypt in the north arm (and on, into the catacombs: another zone)
     const portals = [];
+    const heaters = [];
     if (p.crypt) {
       const sx = S(0.6);
       const z0 = -S(3.9);
@@ -467,9 +468,21 @@ export default {
       // a low parapet round the opening
       box(-sx - h, 0, z1 - h, -sx, Y(0.8), z0, stone);
       box(sx, 0, z1 - h, sx + h, Y(0.8), z0, stone);
-      portals.push({ p: [0, 0, z0 + 0.2], r: 1.0, to: p.crypt, label: 'Stairs: down to the crypt and the catacombs', arrive: { p: [0, 0, z0 + 1.4], yaw: 0 } });
+      // (the portal at mid-flight: E works from the top of the stairs and from the bottom)
+      portals.push({ p: [0, FD / 2, (z0 + z1) / 2], r: 1.3, to: p.crypt, label: 'Stairs: down to the crypt and the catacombs', arrive: { p: [0, 0, z0 + 1.4], yaw: 0 } });
+      // two torches on the arm's end wall, either side above the stairwell: you see where it is
+      for (const s of [-1, 1]) {
+        const base = [s * 0.95, 1.7, -zA + 0.02];
+        const tip = [s * 0.95, 2.0, -zA + 0.32];
+        prims.push(
+          { shape: 'box', min: [s * 0.95 - 0.08, 1.55, -zA], max: [s * 0.95 + 0.08, 1.71, -zA + 0.16], material: 'steel', color: [0.12, 0.11, 0.1], anchored: true, hidden: true },
+          { shape: 'capsule', a: base, b: tip, r: Math.max(0.025, h * 0.6), material: 'wood', density: 0.6, color: [0.3, 0.2, 0.12], anchored: true, hidden: true },
+          { shape: 'sphere', c: tip, r: Math.max(0.06, h * 0.8), material: 'wood', density: 0.9, moisture: 0, color: [0.12, 0.07, 0.04], anchored: true, hidden: true },
+        );
+        heaters.push({ pos: [tip[0], tip[1] + 0.05, tip[2]], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' });
+      }
     }
 
-    return { prims, props: [{ type: 'church', p: [0, 0, 0], spec }], portals };
+    return { prims, props: [{ type: 'church', p: [0, 0, 0], spec }], portals, heaters };
   },
 };

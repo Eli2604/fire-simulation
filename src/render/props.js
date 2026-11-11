@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildCarrierHull } from './hull.js';
+import { buildCryptVault } from './cryptVault.js';
 import { ChurchDrawing } from './church.js';
 
 /**
@@ -181,6 +182,9 @@ export class PropsRenderer {
         m.rotation.z = pr.turn ?? 0;
         return g;
       }
+      case 'cryptVault':
+        // the smooth vault of the underground church (render/cryptVault.js)
+        return buildCryptVault(pr);
       case 'carrierHull':
         // the whole ship around the simulated slice of its deck (render/hull.js)
         return buildCarrierHull(pr);

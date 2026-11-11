@@ -87,7 +87,11 @@ export default {
         const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
         // the green slopes are grass (it burns: a lighter or a spark sets it going), on soil
         const sward = !rock && !sand && !(p.pond && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r);
-        prims.push({ shape: 'box', min: [x, Math.max(0, y - 2.2 * h), z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
+        // down at least to its lowest neighbour's top: where the ground steps down (the shore,
+        // the canal banks) there is no gap to see through under the thin shell of voxels
+        const nb = Math.min(height(cx - step, cz), height(cx + step, cz), height(cx, cz - step), height(cx, cz + step));
+        const bottom = Math.max(0, Math.min(y - 2.2 * h, nb - h));
+        prims.push({ shape: 'box', min: [x, bottom, z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
         if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
         if (p.pond && y < pondLevel && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r)
           prims.push({ shape: 'box', min: [x, y, z], max: [x + step, pondLevel, z + step], material: 'water' });
@@ -98,7 +102,7 @@ export default {
     const ph = sea + 0.6;
     prims.push(
       { shape: 'box', min: [px, ph - 0.1, pz - 0.8], max: [px + p.pierLength, ph, pz + 0.8], material: 'wood', density: 0.3, color: [0.5, 0.38, 0.24] },
-      ...[0, 2, 4].filter((k) => k < p.pierLength - 0.5).flatMap((k) => [
+      ...Array.from({ length: Math.ceil(p.pierLength / 2) }, (_, k) => k * 2).filter((k) => k < p.pierLength - 0.5).flatMap((k) => [
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz - 0.7], b: [px + k + 0.3, ph, pz - 0.7], r: 0.1, material: 'wood' },
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz + 0.7], b: [px + k + 0.3, ph, pz + 0.7], r: 0.1, material: 'wood' },
       ]),

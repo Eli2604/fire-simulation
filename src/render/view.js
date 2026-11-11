@@ -66,7 +66,7 @@ export class View {
     this.root.add(this.fireLight);
     // lights for wall torches and similar small flames (the nearest few get one)
     this.torchLights = [];
-    for (let k = 0; k < 6; k++) {
+    for (let k = 0; k < 8; k++) {
       const l = new THREE.PointLight(0xffd2a0, 0, 10, 1.7);
       this.root.add(l);
       this.torchLights.push(l);
@@ -513,8 +513,8 @@ export class View {
         l.shadow.normalBias = 0.02;
         l.shadow.radius = 3;
       }
-      // (a candle gives about a tenth of a torch's light, and steadier)
-      l.intensity = s.h.kind === 'candle' ? 0.9 * f * (0.95 + 0.05 * Math.sin(this.time * 9 + k)) : 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
+      // (a candle: a warm pool of light round it, steadier than a torch)
+      l.intensity = s.h.kind === 'candle' ? 2.4 * f * (0.95 + 0.05 * Math.sin(this.time * 9 + k)) : 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
     });
   }
 

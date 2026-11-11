@@ -271,7 +271,7 @@ export const SCENARIOS = {
         view: { camera: [71.4, 30, 78.6], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: '', boatTo: 'deck' }, x: 34, z: 31 },
+          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 9, catacombs: '', boatTo: 'deck' }, x: 34, z: 31 },
           // a gothic church being built on the plateau: tower and south arm still in scaffolding
           { type: 'church', params: { crypt: 'catacombs' }, x: 24.1, z: 42.2, y: 'auto' },
           { type: 'house', params: { width: 5, depth: 4 }, x: 49.3, z: 47, y: 'auto' },

@@ -11,6 +11,19 @@ import * as THREE from 'three';
 
 let woodTex = null;
 let flameTex = null;
+let glowTex_ = null;
+
+/** A soft round glow (radial gradient), for the light round a candle flame. */
+function glowTex() {
+  return (glowTex_ ??= canvasTexture(64, 64, (ctx, w, h) => {
+    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    g.addColorStop(0, 'rgba(255,220,160,1)');
+    g.addColorStop(0.25, 'rgba(255,170,90,0.45)');
+    g.addColorStop(1, 'rgba(255,140,60,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }));
+}
 
 function canvasTexture(w, h, draw) {
   if (typeof document === 'undefined') return null;
@@ -168,10 +181,14 @@ export class TorchRenderer {
     const flame = new THREE.Sprite(fm);
     const core = new THREE.Sprite(fm.clone());
     core.material.color = new THREE.Color(0xfff0c0);
-    obj.add(flame, core);
+    // the glow round the flame: the air lit by it, the wax glowing through near the top
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0xffb060, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 }));
+    halo.scale.set(0.34, 0.34, 1);
+    halo.position.y = 0.012;
+    obj.add(flame, core, halo);
     for (const m of [wax, wick]) m.castShadow = true;
     this.group.add(obj);
-    return { obj, flame, core, head: wax, seed: Math.random() * 100, candle: true };
+    return { obj, flame, core, head: wax, halo, seed: Math.random() * 100, candle: true };
   }
 
   update(time) {
@@ -201,7 +218,11 @@ export class TorchRenderer {
       it.core.position.set(0, -0.05 * k + hgt * 0.25, 0);
       it.core.scale.set(0.08 * k * f, hgt * 0.55, 1);
       it.flame.material.opacity = 0.9 * flick;
-      it.head.material.emissiveIntensity = it.candle ? 0.06 * f : 0.22 * f * flick + 0.03;
+      it.head.material.emissiveIntensity = it.candle ? 0.12 * f : 0.22 * f * flick + 0.03;
+      if (it.halo) {
+        it.halo.visible = f > 0.02;
+        it.halo.material.opacity = 0.35 * f * (0.92 + 0.08 * flick);
+      }
     }
     for (const [ht, it] of this.items)
       if (!live.has(ht)) {
