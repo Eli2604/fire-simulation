@@ -13,6 +13,9 @@ import { explode } from './explosions.js';
  *  - an ash and gas column over the crater (heat and dark smoke).
  *
  * After `duration` seconds it dies down: no more lava, the column fades.
+ *
+ * Lava that runs into the sea is quenched: it sets into rock in seconds and the sea
+ * boils off it in clouds of steam ("laze").
  */
 const LAVA_T = 1200;
 
@@ -33,6 +36,7 @@ export function stepVolcanoes(sim, dt) {
       }
       continue;
     }
+    if (v.state === 'erupting' || v.state === 'spent') quench(sim, v, dt);
     if (v.state !== 'erupting') continue;
     v.t += dt;
     if (v.t > v.duration) {
@@ -63,7 +67,14 @@ export function stepVolcanoes(sim, dt) {
         v: [Math.cos(a) * out, up, Math.sin(a) * out],
         mat: MAT.basalt, temp: LAVA_T, skin: LAVA_T, fuel: 1, moist: 0, melt: 1, char: 0, flags: 0, dens: 1, owner: -1,
         tint: [60, 30, 20], age: 0,
+        silent: true, // heard as part of the eruption's roar (below), not one by one
       });
+    }
+    // its roar: one loud noise from the crater every two seconds (guards far off hear it)
+    v.roarAcc = (v.roarAcc ?? 0) + dt;
+    if (v.roarAcc >= 2) {
+      v.roarAcc = 0;
+      w.noises.push({ p: v.crater.slice(), loud: 250, time: w.time, kind: 'eruption' });
     }
     // the column: strongest in the first minute
     v.column.power = 2.5e6 * (v.t < 60 ? 1 : Math.max(0.2, 1 - (v.t - 60) / (v.duration - 60)));
@@ -108,3 +119,43 @@ function placeLava(sim, v) {
     }
   return false;
 }
+
+/**
+ * Lava in the sea: below the sea surface the water takes its heat far faster than
+ * air (boiling on it), so it sets within seconds; the heat goes into steam that
+ * rises from the sea surface over it. Checked twice a second, for hot basalt only.
+ */
+function quench(sim, v, dt) {
+  const w = sim.world;
+  if (!w.sea) return;
+  v.qAcc = (v.qAcc ?? 0) + dt;
+  if (v.qAcc < 0.5) return;
+  const step = v.qAcc;
+  v.qAcc = 0;
+  const { h, nx, ny, mat, temp } = w;
+  const level = w.sea.level;
+  const yTop = Math.floor(level / h);
+  const C = MATERIAL_C * h ** 3; // J/K of a voxel of basalt
+  let hot = 0;
+  for (let k = 0; k < w.solidCount; k++) {
+    const i = w.solids[k];
+    if (mat[i] !== MAT.basalt || temp[i] < 150) continue;
+    const x = i % nx;
+    const y = Math.floor(i / nx) % ny;
+    if (y > yTop) continue;
+    const z = Math.floor(i / (nx * ny));
+    hot++;
+    // film boiling: ~150 K/s at first, slowing as it cools
+    const dT = Math.min(temp[i] - 100, (40 + 0.1 * temp[i]) * step);
+    temp[i] -= dT;
+    w.skin[i] = Math.min(w.skin[i], temp[i]);
+    // the steam: about a third of that heat boils water off (the rest warms the sea)
+    const a = w.airIndexOfVoxel(x, Math.min(ny - 1, yTop + 1), z);
+    if (a >= 0) w.steam[a] += (dT * C * 0.33) / 2.6e6;
+  }
+  if (hot && !v.lazeSaid) {
+    v.lazeSaid = true;
+    w.events.push({ type: 'laze', pos: v.crater.slice(), time: w.time, name: 'the lava' });
+  }
+}
+const MATERIAL_C = 2900 * 840; // basalt: density · specific heat

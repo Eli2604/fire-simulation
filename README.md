@@ -138,7 +138,9 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 **Deep links** open a scene directly: `?scenario=catacombs` (a key of src/scenarios.js),
 `&zone=…` (a zone of it), `&walk=1` (in the walk-through), `&at=x,y,z,yaw,pitch` (standing
 there, degrees), `&lamp=0` (helmet lamp off), `&freeze=1` (paused), `&shot=1` (only the 3D
-view, for screenshots).
+view, for screenshots), `&wind=12&winddir=90&rain=8&fog=0.3` (the weather: m/s, degrees,
+mm/h, 0–1), `&erupt=1` (the island volcano erupts straight away). For example
+`?scenario=carrier&zone=island&wind=8&erupt=1`.
 
 ## Firefighter walk-through
 
@@ -405,6 +407,23 @@ far off), lava welling up in the vent at 1.5 m³/s (molten basalt at 1200 °C, w
 crater, runs over the rim and down the flanks as a liquid, sets grass, trees and houses alight
 and sets into dark rock as it cools), glowing lava bombs thrown out of the crater, and a hot
 ash column over it. After three minutes it calms down.
+
+Its voxels are hidden and the cone is drawn as a mountain over them (render/volcano.js):
+dark basalt with rough clinker on the old flows, grey ash streaks, red-brown oxidised scoria
+and sulphur crusts round the crater, scrub on the lower flanks; while it erupts the crater
+and the vent glow. Fresh lava open to the air crusts over: dark rock glowing dull red, with
+bright cracks that shift as the flow moves under it. Lava that reaches the sea is quenched:
+it sets within seconds and the sea boils off it in clouds of steam.
+
+The **sea** (render/ocean.js) is a sum of Gerstner waves travelling with the wind: the
+wind speed sets their height (a fully developed sea, significant wave height ≈ 0.025·U²,
+capped at 2.2 m) and length (longer waves run faster, ω = √(g·k)); a low swell remains
+in a calm, and whitecaps break on the steepest crests above ~6 m/s. Rain roughens it with
+rings. Its colour comes from the depth down to the real bottom under it (the voxels, kept
+up to date): clear turquoise over sand where it is shallow (you see the bottom), dark blue
+where it is deep, grey-green under a grey sky; the sky is mirrored in it by the Fresnel law.
+On the shore the waves shoal (lower and steeper) and break in lines of surf, with foam along
+the waterline; against a hull they are damped in its lee and slap against it in foam.
 
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
 and a locked glass door. A rack catches fire after 25 s (an electrical fault). Heat

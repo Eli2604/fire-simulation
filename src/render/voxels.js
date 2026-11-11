@@ -158,10 +158,23 @@ export function shadeVoxel(w, i, time, mode, col, glow, o) {
   let g = tint[i * 3 + 1] / 255;
   let b = tint[i * 3 + 2] / 255;
   const f = flags[i];
+  let crust = false;
   if (f & F_LIQUID && M.liquidColor) {
     r = M.liquidColor[0];
     g = M.liquidColor[1];
     b = M.liquidColor[2];
+    // lava open to the air crusts over: dark rock glowing dull red, bright where the crust
+    // cracks (the cracks shift slowly as the flow moves under it)
+    if (M.crust && !mat[i + w.nx]) {
+      const k = (((i * 2654435761) >>> 0) % 1000) / 1000;
+      const crack = ((k * 7.3 + time * 0.08 + Math.sin(time * 0.5 + k * 40) * 0.05) % 1) < 0.24;
+      if (!crack) {
+        crust = true;
+        r = 0.11 + 0.04 * k;
+        g = 0.085 + 0.02 * k;
+        b = 0.075;
+      }
+    }
   } else if (melt[i] > 0 && M.liquidColor) {
     const t = melt[i] * 0.6;
     r += (M.liquidColor[0] - r) * t;
@@ -214,7 +227,7 @@ export function shadeVoxel(w, i, time, mode, col, glow, o) {
   col[o] = r * r; // tint is sRGB-ish, convert to linear
   col[o + 1] = g * g;
   col[o + 2] = b * b;
-  blackbody(T, tmp);
+  blackbody(crust ? Math.min(T, 560 + (T - 1100) * 0.8) : T, tmp);
   let gl = 1;
   if (f & F_BURNING) gl = 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
   glow[o] = tmp[0] * gl;

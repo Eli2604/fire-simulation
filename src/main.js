@@ -441,7 +441,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
@@ -675,6 +675,14 @@ if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
   if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
   load(sc);
 }
+// ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
+for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog']]) {
+  const v = Number(qs.get(k));
+  if (qs.get(k) !== null && Number.isFinite(v)) weather[key] = sim.weather[key] = v;
+}
+view.applyWeather(weather);
+// ...&erupt=1: the volcano erupts straight away (without waiting for the dragon to pass)
+if (qs.get('erupt')) import('./sim/volcano.js').then(({ erupt }) => sim.world.volcanoes.forEach((v) => erupt(sim, v)));
 if (qs.get('shot')) {
   // for screenshots: only the 3D view
   const st = document.createElement('style');

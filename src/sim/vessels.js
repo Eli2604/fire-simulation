@@ -334,7 +334,7 @@ function impact(sim, d, x, y, z, M) {
     }
   }
   if (d.flags & F_BURNING && M.combustible) sim.ignite(d.p, w.h * 1.2);
-  if (E > 50) {
+  if (E > 50 && !d.silent) {
     w.noises.push({ p: d.p.slice(), loud: Math.min(40, 5 + Math.sqrt(E) * 0.5), time: w.time, kind: 'impact' });
     if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label });
   }
@@ -394,6 +394,12 @@ export function stepDebris(sim, dt) {
         break;
       }
       if (y >= w.ny) continue;
+      // at sea, what reaches the floor of the scene below the surface has sunk into deep water
+      // (set down there it would have nothing under it and fall, and land, again and again)
+      if (y < 1 && w.sea && d.p[1] < w.sea.level) {
+        gone = true;
+        break;
+      }
       if (y < 1 || w.mat[w.idx(x, y, z)]) {
         landed = true;
         if (d.flake) break; // paint flakes just settle, they do not become voxels

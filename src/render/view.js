@@ -21,6 +21,8 @@ import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
 import { BloodRenderer } from './blood.js';
+import { Ocean } from './ocean.js';
+import { VolcanoRenderer } from './volcano.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
 import { deriveWeather } from '../sim/weather.js';
@@ -32,6 +34,7 @@ const SKY_FOG = new THREE.Color(0xb9bec2);
 /** Owns the three.js scene and all renderers of the simulation state. */
 export class View {
   constructor(canvas) {
+    this.ocean = new Ocean();
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -82,6 +85,7 @@ export class View {
     this.props = new PropsRenderer(this.root); // masts, radars, deck detail
     this.doors = new DoorRenderer(this.root); // doors drawn as doors
     this.trees = new TreeRenderer(this.root); // trees: bark and leaves
+    this.volcanoes = new VolcanoRenderer(this.root); // volcanoes: basalt cones, glowing craters
     this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
@@ -171,6 +175,7 @@ export class View {
     this.props.setWorld(world);
     this.doors.setWorld(world);
     this.trees.setWorld(world);
+    this.volcanoes.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.smoke.setWorld(world);
@@ -184,22 +189,15 @@ export class View {
     // a ship floats in the sea: a water surface around the hull instead of the ground
     if (this.sea) {
       this.root.remove(this.sea);
-      this.sea.geometry.dispose();
+      this.ocean.dispose();
       this.sea = null;
     }
     this.ground.visible = !world.sea && !world.vacuum;
     if (world.sea) {
-      const R = diag * 12;
-      const shape = new THREE.Shape([new THREE.Vector2(-R, -R), new THREE.Vector2(R, -R), new THREE.Vector2(R, R), new THREE.Vector2(-R, R)]);
-      const [x0, z0, x1, z1] = world.sea.box;
-      if (x1 - x0 > 0.01 && z1 - z0 > 0.01) shape.holes.push(new THREE.Path([new THREE.Vector2(x0, -z0), new THREE.Vector2(x0, -z1), new THREE.Vector2(x1, -z1), new THREE.Vector2(x1, -z0)]));
-      this.sea = new THREE.Mesh(
-        new THREE.ShapeGeometry(shape),
-        new THREE.MeshStandardMaterial({ color: 0x1d4e6e, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.88, side: THREE.DoubleSide }),
-      );
+      // waves from the weather, colour from the depth to the bottom, surf on the shore and the hull (render/ocean.js)
+      this.sea = this.ocean.build(world, diag);
       this.sea.rotation.x = -Math.PI / 2;
       this.sea.position.y = world.sea.level;
-      this.sea.receiveShadow = true;
       this.root.add(this.sea);
     }
     this.ground.scale.set(diag * 12, diag * 12, 1);
@@ -268,6 +266,7 @@ export class View {
     this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
+    this.ocean.setWeather(weather, this.scene.background, grey);
   }
 
   /** The sea against a ship that settles, lists and trims (water aboard): its level and tilt. */
@@ -329,6 +328,9 @@ export class View {
     const k = Math.min(3, Math.sqrt(Math.max(0, stats.hrr - torchW) / ref + s * 0.002));
     const flick = 0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3);
     this.fireLight.intensity = 6 * k * flick * (this.diag / 3) ** 2;
+    // out in daylight a fire (an eruption) lights its surroundings orange, it does not outshine
+    // the sun: at most about twice the daylight a third of the scene away
+    if (!this.dark) this.fireLight.intensity = Math.min(this.fireLight.intensity, 2 * Math.max(0.2, this.sun.intensity) * (this.diag / 3) ** 1.6 * flick);
   }
 
   /**
@@ -385,6 +387,7 @@ export class View {
     const volumetric = this.smokeMode === 'volumetric';
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
     this.updateSea();
+    if (this.sea) this.ocean.update(this.time);
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
     if (this.voxels.mesh) this.voxels.mesh.castShadow = !(this.dark && this.torchShadows);
@@ -414,6 +417,7 @@ export class View {
     this.props.update(dt);
     this.doors.update(dt);
     this.trees.update(this.time);
+    this.volcanoes.update(this.time);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
@@ -480,7 +484,8 @@ export class View {
     for (; this.seenEvents < w.events.length; this.seenEvents++) {
       const e = w.events[this.seenEvents];
       if (e.type !== 'explosion') continue;
-      this.flash = { t: 0, pos: e.pos, power: Math.min(4, 0.5 + Math.cbrt(e.energy / 1e5)) };
+      // no white flash where there is no fireball (an eruption: rock and ash, lit by the lava)
+      if (e.flash !== false) this.flash = { t: 0, pos: e.pos, power: Math.min(4, 0.5 + Math.cbrt(e.energy / 1e5)) };
       const n = Math.min(600, 150 + Math.round(e.energy / 2000));
       for (let k = 0; k < n; k++) {
         const th = Math.random() * Math.PI * 2;

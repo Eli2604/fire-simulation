@@ -6,6 +6,8 @@
  * thrown out, an ash column rises.
  *
  * Only a shell of the cone is voxels (it is hollow inside, like the island's hills).
+ * Those voxels are hidden: render/volcano.js draws the cone as a smooth mountain of
+ * basalt and scoria over them (they still carry the dragon, the lava and the heat).
  */
 export default {
   label: 'Volcano',
@@ -23,12 +25,17 @@ export default {
     const H = p.height;
     const cr = p.crater;
     const T = Math.max(2 * h, 0.8); // shell thickness
-    const rock = { material: 'basalt', anchored: true, variation: 0.1 };
+    const rock = { material: 'basalt', anchored: true, variation: 0.1, hidden: true };
+    // the cone reaches 8 m below its foot (it stands on a slope: down to the ground on every side)
+    const B = 8;
+    const CH = H + 0.6 + B;
+    const CR = (R * 1.3 * CH) / (H + 4.6); // the same slope
     const prims = [
       // the cone (a little below the ground so it sits in the slope), hollowed out
-      { shape: 'cone', base: [0, -4, 0], height: H + 4.6, r: R * 1.3, ...rock, mode: 'fill' },
+      { shape: 'cone', base: [0, -B, 0], height: CH, r: CR, ...rock, mode: 'fill' },
       // (hollow only in its lower half: the vent and the crater sit in solid rock)
-      { shape: 'cone', base: [0, -4, 0], height: (H + 4.6) * 0.6, r: R * 1.3 - T, mode: 'carve' },
+      // (its tip stays well below the floor of the vent, or the lava would pour into the mountain)
+      { shape: 'cone', base: [0, -B, 0], height: B + H - 4.2, r: (CR * (B + H - 4.2)) / CH - T * 1.5, mode: 'carve' },
       // the crater: a bowl at the top, and the vent below it
       { shape: 'ellipsoid', c: [0, H + 0.3, 0], r: [cr, cr * 0.8, cr], mode: 'carve' },
       { shape: 'cylinder', a: [0, H - 2.5, 0], b: [0, H + 0.5, 0], r: Math.max(h * 1.5, cr * 0.45), mode: 'carve' },
@@ -36,15 +43,22 @@ export default {
       { shape: 'cylinder', a: [0, H - 2.6, 0], b: [0, H - 2.0, 0], r: Math.max(h * 1.5, cr * 0.5), ...rock, color: [0.25, 0.12, 0.08] },
     ];
     // old lava flows: ridges down the flanks
+    const ridges = [];
     for (let k = 0; k < 6; k++) {
       const a = rng() * Math.PI * 2;
       const top = [Math.cos(a) * cr * 1.1, H - 0.3, Math.sin(a) * cr * 1.1];
       const bot = [Math.cos(a) * R * 1.05, 0, Math.sin(a) * R * 1.05];
-      prims.push({ shape: 'capsule', a: top, b: bot, r: 0.35 + rng() * 0.3, ...rock, color: [0.12, 0.11, 0.1] });
+      const r = 0.35 + rng() * 0.3;
+      prims.push({ shape: 'capsule', a: top, b: bot, r, ...rock, color: [0.12, 0.11, 0.1] });
+      ridges.push({ a: top, b: bot, r });
     }
     return {
       prims,
-      volcano: { crater: [0, H - 1.8, 0], rim: H + 0.3, craterRadius: cr, trigger: p.triggerDistance, duration: p.duration, lavaRate: p.lavaRate },
+      volcano: {
+        crater: [0, H - 1.8, 0], rim: H + 0.3, craterRadius: cr, trigger: p.triggerDistance, duration: p.duration, lavaRate: p.lavaRate,
+        // its shape, for drawing it (render/volcano.js)
+        shape: { base: [0, -B, 0], height: CH, radius: CR, bowl: [0, H + 0.3, 0], bowlR: [cr, cr * 0.8], vent: Math.max(h * 1.5, cr * 0.45), ridges, seed: p.seed },
+      },
     };
   },
 };
