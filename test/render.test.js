@@ -79,7 +79,7 @@ test('smooth surfaces build for every scenario', () => {
 });
 
 test('volume textures encode smoke, steam and flames from the air grid', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.campfire));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'islet' }); // the campfire on the islet
   for (let k = 0; k < 100; k++) sim.step(sim.dt);
   const vr = new VolumeRenderer({});
   vr.setWorld(sim.world);

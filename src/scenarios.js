@@ -44,18 +44,7 @@ function catacombObjects(exitTo = '') {
 }
 
 export const SCENARIOS = {
-  campfire: {
-    name: 'Campfire',
-    description: 'A log-cabin campfire lit from the kindling, inside a stone ring on a patch of dry grass. Logs char into glowing embers, then ash.',
-    world: { size: [4, 2.2, 4], h: 0.05 },
-    weather: w({ humidity: 0.4, windSpeed: 0.5 }),
-    timeScale: 4,
-    view: { camera: [2.6, 1.9, 2.6] },
-    objects: [
-      { type: 'grass', params: { width: 3.8, depth: 3.8, height: 0.1, density: 0.6, moisture: 0.12, clearRadius: 0.75 }, x: 2, z: 2 },
-      { type: 'woodPile', params: { logs: 8, logLength: 0.6, logRadius: 0.05 }, x: 2, z: 2, ignite: true },
-    ],
-  },
+
   metalBars: {
     name: 'Metal bars on burners',
     description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
@@ -214,7 +203,10 @@ export const SCENARIOS = {
     archipelago: {
       seed: 7,
       extent: 2600,
-      zones: [{ box: [107, -28, 171, 30], floor: -1.7 }], // the island's voxel terrain (its zone is 2 m larger all round)
+      zones: [
+        { box: [107, -28, 171, 30], floor: -1.7 }, // the island's voxel terrain (its zone is 2 m larger all round)
+        { box: [310.5, -404.5, 319.5, -396.5], floor: -1.6 }, // the islet's
+      ],
       islands: [
         { c: [950, -700], rx: 600, rz: 330, rot: 0.35, peak: 140, reef: 1.35 },
         { c: [-700, -1000], rx: 700, rz: 170, rot: -0.45, peak: 80, reef: 1.5 },
@@ -223,7 +215,6 @@ export const SCENARIOS = {
         { c: [820, 250], rx: 160, peak: 75, reef: 1.45, cone: true },
         { c: [1450, 120], rx: 90, rz: 60, rot: 0.8, peak: 25, reef: 1.9 },
         { c: [-1100, 150], rx: 130, peak: 45, reef: 1.6 },
-        { c: [330, -390], rx: 35, rz: 22, peak: 2.5, reef: 2.6 },
         { c: [-220, -320], rx: 80, peak: -1.2, reef: 1.5 },
         { c: [1250, 900], rx: 200, rz: 140, rot: -0.3, peak: 60, reef: 1.5 },
         { c: [-450, 1200], rx: 150, peak: 35, reef: 1.7 },
@@ -263,6 +254,21 @@ export const SCENARIOS = {
         view: { camera: [-3, 10, 14], walk: true },
         objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],
       },
+      // a small islet out on the reef: a log-cabin campfire in a stone ring on dry grass
+      // (the old Campfire scene), a boat back to the island
+      islet: {
+        name: 'Islet with a campfire',
+        origin: [310, 0.32, -405], // (its voxels are finer than the island's: this puts its sea level with theirs)
+        world: { size: [10, 4.5, 9], h: 0.08, ground: 'none' },
+        view: { camera: [12, 5, 12], walk: true },
+        proxy: { shape: 'hill', color: '#7a8a4a', height: 2, fill: 0.8, sea: 2.9 },
+        weather: { humidity: 0.4, windSpeed: 0.5 },
+        objects: [
+          { type: 'island', params: { width: 9, depth: 8, seaLevel: 2.5, hill: 0.6, plateau: 0.35, plateauEast: 0.7, canal: false, pond: false, pierLength: 3, catacombs: '', boatTo: 'island', boatLabel: 'Boat: back to the island', hut: false, seed: 9 }, x: 5, z: 4.5 },
+          { type: 'grass', params: { width: 3.6, depth: 3.2, height: 0.16, density: 0.6, moisture: 0.12, clearRadius: 0.8 }, x: 4.6, z: 5.4, y: 'auto' },
+          { type: 'woodPile', params: { logs: 8, logLength: 0.8, logRadius: 0.08 }, x: 4.6, z: 5.4, y: 'auto', ignite: true },
+        ],
+      },
       island: {
         name: 'Island',
         origin: [105, 0, -30],
@@ -271,7 +277,7 @@ export const SCENARIOS = {
         view: { camera: [71.4, 30, 78.6], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 9, catacombs: '', boatTo: 'deck' }, x: 34, z: 31 },
+          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 9, catacombs: '', boatTo: 'deck', ferryTo: 'islet', hut: false }, x: 34, z: 31 },
           // a gothic church being built on the plateau: tower and south arm still in scaffolding
           { type: 'church', params: { crypt: 'catacombs' }, x: 24.1, z: 42.2, y: 'auto' },
           { type: 'house', params: { width: 5, depth: 4 }, x: 49.3, z: 47, y: 'auto' },

@@ -18,7 +18,7 @@ const view = new View($('view'));
 view.proxies = new ProxyRenderer(view.scene);
 
 const state = {
-  scenario: 'campfire',
+  scenario: 'carrier',
   running: true,
   timeScale: 4,
   tool: 'inspect',

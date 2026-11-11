@@ -22,6 +22,11 @@ export default {
     pond: { value: true, label: 'Pond on the hillside' },
     catacombs: { value: 'catacombs', label: 'Zone the catacomb stairs lead to' },
     boatTo: { value: 'deck', label: 'Zone the boat takes you to' },
+    boatLabel: { value: 'Boat: back to the ship', label: 'What the boat is (its hint)' },
+    ferryTo: { value: '', label: 'Zone a second boat at the pier takes you to (empty: none)' },
+    ferryLabel: { value: 'Boat: to the islet', label: 'What the second boat is (its hint)' },
+    hut: { value: true, label: 'Stone hut on the north shore (the old catacomb entrance)' },
+    canalStart: { value: -0.2, min: -1, max: 1, step: 0.05, label: 'Canal starts at (share of half width)' },
     seed: { value: 5, min: 1, max: 999, step: 1, label: 'Random seed' },
   },
   build(p, { h, rng }) {
@@ -54,7 +59,7 @@ export default {
         const d = Math.hypot(dx, dz);
         if (d < 3 && land > 0.5) y = top0 + (y - top0) * (d / 3);
       }
-      if (p.canal && x > -W * 0.2) {
+      if (p.canal && x > W * p.canalStart) {
         const d = Math.abs(z - canalZ(x));
         if (d < canalW + 1) y = Math.min(y, d < canalW ? sea - 0.8 : sea - 0.8 + (d - canalW) * (y - sea + 0.8));
       }
@@ -114,7 +119,7 @@ export default {
     const ex = -W * 0.05;
     const ez = D * 0.78;
     const ey = height(ex, ez);
-    prims.push(
+    if (p.hut) prims.push(
       { shape: 'box', min: [ex - 1.6, ey - 0.4, ez - 1.6], max: [ex + 1.6, ey + 2.6, ez + 1.6], material: 'stone', anchored: true, color: [0.6, 0.58, 0.52] },
       { shape: 'box', min: [ex - 1.6 + 0.35, ey, ez - 1.6 + 0.35], max: [ex + 1.6 - 0.35, ey + 2.3, ez + 1.6 - 0.35], mode: 'carve' },
       { shape: 'box', min: [ex - 0.6, ey, ez - 1.7], max: [ex + 0.6, ey + 2.0, ez - 1.2], mode: 'carve' },
@@ -125,14 +130,24 @@ export default {
     );
     const portals = [];
     if (p.catacombs) portals.push({ p: [ex, ey, ez - 0.3], r: 1.0, to: p.catacombs, label: 'Stairs: down into the catacombs', arrive: { p: [ex, ey, ez - 2.6], yaw: -Math.PI / 2 } });
-    if (p.boatTo) portals.push({ p: [px + 1.5, ph, pz], r: 1.6, to: p.boatTo, label: 'Boat: back to the ship', arrive: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 } });
+    if (p.boatTo) portals.push({ p: [px + 1.5, ph, pz], r: 1.6, to: p.boatTo, label: p.boatLabel, arrive: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 } });
+    // a second boat on the other side of the pier (to another island)
+    if (p.ferryTo) {
+      prims.push(
+        { shape: 'ellipsoid', c: [px + 1.5, sea, pz - 2.2], r: [2.0, 0.5, 0.8], material: 'wood', density: 0.15, color: [0.2, 0.35, 0.6] },
+        { shape: 'ellipsoid', c: [px + 1.5, sea + 0.12, pz - 2.2], r: [1.8, 0.42, 0.65], mode: 'carve' },
+      );
+      portals.push({ p: [px + 1.5, ph, pz - 1.4], r: 1.0, to: p.ferryTo, label: p.ferryLabel, arrive: { p: [px + p.pierLength - 2, ph, pz - 0.3], yaw: 0 } });
+    }
     return {
       prims,
       sea: { level: sea, box: [0, 0, 0, 0] },
-      heaters: [
-        { pos: [ex - 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
-        { pos: [ex + 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
-      ],
+      heaters: p.hut
+        ? [
+            { pos: [ex - 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
+            { pos: [ex + 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
+          ]
+        : [],
       portals,
       spawn: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 },
     };

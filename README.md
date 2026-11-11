@@ -22,7 +22,7 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 
 ## Using it
 
-- **Scenario**: campfire, metal bars on burners, a wind-driven grass fire, a car fire
+- **Scenario**: metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, catacombs of
@@ -412,7 +412,9 @@ same place, for going there directly). Off their east passage lies an **undergro
 church** (models/cryptChapel.js): benches, an altar under a cross, and on it the candles,
 burning (in this scene they are drawn, each a small flame that lights the vault), with tall
 candles on stands either side. The ship's **lower decks**, below the waterline, are the
-carrier's too: a ladder down from the corridor below deck.
+carrier's too: a ladder down from the corridor below deck. The **campfire** burns on an islet
+out on the reef (a second boat at the island's pier): a log-cabin fire lit from the kindling
+in a stone ring on dry grass, its logs charring into embers, then ash.
 
 A **volcano** (models/volcano.js, sim/volcano.js) stands on the island's main hill. It sleeps
 until a dragon moves within 6 m of its crater; then it erupts: a blast in the crater (heard
