@@ -199,6 +199,8 @@ export class View {
     this.ground.visible = !world.sea && !world.vacuum;
     if (world.sea) {
       // waves from the weather, colour from the depth to the bottom, surf on the shore and the hull (render/ocean.js)
+      // (it reaches beyond the island group round it, to the horizon)
+      this.ocean.extent = this.archSpec && this.zoneOrigin ? this.archSpec.extent ?? 2600 : 0;
       this.sea = this.ocean.build(world, diag);
       this.sea.rotation.x = -Math.PI / 2;
       this.sea.position.y = world.sea.level;
@@ -211,7 +213,9 @@ export class View {
     this.ground.position.set(sx / 2, world.h * 0.9, sz / 2);
 
     this.camera.near = Math.max(0.002, world.h * 0.3);
-    this.camera.far = diag * 30;
+    // far enough for the island group and the sea beyond it
+    this.farBase = Math.max(diag * 30, (this.ocean.extent ?? 0) * 2.6);
+    this.camera.far = this.farBase;
     this.camera.updateProjectionMatrix();
     const target = new THREE.Vector3(sx / 2, sy * 0.22, sz / 2);
     const sameSize = this.lastSize && this.lastSize.every((v, k) => Math.abs(v - world.size[k]) < 1e-6);
@@ -404,7 +408,7 @@ export class View {
       this.scene.fog.color.copy(this.scene.background);
       this.scene.fog.density = (this.fogBase ?? 0.001) * (1 - t) ** 3;
     }
-    const far = t > 0 ? 20000 : (this.diag ?? 50) * 30;
+    const far = t > 0 ? 20000 : this.farBase ?? (this.diag ?? 50) * 30;
     if (this.camera.far !== far) {
       this.camera.far = far;
       this.camera.updateProjectionMatrix();
@@ -497,7 +501,7 @@ export class View {
       }
       const o2 = w.o2[this.flames.world ? Math.max(0, Math.min(w.NA - 1, w.airIdx(Math.floor(s.h.pos[0] / w.ah), Math.floor((s.h.pos[1] + 0.2) / w.ah), Math.floor(s.h.pos[2] / w.ah)))) : 0] ?? 0.232;
       const f = Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)); // a torch dims and dies as the oxygen goes
-      l.position.set(s.h.pos[0], s.h.pos[1] + 0.25, s.h.pos[2]);
+      l.position.set(s.h.pos[0], s.h.pos[1] + (s.h.kind === 'candle' ? 0.04 : 0.25), s.h.pos[2]);
       // the nearest two cast shadows (bones, skulls, people in the light of a torch)
       const shadow = this.torchShadows && k < 2;
       if (l.castShadow !== shadow) {
@@ -509,7 +513,8 @@ export class View {
         l.shadow.normalBias = 0.02;
         l.shadow.radius = 3;
       }
-      l.intensity = 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
+      // (a candle gives about a tenth of a torch's light, and steadier)
+      l.intensity = s.h.kind === 'candle' ? 0.9 * f * (0.95 + 0.05 * Math.sin(this.time * 9 + k)) : 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
     });
   }
 

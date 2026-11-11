@@ -65,7 +65,7 @@ test('catacombs: you can walk from the stairs through every passage and crossing
   const exit = w.portals.find((p) => p.to === 'island');
   assert.ok([...Array(9)].some((_, k) => reach(exit.p[0], exit.p[2] + 0.2 * (k - 4))), 'the stairs up to the exit');
   // every torch: a bracket and a stick big enough to be voxels
-  const torches = w.heaters.filter((h) => h.light);
+  const torches = w.heaters.filter((h) => h.light && h.label === 'torch'); // (not the candles in the crypt chapel)
   assert.ok(torches.length >= 12, `${torches.length} torches`);
   for (const t of torches) {
     let n = 0;
@@ -164,7 +164,7 @@ test('carrier below deck is under the waterline: a hole in the hull lets the sea
 });
 
 test('ship: the fuel line bursts as an explosion that holes the hull; the sea fills the lower deck from the bottom up, to the waterline', async () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.ship));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'lower' });
   const w = sim.world;
   run(sim, 31);
   assert.ok(w.events.some((e) => e.type === 'explosion'), 'the vapour explodes');
@@ -291,7 +291,7 @@ test('catacombs: a blast brings the guards running, and they search the place', 
 });
 
 test('ship: water aboard adds its weight – the ship settles deeper and lists towards the flooded side', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.ship));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'lower' });
   const w = sim.world;
   const level0 = w.sea.level;
   run(sim, 31); // the fuel line bursts against the hull (aft cross corridor, port side)

@@ -177,6 +177,7 @@ export const carrierBelow = {
     height: { value: 2.8, min: 2.4, max: 4, step: 0.1, label: 'Deck height (m)' },
     rackFireAfter: { value: 25, min: 0, max: 600, step: 1, label: 'Server rack fire after (s)' },
     inertSystem: { value: true, label: 'Server room inert-gas system' },
+    downTo: { value: '', label: 'Zone the ladder at the forward end leads down to (empty: none)' },
     waterline: { value: 4.5, min: 0, max: 8, step: 0.1, label: 'Sea level above this deck (m, 0: above the sea)' },
   },
   build(p, { h, rng }) {
@@ -289,7 +290,11 @@ export const carrierBelow = {
       prims,
       heaters: [{ pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 }],
       spawn: { p: [lx + 1.2, h, 0], yaw: 0 },
-      portals: [{ p: [lx, h, 0], r: 0.9, to: 'deck', label: 'Ladder: flight deck' }],
+      portals: [
+        { p: [lx, h, 0], r: 0.9, to: 'deck', label: 'Ladder: flight deck' },
+        // down to the lower decks, below the waterline (shipSection)
+        ...(p.downTo ? [{ p: [hx - 1.4, h, 0], r: 0.9, to: p.downTo, label: 'Ladder: down to the lower decks', arrive: { p: [hx - 2.6, h, 0], yaw: Math.PI } }] : []),
+      ],
       sea: p.waterline > 0 ? { level: p.waterline, box: [-hx, -hz, hx, hz], ship: { keel: -8, deck: H + 6, displacement: 1.0e8, waterplane: 20000, beam: 77, length: 333, kg: 15 } } : undefined,
       inertSystems: p.inertSystem ? [{ p: [(sx0 + sx1) / 2, H - 0.6, (sz0 + sz1) / 2], trigger: 57, label: 'server room inert-gas system' }] : [],
     };

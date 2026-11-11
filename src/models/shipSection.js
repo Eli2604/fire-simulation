@@ -23,6 +23,7 @@ export default {
     burstAfter: { value: 30, min: 0, max: 600, step: 1, label: 'Fuel line bursts after (s)' },
     burstPower: { value: 200000, min: 20000, max: 1000000, step: 10000, label: 'Burning jet (W)' },
     burstBlast: { value: 1e6, min: 0, max: 6e6, step: 1e5, label: 'Vapour explosion at the burst (J; 0: none)' },
+    upTo: { value: '', label: 'Zone the ladder at the aft end leads up to (empty: none)' },
   },
   build(p, { h }) {
     const L = p.length;
@@ -144,6 +145,8 @@ export default {
       sea: { level: p.draft, box: [-hx, -hz, hx, hz], ship: { keel: 0, deck: D, kg: D * 0.55 } },
       // start on the lower deck at the aft end of the corridor
       spawn: { p: [-hx + 1.6, floor1, 0], yaw: 0 },
+      // (in a larger ship: a ladder up to the decks above, another zone)
+      portals: p.upTo ? [{ p: [-hx + 0.8, floor1, 0], r: 0.8, to: p.upTo, label: 'Ladder: up to the hangar deck', arrive: { p: [-hx + 1.8, floor1, 0], yaw: 0 } }] : [],
       ignite: { p: [-L / 8, floor1 + 0.4, cw + 0.8], radius: 0.4, power: 8000 },
     };
   },

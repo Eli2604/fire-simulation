@@ -28,6 +28,7 @@ export default {
   params: {
     wallHeight: { value: 8, min: 6, max: 10, step: 0.4, label: 'Wall height (m)' },
     seed: { value: 3, min: 1, max: 999, step: 1, label: 'Random seed' },
+    crypt: { value: '', label: 'Zone the crypt stairs (north arm) lead down to (empty: none)' },
   },
   build(p, { h, rng }) {
     // voxel faces: x/z at (k + 0.5) h from the origin (it sits on a voxel centre), y at k h
@@ -449,6 +450,26 @@ export default {
     box(S(-4.6), 0, S(-5.4), S(-3.0), Y(0.4), S(-4.6), { material: 'oak', color: [0.5, 0.36, 0.22], density: 0.6 });
     box(S(-4.2), Y(0.4), S(-5.4), S(-3.4), Y(0.8), S(-5.0), { material: 'oak', color: [0.48, 0.34, 0.2], density: 0.6 });
 
-    return { prims, props: [{ type: 'church', p: [0, 0, 0], spec }] };
+    // the stair down to the crypt in the north arm (and on, into the catacombs: another zone)
+    const portals = [];
+    if (p.crypt) {
+      const sx = S(0.6);
+      const z0 = -S(3.9);
+      const z1 = -S(5.6);
+      carve(-sx, FD + h, z1, sx, h, z0);
+      // stone steps going down to the north, between the low walls of the stairwell
+      const n = Math.max(2, Math.round((z0 - z1) / Math.max(h, 0.3)));
+      for (let k = 0; k < n; k++) {
+        const za = z0 - ((z0 - z1) * k) / n;
+        const zb = z0 - ((z0 - z1) * (k + 1)) / n;
+        box(-sx, FD, zb, sx, Math.min(-h, -((k + 1) * -FD) / (n + 1)), za, stone);
+      }
+      // a low parapet round the opening
+      box(-sx - h, 0, z1 - h, -sx, Y(0.8), z0, stone);
+      box(sx, 0, z1 - h, sx + h, Y(0.8), z0, stone);
+      portals.push({ p: [0, 0, z0 + 0.2], r: 1.0, to: p.crypt, label: 'Stairs: down to the crypt and the catacombs', arrive: { p: [0, 0, z0 + 1.4], yaw: 0 } });
+    }
+
+    return { prims, props: [{ type: 'church', p: [0, 0, 0], spec }], portals };
   },
 };

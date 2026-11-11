@@ -22,12 +22,13 @@ npm run headless -- campfire 600   # run a scenario without rendering, print wha
 
 ## Using it
 
-- **Scenario**: campfire, candles, metal bars on burners, a wind-driven grass fire, a car fire
+- **Scenario**: campfire, metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
-  oak, willow and pine in a grass fire, a fire below the waterline of a ship, catacombs of
+  oak, willow and pine in a grass fire, catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
-  and an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
+  its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
+  in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, a house fire in the rain.
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
@@ -405,6 +406,14 @@ canal from the hills to the sea, and a pond on a terrace on the hillside. A plat
 house and a campfire with dry grass around it. Only the top layers of the terrain are
 voxels, which keeps it cheap. Objects can be put on any surface with `"y": "auto"`.
 
+The **catacombs** belong to the island: the stairs down are in the north arm of the church
+(the crypt), and they are built only when you first go down (the Catacombs scenario is the
+same place, for going there directly). Off their east passage lies an **underground
+church** (models/cryptChapel.js): benches, an altar under a cross, and on it the candles,
+burning (in this scene they are drawn, each a small flame that lights the vault), with tall
+candles on stands either side. The ship's **lower decks**, below the waterline, are the
+carrier's too: a ladder down from the corridor below deck.
+
 A **volcano** (models/volcano.js, sim/volcano.js) stands on the island's main hill. It sleeps
 until a dragon moves within 6 m of its crater; then it erupts: a blast in the crater (heard
 far off), lava welling up in the vent at 1.5 m³/s (molten basalt at 1200 °C, which fills the
@@ -473,7 +482,8 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Grass patch | size, height, density, moisture (dry vs green), rectangle/ellipse, bare circle in the middle |
 | Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, fire starts in engine or interior |
 | House | size, wall height and thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, windows, furnished, door open, chimney |
-| Candle | height, radius, paraffin or beeswax, colour, wick length, holder |
+| Candle | height, radius, paraffin or beeswax, colour, wick length, holder. In a coarse scene (voxels larger than the candle) it is drawn, and burns as a small flame that gives light |
+| Underground church (crypt chapel) | nave length and width, passage to the catacombs, rows of benches. A barrel-vaulted nave cut in the limestone, pillars, benches, a dais and an altar under a cross in a round apse, torches |
 | Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power and position, supports |
 | Wood pile / campfire | log cabin / teepee / stack, number, length and radius of logs, moisture, kindling, stone ring |
 | Gas burner | power, flame radius and height, nozzle height |

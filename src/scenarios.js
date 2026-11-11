@@ -17,6 +17,32 @@ import { defaultWeather } from './sim/weather.js';
  */
 const w = (o = {}) => ({ ...defaultWeather(), ...o });
 
+/**
+ * The catacombs: one list for the Catacombs scenario (direct, for testing) and for the
+ * carrier's catacombs zone under the church on the island (loaded only when you go down).
+ * exitTo: the zone their entrance stairs lead up to.
+ */
+function catacombObjects(exitTo = '') {
+  return [
+    { type: 'catacombs', params: { exitTo }, x: 12, z: 17 },
+    // guards on their rounds through the passages, the chambers and their doors
+    { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 7, z: 12 },
+    // (its first guard is the jailer: he carries the key of the dungeon cell)
+    { type: 'enemy', params: { count: 2, spread: 0.5, seed: 2, patrol: 'route', patrolWidth: 10, patrolDepth: 10, key: true }, x: 17, z: 22 },
+    { type: 'enemy', params: { count: 1, spread: 0.3, seed: 5, patrol: 'area', patrolWidth: 14, patrolDepth: 14 }, x: 12, z: 17 },
+    // an underground church off the east passage: benches, an altar under a cross, and on it the
+    // candles (a paraffin and a beeswax one, as in the old Candles scene, and two more), tall
+    // candles on stands either side
+    { type: 'cryptChapel', params: {}, x: 30, z: 17 },
+    { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 29.35, z: 23.0, y: 1.2, ignite: true },
+    { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 29.75, z: 23.1, y: 1.2, ignite: true },
+    { type: 'candle', params: { height: 0.2, radius: 0.025, wax: 'beeswax', color: '#e8c060' }, x: 30.25, z: 23.1, y: 1.2, ignite: true },
+    { type: 'candle', params: { height: 0.15, radius: 0.022 }, x: 30.65, z: 23.0, y: 1.2, ignite: true },
+    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 28.3, z: 22.8, y: 0.8, ignite: true },
+    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 31.7, z: 22.8, y: 0.8, ignite: true },
+  ];
+}
+
 export const SCENARIOS = {
   campfire: {
     name: 'Campfire',
@@ -28,18 +54,6 @@ export const SCENARIOS = {
     objects: [
       { type: 'grass', params: { width: 3.8, depth: 3.8, height: 0.1, density: 0.6, moisture: 0.12, clearRadius: 0.75 }, x: 2, z: 2 },
       { type: 'woodPile', params: { logs: 8, logLength: 0.6, logRadius: 0.05 }, x: 2, z: 2, ignite: true },
-    ],
-  },
-  candle: {
-    name: 'Candles',
-    description: 'A paraffin and a beeswax candle. The wick draws molten wax up, the pool grows, wax drips and re-solidifies.',
-    world: { size: [0.36, 0.28, 0.24], h: 0.008 },
-    weather: w({ ambient: 20, humidity: 0.4 }),
-    timeScale: 20,
-    view: { camera: [0.18, 0.16, 0.3] },
-    objects: [
-      { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 0.11, z: 0.12, ignite: true },
-      { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 0.25, z: 0.12, ignite: true },
     ],
   },
   metalBars: {
@@ -179,33 +193,18 @@ export const SCENARIOS = {
     view: { camera: [1.2, 3.8, -1.5], walk: true },
     objects: [{ type: 'hallway', params: { sprinklers: true }, x: 9.5, z: 2 }],
   },
-  ship: {
-    name: 'Ship: fire below the waterline',
-    description: 'A ship section afloat. After 30 s the fuel line bursts in the aft cross corridor of the lower deck, against the hull below the waterline: the vapour explodes, tears the plating open and sets the corridor on fire, and the sea pours in, filling the lower deck from the bottom up. Close the watertight doors to keep the water (and the fire) to one part; a closed space floods only until its air is squeezed to the sea pressure. Under water you breathe from your mask, and near the hole the inrush pushes you.',
-    world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
-    weather: w({ ambient: 14, humidity: 0.75, windSpeed: 4 }),
-    timeScale: 1,
-    view: { camera: [-3, 10, 14] },
-    objects: [{ type: 'shipSection', params: {}, x: 9, z: 4.5 }],
-  },
   catacombs: {
     name: 'Catacombs',
     description: 'Vaulted limestone passages with carved inscriptions and walls of stacked skulls and bones, lit by torches on the walls; burial niches, and chambers with coffins behind wooden doors. Guards make their rounds, opening and closing the doors. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
-    world: { size: [24, 4.2, 29], h: 0.2, ground: 'quarrySand' },
+    world: { size: [36, 4.2, 34], h: 0.2, ground: 'quarrySand' },
     weather: w({ ambient: 12, humidity: 0.8 }),
     timeScale: 1,
     view: { dark: true, camera: [12, 16, -5] },
-    objects: [
-      { type: 'catacombs', params: {}, x: 12, z: 17 },
-      // guards on their rounds through the passages, the chambers and their doors
-      { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 7, z: 12 },
-      { type: 'enemy', params: { count: 2, spread: 0.5, seed: 2, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 17, z: 22 },
-      { type: 'enemy', params: { count: 1, spread: 0.3, seed: 5, patrol: 'area', patrolWidth: 14, patrolDepth: 14 }, x: 12, z: 17 },
-    ],
+    objects: catacombObjects(),
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -251,10 +250,18 @@ export const SCENARIOS = {
         world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
         view: { camera: [16, 14, -8], walk: true },
         objects: [
-          { type: 'carrierBelow', params: {}, x: 16, z: 8.5 },
+          { type: 'carrierBelow', params: { downTo: 'lower' }, x: 16, z: 8.5 },
           { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
           { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
         ],
+      },
+      // the lower decks, below the waterline: corridors, cabins, watertight doors; the fuel line
+      // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
+      lower: {
+        name: 'Lower decks (below the waterline)',
+        world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
+        view: { camera: [-3, 10, 14], walk: true },
+        objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],
       },
       island: {
         name: 'Island',
@@ -264,9 +271,9 @@ export const SCENARIOS = {
         view: { camera: [71.4, 30, 78.6], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: 'catacombs', boatTo: 'deck' }, x: 34, z: 31 },
+          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 4, catacombs: '', boatTo: 'deck' }, x: 34, z: 31 },
           // a gothic church being built on the plateau: tower and south arm still in scaffolding
-          { type: 'church', params: {}, x: 24.1, z: 42.2, y: 'auto' },
+          { type: 'church', params: { crypt: 'catacombs' }, x: 24.1, z: 42.2, y: 'auto' },
           { type: 'house', params: { width: 5, depth: 4 }, x: 49.3, z: 47, y: 'auto' },
           { type: 'grass', params: { width: 3.4, depth: 3, height: 0.3, density: 0.8, moisture: 0.1, clearRadius: 0.9 }, x: 52, z: 38.1, y: 'auto' },
           { type: 'woodPile', params: { arrangement: 'teepee', logs: 6, logLength: 1.8, logRadius: 0.12, moisture: 0.1, stones: false }, x: 52, z: 38.1, y: 'auto', ignite: true },
@@ -288,8 +295,8 @@ export const SCENARIOS = {
           { type: 'woodPile', params: { arrangement: 'stack', logs: 12, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 46, z: 50.2, y: 'auto' },
           { type: 'enemy', params: { count: 2, spread: 1, patrol: 'area', patrolWidth: 12, patrolDepth: 12 }, x: 46.8, z: 42, y: 'auto' },
           // a dragon: it rests on the terrace on the hillside, crawls up to the hilltop, over to the
-          // church and up its walls, over the roof, down to the catacomb stairs, and flies back
-          { type: 'dragon', params: { route: '30.6,20.8 rest; 51,21.6 climb; 24.1,42.2 climb; 39.1,49.7 sniff; 30.6,20.8 fly rest' }, x: 30.6, z: 20.8, rotation: 90 },
+          // church and up its walls, over the roof, down to its north arm where it smells the catacombs under it, and flies back
+          { type: 'dragon', params: { route: '30.6,20.8 rest; 51,21.6 climb; 24.1,42.2 climb; 24.2,33.4 sniff; 30.6,20.8 fly rest' }, x: 30.6, z: 20.8, rotation: 90 },
         ],
       },
       spaceship: {
@@ -306,16 +313,11 @@ export const SCENARIOS = {
         ],
       },
       catacombs: {
-        name: 'Catacombs under the island',
-        world: { size: [24, 4.2, 29], h: 0.2, ground: 'quarrySand' },
+        name: 'Catacombs under the church',
+        world: { size: [36, 4.2, 34], h: 0.2, ground: 'quarrySand' },
         view: { dark: true, camera: [12, 16, -5], walk: true },
-        objects: [
-          { type: 'catacombs', params: { exitTo: 'island' }, x: 12, z: 17 },
-          // guards on their rounds through the passages, the chambers and their doors
-          { type: 'enemy', params: { count: 2, spread: 0.5, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 7, z: 12 },
-          { type: 'enemy', params: { count: 2, spread: 0.5, seed: 2, patrol: 'route', patrolWidth: 10, patrolDepth: 10 }, x: 17, z: 22 },
-          { type: 'enemy', params: { count: 1, spread: 0.3, seed: 5, patrol: 'area', patrolWidth: 14, patrolDepth: 14 }, x: 12, z: 17 },
-        ],
+        // the whole Catacombs scenario (the same objects), its stairs up into the church
+        objects: catacombObjects('island'),
       },
     },
   },

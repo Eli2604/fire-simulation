@@ -18,6 +18,7 @@ import spaceship from './spaceship.js';
 import dragon from './dragon.js';
 import church from './church.js';
 import volcano from './volcano.js';
+import cryptChapel from './cryptChapel.js';
 
 /**
  * Model registry. Every model is:
@@ -28,7 +29,7 @@ import volcano from './volcano.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel };
 
 export function resolveParams(model, given = {}) {
   const out = {};

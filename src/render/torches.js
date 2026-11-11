@@ -96,6 +96,7 @@ export class TorchRenderer {
 
   build(ht) {
     textures();
+    if (ht.kind === 'candle') return this.buildCandle(ht);
     const [dx, dz, d] = this.wallDir(ht.pos);
     // the torch's own frame: origin at the flame's base (the heater), +x away from the wall, y up
     const obj = new THREE.Group();
@@ -145,6 +146,34 @@ export class TorchRenderer {
     return { obj, flame, core, head, seed: Math.random() * 100 };
   }
 
+  /** A candle (models/candle.js in a coarse scene): wax, wick, holder and its small flame. */
+  buildCandle(ht) {
+    const c = ht.candle;
+    const obj = new THREE.Group();
+    obj.position.set(ht.pos[0], ht.pos[1], ht.pos[2]);
+    const wax = new THREE.Mesh(
+      new THREE.CylinderGeometry(c.radius * 0.97, c.radius, c.height, 18),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(c.color ?? '#f2ede0'), roughness: 0.55, emissive: 0xffb060, emissiveIntensity: 0.05 }),
+    );
+    wax.position.y = -c.wick - c.height / 2;
+    const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.0012, 0.0012, c.wick, 4), new THREE.MeshStandardMaterial({ color: 0x1a1410 }));
+    wick.position.y = -c.wick / 2;
+    obj.add(wax, wick);
+    if (c.holder !== false) {
+      const dish = new THREE.Mesh(new THREE.CylinderGeometry(c.radius * 2.2, c.radius * 2.0, 0.012, 20), new THREE.MeshStandardMaterial({ color: 0xb8a888, roughness: 0.5, metalness: 0.4 }));
+      dish.position.y = -c.wick - c.height - 0.006;
+      obj.add(dish);
+    }
+    const fm = new THREE.SpriteMaterial({ map: flameTex, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+    const flame = new THREE.Sprite(fm);
+    const core = new THREE.Sprite(fm.clone());
+    core.material.color = new THREE.Color(0xfff0c0);
+    obj.add(flame, core);
+    for (const m of [wax, wick]) m.castShadow = true;
+    this.group.add(obj);
+    return { obj, flame, core, head: wax, seed: Math.random() * 100, candle: true };
+  }
+
   update(time) {
     const w = this.world;
     if (!w) return;
@@ -163,14 +192,16 @@ export class TorchRenderer {
       const f = ht.on ? Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)) : 0;
       const s = it.seed;
       const flick = 0.85 + 0.15 * Math.sin(time * 17 + s) * Math.sin(time * 6.3 + s * 2);
-      const hgt = (0.32 + 0.06 * Math.sin(time * 11 + s)) * f * flick;
+      // (a candle's flame is a small teardrop, ~4 cm, that hardly flickers in still air)
+      const k = it.candle ? 0.14 : 1;
+      const hgt = (0.32 + 0.06 * Math.sin(time * 11 + s)) * f * (it.candle ? 0.96 + 0.04 * flick : flick) * k;
       it.flame.visible = it.core.visible = f > 0.02;
-      it.flame.scale.set(0.17 * f * (0.9 + 0.1 * Math.sin(time * 9 + s)), hgt, 1);
-      it.flame.position.set(0, -0.05 + hgt * 0.42, 0);
-      it.core.position.set(0, -0.05 + hgt * 0.25, 0);
-      it.core.scale.set(0.08 * f, hgt * 0.55, 1);
+      it.flame.scale.set(0.17 * k * f * (0.9 + 0.1 * Math.sin(time * 9 + s)), hgt, 1);
+      it.flame.position.set(0, -0.05 * k + hgt * 0.42, 0);
+      it.core.position.set(0, -0.05 * k + hgt * 0.25, 0);
+      it.core.scale.set(0.08 * k * f, hgt * 0.55, 1);
       it.flame.material.opacity = 0.9 * flick;
-      it.head.material.emissiveIntensity = 0.22 * f * flick + 0.03;
+      it.head.material.emissiveIntensity = it.candle ? 0.06 * f : 0.22 * f * flick + 0.03;
     }
     for (const [ht, it] of this.items)
       if (!live.has(ht)) {

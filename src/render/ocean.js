@@ -56,7 +56,8 @@ export class Ocean {
     const [sx, , sz] = world.size;
     const cx = sx / 2;
     const cz = sz / 2;
-    const R = diag * 12;
+    // out to the horizon, beyond the island group round it (render/archipelago.js)
+    const R = Math.max(diag * 12, (this.extent ?? 0) * 2.5);
     const rings = 230;
     const segs = 300;
     const inner = Math.max(diag * 0.75, 12); // fine grid out to here

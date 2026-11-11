@@ -23,6 +23,11 @@ test('every model builds voxels with its default parameters', () => {
       assert.ok(world.enemies.length > 0, 'enemies are characters, not voxels');
       continue;
     }
+    if (type === 'candle') {
+      // smaller than these voxels: it is drawn, and burns as a small flame with its light
+      assert.ok(world.heaters.some((h) => h.kind === 'candle' && h.light), 'a candle in a coarse scene is its flame');
+      continue;
+    }
     if (type === 'dragon') {
       assert.ok(world.dragons.length > 0, 'a dragon is a creature, not voxels');
       continue;
