@@ -51,7 +51,42 @@ function catacombObjects(exitTo = '') {
   ];
 }
 
+/**
+ * Tea by the lake in winter: a small island with a frozen lake in it, a veranda on its shore
+ * looking out over the ice, a couch under it with a plaid, a side table with a book, a candle
+ * and a hot cup of tea, steaming in the frost. One list for its own scenario and for the lake
+ * island in the carrier's island group (boats: where they go; '' none).
+ */
+export const LAKESIDE_WINTER = { ambient: -4, humidity: 0.85, windSpeed: 1.5, windDir: 60, rain: 0.5, fog: 0.05, sunshine: 0.35, season: 'winter', snowCover: 0.12, iceCover: 0.1 };
+function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryLabel = 'Boat' } = {}) {
+  return [
+    { type: 'island', params: { width: 20, depth: 17, seaLevel: 1.0, hill: 1.2, plateau: 0.9, plateauEast: 0.7, canal: false, pond: true, pondX: 0.05, pondZ: -0.3, pondRadius: 4.2, pondRadiusZ: 2.4, pondDepth: 0.8, pierLength: 4, catacombs: '', hut: false, boatTo, boatLabel, ferryTo, ferryLabel, seed: 21 }, x: 11, z: 9.5 },
+    // the veranda on the south shore, open to the lake
+    { type: 'veranda', params: { width: 3.6, depth: 2.6 }, x: 12, z: 12.2, y: 1.9 },
+    { type: 'couch', params: {}, x: 11.8, z: 12.85, y: 2.1 },
+    { type: 'sideTable', params: {}, x: 13.25, z: 12.75, y: 2.1 },
+    // on the table: the tea, just poured, and a candle
+    { type: 'teaCup', params: { temp: 88 }, x: 13.35, z: 12.62, y: 2.7 },
+    { type: 'candle', params: { height: 0.09, radius: 0.03 }, x: 13.3, z: 12.92, y: 2.7, ignite: true },
+    // firewood stacked against the veranda, pines and a bare oak round the lake
+    { type: 'woodPile', params: { arrangement: 'stack', logs: 10, logLength: 0.9, logRadius: 0.08, stones: false, kindling: false }, x: 9.6, z: 13.1, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.5, seed: 4 }, x: 5.2, z: 8.2, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.3, seed: 8 }, x: 17.6, z: 6.6, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 4.2, crownRadius: 1.1, seed: 9 }, x: 16.4, z: 13.8, y: 'auto' },
+    { type: 'tree', params: { species: 'oak', height: 4.5, crownRadius: 2, seed: 6 }, x: 6.4, z: 13, y: 'auto' },
+  ];
+}
+
 export const SCENARIOS = {
+  winterTea: {
+    name: 'Tea by the lake in winter',
+    description: 'A frosty afternoon on a little island with a lake in it: the lake is frozen over (10 cm: it bears you), snow lies and a little more is falling. On a veranda on the shore, out of the snow, a couch with a plaid over its arm, and next to it a side table with a book, a candle and a cup of tea, just poured at 88 °C. It steams in the cold air (the vapour off the hot tea condenses as it mixes with it), cools (most of its heat goes in evaporation while it is hot: ~2–3 K a minute at first), and left out long enough in the frost it freezes over. Walk out onto the ice, or set the couch alight. The same island is in the carrier scene (a boat from the islet).',
+    world: { size: [22, 5, 19], h: 0.1, ground: 'none' },
+    weather: w(LAKESIDE_WINTER),
+    timeScale: 1,
+    view: { camera: [2.5, 1.5, -8.5] },
+    objects: lakesideObjects(),
+  },
 
   laundry: {
     name: 'Laundry on the line',
@@ -220,7 +255,7 @@ export const SCENARIOS = {
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to a small island in a cold snap of its own: a frozen lake, and a cup of tea steaming on a veranda by it. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -233,6 +268,7 @@ export const SCENARIOS = {
       zones: [
         { box: [107, -28, 171, 30], floor: -1.7 }, // the island's voxel terrain (its zone is 2 m larger all round)
         { box: [310.5, -404.5, 319.5, -396.5], floor: -1.6 }, // the islet's
+        { box: [241, 151, 261, 168], floor: -1.6 }, // the lake island's
       ],
       islands: [
         { c: [950, -700], rx: 600, rz: 330, rot: 0.35, peak: 140, reef: 1.35 },
@@ -307,10 +343,21 @@ export const SCENARIOS = {
         proxy: { shape: 'hill', color: '#7a8a4a', height: 2, fill: 0.8, sea: 2.9 },
         weather: { humidity: 0.4, windSpeed: 0.5 },
         objects: [
-          { type: 'island', params: { width: 9, depth: 8, seaLevel: 2.5, hill: 0.6, plateau: 0.35, plateauEast: 0.7, canal: false, pond: false, pierLength: 3, catacombs: '', boatTo: 'island', boatLabel: 'Boat: back to the island', hut: false, seed: 9 }, x: 5, z: 4.5 },
+          { type: 'island', params: { width: 9, depth: 8, seaLevel: 2.5, hill: 0.6, plateau: 0.35, plateauEast: 0.7, canal: false, pond: false, pierLength: 3, catacombs: '', boatTo: 'island', boatLabel: 'Boat: back to the island', ferryTo: 'lake', ferryLabel: 'Boat: to the lake island', hut: false, seed: 9 }, x: 5, z: 4.5 },
           { type: 'grass', params: { width: 3.6, depth: 3.2, height: 0.16, density: 0.6, moisture: 0.12, clearRadius: 0.8 }, x: 4.6, z: 5.4, y: 'auto' },
           { type: 'woodPile', params: { logs: 8, logLength: 0.8, logRadius: 0.08 }, x: 4.6, z: 5.4, y: 'auto', ignite: true },
         ],
+      },
+      // a small island with a frozen lake in it, in a cold snap of its own: tea on a veranda by
+      // the ice (the Tea by the lake scenario)
+      lake: {
+        name: 'Lake island (winter)',
+        origin: [240, 1.8, 150], // (its sea level with the others')
+        world: { size: [22, 5, 19], h: 0.1, ground: 'none' },
+        view: { camera: [2.5, 1.5, -8.5], walk: true },
+        proxy: { shape: 'hill', color: '#dfe4e8', height: 1.5, fill: 0.85, sea: 2.9 },
+        weather: LAKESIDE_WINTER,
+        objects: lakesideObjects({ boatTo: 'island', boatLabel: 'Boat: to the island', ferryTo: 'islet', ferryLabel: 'Boat: back to the islet' }),
       },
       island: {
         name: 'Island',

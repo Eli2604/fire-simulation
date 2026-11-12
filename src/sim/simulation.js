@@ -16,6 +16,7 @@ import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
+import { stepCups } from './tea.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
@@ -134,6 +135,7 @@ export class Simulation {
     // ice on the ponds, the canal and the rivers: forms in a frost, thickens, bears, melts
     if (!w.ice && !w.noIce && (this.weather.ambient <= 0 || (this.weather.iceCover ?? 0) > 0) && !initIce(w, this.weather.iceCover ?? 0)) w.noIce = true;
     if (w.ice) stepIce(this, dt, D);
+    stepCups(this, dt, D); // cups of tea: they cool, steam, freeze
     stepLightning(this, dt);
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)

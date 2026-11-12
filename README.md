@@ -597,6 +597,25 @@ walk than when you stand), 10 cm is safe, thinner breaks at once and you are in 
 bears them well (~8 cm); a dragon needs ~30 cm, on thinner ice it breaks through. A grenade
 blasts a hole in it. Open water skins over again in the cold.
 
+**A cup of tea** (scenario "Tea by the lake in winter", and the lake island in the carrier
+scene: a boat from the islet; models/teaCup.js, sim/tea.js, render/tea.js): a porcelain cup on
+its saucer, far smaller than the voxels, so it is drawn and its heat is kept on its own: the tea
+and the cup as one lump (~1.3 kJ/K for 250 ml). It loses heat by convection from its side and
+its open top (natural, or forced by the wind, whichever is more), by radiation, and by
+evaporation, which is most of it while it is hot (by the heat/mass-transfer analogy from the
+convection, driven by the vapour density at the surface over that in the air). 250 ml at 85 °C
+in a room is ~60 °C after a quarter of an hour, and a few grams have gone into the air; in a
+frost with a breeze it cools faster, holds at 0 °C while it freezes (334 kJ/kg) and then the
+ice cools on. Its steam is that vapour condensing as it mixes into the colder air over the
+cup (the same mixing line as a breath): a thin mist in a warm room once it has cooled a
+little, thick wisps in a frost. The heat it gives off warms the air; a fire nearby warms it.
+Where the table under it burns away it falls (and breaks if it falls far); a blast breaks it.
+The scene round it: a small island (the island model with its pond made into a lake: `pondX`,
+`pondZ`, `pondRadius`, `pondRadiusZ`, `pondDepth`), the lake frozen over (10 cm: it bears
+you), a veranda on the shore (models/veranda.js), a couch with a plaid (models/couch.js), a side
+table with a book and a candle (models/sideTable.js); in the carrier scene it has a cold snap
+of its own (the zone's weather).
+
 **Trees and grass in the wind; detail by distance** (render/trees.js): the trees sway with
 the wind (more towards the top, in its gusts), their branches swing, more towards their
 tips, and the leaves flutter; the grass bends. Close up every leaf card and twig is drawn;

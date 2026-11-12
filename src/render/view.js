@@ -31,6 +31,7 @@ import { PhoenixRenderer } from './phoenix.js';
 import { PatchRenderer } from './patches.js';
 import { SnowRenderer } from './snow.js';
 import { BreathRenderer } from './breath.js';
+import { TeaRenderer } from './tea.js';
 import { MATERIALS } from '../sim/materials.js';
 import { SNOW_COVER } from './archipelago.js';
 import { deriveWeather } from '../sim/weather.js';
@@ -126,6 +127,7 @@ export class View {
     this.ice = new IceRenderer(this.root); // ice on the water (sim/ice.js)
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
+    this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
     this.enemies = new EnemyRenderer(this.root, this.flames);
     this.dragons = new DragonRenderer(this.root, this.flames);
     this.phoenixes = new PhoenixRenderer(this.root, this.flames);
@@ -207,6 +209,7 @@ export class View {
     this.flames.setWorld(world);
     this.patches.clear();
     this.breath.clear();
+    this.tea.setWorld(world);
     this.snow.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -261,7 +264,10 @@ export class View {
     const w = this.world;
     const B = this.breath;
     B.light = Math.min(1, 0.35 + (this.dark ? 0.5 : this.sun.intensity * 0.4));
-    if (w.vacuum) return B.update(dt, this.time, scale, [], () => null);
+    if (w.vacuum) {
+      this.tea.update(dt, scale, null, B.light);
+      return B.update(dt, this.time, scale, [], () => null);
+    }
     const mouths = [];
     for (const e of w.enemies) {
       if (e.dead || e.yaw == null) continue;
@@ -300,6 +306,7 @@ export class View {
       return { T: w.airT[a], RH: rh, wind: [w.vx[a], w.vy?.[a] ?? 0, w.vz[a]] };
     };
     B.update(dt, this.time, scale, mouths, air);
+    this.tea.update(dt, scale, air, B.light);
   }
 
   /** The camera's position in the world's own coordinates ([x, y, z]). */

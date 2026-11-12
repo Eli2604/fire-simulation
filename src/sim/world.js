@@ -135,6 +135,7 @@ export class World {
     this.tracers = []; // shots fired (for a muzzle flash / tracer): { a, b, t }
     this.playerHits = []; // shots that hit the player (the walk-through takes them)
     this.trees = []; // tree skeletons (owner, species, segments) for drawing the bark: render/trees.js
+    this.cups = []; // cups of tea: drawn (render/tea.js), their heat kept on its own (sim/tea.js)
     this.props = []; // drawn-only detail (masts, radars, catapult tracks, nets...): render/props.js
     this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone

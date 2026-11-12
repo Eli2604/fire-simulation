@@ -240,6 +240,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const sh = V.shape && { ...V.shape, base: toWorld(...V.shape.base), bowl: toWorld(...V.shape.bowl), ridges: V.shape.ridges.map((r) => ({ ...r, a: toWorld(...r.a), b: toWorld(...r.b) })) };
     world.volcanoes.push({ ...V, shape: sh, crater: toWorld(...V.crater), rim: oy + V.rim, state: 'dormant' });
   }
+  for (const c of built.cups ?? []) world.cups.push({ ...c, p: toWorld(...c.p), owner: ownerIndex });
   for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   for (const br of built.barrels ?? []) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const VERT = /* glsl */ `
+export const VERT = /* glsl */ `
   attribute float aSize;
   attribute float aAlpha;
   uniform float uScale;
@@ -12,7 +12,7 @@ const VERT = /* glsl */ `
     gl_Position = projectionMatrix * mv;
   }
 `;
-const FRAG = /* glsl */ `
+export const FRAG = /* glsl */ `
   uniform vec3 uColor;
   varying float vA;
   void main() {
@@ -73,16 +73,7 @@ export class BreathRenderer {
    */
   static visibility(T, RH) {
     if (T > 16) return 0;
-    let worst = 0;
-    const Tb = 34;
-    const vb = sat(Tb);
-    const va = sat(T) * RH;
-    for (let f = 0.05; f < 1; f += 0.05) {
-      const Tm = T + (Tb - T) * f;
-      const over = (va + (vb - va) * f) / sat(Tm) - 1;
-      if (over > worst) worst = over;
-    }
-    return Math.min(1, worst * 1.2);
+    return mistOnMixing(T, RH, 34);
   }
 
   /**
@@ -162,6 +153,24 @@ export class BreathRenderer {
     this.n = 0;
     this.alpha.fill(0);
   }
+}
+
+/**
+ * Saturated air at Tb °C (a breath, the air over a hot cup) mixing into air at T °C and
+ * relative humidity RH: how far over saturation the mix goes on its way (0..1), i.e. how
+ * much of it condenses into a visible mist.
+ */
+export function mistOnMixing(T, RH, Tb) {
+  if (Tb <= T) return 0;
+  let worst = 0;
+  const vb = sat(Tb);
+  const va = sat(T) * RH;
+  for (let f = 0.05; f < 1; f += 0.05) {
+    const Tm = T + (Tb - T) * f;
+    const over = (va + (vb - va) * f) / sat(Tm) - 1;
+    if (over > worst) worst = over;
+  }
+  return Math.min(1, worst * 1.2);
 }
 
 /** Saturation vapour density (kg/m³) at T °C (Magnus). */

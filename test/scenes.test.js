@@ -28,6 +28,11 @@ test('every model builds voxels with its default parameters', () => {
       assert.ok(world.heaters.some((h) => h.kind === 'candle' && h.light), 'a candle in a coarse scene is its flame');
       continue;
     }
+    if (type === 'teaCup') {
+      // far smaller than the voxels: drawn, its heat kept on its own (sim/tea.js)
+      assert.equal(world.cups.length, 1, 'a cup of tea is a cup, not voxels');
+      continue;
+    }
     if (type === 'dragon') {
       assert.ok(world.dragons.length > 0, 'a dragon is a creature, not voxels');
       continue;

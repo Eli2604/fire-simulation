@@ -20,6 +20,12 @@ export default {
     pierLength: { value: 6, min: 3, max: 10, step: 0.5, label: 'Pier length (m)' },
     canal: { value: true, label: 'Canal from the hills to the sea' },
     pond: { value: true, label: 'Pond on the hillside' },
+    // (where the pond is, and how big: larger, it is a lake)
+    pondX: { value: 0.15, min: -0.8, max: 0.8, step: 0.05, label: 'Pond at X (share of half width)' },
+    pondZ: { value: -0.55, min: -0.8, max: 0.8, step: 0.05, label: 'Pond at Z (share of half depth)' },
+    pondRadius: { value: 2.2, min: 1, max: 12, step: 0.1, label: 'Pond radius along X (m)' },
+    pondRadiusZ: { value: 0, min: 0, max: 12, step: 0.1, label: 'Pond radius along Z (m; 0: round)' },
+    pondDepth: { value: 1.2, min: 0.3, max: 3, step: 0.1, label: 'Pond depth (m)' },
     catacombs: { value: 'catacombs', label: 'Zone the catacomb stairs lead to' },
     boatTo: { value: 'deck', label: 'Zone the boat takes you to' },
     boatLabel: { value: 'Boat: back to the ship', label: 'What the boat is (its hint)' },
@@ -43,7 +49,9 @@ export default {
     // the canal: a winding line from below the main hill down to the east shore
     const canalZ = (x) => -D * 0.05 + Math.sin(x * 0.35) * D * 0.08;
     const canalW = 1.4;
-    const pondC = { x: W * 0.15, z: -D * 0.55, r: 2.2 };
+    const pondC = { x: W * p.pondX, z: D * p.pondZ, r: p.pondRadius, rz: p.pondRadiusZ || p.pondRadius };
+    // distance from the pond's centre, in metres along its X radius (an ellipse)
+    const pondDist = (x, z) => Math.hypot(x - pondC.x, ((z - pondC.z) * pondC.r) / pondC.rz);
     let pondBase = null;
     const height = (x, z, noDip = false) => {
       const r = Math.hypot(x / W, z / D);
@@ -64,13 +72,13 @@ export default {
         if (d < canalW + 1) y = Math.min(y, d < canalW ? sea - 0.8 : sea - 0.8 + (d - canalW) * (y - sea + 0.8));
       }
       // a dip for the pond
-      const dp = Math.hypot(x - pondC.x, z - pondC.z);
+      const dp = pondDist(x, z);
       if (p.pond && !noDip && dp < pondC.r + 2.5) {
         // a level terrace on the hillside, with the pond dug into it
         const base = pondBase ?? (pondBase = height(pondC.x, pondC.z, true));
         const t = Math.min(1, Math.max(0, (dp - pondC.r - 0.8) / 1.7));
         y = base + (y - base) * t * t * (3 - 2 * t);
-        if (dp < pondC.r) y -= 1.2 * Math.min(1, 2 * (1 - dp / pondC.r));
+        if (dp < pondC.r) y -= p.pondDepth * Math.min(1, 2 * (1 - dp / pondC.r));
       }
       return y;
     };
@@ -91,14 +99,14 @@ export default {
         const sand = y < sea + 0.45;
         const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
         // the green slopes are grass (it burns: a lighter or a spark sets it going), on soil
-        const sward = !rock && !sand && !(p.pond && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r);
+        const sward = !rock && !sand && !(p.pond && pondDist(cx, cz) < pondC.r);
         // down at least to its lowest neighbour's top: where the ground steps down (the shore,
         // the canal banks) there is no gap to see through under the thin shell of voxels
         const nb = Math.min(height(cx - step, cz), height(cx + step, cz), height(cx, cz - step), height(cx, cz + step));
         const bottom = Math.max(0, Math.min(y - Math.max(2.2 * h, 0.6), nb - h)); // (at least 0.6 m of ground: a blast digs a crater in it, not a hole through)
         prims.push({ shape: 'box', min: [x, bottom, z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
         if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
-        if (p.pond && y < pondLevel && Math.hypot(cx - pondC.x, cz - pondC.z) < pondC.r)
+        if (p.pond && y < pondLevel && pondDist(cx, cz) < pondC.r)
           prims.push({ shape: 'box', min: [x, y, z], max: [x + step, pondLevel, z + step], material: 'water' });
       }
     // the pier and a boat on the west shore
