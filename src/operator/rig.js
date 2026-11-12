@@ -545,6 +545,15 @@ const CLIPS = {
     p.head = [-0.05, 0.08 * sin(TAU * u), 0];
     return p;
   }],
+  // at a desk: seated, the rifle slung, hands on the keyboard and mouse, eyes going from screen to screen
+  deskSit: [6.0, (t, u) => {
+    const p = pose0(), f = TAU * u;
+    p.hipsPos = [0, -0.5, -0.04]; p.thighR = [-1.5, 0, -0.06]; p.thighL = [-1.5, 0, 0.06]; p.shinR = [1.5, 0, 0]; p.shinL = [1.5, 0, 0];
+    p.spine = [0.1, 0, 0]; p.head = [-0.14 + 0.05 * sin(f * 2), 0.38 * sin(f) + 0.1 * sin(f * 3), 0];
+    p.sling = 1; p.lG = 0; p.rG = 0; p.lH = 0; p.rH = 0; p.lW = 1; p.rW = 1; p.lPole = [1, -0.6, -0.5]; p.rPole = [-1, -0.6, -0.5];
+    p.lTW = [0.17 + 0.015 * sin(f * 4), 0.79, 0.44]; p.rTW = [-0.19 + 0.04 * sin(f * 3 + 1), 0.79, 0.42 + 0.03 * sin(f * 5)];
+    return p;
+  }],
   // flying the drone on a search: bigger stick inputs, the head turning with it
   droneScout: [4.0, (t, u) => {
     const p = droneKneel(pose0(), 1);
@@ -634,11 +643,11 @@ export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
-  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
+  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle. */
-const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, pickup: 1, swim: 1 };
+const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1 };
 /** A flame trooper cannot shoot or reload; he fires the flame gun standing only. */
 const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle' };
 

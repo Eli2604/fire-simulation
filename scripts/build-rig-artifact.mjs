@@ -3,7 +3,7 @@
  * three.js and the sculpt worker (inlined, started from a blob) in a single document, to share
  * or host anywhere. Uses Rollup's API directly (no esbuild needed).
  *
- *   node scripts/build-rig-artifact.mjs [out.html]     (default: dist/enemy-rig.html)
+ *   node scripts/build-rig-artifact.mjs [out.html] [page]   page: rig (default) or camp
  */
 import { rollup } from 'rollup';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -11,7 +11,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const out = resolve(process.argv[2] ?? resolve(root, 'dist/enemy-rig.html'));
+const page = process.argv[3] ?? 'rig';
+const out = resolve(process.argv[2] ?? resolve(root, `dist/${page === 'rig' ? 'enemy-rig' : page}.html`));
 const three = {
   name: 'resolve-three',
   resolveId(id) {
@@ -38,11 +39,11 @@ const inlineWorker = {
     return code.replace(from, blob);
   },
 };
-const code = (await bundle('src/rig/main.js', [inlineWorker])).replace(/<\/script/gi, '<\\/script');
-const html = readFileSync(resolve(root, 'rig.html'), 'utf8');
+const code = (await bundle(`src/${page}/main.js`, [inlineWorker])).replace(/<\/script/gi, '<\\/script');
+const html = readFileSync(resolve(root, `${page}.html`), 'utf8');
 const head = html.slice(html.indexOf('<title>'), html.indexOf('</head>'));
-const body = html.slice(html.indexOf('<body>') + 6, html.indexOf('<script type="module" src="./src/rig/main.js"></script>'));
-const page = `${head}\n${body}\n<script type="module">\n${code}\n</script>\n`;
+const body = html.slice(html.indexOf('<body>') + 6, html.indexOf(`<script type="module" src="./src/${page}/main.js"></script>`));
+const doc = `${head}\n${body}\n<script type="module">\n${code}\n</script>\n`;
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, page);
-console.log(`${out}: ${(page.length / 1e6).toFixed(2)} MB`);
+writeFileSync(out, doc);
+console.log(`${out}: ${(doc.length / 1e6).toFixed(2)} MB`);

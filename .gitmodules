@@ -1,0 +1,3 @@
+[submodule "vendor/drones"]
+	path = vendor/drones
+	url = https://github.com/Eli2604/drones

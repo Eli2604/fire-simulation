@@ -385,6 +385,11 @@ export const SCENARIOS = {
       { type: 'squad', params: { unit: 'Bravo', threatX: 12, threatZ: -21, flameTrooper: true }, x: 6, z: 29 },
     ],
   },
+  droneCamp: {
+    name: 'Military camp: drone operations desk',
+    description: 'A camp with a swarm of drones flown by the group logic of the drones repo (vendor/drones); a drone operator walks to his desk with a monitor per drone and a tactical map; jammers cut the link to the camp or GNSS.',
+    page: 'camp.html',
+  },
   rigTest: {
     name: 'Soldier rig test (animations, hit areas, gear)',
     description: 'The sculpted operator on its own page: every animation, the hit areas, the detachable gear, and the squad AI on a range you edit.',

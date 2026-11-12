@@ -1053,3 +1053,24 @@ set the threat* moves the threat.
 **Soldier rig test** (`rig.html`): the soldier on a range of its own, with every clip, the hit
 areas (shown and adjustable), the gear, an FPS readout and the squad AI on a range you edit.
 `node scripts/build-rig-artifact.mjs [out.html]` builds it as one self-contained HTML file.
+
+### Squads: senses, the commander's calls, cover
+
+Fire teams also find their enemy themselves: they see hostiles as far as fog, smoke and darkness
+allow (thermal goggles see further), hear noises and send two men to investigate (under radio
+silence), mark what they see as the threat and follow it, and go back to the last known position
+when they lose it. The commander orders thermals, lights on or off (not when that would give them
+away), radio silence and backup; cover at the ends of walls and edges of crates is preferred and
+the gunner takes higher ground a little behind. On the rig page: the Noise, Hostile and
+Investigate tools, Fog, Night and Radio silence.
+
+## Drone operations camp
+
+`camp.html` (scenario **Military camp: drone operations desk**): a camp with a swarm of drones
+flown by the group logic of the [drones](https://github.com/Eli2604/drones) repo, included as a
+git submodule in `vendor/drones` (clone with `git clone --recurse-submodules`, or run
+`git submodule update --init`). The operator walks to his desk in the command tent: a monitor per
+drone (its camera and status: leader, battery, GNSS, link to the camp) and a tactical map of where
+each drone last reported. Jammers (from the drones repo) cut GNSS or the radio link to the camp;
+place more with *Place jammer*. `node scripts/build-rig-artifact.mjs out.html camp` builds it as
+one file.
