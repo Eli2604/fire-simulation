@@ -24,6 +24,10 @@ const AIR_LITRES = 2040;
  * 1/2/3 select the hose (fog nozzle), a fire torch or a hand grenade; the left
  * mouse button uses it (hold for hose/torch, click to throw). T for the thermal
  * imaging camera (sees through smoke), L for the helmet lamp, Esc to leave.
+ * M takes the mask off or puts it back on (a second or so either way: off, you breathe the
+ * air round you, smoke and heat and all, and it stings your eyes; on, the cylinder again).
+ * 7 (or Q, to swap to it and back) is the rifle: hold the right mouse button to bring it up
+ * to your eye, looking along its sight, the view zoomed in a little.
  *
  * The mask view shows the remaining air (consumption depends on effort and
  * heat), the gas temperature at your face, a rough visibility estimate and
@@ -42,6 +46,9 @@ export class Walkthrough {
     this.thermal = false;
     this.tool = 'hose';
     this.throwRequested = false;
+    this.maskOn = true; // the face piece on (M takes it off)
+    this.maskK = 1; // how far on it is (0 off .. 1 on, sealed)
+    this.aimK = 0; // the rifle brought up to the eye (0 .. 1)
     this.sound = new SoundScape();
     this.el = {
       mask: document.getElementById('mask'),
@@ -54,6 +61,20 @@ export class Walkthrough {
       burn: document.querySelector('#mask .burn'),
       down: document.getElementById('walkDown'),
     };
+    // the mask's own parts (the visor's frame, its misting, what is drawn on it, the camera's
+    // picture): they go with it when it comes off; the rest (heat, flames, water) is round you
+    if (this.el.mask) {
+      const visor = document.createElement('div');
+      visor.className = 'visor';
+      for (const e of [document.querySelector('#mask .vignette'), this.el.fog, this.el.tic, this.el.canvas]) if (e) visor.appendChild(e);
+      this.el.mask.insertBefore(visor, this.el.mask.firstChild);
+      this.el.visor = visor;
+      const eyes = document.createElement('div');
+      eyes.className = 'eyes';
+      this.el.mask.insertBefore(eyes, visor);
+      this.el.eyes = eyes;
+      this.el.cross = document.querySelector('#mask .crosshair');
+    }
     this.lamp = new THREE.SpotLight(0xfff1d6, 0, 25, Math.PI / 6.5, 0.75, 1.6);
     this.lamp.castShadow = true; // the lamp's light throws shadows behind what it hits
     this.lamp.shadow.mapSize.set(1024, 1024);
@@ -78,10 +99,20 @@ export class Walkthrough {
     document.addEventListener('mousemove', (e) => {
       if (!this.active || document.pointerLockElement !== canvas) return;
       if (this.flight) return this.flight.mouse(e.movementX, e.movementY);
-      this.yaw -= e.movementX * 0.0022;
-      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * 0.0022));
+      // (zoomed in along the sight the mouse turns you less: the view moves as fast on screen)
+      const s = 0.0022 * (this.view.camera.fov / 72);
+      this.yaw -= e.movementX * s;
+      this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - e.movementY * s));
+    });
+    canvas.addEventListener('contextmenu', (e) => {
+      if (this.active) e.preventDefault();
     });
     document.addEventListener('mousedown', (e) => {
+      // right button: the rifle up to the eye (and the bow drawn along the arrow)
+      if (this.active && document.pointerLockElement === canvas && e.button === 2 && !this.flight && (this.tool === 'rifle' || this.tool === 'bow')) {
+        this.aiming = true;
+        if (this.tool === 'rifle') this.sound.aim?.(true);
+      }
       if (this.active && document.pointerLockElement === canvas && e.button === 0) {
         if (this.flight) this.flight.fireRequested = true;
         else if (this.tool === 'grenade') this.throwRequested = true;
@@ -91,6 +122,10 @@ export class Walkthrough {
       }
     });
     document.addEventListener('mouseup', (e) => {
+      if (e.button === 2 && this.aiming) {
+        this.aiming = false;
+        if (this.tool === 'rifle') this.sound.aim?.(false);
+      }
       if (e.button === 0) {
         this.spraying = false;
         this.trigger = false;
@@ -116,6 +151,16 @@ export class Walkthrough {
       if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
       if (e.code === 'Digit6') this.tool = 'bow';
       if (e.code === 'Digit7') this.tool = 'rifle';
+      // Q: to the rifle and back to what you had
+      if (e.code === 'KeyQ') {
+        if (this.tool === 'rifle') this.tool = this.prevTool ?? 'hose';
+        else {
+          this.prevTool = this.tool;
+          this.tool = 'rifle';
+        }
+        this.spraying = false;
+      }
+      if (e.code === 'KeyM') this.toggleMask();
       if (e.code === 'KeyR' && this.tool === 'rifle' && !this.reloading && (this.ammo ?? 30) < 30) {
         this.reloading = 2;
         this.say('Reloading…', 2);
@@ -156,6 +201,25 @@ export class Walkthrough {
     v.camera.add(this.lamp.target);
     this.el.mask.hidden = false;
     this.el.start.hidden = false;
+    this.maskOn = true;
+    this.maskK = 1;
+    this.aimK = 0;
+    this.aiming = false;
+  }
+
+  /**
+   * M: the mask off, or back on. Off: unclip the demand valve (the air stops), loosen the
+   * straps, pull the face piece off over your head (it hangs on its neck strap); on: the
+   * other way, the valve clicked in last. Either takes about a second, and until it is on
+   * and sealed you breathe what is round you.
+   */
+  toggleMask() {
+    if (this.downed || this.flight || (this.maskK > 0.05 && this.maskK < 0.95)) return;
+    this.maskOn = !this.maskOn;
+    this.sound.maskSwap?.(this.maskOn);
+    this.arm = { mode: 'mask', t: 0, on: this.maskOn };
+    if (this.maskOn) this.say(this.maskBurst ? 'Mask on – but its visor is broken: smoke still gets in' : 'Mask on: breathing from the cylinder', 2.5);
+    else this.say('Mask off: you breathe the air round you (M to put it back on)', 3);
   }
 
   /** Where the sea is coming in (for the sound), the missing hull plating closest to you. */
@@ -260,6 +324,11 @@ export class Walkthrough {
     this.spraying = false;
     this.arm = null;
     this.flight = new Flight(this, sim, vehicle);
+    if (this.gun) this.gun.visible = false;
+    this.aiming = false;
+    this.aimK = 0;
+    this.view.camera.fov = 72;
+    this.view.camera.updateProjectionMatrix();
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
     this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, X eject', 6);
@@ -329,6 +398,81 @@ export class Walkthrough {
     this.say(r.open ? 'Inert gas released, but this space is open: it leaks away' : 'Room flooded with inert gas: the fire will starve (you are on breathing apparatus)', 5);
   }
 
+  /**
+   * The rifle in your hands (while it is the tool): at the hip, or with the right mouse
+   * button up at the eye, its reflex sight's red dot on what you look at. It comes up when
+   * you change to it, kicks back with each shot, and tips over while you reload.
+   */
+  updateGun(dt) {
+    if (!this.gun) {
+      const g = new THREE.Group();
+      const dark = new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.5, metalness: 0.6, emissive: 0x0b0c0d });
+      const poly = new THREE.MeshStandardMaterial({ color: 0x3a3d31, roughness: 0.85, emissive: 0x0a0b08 });
+      const box = (sx, sy, sz, x, y, z, m, rx = 0) => {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m);
+        b.position.set(x, y, z);
+        b.rotation.x = rx;
+        g.add(b);
+        return b;
+      };
+      box(0.045, 0.06, 0.26, 0, 0, 0, dark); // receiver
+      box(0.052, 0.056, 0.24, 0, -0.002, -0.25, poly); // handguard
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.01, 0.2, 10), dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.004, -0.46);
+      g.add(barrel);
+      box(0.026, 0.022, 0.05, 0, 0.004, -0.57, dark); // flash hider
+      box(0.03, 0.13, 0.055, 0, -0.09, -0.06, dark, 0.22); // magazine
+      box(0.03, 0.09, 0.04, 0, -0.07, 0.08, poly, -0.35); // grip
+      box(0.04, 0.075, 0.22, 0, -0.012, 0.24, poly); // stock
+      box(0.03, 0.01, 0.2, 0, 0.035, -0.02, dark); // the rail
+      // the reflex sight: a hood round a tinted glass, the red dot seen in it
+      box(0.004, 0.036, 0.05, -0.018, 0.058, -0.03, dark);
+      box(0.004, 0.036, 0.05, 0.018, 0.058, -0.03, dark);
+      box(0.04, 0.005, 0.05, 0, 0.078, -0.03, dark);
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.032, 0.03), new THREE.MeshBasicMaterial({ color: 0x9fc0ff, transparent: true, opacity: 0.12, depthWrite: false }));
+      glass.position.set(0, 0.058, -0.045);
+      g.add(glass);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0016, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2b1a }));
+      dot.position.set(0, 0.058, -0.046);
+      g.add(dot);
+      // the muzzle flash, and its light on what is round you
+      const flash = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.14, 8, 1, true), new THREE.MeshBasicMaterial({ color: 0xffc46a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      flash.rotation.x = -Math.PI / 2;
+      flash.position.set(0, 0.004, -0.66);
+      flash.visible = false;
+      g.add(flash);
+      const fl = new THREE.PointLight(0xffb060, 0, 8, 2);
+      fl.position.set(0, 0.02, -0.7);
+      g.add(fl);
+      g.visible = false;
+      this.view.camera.add(g);
+      this.gun = g;
+      this.gunFlash = flash;
+      this.gunLight = fl;
+      this.gunUp ??= 0;
+    }
+    const g = this.gun;
+    const want = this.tool === 'rifle' && !this.downed && !this.flight && this.arm?.mode !== 'mask';
+    this.gunUp += ((want ? 1 : 0) - this.gunUp) * Math.min(1, dt * 7);
+    g.visible = this.gunUp > 0.02;
+    if (!g.visible) return;
+    this.kick = Math.max(0, (this.kick ?? 0) - dt * 14);
+    const a = this.aimK;
+    const sway = this.moving ? Math.sin((this.hooks.getSim()?.world.time ?? 0) * 9) * 0.008 * (1 - 0.7 * a) : 0;
+    // at the hip -> at the eye (the dot on the line of sight)
+    const hip = [0.19, -0.2, -0.4];
+    const eye = [0, -0.058, -0.4];
+    const lower = (1 - this.gunUp) * 0.45;
+    const rl = this.reloading ? Math.sin(Math.min(1, (2 - this.reloading) / 2) * Math.PI) : 0;
+    g.position.set(hip[0] + (eye[0] - hip[0]) * a + sway, hip[1] + (eye[1] - hip[1]) * a - lower - 0.06 * rl + Math.abs(sway) * 0.5, hip[2] + (eye[2] - hip[2]) * a + 0.035 * this.kick);
+    g.rotation.set(0.05 * this.kick * (1 - 0.5 * a) - 0.35 * rl - lower, 0.06 * (1 - a), 0.5 * rl);
+    this.flashT = Math.max(0, (this.flashT ?? 0) - dt);
+    this.gunFlash.visible = this.flashT > 0;
+    if (this.gunFlash.visible) this.gunFlash.rotation.y = Math.random() * Math.PI;
+    this.gunLight.intensity = this.flashT > 0 ? 6 : 0;
+  }
+
   /** A gloved forearm in view (only while it does something). */
   updateArm() {
     if (!this.armMesh) {
@@ -348,7 +492,14 @@ export class Walkthrough {
     const g = this.armMesh;
     g.visible = !!a;
     if (!a) return;
-    if (a.mode === 'swing') {
+    if (a.mode === 'mask') {
+      // the hand up to the face piece and with it over the head (off), or down onto the face (on)
+      const u = Math.min(1, a.t / 1.1);
+      const k = Math.sin(u * Math.PI);
+      const lift = a.on ? 1 - u : u;
+      g.position.set(0.14 - 0.1 * k, -0.28 + 0.2 * k + 0.25 * lift * k, -0.12 - 0.12 * k);
+      g.rotation.set(0.9 * k + 0.6 * lift * k, 0.5 - 0.3 * k, -0.4 * k);
+    } else if (a.mode === 'swing') {
       const k = Math.sin(Math.min(1, a.t / 0.45) * Math.PI);
       g.position.set(0.22 - 0.12 * k, -0.25 + 0.05 * k, -0.15 - 0.35 * k);
       g.rotation.set(0.2 * k, 0.3 - 0.4 * k, 0);
@@ -566,7 +717,8 @@ export class Walkthrough {
     const headA = sim.airCellAt(...pts[2]);
     const headT = headA >= 0 ? w.airT[headA] : w.ambient;
     const visorHeat = Math.max(0, (headT - 170) / 700) + Math.max(0, (rad - 14000) / 90000) + (this.onFire > 0 ? 0.03 : 0);
-    if (visorHeat > 0) this.damageMask(visorHeat * dt);
+    const sealed = this.sealed !== false;
+    if (visorHeat > 0 && sealed) this.damageMask(visorHeat * dt);
     // falling things: tiles, debris, fragments near your head
     const head = pts[2];
     for (const d of w.debris) {
@@ -579,8 +731,8 @@ export class Walkthrough {
         const m = MATERIALS[d.mat].density * d.dens * w.h ** 3;
         const v = Math.hypot(...d.v);
         const e = Math.min(1, 0.5 * m * v * v / 60);
-        this.hurt(5 + 35 * e);
-        this.damageMask(0.1 + 0.6 * e, 0.5 + dx, 0.45 - dy);
+        this.hurt(5 + 35 * e + (sealed ? 0 : 10));
+        if (sealed) this.damageMask(0.1 + 0.6 * e, 0.5 + dx, 0.45 - dy);
         this.say('Hit by flying debris!');
       }
     }
@@ -592,9 +744,17 @@ export class Walkthrough {
       this.damageMask(0.15, 0.5, 0.25);
       this.say(`A falling ${MATERIALS[w.mat[above]].label.toLowerCase()} hits your helmet!`);
     }
-    // no air, or smoke through a broken mask (CO, irritants)
-    if (this.air <= 0) dmg += 8;
-    if (this.maskBurst) dmg += Math.min(10, smokeC * 4000);
+    if (sealed) {
+      // no air, or smoke through a broken mask (CO, irritants)
+      if (this.air <= 0) dmg += 8;
+      if (this.maskBurst) dmg += Math.min(10, smokeC * 4000);
+    } else {
+      // the mask off: you breathe what is round you: smoke (CO, irritants), too little
+      // oxygen, hot gas that burns the airway (above ~60 °C), and your face takes the heat
+      const hc = sim.airCellAt(...pts[2]);
+      const o2 = hc >= 0 ? (w.o2[hc] / 0.232) * 20.9 : 20.9;
+      dmg += Math.min(14, smokeC * 6000) + Math.max(0, (16 - o2) * 1.5) + Math.max(0, (gas - 60) / 25) + Math.max(0, (rad - 3000) / 4000);
+    }
     if (dmg > 0) this.hurt(dmg * dt);
     // a little recovery in clean, cool air
     else if (this.health < 100 && this.onFire <= 0) this.health = Math.min(100, this.health + dt * 0.5);
@@ -704,6 +864,8 @@ export class Walkthrough {
     v.camera.remove(this.lamp);
     v.camera.remove(this.lamp.target);
     v.camera.fov = this.savedFov ?? 50;
+    if (this.gun) this.gun.visible = false;
+    if (this.el.eyes) this.el.eyes.style.opacity = '0';
     v.camera.updateProjectionMatrix();
     v.controls.enabled = true;
     this.el.mask.hidden = true;
@@ -839,7 +1001,7 @@ export class Walkthrough {
       const j = sn.cell(this.pos.x, this.pos.z);
       if (j >= 0 && sn.depth[j] > 0.08) trudge = Math.max(0.45, 1 - 0.9 * sn.depth[j] * (1 - Math.min(1, (sn.rho[j] - 150) / 350)));
     }
-    const speed = (this.crawl ? 0.5 : hurry ? 2.2 : 1.2) * wade * trudge;
+    const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * wade * trudge * (1 - 0.45 * this.aimK);
     const len = Math.hypot(fx, fz);
     let moving = 0;
     if (len > 0) {
@@ -953,9 +1115,33 @@ export class Walkthrough {
         this.sound.door?.();
         this.say(`${d.name}: unlocked from the inside and opened`, 3);
       }
-      if (this.arm.t > (this.arm.mode === 'reach' ? 2 : 0.45)) this.arm = null;
+      if (this.arm.t > ({ reach: 2, mask: 1.1 }[this.arm.mode] ?? 0.45)) this.arm = null;
     }
     this.updateArm();
+
+    // --- the mask coming off or going on (sealed only once it is all the way on)
+    this.maskK = Math.max(0, Math.min(1, this.maskK + ((this.maskOn ? 1 : -1) * dt) / 1.1));
+    const wasSealed = this.sealed;
+    this.sealed = this.maskOn && this.maskK >= 1;
+    if (this.sealed && wasSealed === false) this.donFog = 1; // put on, it mists up for a moment
+    this.donFog = Math.max(0, (this.donFog ?? 0) - dt / 1.8);
+    if (this.el.visor) {
+      const u = 1 - this.maskK;
+      const e = u * u * (3 - 2 * u);
+      // off: up over your head, the frame of it passing across your eyes
+      this.el.visor.style.transform = e > 0.001 ? `translateY(${(-150 * e).toFixed(1)}%) scale(${(1 + 0.35 * e).toFixed(3)})` : '';
+      this.el.visor.style.visibility = e > 0.98 ? 'hidden' : '';
+    }
+    // --- the rifle up to the eye: the view zooms in a little, along its sight
+    const wantAim = this.aiming && (this.tool === 'rifle' || this.tool === 'bow') && !this.downed && !this.reloading && this.arm?.mode !== 'mask';
+    this.aimK += ((wantAim ? 1 : 0) - this.aimK) * Math.min(1, dt * 9);
+    const fov = 72 - (this.tool === 'rifle' ? 24 : 14) * this.aimK;
+    if (Math.abs(cam.fov - fov) > 0.01) {
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
+    }
+    if (this.el.cross) this.el.cross.style.opacity = String(1 - (this.tool === 'rifle' ? this.aimK : 0));
+    this.updateGun(dt);
 
     // --- what the fire does to you
     const exposure = this.downed ? null : this.body(dt, sim, cam, eye);
@@ -982,14 +1168,29 @@ export class Walkthrough {
     // under water: the mask is all the air there is (cold and effort: you breathe harder)
     this.underwater = this.isWater(head[0], head[1], head[2]);
     const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0) + (this.underwater ? 20 + 15 * (this.swimming ? 1 : 0) : 0); // a broken mask leaks
-    this.air = Math.max(0, this.air - (lpm / 60) * dt * (sim.world.time > 0 ? 1 : 0));
+    // (the mask off, the cylinder is shut: what you breathe is the air round you)
+    this.air = Math.max(0, this.air - ((this.sealed ? lpm : 0) / 60) * dt * (sim.world.time > 0 ? 1 : 0));
     const bar = (this.air / AIR_LITRES) * 300;
     if (this.underwater && !this.downed) {
-      if (!this.wasUnder) this.say('Under water – you are breathing from your mask', 3);
-      if (this.air <= 0 || this.maskBurst) {
+      if (!this.wasUnder) this.say(this.sealed ? 'Under water – you are breathing from your mask' : 'Under water without your mask – hold your breath, M to put it on!', 3);
+      // without the mask you hold your breath (half a minute, less when working hard)
+      this.breathHeld = this.sealed ? 0 : (this.breathHeld ?? 0) + dt * (1 + moving);
+      if (this.air <= 0 || this.maskBurst || this.breathHeld > 30) {
         this.hurt(18 * dt);
         if (w.time > this.messageUntil) this.say('DROWNING – get your head above the water!', 2);
       }
+    } else this.breathHeld = 0;
+    // the mask off in smoke: it stings your eyes (tears, a blur) and you cough
+    const sting = this.sealed || this.downed ? 0 : Math.min(1, sigma * 0.9 + heat * 0.6 + steam * 30);
+    this.sting = (this.sting ?? 0) + (sting - (this.sting ?? 0)) * Math.min(1, dt * 2);
+    if (this.el.eyes) {
+      const s = this.sting;
+      this.el.eyes.style.opacity = s > 0.02 ? String(Math.min(0.95, s)) : '0';
+      this.el.eyes.style.backdropFilter = s > 0.02 ? `blur(${(1 + 5 * s).toFixed(1)}px)` : 'none';
+    }
+    if (!this.sealed && !this.downed && !this.underwater && (exposure?.smokeC ?? 0) * 6000 > 0.4 && Math.random() < dt * 0.9) {
+      this.sound.cough?.();
+      this.pitch = Math.max(-1.45, this.pitch - 0.03);
     }
     this.wasUnder = this.underwater;
     this.setUnderwater(this.underwater ? 1 : 0);
@@ -1061,11 +1262,14 @@ export class Walkthrough {
         this.ammo--;
         this.shotCd = 0.11;
         const muzzle = [head[0] + aimFwd.x * 0.6, head[1] - 0.12 + aimFwd.y * 0.6, head[2] + aimFwd.z * 0.6];
-        const s = 0.006;
+        // (along the sight it goes where you look; from the hip it scatters more)
+        const s = 0.006 * (1 - 0.75 * this.aimK);
         shoot(sim, muzzle, [aimFwd.x + (Math.random() - 0.5) * s, aimFwd.y + (Math.random() - 0.5) * s, aimFwd.z + (Math.random() - 0.5) * s]);
-        this.pitch = Math.min(1.45, this.pitch + 0.012); // recoil
-        const snd = this.sound;
-        if (snd.running) snd.burst(snd.ctx.currentTime, 0.12, 'bandpass', 1600, 1.2, 0.9);
+        this.pitch = Math.min(1.45, this.pitch + 0.012 * (1 - 0.4 * this.aimK)); // recoil
+        this.yaw += (Math.random() - 0.5) * 0.004;
+        this.kick = 1;
+        this.flashT = 0.05;
+        this.sound.shot?.();
       }
     }
     // shots that hit you
@@ -1106,13 +1310,18 @@ export class Walkthrough {
     }
 
     // --- mask overlay
-    if (this.el.fog) this.el.fog.style.opacity = String(Math.min(0.55, steam * 40 + Math.max(0, gasT - 60) / 400));
+    if (this.el.fog) this.el.fog.style.opacity = String(Math.min(0.75, steam * 40 + Math.max(0, gasT - 60) / 400 + 0.55 * this.donFog));
     if (this.el.heat) this.el.heat.style.opacity = String(heat * (0.6 + 0.4 * Math.sin(w.time * 6)));
     const mins = this.air / Math.max(1, lpm);
     const warn = [];
     if (bar < 55) warn.push('LOW AIR – WITHDRAW');
     if (this.onFire > 0) warn.push('ON FIRE');
     if (this.health < 30) warn.push('HEALTH CRITICAL');
+    if (!this.sealed) {
+      if (exposure && exposure.smokeC * 6000 > 0.4) warn.push('MASK OFF – BREATHING SMOKE');
+      if (gasT > 60) warn.push('HOT AIR – IT BURNS YOUR AIRWAY');
+      if (o2pct < 17) warn.push('LOW OXYGEN');
+    }
     if (this.underwater) warn.push('UNDER WATER – MASK AIR ONLY');
     else if (this.swimming) warn.push('DEEP WATER – SWIMMING');
     if (this.inrush > 1.5) warn.push('INRUSHING SEA');
@@ -1125,11 +1334,21 @@ export class Walkthrough {
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
-    this.el.hud.innerHTML = `
+    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'}${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
+    // the mask off: no display in the visor, only what you know (how you are, what you hold)
+    const bare = this.maskK < 0.6;
+    this.el.hud.classList.toggle('bare', bare);
+    if (bare) {
+      this.el.hud.innerHTML = `
+      <div class="bars"><span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div></div>
+      <div class="row"><span>MASK OFF · M to put it on</span><span>[${toolLabel}]</span></div>
+      ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
+      ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
+    } else this.el.hud.innerHTML = `
       <div class="bars"><span>AIR</span><div class="air"><div class="fill" style="width:${(bar / 3).toFixed(0)}%;background:${bar < 55 ? '#ff4a3a' : bar < 120 ? '#ffb13a' : '#5fd86b'}"></div></div>
       <span>HEALTH</span><div class="air"><div class="fill" style="width:${this.health.toFixed(0)}%;background:${this.health < 30 ? '#ff4a3a' : this.health < 60 ? '#ffb13a' : '#5fb8ff'}"></div></div>
       <span>VISOR</span><div class="air"><div class="fill" style="width:${(this.mask * 100).toFixed(0)}%;background:${this.mask < 0.3 ? '#ff4a3a' : '#c8c8c8'}"></div></div></div>
-      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${{ hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'}` }[this.tool]}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
+      <div class="row"><span>AIR ${bar.toFixed(0)} bar · ${mins.toFixed(0)} min</span><span>GAS ${gasT.toFixed(0)} °C</span><span>VIS ${visibility >= 99 ? '>99' : visibility.toFixed(1)} m</span><span>${this.crawl ? 'CRAWLING' : 'STANDING'}</span><span>[${toolLabel}]</span><span>O₂ ${o2pct.toFixed(1)} %</span></div>
       ${warn.length ? `<div class="warn">${warn.join(' · ')}</div>` : ''}
       ${w.time < this.messageUntil ? `<div class="msg">${this.message}</div>` : ''}`;
     if (this.el.burn) this.el.burn.style.opacity = this.onFire > 0 ? String(0.55 + 0.25 * Math.sin(w.time * 20)) : '0';
@@ -1153,7 +1372,8 @@ export class Walkthrough {
       airFraction: this.air / AIR_LITRES,
       events: w.events,
       onFire: this.onFire > 0,
-      maskLeak: this.maskBurst,
+      maskLeak: this.maskBurst && this.sealed,
+      maskOff: !this.sealed,
       enemies: w.enemies,
       dragons: w.dragons,
       phoenixes: w.phoenixes,

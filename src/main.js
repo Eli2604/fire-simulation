@@ -819,6 +819,26 @@ if (qs.get('walk')) {
   startWalk();
   if (at.length >= 5) walk.pitch = (at[4] * Math.PI) / 180;
   if (qs.get('lamp') === '0') walk.lampOn = false;
+  // ...&mask=off (or a step of putting it on: &mask=0.5), &tool=rifle, &aim=1 (up to the eye), &hud=1 (the view
+  // as you see it, without the start card: for stills)
+  if (qs.get('mask')) {
+    const k = qs.get('mask') === 'off' ? 0 : Math.max(0, Math.min(1, Number(qs.get('mask'))));
+    walk.maskK = Number.isFinite(k) ? k : 0;
+    walk.maskOn = walk.maskK > 0.5;
+    walk.sealed = walk.maskK >= 1;
+  }
+  if (qs.get('tool')) walk.tool = qs.get('tool');
+  if (qs.get('aim')) {
+    walk.aiming = true;
+    walk.aimK = 1;
+    walk.gunUp = 1;
+  }
+  if (qs.get('hud')) {
+    walk.el.start.hidden = true;
+    const st = document.createElement('style');
+    st.textContent = '.lil-gui, #inspect, #toolhint { display: none !important }';
+    document.head.appendChild(st);
+  }
   if (qs.get('freeze')) state.running = false; // a still: everything where it starts
 }
 // ...&advance=60: the scene as it is a minute on (the fine detail round the walk-in spot with it)

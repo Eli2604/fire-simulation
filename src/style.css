@@ -281,3 +281,25 @@ body {
   background: var(--accent);
   color: #111;
 }
+
+/* the mask's own parts: they go with it when it comes off (M) */
+#mask .visor {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 0%;
+  will-change: transform;
+}
+/* the mask off in smoke: stinging, watering eyes */
+#mask .eyes {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse 80% 70% at 50% 50%, rgba(255, 240, 230, 0.06) 35%, rgba(150, 50, 40, 0.45) 100%);
+}
+/* no display in a visor: just how you are and what you hold, small, at the bottom */
+#maskHud.bare {
+  bottom: 4%;
+  width: min(420px, 80vw);
+  font-size: 11px;
+  color: #e8e8e8;
+}

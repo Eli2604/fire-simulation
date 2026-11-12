@@ -164,7 +164,18 @@ scene). You walk in first person wearing breathing apparatus:
   grenade, and the left mouse button uses them. **6 is a bow with fire arrows**: hold the
   button to draw (a longer draw shoots faster) and release to shoot. An arrow sticks in what
   it hits and sets it alight (it burns about 25 s), goes through windows and breaks them,
-  and wounds enemies.
+  and wounds enemies. **7 (or Q, to swap to it and back) is a rifle**: it fires while you hold
+  the button, 30 rounds to a magazine, and R reloads. Hold the **right mouse button** to bring it
+  up to your eye: you look along its reflex sight (a red dot), the view zooms in a little, the
+  mouse turns you more slowly, shots go where the dot is, and you walk more slowly.
+- **M takes the mask off or puts it back on.** Either takes about a second: your hand goes up to
+  it, the straps, the face piece over your head and the demand valve sound as it comes off or
+  clicks back in. With the mask off you breathe the air round you, not the cylinder. Smoke,
+  hot gas (above about 60 °C it burns the airway), too little oxygen and radiant heat on your
+  face all hurt you. Smoke makes your eyes sting and water (the view blurs) and you cough.
+  Under water you hold your breath for about half a minute. The display in the visor goes
+  with the mask: you see only your health and what you hold. Put back on, the mask mists up
+  for a moment.
 - **T** toggles the thermal imaging camera, which sees through smoke. **L** toggles the
   helmet lamp.
 - **Water:** you wade through water (it holds you back), swim with your head out where it is
@@ -184,7 +195,10 @@ scene). You walk in first person wearing breathing apparatus:
 - **Sound:** generated live, with no audio files: the breathing apparatus (demand-valve
   click, inhale, exhale; faster when you work hard or get hot), positional fire roar and
   crackle, the hiss of a gas jet, the hose, the low-air whistle, a heartbeat under heat
-  stress, blasts, breaking glass, the bow, enemies' footsteps and shouts, and the jet engine.
+  stress, breaking glass, the bow, enemies' footsteps and shouts, and the jet engine. A blast
+  (a grenade, a rocket) has a sharp crack, the bang, a deep boom and a rumble with echoes, then
+  the debris coming down. It arrives as late as sound takes to travel and is duller from far
+  off. Close by it deafens you for a moment and your ears ring.
 
 ### Enemies
 
@@ -258,6 +272,18 @@ moves and hunts, render/dragon.js for how it looks). It is about 9 m from nose t
   in its jaws and then swallowed. In the walk-through you see out past its teeth until it
   swallows. Afterwards it is sated for a minute and goes back to its round.
 - **Senses.** It sees far further than a guard, but walls, smoke and foliage block its view.
+  Sight is traced voxel by voxel, so even a single course of roof tiles met at a slant blocks
+  it. Inside a building it sees you only through a way in for the eye: an open door, a hole,
+  an unfinished wall, a window still without glass, or a glazed window from within about 20 m
+  (the stained glass is coloured and the inside is dim). Guards trace their sight the same way.
+- **It breaks in.** If it saw you and you hide in a building, it does not give up: for about
+  45 s it stays and breaks the place open. It breathes fire on the walls, the door and the
+  roof, and what burns catches. It also climbs onto the building, rears up and comes down
+  with its whole weight. Tiles, boards and glass go first, brick and stone crack and give
+  after a few stamps, and what breaks falls in, possibly onto you. When the roof over you is
+  gone you are in the open, and it comes for you. Steel decks and hulls do not give. Landing
+  on a roof hits it hard too: its weight on all four feet breaks boards and tiles and cracks
+  stone, more the faster it comes in, so a roof it keeps landing on gives way.
   Resting, it only notices what comes close. Blasts wake it, and it remembers who hurt it.
 - **Its feet are heard.** Every time a diagonal pair of feet comes down there is a thud, heavier
   when it runs and heaviest when it lands on all four. The guards hear it too, and its

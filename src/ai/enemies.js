@@ -1,3 +1,4 @@
+import { traceVoxels } from './sight.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
@@ -122,22 +123,20 @@ export class EnemyAI {
     return pts.reverse();
   }
 
-  /** Line of sight from a to b, blocked by solids and thick smoke. */
+  /** Line of sight from a to b, voxel by voxel (ai/sight.js): blocked by solids and thick smoke. */
   sees(a, b) {
     const w = this.world;
     const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
     if (d > 22) return false;
-    const n = Math.ceil(d / 0.25);
     let tau = 0;
-    for (let k = 1; k < n; k++) {
-      const t = k / n;
-      const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-      if (this.solidAt(...p)) return false;
-      const c = this.sim.airCellAt(...p);
-      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * (d / n);
-      if (tau > 2.5) return false;
-    }
-    return true;
+    return !traceVoxels(w, a, b, (i, len, t) => {
+      if (i < 0) return false;
+      const m = w.mat[i];
+      if (m && MATERIALS[m].fluidity < 0.95 && !(this.passDoors && w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked)) return true;
+      const c = this.sim.airCellAt(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * len;
+      return tau > 2.5;
+    });
   }
 
   step(dt) {

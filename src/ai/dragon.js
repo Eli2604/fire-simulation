@@ -1,3 +1,5 @@
+import { traceVoxels } from './sight.js';
+import { crush } from '../sim/crush.js';
 import { MATERIALS } from '../sim/materials.js';
 
 /**
@@ -444,29 +446,40 @@ export class DragonAI {
     return !(seeThrough ? SEE_THROUGH : WALK_THROUGH).has(M.name);
   }
 
-  /** Line of sight from a to b: blocked by solids, foliage (a little) and thick smoke. */
+  /**
+   * Line of sight from a to b, voxel by voxel (ai/sight.js): blocked by walls and roofs,
+   * foliage a little, thick smoke. Into a building only where there is a way for the eye:
+   * an open door, a hole, a window still without its glass, or through the glass, which is
+   * coloured (and the inside is dim): through it someone is made out only nearer, ~20 m.
+   */
   sees(a, b, range = 45) {
     const w = this.world;
     const d = dist(a, b);
     if (d > range) return false;
-    const n = Math.ceil(d / (w.h * 0.6));
     let tau = 0;
-    for (let k = 1; k < n; k++) {
-      const t = k / n;
-      const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-      if (this.solidAt(p, true)) return false;
-      const i = w.voxelAt(p[0], p[1], p[2]);
-      if (i >= 0 && w.mat[i] && MATERIALS[w.mat[i]].name !== 'glass' && MATERIALS[w.mat[i]].fluidity < 0.95) tau += 0.35; // foliage
-      const c = this.sim.airCellAt(...p);
-      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * (d / n);
-      if (tau > 2.5) return false;
-    }
-    return true;
+    let pane = false;
+    let glass = false;
+    const blocked = traceVoxels(w, a, b, (i, len, t) => {
+      if (i < 0) return false;
+      const m = w.mat[i];
+      const M = m ? MATERIALS[m] : null;
+      if (M && M.fluidity < 0.95) {
+        if (M.name === 'glass') {
+          if (!pane) tau += 0.6; // each pane it looks through
+          pane = glass = true;
+        } else if (SEE_THROUGH.has(M.name)) tau += (0.35 * len) / (w.h * 0.6); // foliage
+        else return true;
+      } else pane = false;
+      const c = this.sim.airCellAt(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * len;
+      return tau > 2.5;
+    });
+    return !blocked && (!glass || d < 20);
   }
 
-  /** Is there a roof (anything solid) above someone standing at p? */
+  /** Is there a roof (anything solid) above someone standing at p? (a nave's vault is ~15 m up) */
   sheltered(p) {
-    for (let y = p[1] + 2.0; y < p[1] + 9; y += this.world.h) if (this.solidAt([p[0], y, p[2]], true)) return true;
+    for (let y = p[1] + 2.0; y < p[1] + 30; y += this.world.h) if (this.solidAt([p[0], y, p[2]], true)) return true;
     return false;
   }
 
@@ -606,7 +619,8 @@ export class DragonAI {
       d.target = best;
     } else if (d.target) {
       // lost sight: go on to where they were for a while
-      if (w.time - d.target.lastSeen > 12) d.target = null;
+      // (someone it saw go in under a roof: it waits them out, breaking the place open, longer)
+      if (w.time - d.target.lastSeen > (this.sheltered(d.target.p) ? 45 : 12)) d.target = null;
       else d.target.seen = false;
     }
   }
@@ -830,7 +844,7 @@ export class DragonAI {
     if (d.mode === 'air') {
       const h = (d.hunt ??= { passes: 0, phase: 'in' });
       // after a pass or two, land near them (unless they are under a roof)
-      if (!roof && (h.passes >= 2 || d.fuel < 0.3)) {
+      if (roof || h.passes >= 2 || d.fuel < 0.3) {
         h.spot ??= this.landingSpot(d, w, [T.p[0] - Math.sin(d.yaw) * 6 * k, 0, T.p[2] - Math.cos(d.yaw) * 6 * k], 6);
         if (h.spot && this.land(d, w, dt, h.spot)) d.hunt = null;
         if (!h.spot) h.passes = 0;
@@ -864,6 +878,10 @@ export class DragonAI {
       this.groundMove(d, w, dt, null, 0);
       return;
     }
+    if (d.stampT > 0) {
+      this.groundMove(d, w, dt, null, 0);
+      return this.stamp(d, w, dt, center);
+    }
     if (reach && dm < 2.0 * k && d.biteCool <= 0) {
       d.biteT = 0.5;
       d.lunge = 1;
@@ -873,9 +891,26 @@ export class DragonAI {
       this.startBreath(d, center, 0.6);
       return;
     }
-    if (!reach && T.seen && dm < 11 * k && d.fuel > 0.3 && d.breathCool <= 0) {
-      // under a roof: burn them out
-      this.startBreath(d, center, 0.6);
+    if (roof && w.time - T.lastSeen < 45) {
+      // under a roof: it breaks the place open to get at them. It burns it (the fire lands on
+      // the walls, the door, the roof, and what burns catches), or climbs onto it and stamps,
+      // rearing up and coming down with its whole weight, until walls and roof give
+      d.siege = (d.siege ?? 0) + dt;
+      if (d.fuel > 0.45 && d.breathCool <= 0 && dm < 12 * k && (d.siegeTurn ?? 0) % 3 === 0) {
+        d.siegeTurn = (d.siegeTurn ?? 0) + 1;
+        this.startBreath(d, center, 0.6);
+        return;
+      }
+      // (where its stamps broke nothing more, it moves on over the roof towards them first)
+      d.siegeWalk = Math.max(0, (d.siegeWalk ?? 0) - dt);
+      if ((dh < 3.5 * k || d.blocked > 0.6) && d.siegeWalk <= 0) {
+        d.stampT = 1.25;
+        d.stampAt = T.p.slice();
+        d.blocked = 0;
+        d.siegeTurn = (d.siegeTurn ?? 0) + (Math.random() < 0.35 ? 1 : 0);
+        return;
+      }
+      this.groundMove(d, w, dt, T.p, 3.5 * Math.sqrt(k), { climb: true });
       return;
     }
     const stop = reach ? 0 : 6 * k;
@@ -889,6 +924,55 @@ export class DragonAI {
       d.forceTakeoff = true;
     }
     if (d.forceTakeoff) this.takeoff(d, w, dt);
+  }
+
+  /**
+   * A stamp: it rears up on its hind legs (half a second), and comes down with its forefeet
+   * and its whole weight on what is in front of and under it: a roof, a wall, a door. What
+   * breaks falls in (and on whoever is under it). A deep thud the whole island hears.
+   */
+  stamp(d, w, dt, center) {
+    const k = d.k;
+    const before = d.stampT;
+    d.stampT -= dt;
+    const u = 1 - d.stampT / 1.25;
+    d.rear = u < 0.5 ? 1.4 * k * Math.sin(((u / 0.5) * Math.PI) / 2) : 0;
+    d.look = center;
+    const slam = 0.62;
+    if (before > slam && d.stampT <= slam) {
+      const C = d.chest;
+      // towards them (it reaches further where the last stamps broke nothing)
+      const to = d.stampAt ?? center;
+      let F = [to[0] - C[0], 0, to[2] - C[2]];
+      const dl = Math.hypot(F[0], F[2]);
+      F = dl > 0.1 ? [F[0] / dl, 0, F[2] / dl] : [Math.sin(d.yaw), 0, Math.cos(d.yaw)];
+      const side = [F[2], 0, -F[0]];
+      const reach = Math.min(Math.max(0.8 * k, dl), (1.1 + (d.stampMiss ?? 0) * 0.7) * k);
+      // the level it stands on (a roof, the top of a wall), and the ground under its feet
+      const stand = groundAt(w, d.p[0], d.p[2], d.p[1]).y;
+      const hits = [];
+      for (const sd of [1, -1]) {
+        const x = C[0] + F[0] * reach + side[0] * sd * 0.7 * k;
+        const z = C[2] + F[2] * reach + side[2] * sd * 0.7 * k;
+        hits.push([x, stand, z]);
+        const g = groundAt(w, x, z, C[1] + 0.8 * k).y;
+        if (stand - g > 1.0 * k) hits.push([x, g, z]); // (through a hole: on what is below)
+      }
+      // and its chest slamming into what is in front
+      hits.push([C[0] + F[0] * (reach + 0.5 * k), stand + 0.8 * k, C[2] + F[2] * (reach + 0.5 * k)]);
+      let broke = 0;
+      for (const p of hits) broke += crush(this.sim, p, 1.15 * k, 1.1, C);
+      d.stampMiss = broke ? 0 : (d.stampMiss ?? 0) + 1;
+      if (d.stampMiss >= 3) {
+        d.stampMiss = 0;
+        d.siegeWalk = 1.5;
+      }
+      this.footfall(d, w, 1);
+      d.stamps = (d.stamps ?? 0) + 1;
+      w.events.push({ type: 'dragonStamp', pos: hits[0], time: w.time, name: 'the dragon', broke });
+      w.noises.push({ p: C.slice(), loud: 45 * k, time: w.time, kind: 'dragon' });
+    }
+    if (d.stampT <= 0) d.rear = 0;
   }
 
   /** The lunge and snap of the jaws. */
@@ -1138,6 +1222,7 @@ export class DragonAI {
    */
   groundMove(d, w, dt, goal, speed, opts = {}) {
     const k = d.k;
+    if (!(d.stampT > 0)) d.rear = 0; // (only while it rears up to stamp)
     d.mode = 'ground';
     let want = d.yaw;
     if (goal) {
@@ -1218,7 +1303,7 @@ export class DragonAI {
           d.p[0] -= fx * s;
           d.p[2] -= fz * s;
         }
-      } else d.p[1] = approach(d.p[1], gy, 8, dt);
+      } else d.p[1] = approach(d.p[1], gy + (d.rear ?? 0), d.rear > 0 ? 5 : 9, dt);
     }
     // clinging to a wall (the chest well above what is under it)
     d.cling = d.p[1] - gy > 0.6 * k ? 1 : 0;
@@ -1234,7 +1319,7 @@ export class DragonAI {
    * A diagonal pair of feet comes down (front on one side, hind on the other): a
    * thud for the sound (d.footfalls) and a noise the guards hear.
    */
-  footfall(d, w, heavy = 0) {
+  footfall(d, w, heavy = 0, impact = 0) {
     const k = d.k;
     d.steps++;
     if (!d.spine) return;
@@ -1249,6 +1334,10 @@ export class DragonAI {
       const z = P[2] + side[2] * sd * (rx + 0.5) * k;
       const y = d.cling ? P[1] : groundAt(w, x, z, P[1] + 0.5 * k).y;
       d.footfalls.push({ p: [x, y, z], t: w.time, weight: (heavy ? 2 : 0.5 + 0.5 * Math.min(1, d.speed / (4 * k))) * k * k });
+      if (impact > 0) {
+        const broke = crush(this.sim, [x, y, z], 0.9 * k, impact * k, [P[0], P[1] + 3 * k, P[2]]);
+        if (broke) w.events.push({ type: 'dragonStamp', pos: [x, y, z], time: w.time, name: 'the dragon', broke });
+      }
     }
     if (d.footfalls.length > 12) d.footfalls.splice(0, d.footfalls.length - 12);
     w.noises.push({ p: d.chest.slice(), loud: (heavy ? 30 : 10 + 4 * d.speed) * k, time: w.time, kind: 'dragon' });
@@ -1326,12 +1415,15 @@ export class DragonAI {
     const alt = g + PLAN.clear * k + Math.max(0, dh - 1.5 * k) * 0.35;
     this.airMove(d, w, dt, spot, alt, clamp(dh * 0.45, 3, 11), dh < 6 * k ? 0.7 : 2.2);
     if (dh < 2.4 * k && d.p[1] - here < PLAN.clear * k + 1.0 * k) {
+      // the impact: its weight coming down on all four feet at once (harder the faster it came
+      // in): on a roof, tiles and boards break and stone cracks; land on it often and it gives
+      const impact = 0.55 + 0.06 * d.speed + 0.12 * Math.abs(d.vy ?? 0);
       d.mode = 'ground';
       d.speed = Math.min(d.speed, 1.5);
       d.vy = 0;
       d.flare = 0;
       d.cling = 0;
-      this.footfall(d, w, 1); // all four feet at once, hard
+      this.footfall(d, w, 1, impact); // all four feet at once, hard
       w.noises.push({ p: d.p.slice(), loud: 20, time: w.time, kind: 'dragon' });
       return true;
     }

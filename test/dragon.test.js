@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createSimulation } from '../src/sim/createSimulation.js';
 import { SCENARIOS, cloneScene } from '../src/scenarios.js';
 import { explode } from '../src/sim/explosions.js';
-import { groundAt, PLAN } from '../src/ai/dragon.js';
+import { groundAt, PLAN, pose } from '../src/ai/dragon.js';
 import { F_BURNING } from '../src/sim/world.js';
 import { MATERIALS } from '../src/sim/materials.js';
 
@@ -234,4 +234,110 @@ test('guards run from it', () => {
   run(sim, 4);
   assert.equal(e.state, 'flee');
   assert.ok(e.p[0] > 14.5, `ran away (x ${e.p[0].toFixed(1)})`);
+});
+
+test('it does not see in through walls or a roof: only through a hole, or (close) a window', () => {
+  const sim = field();
+  const w = sim.world;
+  const D = sim.dragonAI;
+  const M = (n) => MATERIALS.findIndex((m) => m.name === n);
+  const h = w.h;
+  // a closed stone hut, walls and roof a single voxel thick, at x 28..34, z 12..18, 0..3.2 m high
+  const X0 = Math.round(28 / h), X1 = Math.round(34 / h), Z0 = Math.round(12 / h), Z1 = Math.round(18 / h), Y1 = Math.round(3.2 / h);
+  for (let x = X0; x <= X1; x++)
+    for (let z = Z0; z <= Z1; z++)
+      for (let y = 1; y <= Y1; y++) if (x === X0 || x === X1 || z === Z0 || z === Z1 || y === Y1) w.mat[w.idx(x, y, z)] = M('stone');
+  const head = [31.1, 2.1, 15.1];
+  const around = (r) => {
+    let seen = 0;
+    for (let a = 0; a < 360; a += 10)
+      for (const y of [1.5, 4, 9, 16]) if (D.sees([head[0] + Math.cos((a * Math.PI) / 180) * r, y, head[2] + Math.sin((a * Math.PI) / 180) * r], head)) seen++;
+    return seen;
+  };
+  assert.equal(around(12), 0, 'from no side, slant or height through the walls and the single course of roof');
+  assert.equal(around(30), 0);
+  // a window of glass in the west wall: seen through it from close by, not from far
+  for (let z = Math.round(14.4 / h); z <= Math.round(15.8 / h); z++) for (let y = Math.round(1.4 / h); y <= Math.round(2.8 / h); y++) w.mat[w.idx(X0, y, z)] = M('glass');
+  assert.ok(D.sees([18, 2.1, 15.1], head), 'through the glass from 13 m');
+  assert.ok(!D.sees([4, 2.1, 15.1], head), 'not through the glass from 27 m');
+  // the glass gone (an open window, a hole): seen from far too
+  for (let z = Math.round(14.4 / h); z <= Math.round(15.8 / h); z++) for (let y = Math.round(1.4 / h); y <= Math.round(2.8 / h); y++) w.mat[w.idx(X0, y, z)] = 0;
+  assert.ok(D.sees([4, 2.1, 15.1], head), 'through the hole from 27 m');
+});
+
+test('someone it saw hides in a hut: it burns it and stamps on it until the walls and roof give', () => {
+  const sim = field([], false);
+  const w = sim.world;
+  const M = (n) => MATERIALS.findIndex((m) => m.name === n);
+  const h = w.h;
+  // a hut of brick with a board roof, closed all round, at x 26..32, z 12..18
+  const X0 = Math.round(26 / h), X1 = Math.round(32 / h), Z0 = Math.round(12 / h), Z1 = Math.round(18 / h), Y1 = Math.round(3.2 / h);
+  let built = 0;
+  for (let x = X0; x <= X1; x++)
+    for (let z = Z0; z <= Z1; z++)
+      for (let y = 1; y <= Y1; y++)
+        if (x === X0 || x === X1 || z === Z0 || z === Z1 || y === Y1) {
+          const i = w.idx(x, y, z);
+          w.mat[i] = M(y === Y1 ? 'wood' : 'brick');
+          w.dens[i] = 1;
+          w.temp[i] = w.ambient;
+          w.skin[i] = w.ambient;
+          w.fuel[i] = MATERIALS[w.mat[i]].combustible ? 1 : 0;
+          built++;
+        }
+  w.listDirty = true;
+  w.structureDirty = true;
+  const inside = [29.1, h, 15.1];
+  const d = w.dragons[0];
+  // it saw you go in a moment ago
+  player(sim, inside);
+  d.target = { kind: 'player', ref: 'player', p: inside.slice(), head: [inside[0], inside[1] + 1.7, inside[2]], seen: false, lastSeen: 0 };
+  d.state = 'hunt';
+  d.sated = 0;
+  let stamps = 0;
+  let fire = false;
+  run(sim, 40, () => {
+    stamps = d.stamps ?? 0;
+    if (d.breathT > 0) fire = true;
+  });
+  let left = 0;
+  for (let x = X0; x <= X1; x++) for (let z = Z0; z <= Z1; z++) for (let y = 1; y <= Y1; y++) if ((x === X0 || x === X1 || z === Z0 || z === Z1 || y === Y1) && w.mat[w.idx(x, y, z)]) left++; // (the walls and roof: not what fell in)
+  assert.ok(fire, 'it breathed fire on it');
+  assert.ok(stamps >= 3, `it stamped on it (${stamps} times)`);
+  assert.ok(built - left > 25, `walls and roof broken (${built - left} of ${built} voxels gone)`);
+  assert.ok(w.playerHeld || w.events.some((e) => e.type === 'devoured'), 'it got in at them');
+});
+
+test('landing on a roof, its weight comes down on it: boards break under its feet', () => {
+  const sim = field([], false);
+  const w = sim.world;
+  const M = (n) => MATERIALS.findIndex((m) => m.name === n);
+  const h = w.h;
+  // a flat board roof on posts, 3 m up, at x 24..34, z 10..20
+  const Y = Math.round(3 / h);
+  for (let x = Math.round(24 / h); x <= Math.round(34 / h); x++)
+    for (let z = Math.round(10 / h); z <= Math.round(20 / h); z++) {
+      const i = w.idx(x, Y, z);
+      w.mat[i] = M('wood');
+      w.dens[i] = 0.5;
+      w.temp[i] = w.skin[i] = w.ambient;
+      w.flags[i] |= 4; // (held up: posts)
+    }
+  w.listDirty = true;
+  const d = w.dragons[0];
+  // in the air above it, coming in to land on it
+  d.mode = 'air';
+  d.p = [29, Y * h + 6, 15];
+  d.speed = 6;
+  d.vy = -3;
+  const before = w.events.length;
+  for (let n = 0; n < 200 && d.mode !== 'ground'; n++) {
+    sim.dragonAI.land(d, w, 0.05, [29, 0, 15]);
+    sim.dragonAI.updateTrail(d);
+    pose(d, w, 0.05);
+    w.time += 0.05;
+  }
+  assert.equal(d.mode, 'ground', 'it landed');
+  const ev = w.events.slice(before).filter((e) => e.type === 'dragonStamp');
+  assert.ok(ev.length > 0 && ev.reduce((a, e) => a + e.broke, 0) > 3, `boards broke under it (${ev.reduce((a, e) => a + e.broke, 0)})`);
 });

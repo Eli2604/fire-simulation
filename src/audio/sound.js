@@ -242,11 +242,12 @@ export class SoundScape {
     if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
       const rate = 13 + effort * 15;
-      this.breathe(Math.max(t, this.nextBreath), rate, effort);
+      if (state.maskOff) this.breatheFree(Math.max(t, this.nextBreath), rate, effort);
+      else this.breathe(Math.max(t, this.nextBreath), rate, effort);
       this.nextBreath = Math.max(t, this.nextBreath) + 60 / rate;
     }
     // low air warning whistle (real sets whistle at ~55 bar of 300)
-    const low = state.airFraction < 55 / 300;
+    const low = state.airFraction < 55 / 300 && !state.maskOff;
     this.whistleGain.gain.setTargetAtTime(low ? 0.06 * (0.6 + 0.4 * Math.sin(t * 18)) : 0, t, 0.02);
     // heartbeat under heat stress
     if (state.heat > 0.3 && t >= this.nextBeat) {
@@ -274,8 +275,7 @@ export class SoundScape {
         this.thump(td + 0.05, 1.2 * g);
         this.burst(td + 0.2, 4.5 + 3 * far, 'lowpass', 110 - 50 * far, 0.7, 1.5 * g);
       } else if (e.type === 'explosion') {
-        this.burst(t, 1.8, 'lowpass', 300, 0.7, 1.2);
-        this.thump(t, 1);
+        this.blast(e, state.listener?.pos);
       } else if (e.type === 'pipeBurst' || e.type === 'waterBurst') {
         this.burst(t, 0.4, 'bandpass', 900, 0.8, 0.8);
       } else if (e.type === 'decompression') {
@@ -287,6 +287,14 @@ export class SoundScape {
       } else if (e.type === 'gulp' || e.type === 'dragonSnap') {
         this.stomp(e.pos, 0.5);
         this.burst(t, 0.12, 'bandpass', 900, 1.5, 0.5);
+      } else if (e.type === 'dragonStamp') {
+        // its weight coming down on a roof: the thud, and what breaks under it
+        this.stomp(e.pos, 2.2);
+        if (e.broke) {
+          const out = this.at(e.pos, 6);
+          this.noiseTo(out, t, 0.9, 'lowpass', 900, 0.7, Math.min(1.4, 0.5 + e.broke * 0.05));
+          for (let n = 0; n < Math.min(14, e.broke); n++) this.noiseTo(out, t + 0.05 + Math.random() * 0.9, 0.05, 'bandpass', 1200 + Math.random() * 3000, 3, 0.3);
+        }
       } else if (e.type === 'dragonDown') {
         this.stomp(e.pos, 2);
         this.burst(t, 1.2, 'lowpass', 250, 0.7, 1.0);
@@ -526,6 +534,148 @@ export class SoundScape {
     const t = this.ctx.currentTime;
     this.burst(t, 0.12, 'highpass', 2500, 0.7, 0.9);
     this.burst(t + 0.03, 0.25, 'bandpass', 5500, 3, 0.4);
+  }
+
+  /**
+   * An explosion (a grenade, a rocket, a tank bursting): the sharp crack of the shock, the
+   * bang, a deep boom you feel more than hear, the rumble rolling off and its echoes, and
+   * what it threw coming down. It comes as late as sound takes to get here and duller from
+   * far off (the air takes the high notes). Close by it is deafening: your ears ring and
+   * the rest goes quiet for a moment. Through a limiter, so it can be loud without clipping.
+   */
+  blast(e, lp) {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    if (!this.boomBus) {
+      const c = ctx.createDynamicsCompressor();
+      c.threshold.value = -8;
+      c.knee.value = 4;
+      c.ratio.value = 10;
+      c.attack.value = 0.002;
+      c.release.value = 0.3;
+      c.connect(this.master);
+      this.boomBus = c;
+    }
+    const d = lp ? Math.max(1, Math.hypot(e.pos[0] - lp[0], e.pos[1] - lp[1], e.pos[2] - lp[2])) : 10;
+    const size = Math.max(0.4, Math.min(3, Math.cbrt((e.energy ?? 8e5) / 8e5)));
+    const k = Math.min(2.2, size * (1.6 / (1 + d / 18)));
+    const far = Math.min(1, d / 400);
+    const t0 = t + d / 343;
+    const pan = ctx.createPanner();
+    pan.panningModel = 'HRTF';
+    pan.distanceModel = 'linear';
+    pan.maxDistance = 1e5;
+    pan.rolloffFactor = 0; // (the level is set here: k)
+    if (pan.positionX) {
+      pan.positionX.value = e.pos[0];
+      pan.positionY.value = e.pos[1];
+      pan.positionZ.value = e.pos[2];
+    }
+    pan.connect(this.boomBus);
+    // the crack of the shock front (gone at a distance)
+    if (far < 0.5) {
+      this.noiseTo(pan, t0, 0.09, 'highpass', 1400, 0.7, 2.2 * k * (1 - far * 2));
+      this.noiseTo(pan, t0 + 0.005, 0.45, 'bandpass', 1600 - 900 * far, 0.6, 1.6 * k);
+    }
+    // the body of the bang, and the boom under it
+    this.noiseTo(pan, t0, 1.2 + 0.8 * size, 'lowpass', 900 - 600 * far, 0.7, 1.8 * k);
+    for (const [f0, f1, lvl, dur] of [[62, 26, 2.4, 0.9], [110, 45, 1.2, 0.5]]) {
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(f0 * (1.1 - 0.2 * Math.min(1, size)), t0);
+      o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.001, lvl * k), t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * (1 + size * 0.5));
+      o.connect(g).connect(pan);
+      o.start(t0);
+      o.stop(t0 + dur * (1 + size * 0.5) + 0.05);
+    }
+    // the rumble rolling off, and its echoes off walls and hills
+    this.noiseTo(pan, t0 + 0.15, 2.5 + 2 * far + size, 'lowpass', 220 - 100 * far, 0.7, 1.0 * k);
+    for (let n = 0; n < 3; n++) this.noiseTo(pan, t0 + 0.25 + n * 0.32 + Math.random() * 0.15, 0.5, 'bandpass', 500 - 80 * n, 0.8, 0.45 * k * 0.6 ** n);
+    // what it threw coming down: grit, stones, splinters
+    if (d < 60)
+      for (let n = 0; n < 16; n++) this.noiseTo(pan, t0 + 0.35 + Math.random() * 1.6, 0.03 + Math.random() * 0.05, 'bandpass', 1500 + Math.random() * 4500, 3, (0.15 + Math.random() * 0.35) * k);
+    // close: deafened for a moment, a ringing in the ears
+    if (d < 12) {
+      const deaf = Math.min(1, (12 - d) / 9) * Math.min(1, size);
+      const m = this.master.gain;
+      m.cancelScheduledValues(t0 + 0.05);
+      m.setValueAtTime(m.value, t0 + 0.05);
+      m.linearRampToValueAtTime(0.8 * (1 - 0.7 * deaf), t0 + 0.35);
+      m.linearRampToValueAtTime(0.8, t0 + 0.35 + 3 * deaf);
+      const o = ctx.createOscillator();
+      o.frequency.value = 3600 + Math.random() * 900;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.06 * deaf, t0 + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3 + 4 * deaf);
+      o.connect(g).connect(ctx.destination);
+      o.start(t0 + 0.1);
+      o.stop(t0 + 0.4 + 4 * deaf);
+    }
+  }
+
+  /** Breathing without the mask: your own breath, no regulator (quieter, softer). */
+  breatheFree(t, rate, effort) {
+    const cycle = 60 / rate;
+    this.burst(t, cycle * 0.35, 'bandpass', 900 + effort * 400, 0.5, 0.04 + effort * 0.08);
+    this.burst(t + cycle * 0.45, cycle * 0.4, 'lowpass', 600, 0.5, 0.05 + effort * 0.09);
+  }
+
+  /**
+   * The mask coming off or going on: the head harness straps (a rubbery slither), the seal of
+   * the face piece against your face, the demand valve: off, the air stops with a last hiss;
+   * on, a click as it connects and a breath of air as it kicks in.
+   */
+  maskSwap(on) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    // straps
+    this.burst(t, 0.35, 'bandpass', 2400, 2.5, 0.18);
+    this.burst(t + 0.18, 0.3, 'bandpass', 3100, 2.5, 0.14);
+    if (on) {
+      this.thump(t + 0.5, 0.25); // the face piece onto your face
+      this.burst(t + 0.55, 0.06, 'highpass', 3000, 0.7, 0.4); // the valve clicks in
+      this.burst(t + 0.62, 0.7, 'bandpass', 1900, 0.9, 0.35); // the first rush of air
+    } else {
+      this.burst(t + 0.05, 0.05, 'highpass', 3000, 0.7, 0.35); // the valve off
+      this.burst(t + 0.08, 0.9, 'bandpass', 1700, 0.9, 0.3); // the air in it hissing out
+      this.burst(t + 0.4, 0.15, 'lowpass', 700, 0.8, 0.2); // the seal letting go
+    }
+    this.nextBreath = t + 1.1;
+  }
+
+  /** A cough (smoke without the mask). */
+  cough() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    const n = 1 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < n; k++) {
+      const t0 = t + k * (0.28 + Math.random() * 0.1);
+      this.burst(t0, 0.2, 'bandpass', 420 + Math.random() * 120, 1.2, 0.55);
+      this.burst(t0 + 0.01, 0.12, 'bandpass', 1300, 1.5, 0.2);
+      this.thump(t0, 0.2);
+    }
+  }
+
+  /** Raising the rifle to the eye, or bringing it down. */
+  aim(up) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.12, 'bandpass', up ? 1300 : 1000, 2, 0.12);
+    this.burst(t + 0.05, 0.04, 'highpass', 2600, 0.7, 0.1);
+  }
+
+  /** A rifle shot: the crack and the report off the walls. */
+  shot() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.05, 'highpass', 2500, 0.7, 1.1);
+    this.burst(t, 0.14, 'bandpass', 1500, 1.0, 1.0);
+    this.thump(t, 0.5);
+    this.burst(t + 0.06, 0.5, 'lowpass', 600, 0.7, 0.3);
   }
 
   thump(t, level) {
