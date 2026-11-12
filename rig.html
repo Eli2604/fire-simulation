@@ -30,7 +30,7 @@ body{background:var(--sky);color:var(--ink);font-family:var(--body);overflow:hid
 .selrow span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .hp{height:5px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden}
 .hp i{display:block;height:100%;width:100%;background:var(--ok);transition:width .2s}
-.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px}
 .tabs button{padding:6px 4px;font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
 .grid button{padding:6px 4px;font-size:13px}
@@ -92,6 +92,7 @@ pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.5;background
     <button type="button" role="tab" data-tab="anim">Animate</button>
     <button type="button" role="tab" data-tab="hit">Hit areas</button>
     <button type="button" role="tab" data-tab="gear">Gear</button>
+    <button type="button" role="tab" data-tab="dragon">Dragon</button>
   </div>
 
   <section data-pane="squad">
@@ -158,6 +159,23 @@ Enemies.squads[0].setThreat([0,0,-8]);</pre></details>
     </div>
     <div class="row"><button id="reequip" type="button">Re-equip</button><button id="swapLoad" type="button">Rifle ⇄ flame gun</button><button id="tgDrop" type="button" aria-pressed="true">Drop rifle on death</button></div>
     <p class="hint">The person, rifle (with magazine), helmet and backpack are separate, closed objects on their own bones (without the helmet you see his hair). Drop the rifle and he draws the compact carbine from his back; with that gone too, he runs back for the rifle. The flame trooper fires only standing. Detached, each becomes a rigid body with gravity, bounce and friction that collides with the ground, walls and crates.</p>
+  </section>
+
+  <section data-pane="dragon" hidden>
+    <div class="sel">
+      <div class="selrow"><b>Dragon</b><span id="dState">rest · 600 HP</span></div>
+      <div class="hp"><i id="dHp"></i></div>
+    </div>
+    <div class="grid" id="dAnims"></div>
+    <label class="sl"><span>Speed</span><input type="range" id="dSpeed" min="0" max="2" step="0.05" value="1"><output id="dSpeedO"></output></label>
+    <div class="row"><button id="tgDZones" type="button" aria-pressed="false">Show hit areas</button><button id="tgDFire" type="button" aria-pressed="false">Damage on click</button><button id="tgDFollow" type="button" aria-pressed="false">Follow</button></div>
+    <label class="sl" for="dWeapon"><span>Weapon</span><select id="dWeapon" style="grid-column:2/4"><option value="arrow">Arrow (30)</option><option value="bullet">Bullet (22)</option><option value="rocket">Rocket (350)</option></select></label>
+    <label class="sl" for="dZoneSel"><span>Zone</span><select id="dZoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Radius</span><input type="range" id="dzR" min="0.5" max="2" step="0.05"><output id="dzRo"></output></label>
+    <label class="sl"><span>Length</span><input type="range" id="dzL" min="0.5" max="1.6" step="0.02"><output id="dzLo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" id="dzM" min="0.1" max="5" step="0.1"><output id="dzMo"></output></label>
+    <div class="row"><button id="dRevive" type="button">Revive</button><button id="dClean" type="button">Wash the blood away</button></div>
+    <p class="hint" id="dLastHit">The simulation's own dragon (ai/dragon.js moves and poses it; render/dragon.js draws it). Its hit zones follow the pose; the same zones decide where arrows, bullets and rockets land in the simulation. A wound bleeds: health drains, blood drips where it goes (a trail of drops, in flight too), sprays onto the ground behind the hit and stains its scales. Click it to see a zone; with Damage on click, to hit it there.</p>
   </section>
 </aside>
 

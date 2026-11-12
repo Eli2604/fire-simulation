@@ -6,7 +6,7 @@ import * as THREE from 'three';
  * (dark, with chipped stone round them), and the muzzle flash and a short
  * tracer of each shot.
  */
-function splatTexture(kind) {
+export function splatTexture(kind) {
   if (typeof document === 'undefined' || typeof document.createElement('canvas').getContext !== 'function') return null;
   const c = document.createElement('canvas');
   c.width = c.height = 128;

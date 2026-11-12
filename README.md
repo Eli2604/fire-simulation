@@ -293,8 +293,13 @@ moves and hunts, render/dragon.js for how it looks). It is about 9 m from nose t
 - **Its feet are heard.** Every time a diagonal pair of feet comes down there is a thud, heavier
   when it runs and heaviest when it lands on all four. The guards hear it too, and its
   wingbeats, its roar and its swallowing are heard as well. Guards run from it.
-- **Wounds.** Fire does not hurt it. Fire arrows do (double in the head), and so do rockets
-  and blasts. Badly hurt, it flies back to its lair to rest and heal. Killed, it falls out of
+- **Wounds.** Fire does not hurt it. Fire arrows do, and so do rockets and blasts. Where a hit
+  lands decides what it does: hit zones (head, neck, chest, belly, tail, each wing, each leg)
+  follow its pose as tapered capsules, each with a damage multiplier (the head ×2.5, the wings
+  ×0.3) and a bleeding rate. A wound bleeds as a soldier's does: its health drains (it heals
+  only once the bleeding has stopped), blood drips from the wound (a trail of drops on the
+  ground under where it crawls or flies), sprays onto what is behind the hit, and stains its
+  scales. Badly hurt, it flies back to its lair to rest and heal. Killed, it falls out of
   the sky and lies on its side.
 
 **Its route** is set on the dragon object (*Route*) as waypoints in the zone's metres:
@@ -1052,6 +1057,12 @@ set the threat* moves the threat.
 
 **Soldier rig test** (`rig.html`): the soldier on a range of its own, with every clip, the hit
 areas (shown and adjustable), the gear, an FPS readout and the squad AI on a range you edit.
+Its *Dragon* tab shows the simulation's dragon instead (the same AI and renderer, in a small
+field of its own with a wall to climb): every act as a button (rest, walk, run, sniff, roar,
+breathe fire, bite, rear and stamp, climb, take off, fly, glide, bank, land, hurt, die, shot
+down), a speed control, its hit zones shown and adjustable (radius, length, damage; the
+simulation uses the same table), and damage on click with an arrow, a bullet or a rocket: the
+zone under the cursor flashes and bleeds. `?dragon=1&dact=fly&dzones=1` opens it.
 `node scripts/build-rig-artifact.mjs [out.html]` builds it as one self-contained HTML file.
 
 ### Squads: senses, the commander's calls, cover
