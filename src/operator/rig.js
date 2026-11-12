@@ -1241,6 +1241,20 @@ export class OperatorFigure {
     this.ctrl = A.ctrl.clone();
     this.ctrl.visible = false;
     bones.chest.add(this.ctrl);
+    // thermal monocular (flipped down over the right eye) and the weapon light
+    const thermal = (this.thermal = new THREE.Group());
+    const tm = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.07, 12), A.black);
+    tm.rotation.x = Math.PI / 2;
+    tm.position.set(-0.032, 0.026, 0.135);
+    const tl = new THREE.Mesh(new THREE.CircleGeometry(0.016, 12), new THREE.MeshBasicMaterial({ color: '#3cff8a' }));
+    tl.position.set(-0.032, 0.026, 0.1);
+    tl.rotation.y = Math.PI;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.05, 0.012), A.black);
+    arm.position.set(-0.03, 0.06, 0.12);
+    thermal.add(tm, tl, arm);
+    thermal.visible = false;
+    hf.add(thermal);
+    this.lightOn = false;
     // the grenade in the right hand while throwing
     const nade = (this.nade = new THREE.Group());
     nade.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
@@ -1522,6 +1536,25 @@ export class OperatorFigure {
       s.material.color.setHSL(0.09 - a * 0.12, 1, 0.6 - a * 0.6);
       s.material.opacity = 1 - a / 0.55;
     }
+  }
+  /** Gear the squad wears: thermal monocular down, weapon light on. */
+  setGear({ thermal = false, light = false } = {}) {
+    this.thermal.visible = thermal;
+    if (light === this.lightOn) return;
+    this.lightOn = light;
+    if (light && !this.lamp) {
+      const lamp = (this.lamp = new THREE.SpotLight('#fff4dc', 6, 28, 0.32, 0.5, 1.6));
+      lamp.position.copy(rl2w(0.75, 0.045, 0.052));
+      const tgt = new THREE.Object3D();
+      tgt.position.copy(rl2w(3, 0.045, 0.052));
+      this.bones.weapon.add(lamp, tgt);
+      lamp.target = tgt;
+      const glow = (this.lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.A.flashTex, color: '#fff2c8', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })));
+      glow.position.copy(rl2w(0.76, 0.045, 0.052));
+      glow.scale.setScalar(0.09);
+      this.bones.weapon.add(glow);
+    }
+    if (this.lamp) this.lamp.visible = this.lampGlow.visible = light;
   }
   hitFlash() {
     this.mat.userData.uHit.value = 1;

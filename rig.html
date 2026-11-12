@@ -106,7 +106,9 @@ pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.5;background
         <button type="button" data-tool="wall">Wall</button>
         <button type="button" data-tool="crate">Crate</button>
         <button type="button" data-tool="erase">Erase</button>
-        <button type="button" data-tool="threat">Threat</button>
+        <button type="button" data-tool="noise">Noise</button>
+        <button type="button" data-tool="hostile">Hostile</button>
+        <button type="button" data-tool="investigate">Investigate</button>
         <button type="button" id="rotBtn">Wall 0°</button>
       </div></div>
     <div class="legend">
@@ -116,6 +118,7 @@ pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.5;background
       <i class="sw" style="background:#5aa9e6"></i><span>R1, rifleman with the commander (team A)</span>
       <i class="sw" style="background:#7cc46a"></i><span>R2, rifleman with the gunner (team B)</span>
     </div>
+    <div class="row"><button id="tgFog" type="button" aria-pressed="false">Fog</button><button id="tgNight" type="button" aria-pressed="false">Night</button><button id="btnSilence" type="button">Radio silence 30 s</button></div>
     <div class="row"><button id="tgRadio" type="button" aria-pressed="true">Radio voices</button><button id="tgBravo" type="button" aria-pressed="true">Team Bravo</button></div>
     <p class="hint" id="squadStatus">Bounding overwatch: one team moves to cover nearer the threat while the other covers it, then they swap. Dashed lines are planned routes, solid lines are trails, rings are chosen cover. On contact, when the threat moves and when a man is down, the radio man calls it in and team Bravo (on the flank) answers.</p>
   </section>

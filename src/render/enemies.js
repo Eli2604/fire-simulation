@@ -430,6 +430,7 @@ export class EnemyRenderer {
       f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (e.squad ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
     f.setAim(e.squad ? e.aimAt : null);
+    f.setGear({ thermal: !!e.thermal, light: !!e.light });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;
     f.update(dt);

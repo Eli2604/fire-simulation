@@ -1468,6 +1468,10 @@ export class Simulation {
       radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
       fire: (e, target) => {
         const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.6, e.p[1] + 1.1, e.p[2] + Math.cos(e.yaw) * 0.6];
+      // fog, smoke and darkness: how far they can see; what they hear
+      visibility: () => (w.dark ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
+      dark: () => !!w.dark,
+      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
         e.flashUntil = w.time + 0.06;
         shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad });
       },

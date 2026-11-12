@@ -31,6 +31,17 @@
  *    orders him to scout: he flies the drone on an expanding square round the area (m.droneGoal,
  *    two rings of eight points), reporting each sector clear. If the threat moves or a man goes
  *    down, the commander calls the drone back over the threat.
+ *  - Senses: they see hostiles (host.hostiles) within what the visibility allows and in line of
+ *    sight (host.lineOfSight); a sighting is the threat, marked on the hostile, and followed as
+ *    he moves. Noises (host.noises: { p, loud m, time }) within earshot make the commander send
+ *    two men to investigate (or investigate(p) on order); losing sight of the enemy for long,
+ *    they investigate the last known position.
+ *  - The commander's calls: radio silence for a while (calls wait; hand signals instead) when
+ *    they move unseen; thermal goggles on when the visibility is poor (fog, smoke, dark,
+ *    host.visibility / host.dark); lights on in the dark unless that would give them away;
+ *    backup from the other teams when two men are down or the enemy outnumbers them.
+ *  - Positions: cover at a corner (covered on two sides) is better; the gunner prefers higher
+ *    ground a little behind the team (he sees further) and calls out good cover from there.
  *  - Orders: the first squad leads. On contact its commander sends every other team to a flank
  *    of the threat ("Bravo, take the west flank"); a team that gets well ahead of the lead is
  *    told to hold off until the lead catches up, then to continue; when the threat moves away
@@ -79,6 +90,14 @@ export class SquadAI {
     this.contacted = false;
     this.goal = null; // where this team is sent (a flank); null: straight at the threat
     this.lastDown = -Infinity;
+    this.silentUntil = 0;
+    this.deferred = [];
+    this.heardT = 0;
+    this.lastSeen = -Infinity;
+    this.inv = null; // investigating: { p, why, men, t }
+    this.condT = 0;
+    this.gear = { thermal: false, light: false };
+    this.backupCalled = false;
     this.threatT = 0; // when the threat last moved
     this.holdT = 0; // how long they have held at the threat
     this.holdOff = false;
@@ -217,6 +236,19 @@ export class SquadAI {
   }
 
   /* ---------- radio ---------- */
+  /** Radio silence over: what had to wait is said now. */
+  flushRadio() {
+    if (this.time < this.silentUntil || !this.deferred.length) return;
+    const d = this.deferred;
+    this.deferred = [];
+    for (const r of d) if (!r.m.dead) this.say(r.m, r.text, r.kind);
+  }
+  /** Radio silence for s seconds (the commander's call). */
+  radioSilence(s) {
+    const cmd = this.radioMan();
+    if (cmd) this.say(cmd, `${this.unit}, radio silence ${Math.round(s)} seconds`, 'order');
+    this.silentUntil = this.time + s;
+  }
   radioMan() {
     const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
     return al.find((m) => m.squad === 'CMD') ?? al[0];
@@ -245,6 +277,11 @@ export class SquadAI {
     peers.forEach((p, i) => p.radioQueue.push({ at: p.time + 2.8 + i * 2.6, text: p.unit + ', copy ' + U + ', ' + (kind === 'manDown' ? 'understood, out' : 'we have it, out'), kind: 'reply' }));
   }
   say(m, text, kind) {
+    if (this.time < this.silentUntil && kind !== 'manDown' && kind !== 'none') {
+      this.deferred.push({ m, text, kind });
+      if (m.squad === 'CMD' && !this.busy(m)) this.setAnim(m, 'signalMove');
+      return;
+    }
     // (the drone operator talks through his headset: his hands stay on the controller)
     if (m.squad !== 'UAV' && (!this.busy(m) || m.anim === 'crouchAim')) this.setAnim(m, 'radio');
     m.signal = { text: text.toUpperCase(), until: this.time + 3 };
@@ -336,24 +373,33 @@ export class SquadAI {
 
   computeCovers() {
     this.covers = [];
-    if (!this.threat) return;
     const { nx, nz } = this;
+    // higher ground (for the gunner): free cells clearly above the lowest ground
+    let lo = Infinity;
+    for (let k = 0; k < nx * nz; k++) if (!this.blocked[k]) lo = Math.min(lo, this.fy[k]);
+    this.high = [];
+    for (let k = 0; k < nx * nz; k++) if (!this.blocked[k] && this.fy[k] > lo + 0.6 && k % 2 === 0) this.high.push({ k, p: this.cellPos(k), q: 0, high: this.fy[k] - lo });
+    if (!this.threat) return;
     for (let j = 2; j < nz - 2; j++)
       for (let i = 2; i < nx - 2; i++) {
         const k = j * nx + i;
         if (this.blocked[k] || this.dObs[k] > 2) continue;
-        let vx = 0, vz = 0;
+        let vx = 0, vz = 0, ns = 0;
         for (let dj = -3; dj <= 3; dj++)
           for (let di = -3; di <= 3; di++) if (this.solidCell[(j + dj) * nx + (i + di)] ?? 0) {
             vx += di;
             vz += dj;
+            ns++;
           }
         const l = Math.hypot(vx, vz);
         if (l < 1e-3) continue;
         const p = this.cellPos(k);
         const tx = this.threat[0] - p[0], tz = this.threat[2] - p[2], tl = Math.hypot(tx, tz) || 1;
         const qd = (vx / l) * (tx / tl) + (vz / l) * (tz / tl);
-        if (qd > 0.55) this.covers.push({ k, p, q: qd });
+        // a corner: the end of a wall or the edge of a crate (only a short stretch of it next to
+        // him): covered towards the threat, and he can look round it
+        const corner = ns <= 7;
+        if (qd > 0.55) this.covers.push({ k, p, q: qd + (corner ? 0.7 : 0), corner });
       }
   }
 
@@ -538,8 +584,35 @@ export class SquadAI {
     const oc = centroid(over.length ? over : al), T = this.goal ?? this.threat;
     const taken = new Set(al.filter((m) => !movers.includes(m) && m.coverCell >= 0).map((m) => m.coverCell));
     const others = this.host.members().filter((o) => o.squad && (o.unit ?? 'Alpha') !== this.unit && !o.dead && o.cover).map((o) => o.cover);
+    // the gunner on higher ground sees further: cover he can see is easier to judge
+    const mg = al.find((m) => m.squad === 'MG' && !movers.includes(m));
+    const mgHigh = mg && this.high?.length && mg.p[1] > Math.min(...al.map((m) => m.p[1])) + 0.5;
     for (const u of movers) {
       const du = dist2(u.p, T);
+      if (u.squad === 'MG' && this.high?.length) {
+        // higher ground a little behind the team, within reach
+        const cy = centroid(al)[1];
+        let hb = null, hs = -1e9;
+        for (const c of this.high) {
+          if (taken.has(c.k)) continue;
+          const tr = dist2(c.p, u.p), dc = dist2(c.p, T);
+          if (tr > 14 || dc < dist2(oc, T) - 3) continue;
+          const sc = 3 * (c.p[1] - cy) - Math.abs(tr - 6) * 0.2 - Math.max(0, dist2(oc, T) - dc) * 0.5;
+          if (sc > hs) (hs = sc), (hb = c);
+        }
+        if (hb && hs > 0) {
+          taken.add(hb.k);
+          u.coverCell = hb.k;
+          u.cover = hb.p.slice();
+          u.highGround = true;
+          this.follow(u, this.route(u.p, hb.p), 'run', (m) => {
+            m.arrived = true;
+            m.fireT = 0.6;
+            this.say(m, `${this.unit}, gunner, on high ground, I have eyes on the area and your backs`, 'intel');
+          });
+          continue;
+        }
+      }
       let best = null, bs = -1e9;
       for (const c of this.covers) {
         if (taken.has(c.k)) continue;
@@ -548,7 +621,7 @@ export class SquadAI {
         const travel = dist2(c.p, u.p);
         if (travel > 9.5 || dist2(c.p, oc) > 11) continue;
         if ([...taken].some((k) => dist2(this.cellPos(k), c.p) < 1.3) || others.some((o) => dist2(o, c.p) < 1.3)) continue;
-        const sc = prog - Math.abs(travel - 5) * 0.35 + c.q * 1.5 - (u.squad === 'MG' ? prog * 0.3 : 0);
+        const sc = prog - Math.abs(travel - 5) * 0.35 + c.q * 1.5 - (u.squad === 'MG' ? prog * 0.3 : 0) + (mgHigh && dist2(c.p, mg.p) < 16 ? 0.4 : 0);
         if (sc > bs) {
           bs = sc;
           best = c;
@@ -583,10 +656,174 @@ export class SquadAI {
     }
   }
 
+  /** How far the team can see (m), with the gear they have on. */
+  sight() {
+    const v = this.host.visibility?.() ?? 60;
+    return this.gear.thermal ? Math.max(v * 2.5, 45) : this.host.dark?.() && !this.gear.light ? Math.min(v, 14) : v;
+  }
+  /** Is the enemy (or might it be) close and unaware of us? Then stay dark and quiet. */
+  stealthy() {
+    return !this.contacted || this.time - this.lastSeen > 12;
+  }
+  /** Send two men to look at p (a noise, a last known position, the operator's order). */
+  investigate(p, why = 'location') {
+    const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
+    const men = al.filter((m) => m.squad === 'R1' || m.squad === 'R2');
+    const pick = (men.length ? men : al.filter((m) => m.squad !== 'CMD')).slice(0, 2);
+    if (!pick.length) return;
+    if (!this.blocked || this.navAge === Infinity) {
+      this.rebuildNav();
+      this.navAge = 0;
+    }
+    this.inv = { p: p.slice(), why, men: pick, t: this.time, look: 0 };
+    const cmd = this.radioMan();
+    const who = pick.map((m) => NAME[m.squad]).join(' and ');
+    const c = centroid(al);
+    const dx = p[0] - c[0], dz = p[2] - c[2];
+    const where = Math.round(Math.hypot(dx, dz)) + ' metres ' + BEARING[((Math.round(Math.atan2(dx, -dz) / (Math.PI / 4)) % 8) + 8) % 8];
+    if (cmd) {
+      if (this.stealthy() && this.time >= this.silentUntil) {
+        this.say(cmd, `${this.unit}, ${why} ${where}, ${who} investigate, radio silence thirty seconds`, 'order');
+        this.silentUntil = this.time + 30;
+      } else if (this.time < this.silentUntil) this.setAnim(cmd, 'signalMove');
+      else this.say(cmd, `${this.unit}, ${why} ${where}, ${who} investigate`, 'order');
+    }
+    pick.forEach((m, i) => {
+      const to = [p[0] + (i ? 1.2 : -1.2), p[1], p[2]];
+      m.coverCell = -1;
+      m.cover = to;
+      this.follow(m, this.route(m.p, to), 'aimWalk', (q) => (q.arrived = true));
+      m.aimAt = p;
+    });
+  }
+  /** Sightings, noises, losing contact; the commander's calls on gear, silence and backup. */
+  senses(dt) {
+    const H = this.host;
+    const al = this.members().filter((m) => !m.dead);
+    if (!al.length) return;
+    // sightings
+    const range = this.sight();
+    let seen = null, nSeen = 0;
+    for (const h of H.hostiles?.() ?? []) {
+      if (h.dead) continue;
+      const spot = al.find((m) => dist2(m.p, h.p) < range && (H.lineOfSight?.(m.p, h.p) ?? true));
+      if (!spot) continue;
+      nSeen++;
+      h.marked = true;
+      if (!seen || dist2(spot.p, h.p) < dist2(spot.p, seen.p)) seen = h;
+    }
+    if (seen) {
+      this.lastSeen = this.time;
+      if (this.inv) this.endInvestigation(false);
+      if (!this.threat || dist2(this.threat, seen.p) > 1.5) {
+        if (!this.threat) {
+          this.threat = seen.p.slice();
+          this.contacted = false; // reported below as a contact
+          this.navAge = Infinity;
+          this.silentUntil = 0;
+        } else this.setThreat(seen.p.slice());
+      }
+    } else if (this.threat && this.lastSeen > -Infinity && this.time - this.lastSeen > 25 && !this.inv && (H.hostiles?.() ?? []).length) {
+      const last = this.threat;
+      const cmd = this.radioMan();
+      if (cmd) this.say(cmd, `${this.unit}, lost contact, checking the last known position`, 'order');
+      this.threat = null;
+      this.lastSeen = -Infinity;
+      this.investigate(last, 'last known position');
+    }
+    // noises within earshot (gunfire carries far, a dropped crate not)
+    for (const n of H.noises?.() ?? []) {
+      if (n.time <= this.heardT) continue;
+      this.heardT = Math.max(this.heardT, n.time);
+      if (n.squad === this.unit) continue;
+      const c = centroid(al);
+      if (dist2(c, n.p) > n.loud) continue;
+      if (this.threat) continue; // busy with the threat they have
+      if (!this.inv) this.investigate(n.p, 'noise');
+    }
+    // the investigators: look round where they got to; nothing there, come back
+    if (this.inv) {
+      const I = this.inv;
+      if (I.men.every((m) => m.dead || m.arrived)) {
+        I.look += dt;
+        for (const m of I.men) if (!m.dead) this.setAnim(m, 'aim');
+        if (I.look > 4) this.endInvestigation(true);
+      } else if (this.time - I.t > 40) this.endInvestigation(true);
+    }
+    // gear: thermals in poor visibility, lights in the dark unless that gives them away
+    this.condT -= dt;
+    if (this.condT <= 0) {
+      this.condT = 6;
+      const v = H.visibility?.() ?? 60;
+      const cmd = this.radioMan();
+      const wantT = v < 40, wantL = !!H.dark?.() && !this.stealthy() && !wantT;
+      const calls = [];
+      if (wantT !== this.gear.thermal) calls.push(wantT ? 'switch to thermals' : 'thermals off');
+      if (wantL !== this.gear.light) calls.push(wantL ? 'lights on' : this.stealthy() ? 'lights off, do not give away our position' : 'lights off');
+      this.gear = { thermal: wantT, light: wantL };
+      for (const m of this.members()) {
+        m.thermal = wantT && m.squad !== 'UAV';
+        m.light = wantL;
+      }
+      if (calls.length && cmd) {
+        if (this.time < this.silentUntil) this.setAnim(cmd, 'signalDown');
+        else this.say(cmd, `${this.unit}, ${calls.join(', ')}`, 'order');
+      }
+    }
+    // backup: two men down, or more of them than of us standing
+    const down = this.members().filter((m) => m.dead).length;
+    if (!this.backupCalled && (down >= 2 || nSeen >= 3 || nSeen > al.length)) {
+      const peers = (H.peers?.() ?? []).filter((p) => p !== this && p.alive());
+      const cmd = this.radioMan();
+      if (cmd) {
+        this.backupCalled = true;
+        const c = centroid(al);
+        this.silentUntil = 0;
+        this.say(cmd, `${this.unit}, requesting backup, ${down} down, ${nSeen} hostiles`, 'order');
+        if (!peers.length) this.radioQueue.push({ at: this.time + 3.2, self: true, text: `${this.unit}, no response`, kind: 'none' });
+        peers.forEach((p, i) => p.radioQueue.push({ at: p.time + 2.8 + i * 2.6, text: `${p.unit}, copy ${this.unit}, on our way`, kind: 'reply', order: { kind: 'flank', to: c } }));
+      }
+    }
+  }
+  endInvestigation(nothing) {
+    const I = this.inv;
+    this.inv = null;
+    if (!I) return;
+    const cmd = this.radioMan();
+    const back = centroid(this.members().filter((m) => !m.dead && !I.men.includes(m)));
+    for (const m of I.men) {
+      if (m.dead) continue;
+      m.cover = null;
+      if (nothing && back) this.follow(m, this.route(m.p, [back[0] + (Math.random() - 0.5) * 3, back[1], back[2] + (Math.random() - 0.5) * 3]), 'aimWalk', (q) => (q.arrived = true));
+    }
+    if (nothing && cmd) {
+      const who = I.men.find((m) => !m.dead) ?? cmd;
+      // (held back while radio silence lasts)
+      this.say(who, `${this.unit}, nothing found at the ${I.why}, coming back`, 'intel');
+    }
+  }
+
   step(dt) {
     this.time += dt;
     const ms = this.members();
-    if (!ms.length || !this.threat) return;
+    if (!ms.length) return;
+    // no threat yet: listen, look, send men to investigate; hold where they are
+    if (this.on) this.senses(dt);
+    if (!this.threat) {
+      for (const m of ms) {
+        if (m.dead) continue;
+        m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.trail = [], true);
+        this.move(m, dt);
+        if (!m.path && !this.busy(m) && !this.inv?.men.includes(m)) {
+          if (this.inv) this.face(m, this.inv.p, dt);
+          this.setAnim(m, m.squad === 'UAV' ? 'crouch' : 'crouchAim');
+        }
+        const last = m.trail[m.trail.length - 1];
+        if (!last || Math.hypot(last[0] - m.p[0], last[1] - m.p[2]) > 0.25) m.trail.push([m.p[0], m.p[2]]);
+      }
+      this.flushRadio();
+      return;
+    }
     this.navAge += dt;
     if (this.navAge > 8) {
       this.rebuildNav();
@@ -617,6 +854,7 @@ export class SquadAI {
         this.lastDown = this.time;
         this.recallDrone('man down');
       }
+    this.flushRadio();
     for (let i = this.radioQueue.length - 1; i >= 0; i--) {
       const r = this.radioQueue[i];
       if (this.time < r.at) continue;

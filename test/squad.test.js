@@ -139,3 +139,72 @@ test('the drone operator keeps the team informed, scouts when the area is safe, 
   assert.ok(!uav.scouting && !uav.droneGoal, 'recalled');
   assert.ok(log.radio.some((r) => /back on the threat/.test(r.text)));
 });
+
+/** A range with no threat yet: hostiles, noises, visibility and a mound for the gunner. */
+function quiet({ vis = 60, dark = false } = {}) {
+  const r = range();
+  const hostiles = [];
+  const noises = [];
+  const mound = (x, z) => Math.max(0, 1.6 - Math.hypot(x - 4, z - 9) * 0.45);
+  for (const s of r.squads) {
+    s.threat = null;
+    Object.assign(s.host, {
+      hostiles: () => hostiles, noises: () => noises, visibility: () => vis, dark: () => dark,
+      lineOfSight: () => true, floor: mound,
+    });
+  }
+  return { ...r, hostiles, noises };
+}
+const run = (squads, s) => { for (let t = 0; t < s; t += 0.05) for (const q of squads) q.step(0.05); };
+
+test('a noise: two men go and look (radio silence), find nothing and come back', () => {
+  const { members, squads, log, noises } = quiet();
+  noises.push({ p: [6, 0, 0], loud: 30, time: 0.5 });
+  run(squads, 3);
+  assert.ok(log.radio.some((r) => /noise .* investigate, radio silence/.test(r.text)), 'the commander sends two men, radio silence');
+  const inv = squads[0].inv;
+  assert.ok(inv && inv.men.length === 2 && inv.men.every((m) => m.squad === 'R1' || m.squad === 'R2'));
+  const before = log.radio.length;
+  run(squads, 10);
+  assert.equal(log.radio.filter((r, i) => i >= before && r.unit === 'Alpha').length, 0, 'nothing said during the silence');
+  run(squads, 40);
+  assert.ok(log.radio.some((r) => /nothing found/.test(r.text)), 'nothing there: they report it once the silence is over');
+  assert.equal(squads[0].inv, null);
+  void members;
+});
+
+test('a hostile seen is the threat, marked and followed; outnumbered they call for backup', () => {
+  const { squads, log, hostiles } = quiet();
+  hostiles.push({ p: [2, 0, -8], id: 0 }, { p: [-3, 0, -9], id: 1 }, { p: [0, 0, -10], id: 2 });
+  run(squads, 7);
+  assert.ok(squads[0].threat, 'contact');
+  assert.ok(hostiles.every((h) => h.marked), 'marked as threats');
+  assert.ok(log.radio.some((r) => /contact/.test(r.text)));
+  assert.ok(log.radio.some((r) => /requesting backup/.test(r.text)) && log.radio.some((r) => /on our way/.test(r.text)), 'backup called and answered');
+  hostiles[0].p = [8, 0, -4];
+  hostiles[1].dead = hostiles[2].dead = true;
+  run(squads, 3);
+  assert.ok(Math.hypot(squads[0].threat[0] - 8, squads[0].threat[2] + 4) < 0.1, 'the threat follows the hostile');
+});
+
+test('poor visibility: thermals on; dark and close to an unaware enemy: lights stay off', () => {
+  const fog = quiet({ vis: 25 });
+  run(fog.squads, 1);
+  assert.ok(fog.log.radio.some((r) => /switch to thermals/.test(r.text)));
+  assert.ok(fog.members.filter((m) => m.unit === 'Alpha' && m.squad !== 'UAV').every((m) => m.thermal));
+  const night = quiet({ dark: true });
+  run(night.squads, 1);
+  assert.ok(night.members.every((m) => !m.light), 'no lights before contact (stealth)');
+  night.hostiles.push({ p: [0, 0, 3], id: 0 });
+  run(night.squads, 8);
+  assert.ok(night.members.filter((m) => m.unit === 'Alpha').some((m) => m.light), 'lights on once engaged');
+});
+
+test('cover at corners is preferred; the gunner takes the higher ground behind', () => {
+  const { members, squads } = quiet();
+  squads[0].setThreat([0, 0, -11]);
+  run(squads, 40);
+  assert.ok(squads[0].covers.some((c) => c.corner), 'corners found');
+  const mg = members.find((m) => m.unit === 'Alpha' && m.squad === 'MG');
+  assert.ok(mg.highGround || mg.p[1] > 0.4, `the gunner went up (y = ${mg.p[1].toFixed(2)})`);
+});

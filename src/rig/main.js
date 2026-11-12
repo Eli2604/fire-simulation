@@ -50,6 +50,7 @@ const scene = new THREE.Scene();
   scene.background = t;
 }
 scene.fog = new THREE.Fog('#b9cfe2', 30, 90);
+const skyTex = scene.background;
 {
   const env = new THREE.Scene();
   env.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.ShaderMaterial({
@@ -176,8 +177,63 @@ function addObstacle(type, x, z, rot) {
 }
 [['wall', -3.5, 5.5, 0], ['crate', 2.6, 6.2, 0], ['crate', 3.7, 6.2, 0], ['wall', 4.6, 1.5, 1], ['crate', -1.2, 1.6, 0], ['wall', -5, -1.5, 1], ['wall', -1.5, -3.6, 0], ['crate', 3.2, -4.2, 0],
   ['wall', 5.4, -7.4, 0], ['crate', -3.6, -7.8, 0], ['crate', 0.6, -8.6, 0]].forEach((o) => addObstacle(...o));
+// a low mound behind the walls: the gunner's high ground
+const MOUND = { x: 6, z: 7.5, r: 3.6, h: 1.5 };
+const floorAt = (x, z) => {
+  const d = Math.hypot(x - MOUND.x, z - MOUND.z) / MOUND.r;
+  return d >= 1 ? 0 : MOUND.h * 0.5 * (1 + Math.cos(Math.PI * d));
+};
+{
+  const g = new THREE.CircleGeometry(MOUND.r, 48, 0, Math.PI * 2);
+  g.rotateX(-Math.PI / 2);
+  const pa = g.attributes.position;
+  for (let i = 0; i < pa.count; i++) pa.setY(i, floorAt(pa.getX(i) + MOUND.x, pa.getZ(i) + MOUND.z) + 0.01);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: '#a99070', roughness: 1 }));
+  m.position.set(MOUND.x, 0, MOUND.z);
+  m.receiveShadow = true;
+  scene.add(m);
+}
 const solid = (x, y, z) => WORLD.obstacles.some(({ box: b }) => x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y && y < b.max.y);
-const physics = new PhysicsWorld({ ground: () => 0, boxes: () => WORLD.obstacles });
+const physics = new PhysicsWorld({ ground: (x, z) => floorAt(x, z), boxes: () => WORLD.obstacles });
+/** Line of sight at eye height, blocked by walls and crates. */
+function lineOfSight(a, b) {
+  const n = Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.3);
+  for (let k = 1; k < n; k++) {
+    const t = k / n;
+    if (solid(a[0] + (b[0] - a[0]) * t, 1.0 + (a[1] + (b[1] - a[1]) * t), a[2] + (b[2] - a[2]) * t)) return false;
+  }
+  return true;
+}
+/* ---------- conditions: fog and night ---------- */
+const COND = { fog: false, night: false };
+function visibility() {
+  return COND.fog ? 22 : 60;
+}
+function applyConditions() {
+  scene.fog = new THREE.Fog(COND.night ? '#0b1220' : COND.fog ? '#c8ccd0' : '#b9cfe2', COND.fog ? 4 : 30, COND.fog ? 30 : 90);
+  sun.intensity = COND.night ? 0.05 : COND.fog ? 0.9 : 2.2;
+  scene.environmentIntensity = COND.night ? 0.05 : 1;
+  scene.children.forEach((o) => o.isHemisphereLight && (o.intensity = COND.night ? 0.06 : 0.55));
+  renderer.setClearColor(COND.night ? '#0b1220' : '#b9cfe2');
+  scene.background = COND.night || COND.fog ? new THREE.Color(COND.night ? '#0b1220' : '#c8ccd0') : skyTex;
+}
+/* ---------- noises (made with the Noise tool, by shots, by blasts) ---------- */
+const NOISES = [];
+let noiseClock = 0;
+function makeNoise(p, loud = 30, squad, ring = !squad && loud < 45) {
+  NOISES.push({ p: [p[0], 0, p[2]], loud, time: noiseClock, squad });
+  if (NOISES.length > 60) NOISES.shift();
+  if (!ring) return;
+  const r = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), new THREE.MeshBasicMaterial({ color: '#f1ead8', transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
+  r.rotation.x = -Math.PI / 2;
+  r.position.set(p[0], 0.06, p[2]);
+  r.userData.t = 0;
+  r.userData.max = Math.min(loud, 12);
+  scene.add(r);
+  RIPPLES.push(r);
+}
+const RIPPLES = [];
 
 /* ================= soldiers ================= */
 let A = null;
@@ -296,8 +352,10 @@ class Enemy {
       }
       f.setAim(null);
     } else f.setAim(null);
+    if (!(SQ.on && d.squad)) d.p[1] = floorAt(d.p[0], d.p[2]);
     g.position.set(d.p[0], d.p[1], d.p[2]);
     g.rotation.y = d.yaw;
+    f.setGear({ thermal: !!d.thermal, light: !!d.light });
     f.update(dt);
     if (this.dropT != null && (this.dropT -= dt) <= 0) {
       this.dropT = null;
@@ -333,6 +391,7 @@ const puffTex = (() => {
   return new THREE.CanvasTexture(c);
 })();
 function explode(p) {
+  makeNoise([p.x, 0, p.z], 60, undefined, true);
   // a grenade: ~0.18 kg of explosive; lethal close, wounding further out (as in the simulation)
   const R = 0.4 * Math.cbrt(8e5 / 1000);
   const light = new THREE.PointLight('#ffb060', 60, 18, 2);
@@ -431,11 +490,21 @@ function host(unit) {
     unit,
     members: () => Enemies.list.map((e) => e.d),
     solid,
-    floor: () => 0,
+    floor: (x, z) => floorAt(x, z),
+    hostiles: () => HOSTILES.map((h) => h.d),
+    noises: () => NOISES,
+    lineOfSight,
+    visibility,
+    dark: () => COND.night,
     bounds: [-16, -16, 16, 16],
     threat: WORLD.threat,
     peers: () => Enemies.squads,
-    fire: () => {},
+    fire: (m, target) => {
+      makeNoise(m.p, 45, m.unit);
+      const h = HOSTILES.filter((x) => !x.d.dead).sort((a, b) => Math.hypot(a.d.p[0] - target[0], a.d.p[2] - target[2]) - Math.hypot(b.d.p[0] - target[0], b.d.p[2] - target[2]))[0];
+      if (h && Math.hypot(h.d.p[0] - target[0], h.d.p[2] - target[2]) < 3 && lineOfSight(m.p, h.d.p) && Math.random() < (h.d.covered ? 0.12 : 0.3)) h.damage(35);
+      Enemies.list.find((e) => e.d === m)?.fig.muzzle(0.05);
+    },
     grenade: (m, from, vel) => throwGrenade(from, vel),
     droneLaunch: (m, T) => {
       const e = Enemies.list.find((x) => x.d === m);
@@ -473,7 +542,14 @@ function startSquads() {
   team('Alpha', S, [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8], ['UAV', 0, 3.4]]);
   if (bravoOn) team('Bravo', S.clone().add(new THREE.Vector3(-9, 0, 0)), [['CMD', -0.8, 0], ['MG', 0.8, 0.3], ['R2', 0, 1.6, 'torch']]);
   Enemies.squads = [...new Set(Enemies.list.map((e) => e.d.unit))].map((u) => new SquadAI(host(u)));
-  for (const s of Enemies.squads) s.on = SQ.on;
+  for (const s of Enemies.squads) {
+    s.on = SQ.on;
+    s.threat = null; // no contact yet: they listen and look
+  }
+  HOSTILES.forEach((h) => h.dispose());
+  HOSTILES.length = 0;
+  for (const [x, z, x2, z2] of [[-2, -10, 4, -9], [5, -12, -1, -13], [-6, -11, -6, -6]]) spawnHostile([x, 0, z], [x2, 0, z2]);
+  setTimeout(() => makeNoise([1, 0, -9], 40), 2500);
   select(Enemies.list[0]);
 }
 function setAI(v) {
@@ -483,6 +559,108 @@ function setAI(v) {
   b.textContent = v ? 'Stop squad AI' : 'Start squad AI';
   b.classList.toggle('on', v);
 }
+/* ---------- hostiles: patrol, notice the team, take cover and fire back ---------- */
+const HOSTILES = [];
+class Hostile {
+  constructor(p, p2) {
+    this.fig = new OperatorFigure(A, { zones: false });
+    this.fig.autoFlash = false;
+    scene.add(this.fig.group);
+    this.d = { p: p.slice(), yaw: Math.PI, hp: 100, dead: false };
+    this.route = [p.slice(), p2.slice()];
+    this.i = 1;
+    this.state = 'patrol';
+    this.cd = 0;
+    this.tag = textTag('HOSTILE', '#d4553b');
+    scene.add(this.tag);
+  }
+  damage(n) {
+    if (this.d.dead) return;
+    this.d.hp -= n;
+    this.fig.hitFlash();
+    this.state = 'alert';
+    if (this.d.hp <= 0) {
+      this.d.dead = true;
+      this.fig.play('die', { fade: 0.12 });
+      this.tag.visible = false;
+    } else this.fig.play('hit', { fade: 0.06 });
+  }
+  dispose() {
+    this.fig.dispose();
+    scene.remove(this.tag);
+  }
+  update(dt) {
+    const d = this.d, f = this.fig;
+    if (!d.dead) {
+      const squad = Enemies.list.filter((e) => !e.d.dead);
+      const range = COND.night ? 12 : visibility();
+      const near = squad.filter((e) => Math.hypot(e.d.p[0] - d.p[0], e.d.p[2] - d.p[2]) < range && lineOfSight(d.p, e.d.p));
+      const heard = NOISES.some((n) => n.squad && noiseClock - n.time < 1 && Math.hypot(n.p[0] - d.p[0], n.p[2] - d.p[2]) < n.loud);
+      if (near.length || heard) this.state = 'alert';
+      if (this.state === 'patrol') {
+        const t = this.route[this.i];
+        const dx = t[0] - d.p[0], dz = t[2] - d.p[2], l = Math.hypot(dx, dz);
+        if (l < 0.3) this.i = 1 - this.i;
+        else {
+          d.yaw = Math.atan2(dx, dz);
+          d.p[0] += (dx / l) * 1.1 * dt;
+          d.p[2] += (dz / l) * 1.1 * dt;
+        }
+        f.play('walk');
+      } else {
+        // crouched behind what he has, firing bursts at the nearest he can see
+        d.covered = true;
+        const tgt = near.sort((a, b) => Math.hypot(a.d.p[0] - d.p[0], a.d.p[2] - d.p[2]) - Math.hypot(b.d.p[0] - d.p[0], b.d.p[2] - d.p[2]))[0];
+        if (tgt) d.yaw = Math.atan2(tgt.d.p[0] - d.p[0], tgt.d.p[2] - d.p[2]);
+        this.cd -= dt;
+        if (tgt && this.cd <= 0) {
+          this.cd = 2 + Math.random() * 1.5;
+          f.play('crouchShoot', { restart: true, fade: 0.1 });
+          for (let k = 0; k < 3; k++) setTimeout(() => !d.dead && f.muzzle(0.05), k * 120);
+          makeNoise(d.p, 45);
+          if (Math.random() < 0.18) tgt.damage(30);
+        } else if (this.cd < 1.5) f.play('crouchAim');
+      }
+    }
+    d.p[1] = floorAt(d.p[0], d.p[2]);
+    f.group.position.set(d.p[0], d.p[1], d.p[2]);
+    f.group.rotation.y = d.yaw;
+    f.update(dt);
+    this.tag.position.set(d.p[0], d.p[1] + 2.3, d.p[2]);
+    if (d.marked && !this.marked) {
+      this.marked = true;
+      scene.remove(this.tag);
+      this.tag = textTag('HOSTILE · MARKED', '#ff3b2f');
+      scene.add(this.tag);
+    }
+  }
+}
+function textTag(text, color) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(20,22,18,.82)';
+  g.fillRect(0, 0, 256, 64);
+  g.fillStyle = color;
+  g.fillRect(0, 58, 256, 6);
+  g.font = '700 34px "Barlow Condensed", "Arial Narrow", sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = '#f1ead8';
+  g.fillText(text, 128, 30);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthWrite: false, toneMapped: false }));
+  s.scale.set(0.9, 0.22, 1);
+  return s;
+}
+function spawnHostile(p, p2) {
+  const h = new Hostile(p, p2 ?? [p[0] + 3, 0, p[2]]);
+  HOSTILES.push(h);
+  return h;
+}
+Enemies.hostiles = HOSTILES;
 function setThreat(p) {
   WORLD.threat = [p.x, 0, p.z];
   for (const s of Enemies.squads) s.setThreat(WORLD.threat);
@@ -564,6 +742,9 @@ tg('tgPaths', (v) => (viz.show = showPaths = v));
 tg('tgZones', (v) => showZones(v));
 tg('tgDrop', (v) => (dropOnDeath = v));
 tg('tgRadio', (v) => setRadioSound((radioOn = v)));
+tg('tgFog', (v) => ((COND.fog = v), applyConditions()));
+tg('tgNight', (v) => ((COND.night = v), applyConditions()));
+$('btnSilence').onclick = () => Enemies.squads[0]?.radioSilence(30);
 tg('tgBravo', (v) => {
   bravoOn = v;
   setAI(true);
@@ -586,7 +767,7 @@ function setTool(t) {
 }
 document.querySelectorAll('#tools button[data-tool]').forEach((b) => (b.onclick = () => {
   setTool(b.dataset.tool);
-  toast({ select: 'Click a soldier to select it', wall: 'Click the ground to place a wall', crate: 'Click the ground to place a crate', erase: 'Click a wall or crate to remove it', threat: 'Click the ground to move the threat' }[tool]);
+  toast({ select: 'Click a soldier to select it', wall: 'Click the ground to place a wall', crate: 'Click the ground to place a crate', erase: 'Click a wall or crate to remove it', noise: 'Click the ground to make a noise there', hostile: 'Click the ground to place a hostile', investigate: 'Click where the commander should send two men to look' }[tool]);
 }));
 $('rotBtn').onclick = (ev) => {
   wallRot = wallRot ? 0 : 1;
@@ -660,10 +841,19 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   p.x = Math.round(p.x * 2) / 2;
   p.z = Math.round(p.z * 2) / 2;
   if (Math.abs(p.x) > 16 || Math.abs(p.z) > 16) return toast('Place inside the 32 m range');
-  if (tool === 'threat') {
-    setThreat(p);
+  if (tool === 'noise') {
+    makeNoise([p.x, 0, p.z], 35);
+    toast('A noise: the nearest team sends men to look');
+    return;
+  }
+  if (tool === 'hostile') {
+    spawnHostile([p.x, 0, p.z]);
+    toast('A hostile: he patrols until he sees or hears the team');
+    return;
+  }
+  if (tool === 'investigate') {
+    Enemies.squads[0]?.investigate([p.x, 0, p.z], 'location');
     setTool('select');
-    toast('Threat moved: the teams call it in');
     return;
   }
   addObstacle(tool, p.x, p.z, tool === 'wall' ? wallRot : 0);
@@ -731,11 +921,26 @@ const clock = new THREE.Clock();
 let fixedT = qs.get('t') ? +qs.get('t') : null, frozen = false, now = 0;
 function tick(dt) {
   now += dt;
-  for (const s of Enemies.squads) s.step(dt);
+  noiseClock += dt;
+  for (const s of Enemies.squads) {
+    s.time ??= 0;
+    s.step(dt);
+  }
+  for (const h of HOSTILES) h.update(dt);
+  for (let i = RIPPLES.length - 1; i >= 0; i--) {
+    const r = RIPPLES[i];
+    r.userData.t += dt;
+    r.scale.setScalar(0.5 + r.userData.max * r.userData.t);
+    r.material.opacity = Math.max(0, 0.8 - r.userData.t * 0.8);
+    if (r.userData.t > 1) {
+      scene.remove(r);
+      RIPPLES.splice(i, 1);
+    }
+  }
   for (const e of Enemies.list) e.update(dt);
   physics.step(dt);
   stepGrenades(dt);
-  viz.update(Enemies.list.map((e) => e.d), SQ.on && Enemies.squads.length ? [WORLD.threat] : [], now);
+  viz.update(Enemies.list.map((e) => e.d), SQ.on ? Enemies.squads.filter((s) => s.threat).map((s) => s.threat) : [], now);
 }
 renderer.setAnimationLoop(() => {
   let dt = Math.min(clock.getDelta(), 0.05);
