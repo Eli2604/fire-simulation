@@ -199,6 +199,10 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
       }
     }
   }
+  // a dragon on the ray, nearer than whoever (or whatever) it would hit: its hit zones (ai/dragon.js)
+  const tNear = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
+  const dr = sim.dragonAI?.shot?.(from, d, tNear, 'bullet');
+  if (dr) best = { dragon: dr.dragon, zone: dr.k, p: dr.p };
   w.noises.push({ p: from.slice(), loud: 70, time: w.time, kind: shooter ? 'enemy' : 'gunshot' });
   w.tracers.push({ a: from.slice(), b: best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range], t: w.time });
   if (w.tracers.length > 40) w.tracers.shift();
@@ -206,6 +210,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     best.wound = wound(sim, best.enemy, best.zone, weapon, best.p, d);
     return best;
   }
+  if (best?.dragon) return best;
   if (best?.player) {
     best.weapon = weapon;
     return best;

@@ -160,3 +160,16 @@ test('the rig stage: every act runs on the same dragon code, and does what it sa
   const dmg = st.hitZone('neck', 'arrow');
   assert.ok(dmg > 30 && st.dragon.bleed > 0 && st.dragon.stains.length === 1, 'a hit by zone key');
 });
+
+test('a rifle round hits the dragon in a zone and it bleeds (sim/wounds.js shoot)', async () => {
+  const { shoot } = await import('../src/sim/wounds.js');
+  const { sim, w, d } = field();
+  const h0 = d.health;
+  const from = [d.chest[0] - 0.3, 7, d.chest[2]];
+  const hit = shoot(sim, from, [0, -1, 0]);
+  assert.ok(hit?.dragon === d, 'the round hit the dragon');
+  assert.equal(hit.zone, 'chest');
+  assert.ok(d.health < h0 && d.bleed > 0, 'hurt and bleeding');
+  // beside it: the round goes into the ground
+  assert.ok(!shoot(sim, [d.chest[0], 7, d.chest[2] + 9], [0, -1, 0])?.dragon);
+});
