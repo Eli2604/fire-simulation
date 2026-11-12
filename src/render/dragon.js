@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { PLAN, bodyRadius, smoothGround } from '../ai/dragon.js';
+import { PLAN, bodyRadius, smoothGround, dragonZones, dragonWoundPoint } from '../ai/dragon.js';
+import { splatTexture } from './blood.js';
 
 /**
  * Draws the dragons from their simulated pose (ai/dragon.js: d.spine, d.head, legs from
@@ -26,6 +27,8 @@ import { PLAN, bodyRadius, smoothGround } from '../ai/dragon.js';
  *  - Four sprawling lizard legs: upper arm and thigh out to the side, elbows and
  *    knees bent, five clawed toes; feet planted on the ground through the stride, or
  *    gripping a wall when it climbs.
+ *  - Its wounds: blood on the scales where a hit went in (d.stains, placed on its hit
+ *    zones so they move with the body), fresh red, drying dark.
  */
 
 const PALETTES = {
@@ -456,6 +459,16 @@ export class DragonRenderer {
     // --- the fire: a light at the mouth
     f.fireLight = new THREE.PointLight(0xff8a2a, 0, 30 * k, 1.6);
     root.add(f.fireLight);
+
+    // --- wounds: blood on the scales (splashes on the skin, up to 40)
+    this.stainTex ??= splatTexture('blood');
+    const sm = new THREE.MeshStandardMaterial({ map: this.stainTex, alphaMap: this.stainTex, transparent: true, depthWrite: false, roughness: 0.3, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, side: THREE.DoubleSide });
+    f.stains = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), sm, 40);
+    f.stains.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(40 * 3), 3);
+    f.stains.count = 0;
+    f.stains.frustumCulled = false;
+    f.stains.renderOrder = 2;
+    root.add(f.stains);
     return f;
   }
 
@@ -891,7 +904,43 @@ export class DragonRenderer {
       fl.intensity = 6 * k * k * d.glow;
       if (this.flames && Math.random() < 0.6) this.flames.spawn(m[0] + (Math.random() - 0.5) * 0.2 * k, m[1], m[2] + (Math.random() - 0.5) * 0.2 * k, dir[0] * 1.5, 0.8, dir[2] * 1.5, 0.3, 0.1 * k, 0, 0.6);
     } else fl.intensity = 0;
+    this.poseStains(f, d, world);
     void F;
+  }
+
+  /** The blood on its scales where it was hit (on the hit zones, so it moves with the body). */
+  poseStains(f, d, world) {
+    const S = d.stains ?? [];
+    const st = f.stains;
+    st.count = 0;
+    if (!S.length) return;
+    const zones = dragonZones(d, world);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const n = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    const sc = new THREE.Vector3();
+    const Z = new THREE.Vector3(0, 0, 1);
+    const c = st.instanceColor.array;
+    for (let i = 0; i < S.length && st.count < 40; i++) {
+      const s = S[i];
+      const at = dragonWoundPoint(d, s, world, zones);
+      if (!at) continue;
+      n.set(...at.n);
+      q.setFromUnitVectors(Z, n).multiply(_q.setFromAxisAngle(Z, i * 2.4));
+      p.set(...at.p).addScaledVector(n, 0.01 * d.k);
+      const r = s.r * 2;
+      m.compose(p, q, sc.set(r, r * 1.3, r));
+      st.setMatrixAt(st.count, m);
+      // fresh: bright red; drying dark over a few minutes
+      const age = Math.min(1, Math.max(0, (world?.time ?? 0) - s.t) / 240);
+      c[st.count * 3] = 0.42 - 0.26 * age;
+      c[st.count * 3 + 1] = 0.02 + 0.03 * age;
+      c[st.count * 3 + 2] = 0.02 + 0.02 * age;
+      st.count++;
+    }
+    st.instanceMatrix.needsUpdate = true;
+    st.instanceColor.needsUpdate = true;
   }
 
   /** A leg: the foot planted on the ground (or the wall) through the stride, swung forward between; 2-bone IK. */

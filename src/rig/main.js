@@ -4,6 +4,8 @@
  * pack as rigid bodies), an FPS readout, and the squad AI (ai/squad.js) on a range you edit
  * (walls, crates, the threat), with two teams that talk on the radio. Hand grenades fly, bounce
  * and go off here with a local blast (in the simulation's Squad scenario they are the real ones).
+ * The Dragon tab (rig/dragon.js) shows the simulation's dragon instead: its acts, hit zones and
+ * bleeding; the soldiers' range is hidden and paused while it is open.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -13,6 +15,7 @@ import { SquadAI } from '../ai/squad.js';
 import { radioSay, setRadioSound, shoutSay, flashBang } from '../audio/radio.js';
 import { WEAPONS } from '../sim/wounds.js';
 import { SCENARIOS } from '../scenarios.js';
+import { DragonRig } from './dragon.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -891,6 +894,9 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   for (const s of Enemies.squads) s.replan();
 });
 
+/* ================= the dragon (its own tab: rig/dragon.js) ================= */
+const dragonRig = (window.Dragon = new DragonRig({ scene, camera, controls, renderer, toast, $, qs }));
+
 /* ================= build, then run ================= */
 function setProg(n, p) {
   const el = $('pb-' + n);
@@ -982,12 +988,13 @@ renderer.setAnimationLoop(() => {
     frozen = true;
   }
   if (frozen) dt = 0;
-  if (A) tick(dt);
+  if (A && !dragonRig.active) tick(dt);
   if (selected) {
     ring.position.set(selected.d.p[0], 0.02, selected.d.p[2]);
     ring.visible = !selected.d.dead;
   }
   if (Enemies.list.length && Math.random() < 0.08) onChange();
+  dragonRig.update(dt);
   controls.update();
   renderer.render(scene, camera);
   frames++;

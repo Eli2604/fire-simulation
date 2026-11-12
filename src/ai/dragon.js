@@ -1,6 +1,7 @@
 import { traceVoxels } from './sight.js';
 import { crush } from '../sim/crush.js';
 import { iceBears } from '../sim/ice.js';
+import { splatter } from '../sim/wounds.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
@@ -32,7 +33,13 @@ import { MATERIALS } from '../sim/materials.js';
  *    in the jaws, chewed and swallowed. Afterwards it is sated for a while.
  *  - It sees (line of sight, blocked by walls and thick smoke, far further than a
  *    guard), hears noises (a blast brings it), and remembers who hurt it.
- *  - Fire does not hurt it. Arrows (more in the head), rockets and blasts do.
+ *  - Fire does not hurt it. Arrows, bullets, rockets and blasts do, by where they
+ *    land: hit zones (DRAGON_ZONES: head, neck, chest, belly, tail, each wing, each
+ *    leg) are tapered capsules that follow the pose, each with a damage multiplier
+ *    (the head most, the wings little) and a bleeding rate. A wound bleeds as a
+ *    soldier's does (sim/wounds.js): its health drains, slowing as it clots, blood
+ *    drips from the wound (a trail of drops on the ground where it walks or flies),
+ *    sprays onto whatever is behind the hit, and stains its scales there.
  *    Badly hurt it flies back to its lair to rest; killed, it falls.
  *
  *  - Its round: a route of waypoints (`route`: "x,z action; x,z action; ..." in
@@ -421,6 +428,288 @@ export function pose(d, w, dt) {
   void cross;
 }
 
+// -----------------------------------------------------------------------------
+// hit zones
+
+/**
+ * Where a hit lands on a dragon: tapered capsules along the posed body. `mult` times
+ * what the weapon does is the damage; `bleed` is how hard a wound there bleeds (health
+ * per second, clotting over a minute). `r` and `len` scale a zone's radius and length:
+ * the rig page adjusts them, and the simulation uses the same table. The head is armoured
+ * bone over the brain (most damage); the neck carries the great vessels (bleeds most); the
+ * wings are skin on fin rays (little).
+ */
+export const DRAGON_ZONES = {
+  head: { label: 'Head', mult: 2.5, bleed: 1.5, r: 1, len: 1, color: '#e0604a' },
+  neck: { label: 'Neck', mult: 1.6, bleed: 2, r: 1, len: 1, color: '#e8894a' },
+  chest: { label: 'Chest', mult: 1.3, bleed: 1.5, r: 1, len: 1, color: '#e7c35a' },
+  belly: { label: 'Belly', mult: 1, bleed: 1.2, r: 1, len: 1, color: '#d6b27a' },
+  tail: { label: 'Tail', mult: 0.5, bleed: 0.5, r: 1, len: 1, color: '#b48ce6' },
+  wingL: { label: 'Wing L', mult: 0.3, bleed: 0.2, r: 1, len: 1, color: '#5aa9e6' },
+  wingR: { label: 'Wing R', mult: 0.3, bleed: 0.2, r: 1, len: 1, color: '#5aa9e6' },
+  foreL: { label: 'Foreleg L', mult: 0.6, bleed: 0.6, r: 1, len: 1, color: '#7cc46a' },
+  foreR: { label: 'Foreleg R', mult: 0.6, bleed: 0.6, r: 1, len: 1, color: '#7cc46a' },
+  hindL: { label: 'Hind leg L', mult: 0.6, bleed: 0.6, r: 1, len: 1, color: '#7cc46a' },
+  hindR: { label: 'Hind leg R', mult: 0.6, bleed: 0.6, r: 1, len: 1, color: '#7cc46a' },
+};
+
+/** Base damage of one hit, before the zone's multiplier. */
+const HIT_DAMAGE = { arrow: 30, bullet: 22, rocket: 350 };
+
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const add3 = (a, b, s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
+const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+/**
+ * The frame of the body at spine point i: t towards the head, u up (on a wall: away from
+ * it), s to its left; rolled with the bank. The same frame the renderer builds its tube on.
+ */
+function spineFrame(d, i) {
+  const P = d.spine;
+  const n = P.length;
+  const t = norm(sub(P[Math.max(0, i - 1)], P[Math.min(n - 1, i + 1)]));
+  const aW = clamp((Math.abs(t[1]) - 0.55) / 0.35, 0, 1);
+  const sg = -Math.sign(t[1] || 1) * aW;
+  let u = [Math.sin(d.yaw) * sg, 1 - aW, Math.cos(d.yaw) * sg];
+  u = norm(add3(u, t, -dot(u, t)));
+  let s = norm(cross(u, t));
+  const roll = d.rolls?.[i] ?? 0;
+  if (roll) {
+    u = norm(add3(u.map((v) => v * Math.cos(roll)), s, Math.sin(roll)));
+    s = norm(cross(u, t));
+  }
+  return { p: P[i], t, u, s };
+}
+
+/** A zone's points scaled in length by f about its middle: extended along its ends, or trimmed. */
+function stretch(pts, f) {
+  const n = pts.length;
+  if (f === 1 || n < 2) return pts;
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + dist(pts[i].p, pts[i - 1].p));
+  const L = cum[n - 1];
+  const e = ((f - 1) * L) / 2;
+  if (e >= 0) {
+    const a = norm(sub(pts[0].p, pts[1].p));
+    const b = norm(sub(pts[n - 1].p, pts[n - 2].p));
+    return [{ ...pts[0], p: add3(pts[0].p, a, e) }, ...pts.slice(1, -1), { ...pts[n - 1], p: add3(pts[n - 1].p, b, e) }];
+  }
+  const at = (s) => {
+    let i = 1;
+    while (i < n - 1 && cum[i] < s) i++;
+    const t = clamp((s - cum[i - 1]) / Math.max(1e-6, cum[i] - cum[i - 1]), 0, 1);
+    const A = pts[i - 1];
+    const B = pts[i];
+    return { p: lerp3(A.p, B.p, t), r: A.r + (B.r - A.r) * t, up: lerp3(A.up, B.up, t), ell: A.ell && B.ell ? [A.ell[0] + (B.ell[0] - A.ell[0]) * t, A.ell[1] + (B.ell[1] - A.ell[1]) * t] : null };
+  };
+  const out = [at(-e)];
+  for (let i = 0; i < n; i++) if (cum[i] > -e && cum[i] < L + e) out.push(pts[i]);
+  out.push(at(L + e));
+  return out;
+}
+
+const zoneCache = new WeakMap();
+
+/**
+ * The hit zones of a posed dragon: [{ k, z (its DRAGON_ZONES entry), pts: [{ p, r, up, ell }],
+ * cum (arc length at each point), L, flat }]. Body zones run along the spine (ell: the
+ * half width and height of the body there); the legs from the girdle through the knee
+ * to the foot (planted through the stride, tucked in flight, gripping a wall); the wings
+ * along the middle of the skin behind the bones, by the fold and the wingbeat. `w` (the
+ * world) puts planted feet on the ground.
+ */
+export function dragonZones(d, w = null) {
+  if (!d.spine) return [];
+  const sig = Object.values(DRAGON_ZONES).reduce((a, z, i) => a + z.r * (i + 1) + z.len * (i + 7) * 13, 0);
+  const c = zoneCache.get(d);
+  if (c && c.spine === d.spine && c.sig === sig) return c.zones;
+  const k = d.k;
+  const P = d.spine;
+  const n = P.length;
+  const iS = d.iShoulder;
+  const iH = d.iHip;
+  const iM = Math.round((iS + iH) / 2);
+  const frames = P.map((_, i) => spineFrame(d, i));
+  const zones = [];
+  const add = (key, pts, flat = false) => {
+    const z = DRAGON_ZONES[key];
+    pts = stretch(pts, z.len).map((q) => ({ ...q, r: q.r * z.r }));
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i].p, pts[i - 1].p));
+    zones.push({ k: key, z, pts, cum, L: cum[cum.length - 1], flat });
+  };
+  const run = (i0, i1) => {
+    const pts = [];
+    for (let i = i0; i <= i1; i++) {
+      const [rx, ry] = bodyRadius(i * PLAN.ds);
+      pts.push({ p: P[i], r: (Math.max(rx, ry) + 0.06) * k, up: frames[i].u, ell: [rx * k, ry * k] });
+    }
+    return pts;
+  };
+  // --- the head: skull and jaws
+  const { p: H, dir, up } = d.head;
+  const L = PLAN.head * k;
+  add('head', [
+    { p: add3(H, dir, -0.05 * k), r: 0.3 * k, up },
+    { p: add3(H, dir, 0.5 * L), r: 0.28 * k, up },
+    { p: add3(H, dir, 0.95 * L), r: 0.15 * k, up },
+  ]);
+  // --- the body along the spine
+  add('neck', run(0, iS));
+  add('chest', run(iS, iM));
+  add('belly', run(iM, iH));
+  add('tail', run(iH, n - 1));
+  // --- the legs (as render/dragon.js poses them)
+  for (const [key, front, side] of [['foreL', 1, 1], ['foreR', 1, -1], ['hindL', 0, 1], ['hindR', 0, -1]]) {
+    const i = front ? iS : iH;
+    const fr = frames[i];
+    const [rx, ry] = bodyRadius(i * PLAN.ds).map((v) => v * k);
+    const out = fr.s.map((v) => v * side);
+    const root = add3(add3(fr.p, out, rx * 0.78), fr.u, -ry * 0.25);
+    const tucked = add3(add3(add3(root, fr.t, -(front ? 0.35 : 1.2) * k), fr.u, -(front ? 0.5 : 0.25) * k), out, 0.05 * k);
+    let foot;
+    if (d.mode === 'ground' && Math.abs(fr.t[1]) > 0.5) {
+      // on a wall: gripping it, out to the side and under the belly
+      foot = add3(add3(add3(root, out, 0.55 * k), fr.u, -(ry + 0.15 * k)), fr.t, (front ? 0.3 : 0) * k);
+    } else if (d.groundF > 0.01) {
+      const fh = norm([fr.t[0], 0, fr.t[2]]);
+      const oh = norm([out[0], 0, out[2]]);
+      const spread = (rx + (0.55 + 0.25 * d.crouch) * k) * (front ? 1 : 1.05);
+      const moving = Math.min(1, d.speed / (0.6 * k));
+      const stride = (1.3 + 0.12 * d.speed) * k * moving;
+      const u = (((d.gait + (((front ? 0 : 0.5) + (side > 0 ? 0 : 0.5)) % 1)) % 1) + 1) % 1;
+      const duty = 0.62;
+      let along;
+      let lift = 0;
+      if (u < duty) along = stride / 2 - (stride * u) / duty;
+      else {
+        const t = (u - duty) / (1 - duty);
+        along = -stride / 2 + stride * t;
+        lift = 0.3 * k * Math.sin(Math.PI * t) * moving;
+      }
+      foot = add3(add3(root, oh, spread - rx * 0.78), fh, (front ? 0.3 : -0.05) * k + along);
+      foot[1] = (w ? smoothGround(w, foot[0], foot[2], root[1] + 0.5 * k) : d.p[1] - clearance(0, k, d.crouch)) + lift;
+      if (d.groundF < 1) foot = lerp3(tucked, foot, d.groundF);
+    } else foot = tucked;
+    // the elbow / knee: out and up, sprawling
+    const knee = add3(add3(lerp3(root, foot, 0.5), out, 0.25 * k * d.groundF), fr.u, 0.15 * k);
+    const r = front ? [0.2, 0.14, 0.12] : [0.26, 0.17, 0.13];
+    add(key, [root, knee, foot].map((p, j) => ({ p, r: r[j] * k, up: fr.u })));
+  }
+  // --- the wings: the bones by the fold and the wingbeat (as render/dragon.js), the skin behind
+  {
+    const iw = Math.min(n - 1, iS + 1);
+    const fr = frames[iw];
+    const [rx, ry] = bodyRadius(iw * PLAN.ds).map((v) => v * k);
+    const ph = (d.flapPhase ?? 0) * Math.PI * 2;
+    const amp = d.flapAmp ?? 0;
+    const fold = clamp(d.fold ?? 0, 0, 1);
+    const flex = amp * 0.4 * Math.max(0, -Math.sin(ph));
+    const fl = d.flare ?? 0;
+    const th = [0.12 + amp * 0.6 * Math.cos(ph), 0.08 + amp * 0.65 * Math.cos(ph - 0.35), 0.1 + amp * 0.75 * Math.cos(ph - 0.7)];
+    const spread = [[1, 0.1, -0.15 + 0.3 * fl], [1, 0, 0.12 + 0.2 * fl], [1, -0.05, -0.1]];
+    const folded = [[0.3, 0.08, -1], [0.18, -0.06, 1], [0.12, -0.1, -1]];
+    const fEff = [fold, Math.min(1, fold + flex * 0.6), Math.min(1, fold + flex)];
+    const rot = (v, a) => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a), v[2]];
+    const lerpN = (a, b, t) => norm(lerp3(a, b, t));
+    const lens = [1.5, 1.8, 1.1];
+    // the skin at each joint: [bone, ray direction, ray length] (the rays fan out along the hand)
+    const RAYS = [[0, [0.05, 0, -1], 1.1], [1, [0.2, 0, -1], 1.75], [2, [Math.sin(0.35), 0, -Math.cos(0.35)], 2.0], [2, [Math.sin(1.5), 0, -Math.cos(1.5)], 2.55]];
+    for (const [key, side] of [['wingL', 1], ['wingR', -1]]) {
+      const out = fr.s.map((v) => v * side);
+      const toW = (v) => add3(add3(out.map((x) => x * v[0]), fr.u, v[1]), fr.t, v[2]);
+      const bones = [add3(add3(fr.p, fr.u, ry * 0.72), out, rx * 0.5)];
+      for (let b = 0; b < 3; b++) bones.push(add3(bones[b], toW(rot(lerpN(spread[b], folded[b], fEff[b]), th[b] * (1 - fold))), lens[b] * k));
+      const pts = RAYS.map(([b, sp, len], j) => {
+        const a = th[b] * (1 - fold);
+        const l = len * k * (1 - 0.3 * fEff[b]);
+        return { p: add3(bones[j], toW(rot(lerpN(sp, [0.22, -0.4, -1], fEff[b] * 0.95), a)), l * 0.5), r: Math.max(0.15 * k, l * 0.5 * (1 - 0.55 * fEff[b])), up: norm(toW(rot([0, 1, 0], a))) };
+      });
+      add(key, pts, true);
+    }
+  }
+  zoneCache.set(d, { spine: d.spine, sig, zones });
+  return zones;
+}
+
+/** The frame along zone Z at segment i, fraction t: the point, radius, tangent, up and left. */
+function zoneFrame(Z, i, t) {
+  const A = Z.pts[i - 1];
+  const B = Z.pts[i];
+  const T = norm(sub(B.p, A.p));
+  let U = lerp3(A.up, B.up, t);
+  U = add3(U, T, -dot(U, T));
+  if (len3(U) < 1e-4) U = Math.abs(T[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  U = norm(add3(U, T, -dot(U, T)));
+  const ell = A.ell && B.ell ? [A.ell[0] + (B.ell[0] - A.ell[0]) * t, A.ell[1] + (B.ell[1] - A.ell[1]) * t] : null;
+  return { q: lerp3(A.p, B.p, t), r: A.r + (B.r - A.r) * t, T, U, S: cross(U, T), ell };
+}
+
+/**
+ * Which zone of dragon d a point p is in, or null: { k, zone (DRAGON_ZONES entry), Z (the
+ * posed zone), i, t (the segment and how far along it), u (how far along the zone, 0..1), q
+ * (the nearest point on its axis) }. Where zones overlap, the one p is deepest in.
+ */
+export function dragonHitZone(d, p, w = null, zones = null) {
+  if (!d.spine || dist(p, d.chest) > 11 * d.k) return null;
+  zones ??= dragonZones(d, w);
+  let best = null;
+  for (const Z of zones) {
+    for (let i = 1; i < Z.pts.length; i++) {
+      const A = Z.pts[i - 1];
+      const B = Z.pts[i];
+      const ab = sub(B.p, A.p);
+      const L2 = dot(ab, ab);
+      const t = L2 > 1e-9 ? clamp(dot(sub(p, A.p), ab) / L2, 0, 1) : 0;
+      const q = add3(A.p, ab, t);
+      const e = dist(p, q) / Math.max(1e-3, A.r + (B.r - A.r) * t);
+      if (e < 1 && (!best || e < best.e)) best = { k: Z.k, zone: Z.z, Z, e, i, t, u: Z.L > 0 ? (Z.cum[i - 1] + t * (Z.cum[i] - Z.cum[i - 1])) / Z.L : 0, q };
+    }
+  }
+  return best;
+}
+
+/** The first hit zone along a ray from `from` (direction dir, up to max m): the hit (as dragonHitZone) with p and the distance s, or null. */
+export function dragonRayHit(d, from, dir, max = 80, w = null) {
+  if (!d.spine) return null;
+  const D = norm(dir);
+  // only near the dragon: where the ray passes within its reach of the chest
+  const R = 11 * d.k;
+  const s0 = dot(sub(d.chest, from), D);
+  const close = dist(add3(from, D, s0), d.chest);
+  if (close > R) return null;
+  const half = Math.sqrt(R * R - close * close);
+  const zones = dragonZones(d, w);
+  for (let s = Math.max(0, s0 - half); s < Math.min(max, s0 + half); s += 0.04) {
+    const p = add3(from, D, s);
+    const hz = dragonHitZone(d, p, w, zones);
+    if (hz) return { ...hz, p, s };
+  }
+  return null;
+}
+
+/** Where a wound (or a stain: { k, u, a }) is on the posed body now: { p, n } (on the skin, its outward normal), or null. */
+export function dragonWoundPoint(d, s, w = null, zones = dragonZones(d, w)) {
+  const Z = zones.find((z) => z.k === s.k);
+  if (!Z || Z.pts.length < 2) return null;
+  const at = s.u * Z.L;
+  let i = 1;
+  while (i < Z.pts.length - 1 && Z.cum[i] < at) i++;
+  const t = clamp((at - Z.cum[i - 1]) / Math.max(1e-6, Z.cum[i] - Z.cum[i - 1]), 0, 1);
+  const F = zoneFrame(Z, i, t);
+  const c = Math.cos(s.a);
+  const sn = Math.sin(s.a);
+  const n = norm(add3(F.U.map((v) => v * c), F.S, sn));
+  if (Z.flat) {
+    // the wing: on its skin (the middle of the zone), facing the side it was hit from
+    const nn = F.U.map((v) => v * Math.sign(c || 1));
+    return { p: add3(F.q, nn, 0.03 * d.k), n: nn };
+  }
+  // the body: on the ellipse of its cross-section (a flatter belly); limbs and head: inside the capsule
+  const r = F.ell ? 1 / Math.hypot(c / (F.ell[1] * (c < 0 ? 0.85 : 1)), sn / F.ell[0]) : (F.r / Z.z.r) * 0.8;
+  return { p: add3(F.q, n, r), n };
+}
+
 export class DragonAI {
   constructor(sim) {
     this.sim = sim;
@@ -511,6 +800,7 @@ export class DragonAI {
     for (const d of w.dragons) {
       initDragon(d, w);
       d.time = (d.time ?? 0) + dt;
+      this.bleed(d, w, dt);
       this.stepOne(d, w, dt, noises);
     }
   }
@@ -532,8 +822,8 @@ export class DragonAI {
     d.blink = Math.max(0, d.blink - dt);
     if (Math.random() < dt * 0.25) d.blink = 0.18;
     d.alert = d.state === 'rest' && !d.target ? Math.max(0, (d.alert ?? 0) - dt * 0.3) : 1;
-    // resting heals
-    if (d.state === 'rest' && d.mode === 'ground') d.health = Math.min(d.maxHealth, d.health + dt * 3);
+    // resting heals (once its wounds have stopped bleeding)
+    if (d.state === 'rest' && d.mode === 'ground' && !(d.bleed > 0.3)) d.health = Math.min(d.maxHealth, d.health + dt * 3);
 
     // --- senses (a few times a second)
     d.senseT -= dt;
@@ -1519,37 +1809,101 @@ export class DragonAI {
   // ---------------------------------------------------------------------------
   // wounds
 
-  /** A projectile at p: did it hit a dragon? */
-  hit(p, type) {
+  /** A projectile at p (g: the projectile, its velocity v): did it hit a dragon? By the zone it is in. */
+  hit(p, type, g) {
     for (const d of this.world.dragons ?? []) {
       if (!d.spine || d.health <= 0) continue;
-      const k = d.k;
-      let part = null;
-      const hp = d.head.p;
-      const hc = [0, 1, 2].map((c) => hp[c] + d.head.dir[c] * PLAN.head * k * 0.45);
-      if (dist(p, hc) < 0.55 * k) part = 'head';
-      else
-        for (let i = 0; i < d.spine.length; i++) {
-          const [rx, ry] = bodyRadius(i * PLAN.ds);
-          if (dist(p, d.spine[i]) < Math.max(rx, ry) * k + 0.1) {
-            part = 'body';
-            break;
-          }
-        }
-      if (!part) continue;
-      const dmg = (type === 'arrow' ? 30 : type === 'rocket' ? 350 : 60) * (part === 'head' ? 2 : 1);
-      this.wound(d, dmg);
+      const hz = dragonHitZone(d, p, this.world);
+      if (!hz) continue;
+      const v = g?.v;
+      this.strike(d, hz, type, p, v ? (Array.isArray(v) ? v : [v.x, v.y, v.z]) : sub(p, hz.q));
       return true;
     }
     return false;
   }
 
-  /** A blast hurts a dragon in range. */
+  /**
+   * A hitscan shot (a bullet) from `from` along dir, up to `max` m (where it would hit a
+   * wall): the dragon it hits first, by zone, wounded. Returns { dragon, k, p, s } or null.
+   */
+  shot(from, dir, max = 80, type = 'bullet') {
+    let best = null;
+    for (const d of this.world.dragons ?? []) {
+      if (!d.spine || d.health <= 0) continue;
+      const h = dragonRayHit(d, from, dir, max, this.world);
+      if (h && (!best || h.s < best.s)) best = { ...h, dragon: d };
+    }
+    if (best) this.strike(best.dragon, best, type, best.p, dir);
+    return best;
+  }
+
+  /**
+   * A hit in zone hz (dragonHitZone) by a `type` ('arrow' | 'bullet' | 'rocket' | other)
+   * at p, travelling along dir: the damage times the zone's multiplier, and a wound there.
+   * The wound bleeds (d.bleed, health per second), blood sprays on along dir onto what is
+   * behind, and a stain stays on the scales where it went in. Returns the damage.
+   */
+  strike(d, hz, type, p, dir) {
+    const w = this.world;
+    const k = d.k;
+    const Z = hz.zone;
+    const dmg = (HIT_DAMAGE[type] ?? 60) * Z.mult;
+    d.wounds ??= {};
+    d.wounds[hz.k] = (d.wounds[hz.k] ?? 0) + 1;
+    d.bleed = (d.bleed ?? 0) + Z.bleed * (type === 'rocket' ? 2.5 : type === 'bullet' ? 0.7 : 1);
+    // where it went in, round the zone's axis (so the stain follows the pose from now on)
+    const F = zoneFrame(hz.Z, hz.i, hz.t);
+    const off = sub(p, F.q);
+    d.stains ??= [];
+    d.stains.push({ k: hz.k, u: hz.u, a: Math.atan2(dot(off, F.S), dot(off, F.U)), t: w.time, r: (0.1 + 0.05 * Z.mult) * k * (type === 'rocket' ? 2 : 1) });
+    if (d.stains.length > 40) d.stains.shift();
+    // the spray behind the wound (a dragon has a lot of blood)
+    const dd = len3(dir) > 1e-6 ? dir : off;
+    splatter(this.sim, p, dd, (hz.k.startsWith('wing') ? 0.8 : 2) * Math.sqrt(k));
+    w.events.push({ type: 'dragonWound', pos: p.slice(), time: w.time, name: Z.label, zone: hz.k, damage: dmg });
+    this.wound(d, dmg);
+    return dmg;
+  }
+
+  /**
+   * Wounds bleed: health drains (slowing as they clot; a dead dragon's soon stop), and
+   * blood drips from them, falling with the speed it has: a trail of drops on the ground
+   * under where it crawls or flies (sim/wounds.js steps them and leaves the stains).
+   */
+  bleed(d, w, dt) {
+    if (!(d.bleed > 0.01) || !d.spine) return;
+    if (d.health > 0) {
+      d.health -= d.bleed * dt;
+      if (d.health <= 0) {
+        d.health = 0;
+        w.events.push({ type: 'dragonHit', pos: d.chest.slice(), time: w.time, name: 'the dragon (bled out)' });
+      }
+    }
+    d.bleed *= Math.exp(-dt / (d.health > 0 ? 60 : 8));
+    const rand = () => this.sim.rand?.() ?? Math.random();
+    let n = dt * Math.min(12, d.bleed * 2.5);
+    while (n > 0) {
+      if (n < 1 && rand() > n) break;
+      n -= 1;
+      const s = d.stains?.length ? d.stains[Math.floor(rand() * d.stains.length)] : null;
+      const at = (s && dragonWoundPoint(d, s, w)?.p) ?? d.chest;
+      const air = d.mode === 'air' || d.mode === 'falling';
+      const v = air ? [Math.sin(d.yaw) * d.speed, d.vy ?? 0, Math.cos(d.yaw) * d.speed] : [0, 0, 0];
+      w.drops.push({ p: at.slice(), v: [v[0] + (rand() - 0.5) * 0.4, v[1], v[2] + (rand() - 0.5) * 0.4], life: 4 });
+    }
+    if (w.drops.length > 600) w.drops.splice(0, w.drops.length - 600);
+  }
+
+  /** A blast hurts a dragon in range (and tears it open: it bleeds). */
   blast(center, radius) {
     for (const d of this.world.dragons ?? []) {
       if (!d.chest || d.health <= 0) continue;
       const dd = dist(center, d.chest);
-      if (dd < radius * 1.8) this.wound(d, 320 * (1 - dd / (radius * 1.8)));
+      if (dd < radius * 1.8) {
+        const f = 1 - dd / (radius * 1.8);
+        d.bleed = (d.bleed ?? 0) + 3 * f;
+        this.wound(d, 320 * f);
+      }
     }
   }
 
