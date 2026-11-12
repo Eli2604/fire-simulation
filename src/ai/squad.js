@@ -25,6 +25,12 @@
  *  - Drone: a drone operator (role UAV) stays back from the bounds; on contact he takes the
  *    drone out of his backpack and launches it (host.droneLaunch), radios that it is up, and
  *    stays at the controls.
+ *    While it is up he keeps the team informed: a report every so often (where the threat is,
+ *    whether it moved, where the other teams are). When the team has reached the threat and
+ *    held it a while with no one hit and nothing moving (the area is safe), the commander
+ *    orders him to scout: he flies the drone on an expanding square round the area (m.droneGoal,
+ *    two rings of eight points), reporting each sector clear. If the threat moves or a man goes
+ *    down, the commander calls the drone back over the threat.
  *  - Orders: the first squad leads. On contact its commander sends every other team to a flank
  *    of the threat ("Bravo, take the west flank"); a team that gets well ahead of the lead is
  *    told to hold off until the lead catches up, then to continue; when the threat moves away
@@ -48,6 +54,7 @@
  * signal { text, until }, moving, speed.
  */
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
+const SCOUT_R = [10, 16];
 const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, throwGrenade: 1.6, pickup: 1.3, radio: 2.4 };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
@@ -71,9 +78,60 @@ export class SquadAI {
     this.radioQueue = [];
     this.contacted = false;
     this.goal = null; // where this team is sent (a flank); null: straight at the threat
+    this.lastDown = -Infinity;
+    this.threatT = 0; // when the threat last moved
+    this.holdT = 0; // how long they have held at the threat
     this.holdOff = false;
     this.pursuit = false;
     this.orderT = 0;
+  }
+  /** The drone operator, his drone in the air. */
+  uav() {
+    return this.members().find((m) => m.squad === 'UAV' && !m.dead && m.deployed && m.droneAt == null);
+  }
+  /** Back over the threat (the commander's call). */
+  recallDrone(why) {
+    const u = this.uav();
+    if (!u || !u.scouting) return;
+    u.scouting = false;
+    u.droneGoal = null;
+    const cmd = this.radioMan();
+    if (cmd) this.say(cmd, `Drone, ${this.unit}, ${why}, back on the threat`, 'order');
+    this.radioQueue.push({ at: this.time + 2.6, uav: true, text: `${this.unit}, drone, copy, back on the threat`, kind: 'reply' });
+  }
+  /** What the drone sees, for the team. */
+  intel(u) {
+    const T = this.threat;
+    const moved = this.lastIntel && Math.hypot(T[0] - this.lastIntel[0], T[2] - this.lastIntel[2]) > 1;
+    const dir = (a, b) => BEARING[((Math.round(Math.atan2(b[0] - a[0], -(b[2] - a[2])) / (Math.PI / 4)) % 8) + 8) % 8];
+    let text = `${this.unit}, drone, eyes on the threat, ${this.bearing()}, ${moved ? 'it has moved ' + dir(this.lastIntel, T) : 'no movement'}`;
+    const peers = (this.host.peers?.() ?? []).filter((p) => p !== this && p.alive());
+    for (const p of peers) {
+      const c = centroid(p.members().filter((m) => !m.dead));
+      text += `, ${p.unit} is ${Math.round(dist2(c, T))} metres ${dir(T, c)} of it`;
+    }
+    this.lastIntel = T.slice();
+    this.say(u, text, 'intel');
+    const cmd = this.radioMan();
+    if (cmd) this.radioQueue.push({ at: this.time + 3.5, text: `Drone, ${this.unit}, copy`, kind: 'reply' });
+  }
+  /** The drone on its search: the next point of the expanding square, a report for the last. */
+  scoutStep(u) {
+    const c = this.threat;
+    const i = u.scoutI++;
+    if (i >= SCOUT_R.length * 8) {
+      u.scouting = false;
+      u.droneGoal = null;
+      this.say(u, `${this.unit}, drone, search complete, area clear, back on the threat`, 'intel');
+      return;
+    }
+    const r = SCOUT_R[Math.floor(i / 8)], a = ((i % 8) * Math.PI) / 4;
+    u.droneGoal = [c[0] + Math.sin(a) * r, c[1], c[2] - Math.cos(a) * r];
+    if (i > 0) {
+      const pr = SCOUT_R[Math.floor((i - 1) / 8)], pa = (((i - 1) % 8) * Math.PI) / 4;
+      this.say(u, `${this.unit}, drone, sector ${BEARING[(i - 1) % 8]}, ${pr} metres, clear`, 'intel');
+      void pa;
+    }
   }
   /** The leading squad gives the orders. */
   get isLead() {
@@ -138,6 +196,10 @@ export class SquadAI {
 
   setThreat(p) {
     const moved = !this.threat || Math.hypot(p[0] - this.threat[0], p[2] - this.threat[2]) > 1;
+    if (moved) {
+      this.threatT = this.time;
+      this.recallDrone('the threat has moved');
+    }
     const al = this.members().filter((m) => !m.dead);
     const away = this.threat && al.length && dist2(centroid(al), p) > dist2(centroid(al), this.threat) + 4;
     this.threat = [p[0], p[1] ?? 0, p[2]];
@@ -183,7 +245,8 @@ export class SquadAI {
     peers.forEach((p, i) => p.radioQueue.push({ at: p.time + 2.8 + i * 2.6, text: p.unit + ', copy ' + U + ', ' + (kind === 'manDown' ? 'understood, out' : 'we have it, out'), kind: 'reply' }));
   }
   say(m, text, kind) {
-    if (!this.busy(m) || m.anim === 'crouchAim') this.setAnim(m, 'radio');
+    // (the drone operator talks through his headset: his hands stay on the controller)
+    if (m.squad !== 'UAV' && (!this.busy(m) || m.anim === 'crouchAim')) this.setAnim(m, 'radio');
     m.signal = { text: text.toUpperCase(), until: this.time + 3 };
     this.host.radio?.(m, text, kind);
     this.status = 'Radio: ' + text;
@@ -551,13 +614,20 @@ export class SquadAI {
       if (m.dead && !m.reportedDown) {
         m.reportedDown = true;
         if (this.contacted && al.length) this.report('manDown', NAME[m.squad]);
+        this.lastDown = this.time;
+        this.recallDrone('man down');
       }
     for (let i = this.radioQueue.length - 1; i >= 0; i--) {
       const r = this.radioQueue[i];
       if (this.time < r.at) continue;
       this.radioQueue.splice(i, 1);
-      const m = this.radioMan();
+      const m = r.uav ? this.uav() : this.radioMan();
       if (!m) continue;
+      if (r.scout) {
+        m.scouting = true;
+        m.scoutI = 0;
+        m.scoutT = 0;
+      }
       if (r.self) {
         m.signal = { text: r.text.toUpperCase(), until: this.time + 2 };
         this.host.radio?.(m, r.text, r.kind);
@@ -621,8 +691,22 @@ export class SquadAI {
           this.face(m, T, 1, 10);
           this.setAnim(m, 'deployDrone');
           m.droneAt = this.time + 6.0;
-        } else if (m.deployed) this.setAnim(m, 'droneControl');
-        else this.setAnim(m, 'crouchAim');
+        } else if (m.deployed && m.droneAt == null) {
+          this.setAnim(m, m.scouting ? 'droneScout' : 'droneControl');
+          if (m.scouting) {
+            m.scoutT = (m.scoutT ?? 0) - dt;
+            if (m.scoutT <= 0) {
+              m.scoutT = 5;
+              this.scoutStep(m);
+            }
+          } else {
+            m.intelT = (m.intelT ?? 6) - dt;
+            if (m.intelT <= 0) {
+              m.intelT = 14;
+              this.intel(m);
+            }
+          }
+        } else if (!m.deployed) this.setAnim(m, 'crouchAim');
         continue;
       }
       if (m.anim === 'pickup' && m.goingFor) {
@@ -699,6 +783,15 @@ export class SquadAI {
         m.signal = { text: 'FRAG OUT', until: this.time + 1.8 };
       }
     }
+    // held at the threat a while, no one hit, nothing moving: the area is safe, send the drone scouting
+    this.holdT = this.phase === 'hold' ? this.holdT + dt : 0;
+    const u = this.uav();
+    if (u && !u.scouting && !u.scoutOrdered && this.holdT > 6 && this.time - this.lastDown > 20 && this.time - this.threatT > 20) {
+      u.scoutOrdered = true;
+      this.say(cmd, `Drone, ${this.unit}, area is clear, go scouting`, 'order');
+      this.radioQueue.push({ at: this.time + 2.6, uav: true, scout: true, text: `${this.unit}, drone, copy, scouting`, kind: 'reply' });
+    }
+    if (u && !u.scouting && u.scoutOrdered && this.phase !== 'hold') u.scoutOrdered = false;
     if (this.pursuit || this.holdOff === true || this.holdOff === 'asked-continue') {
       // in pursuit, or told to hold off: no bounds
     } else if (this.phase === 'bound') {

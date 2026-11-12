@@ -281,6 +281,7 @@ class Enemy {
         if (MOVING[f.state]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, d.speed / MOVING[f.state])) : 0.001);
       }
       f.setAim(d.aimAt);
+      f.droneGoal = d.droneGoal ? V(d.droneGoal) : null;
     } else if (this.patrol && !d.dead && MOVING[f.state] && f.shown === f.state) {
       const tgt = this.patrol.pts[this.patrol.i];
       const dx = tgt[0] - d.p[0], dz = tgt[2] - d.p[2], dist = Math.hypot(dx, dz);

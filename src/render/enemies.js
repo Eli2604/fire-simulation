@@ -431,6 +431,7 @@ export class EnemyRenderer {
     }
     f.setAim(e.squad ? e.aimAt : null);
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
+    f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;
     f.update(dt);
     if (e.state === 'lure' && !e.dead && this.flames) {
       const p = new THREE.Vector3();

@@ -117,3 +117,25 @@ test('the lead team gives orders on the radio: a flank, hold off and continue, p
   assert.ok(log.radio.some((r) => /copy, in pursuit/.test(r.text)) && (squads[1].pursuit || squads[1].phase === 'bound'), 'Bravo follows');
   assert.ok(members.some((m) => m.unit === 'Alpha' && m.anim === 'run'), 'running after it');
 });
+
+test('the drone operator keeps the team informed, scouts when the area is safe, and is called back', () => {
+  const { members, squads, log } = range();
+  members.push({ p: [0, 0, 13.5], yaw: Math.PI, squad: 'UAV', unit: 'Alpha' });
+  // Alpha at the threat already, Bravo nearby: a quick hold
+  for (const m of members) if (m.unit === 'Alpha' && m.squad !== 'UAV') m.p = [m.p[0] * 0.5, 0, -7];
+  for (let t = 0; t < 40; t += 0.05) for (const s of squads) s.step(0.05);
+  const uav = members.find((m) => m.squad === 'UAV');
+  assert.ok(uav.deployed, 'the drone is up');
+  assert.ok(log.radio.some((r) => r.kind === 'drone'), 'drone is up, on the radio');
+  assert.ok(log.radio.some((r) => r.kind === 'intel' && /eyes on the threat/.test(r.text) && /Bravo is/.test(r.text)), 'regular intel, with where Bravo is');
+  assert.ok(log.radio.some((r) => /area is clear, go scouting/.test(r.text)), 'the commander orders the search once it is safe');
+  assert.ok(uav.scouting && uav.droneGoal, 'the drone is on its search');
+  for (let t = 0; t < 12; t += 0.05) for (const s of squads) s.step(0.05);
+  assert.ok(log.radio.some((r) => /sector .* clear/.test(r.text)), 'sectors reported clear');
+  assert.equal(uav.anim, 'droneScout');
+  // the threat moves: back on it
+  squads[0].setThreat([5, 0, -12]);
+  for (let t = 0; t < 4; t += 0.05) for (const s of squads) s.step(0.05);
+  assert.ok(!uav.scouting && !uav.droneGoal, 'recalled');
+  assert.ok(log.radio.some((r) => /back on the threat/.test(r.text)));
+});

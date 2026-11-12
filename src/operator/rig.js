@@ -16,7 +16,8 @@
  *    standing (the 'flame' clip); crouched or prone he just holds it.
  *  - Drone: a trooper with a backpack slips it off, kneels, sets it down and opens it, lifts a
  *    quadcopter out, places it ahead of him, pulls his FPV goggles down and takes the controller;
- *    the drone spins up, climbs and circles over its target (droneTarget) while he stays put.
+ *    the drone spins up, climbs and circles over its target (droneTarget) while he stays put;
+ *    given a droneGoal it flies there instead (scouting), higher and faster.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -544,6 +545,14 @@ const CLIPS = {
     p.head = [-0.05, 0.08 * sin(TAU * u), 0];
     return p;
   }],
+  // flying the drone on a search: bigger stick inputs, the head turning with it
+  droneScout: [4.0, (t, u) => {
+    const p = droneKneel(pose0(), 1);
+    const f = TAU * u;
+    p.lT = [0.075 + 0.014 * sin(f * 3), 1.12 + 0.006 * sin(f * 5), 0.28]; p.rT = [-0.075 + 0.016 * sin(f * 2 + 1), 1.12, 0.28 + 0.008 * sin(f * 4)];
+    p.head = [-0.08 + 0.05 * sin(f * 2), 0.35 * sin(f), 0.06 * sin(f)]; p.spine[1] = 0.12 * sin(f);
+    return p;
+  }],
   // the flame gun: only standing, aimed from the hip
   flame: [2.0, (t, u) => {
     const p = stance(pose0()), f = TAU * u;
@@ -625,11 +634,11 @@ export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
-  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
+  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle. */
-const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, pickup: 1, swim: 1 };
+const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, pickup: 1, swim: 1 };
 /** A flame trooper cannot shoot or reload; he fires the flame gun standing only. */
 const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle' };
 
@@ -1326,7 +1335,7 @@ export class OperatorFigure {
         this.droneFly = { t: 0, start: this.drone.position.clone(), ang: 0, v: new THREE.Vector3() };
         this.onDroneLaunch?.(this);
       }
-    } else if (this.shown === 'droneControl') {
+    } else if (this.shown === 'droneControl' || this.shown === 'droneScout') {
       this.goggles.visible = this.ctrl.visible = true;
     } else this.goggles.visible = this.ctrl.visible = false;
     const F = this.droneFly;
@@ -1350,13 +1359,18 @@ export class OperatorFigure {
     const g = this.group.position;
     const T = this.droneTarget ?? new THREE.Vector3(g.x + Math.sin(this.group.rotation.y) * 8, g.y, g.z + Math.cos(this.group.rotation.y) * 8);
     let goal;
+    let vmax = 4;
     if (F.t < 2.6) goal = F.start.clone().setY(g.y + 0.1 + 3.4 * sm01((F.t - 0.6) / 2));
-    else {
+    else if (this.droneGoal) {
+      // scouting: straight to the next search point, higher and faster
+      goal = this.droneGoal.clone().setY(g.y + 6);
+      vmax = 6;
+    } else {
       F.ang += dt * 0.55;
       goal = new THREE.Vector3(T.x + Math.cos(F.ang) * 3.5, g.y + 4, T.z + Math.sin(F.ang) * 3.5);
     }
     const want = goal.sub(d.position);
-    const sp = Math.min(4, want.length() * 1.5);
+    const sp = Math.min(vmax, want.length() * 1.5);
     const vt = want.normalize().multiplyScalar(sp);
     F.v.lerp(vt, Math.min(1, dt * 2));
     d.position.addScaledVector(F.v, dt);
