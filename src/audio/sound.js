@@ -259,7 +259,21 @@ export class SoundScape {
     const ev = state.events ?? [];
     for (; this.seenEvents < ev.length; this.seenEvents++) {
       const e = ev[this.seenEvents];
-      if (e.type === 'explosion') {
+      if (e.type === 'explosion' && e.name === 'lightning') {
+        // (its sound is the thunder: below)
+      } else if (e.type === 'lightning') {
+        // thunder: the crack of the strike, then the rumble rolling on for seconds; it comes as
+        // far behind the flash as sound takes to get here (~3 s a kilometre), duller and longer
+        // from further (the air takes the high notes)
+        const lp = state.listener?.pos;
+        const d = lp ? Math.hypot(e.pos[0] - lp[0], e.pos[1] - lp[1], e.pos[2] - lp[2]) : 0;
+        const td = t + d / 343;
+        const far = Math.min(1, d / 1500);
+        const g = Math.max(0.35, 1 - far * 0.6);
+        if (far < 0.3) this.burst(td, 0.18, 'highpass', 1800, 0.7, 1.1 * (1 - far * 3));
+        this.thump(td + 0.05, 1.2 * g);
+        this.burst(td + 0.2, 4.5 + 3 * far, 'lowpass', 110 - 50 * far, 0.7, 1.5 * g);
+      } else if (e.type === 'explosion') {
         this.burst(t, 1.8, 'lowpass', 300, 0.7, 1.2);
         this.thump(t, 1);
       } else if (e.type === 'pipeBurst' || e.type === 'waterBurst') {

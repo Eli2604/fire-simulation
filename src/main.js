@@ -240,6 +240,7 @@ const wc = [
   fW.add(weather, 'windSpeed', 0, 35, 0.1).name('Wind speed (m/s)'),
   fW.add(weather, 'windDir', 0, 360, 5).name('Wind towards (°)'),
   fW.add(weather, 'rain', 0, 50, 0.5).name('Rain / snow (mm/h of water)'),
+  fW.add(weather, 'lightning', 0, 20, 0.5).name('Lightning (strikes a minute)'),
   fW.add(weather, 'fog', 0, 1, 0.01).name('Fog'),
 ];
 wc.forEach((c) => c.onChange(() => view.applyWeather(weather)));
@@ -250,7 +251,9 @@ const setWeather = (o) => {
   wc.forEach((c) => c.updateDisplay());
   view.applyWeather(weather);
 };
-fW.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 }) }, 'storm').name('Storm (gale, rain, high sea)');
+fW.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
+// lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
+fW.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
 fW.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
 // the seasons: the weather of a typical day, the leaves and the grass, snow lying in winter
 // (below freezing what falls is snow: sim/snow.js)
@@ -779,14 +782,14 @@ if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
 // ...&snow=0.4: that much snow lying
 if (qs.get('snow') !== null && Number.isFinite(Number(qs.get('snow')))) setSnow(Number(qs.get('snow')));
 // ...&storm=1: a gale with rain; ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
-if (qs.get('storm')) for (const [k, v] of Object.entries({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 })) weather[k] = sim.weather[k] = v;
-for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog']]) {
+if (qs.get('storm')) for (const [k, v] of Object.entries({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 })) weather[k] = sim.weather[k] = v;
+for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog'], ['lightning', 'lightning']]) {
   const v = Number(qs.get(k));
   if (qs.get(k) !== null && Number.isFinite(v)) weather[key] = sim.weather[key] = v;
 }
 view.applyWeather(weather);
 // ...&blast=x,y,z,energy: an explosion there after a second (for testing: energy in J, a grenade ~6e5)
-if (qs.get('blast')) {
+if (qs.get('blast') && !(Number(qs.get('advance')) > 0)) {
   const [bx, by, bz, be] = qs.get('blast').split(',').map(Number);
   if ([bx, by, bz].every(Number.isFinite)) setTimeout(() => import('./sim/explosions.js').then(({ explode }) => explode(sim, [bx, by, bz], Number.isFinite(be) ? be : 6e5)), 1000);
 }
@@ -807,7 +810,20 @@ if (qs.get('walk')) {
   if (qs.get('freeze')) state.running = false; // a still: everything where it starts
 }
 // ...&advance=60: the scene as it is a minute on (the fine detail round the walk-in spot with it)
+// ...&strike=x,z: a lightning strike there as the scene starts (sim/lightning.js); &holdbolt=1 keeps its bolt drawn (a still)
+if (qs.get('holdbolt')) view.boltHold = true;
+if (qs.get('strike')) {
+  const [x, z] = qs.get('strike').split(',').map(Number);
+  const { strike } = await import('./sim/lightning.js');
+  strike(sim, Number.isFinite(x) && Number.isFinite(z) ? [x, z] : null);
+}
 if (Number(qs.get('advance')) > 0) {
+  // (a blast in the link goes off first: the scene is then the aftermath)
+  const bl = (qs.get('blast') ?? '').split(',').map(Number);
+  if (bl.length >= 3 && bl.slice(0, 3).every(Number.isFinite)) {
+    const { explode } = await import('./sim/explosions.js');
+    explode(sim, bl.slice(0, 3), Number.isFinite(bl[3]) ? bl[3] : 6e5);
+  }
   const sp = sim.spawn.p;
   const eye = [sp[0], (sp[1] ?? 0) + 1.7, sp[2]];
   for (let t = 0; t < Number(qs.get('advance')); t += 0.5) {

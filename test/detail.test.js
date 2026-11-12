@@ -265,3 +265,62 @@ test('lava in a pond boils it and sets; a pond on wet ground keeps its water', a
   assert.ok(w.skin[lava] < 400, `crust: ${w.skin[lava].toFixed(0)} °C`);
   assert.ok(w.temp[lava] < MATERIALS[MAT.basalt].meltingPoint, `set: ${w.temp[lava].toFixed(0)} °C`);
 });
+
+test('a grenade shreds a tree\'s leaves and snaps its branches; against the trunk it fells it', async () => {
+  const { explode } = await import('../src/sim/explosions.js');
+  const { MATERIALS } = await import('../src/sim/materials.js');
+  const oak = () => createSimulation({ world: { size: [12, 9, 12], h: 0.1, ground: 'soil' }, weather: { ambient: 15 }, objects: [{ type: 'tree', params: { species: 'oak', height: 6, crownRadius: 2.4 }, x: 6, z: 6 }], noFire: true });
+  const count = (sim, test) => {
+    const w = sim.world;
+    let n = 0;
+    for (let k = 0; k < w.solidCount; k++) if (test(w.solids[k], w)) n++;
+    return n;
+  };
+  const leaves = (i, w) => MATERIALS[w.mat[i]].name === 'leaves';
+  const high = (i, w) => w.owner[i] === w.trees[0].owner && w.coords(i)[1] * w.h > 3 && MATERIALS[w.mat[i]].name !== 'leaves';
+  // in the crown: leaves shredded and blown off, branches snapped, they fall
+  const a = oak();
+  const l0 = count(a, leaves);
+  const b0 = count(a, high);
+  explode(a, [7.5, 3.5, 6], 3e5);
+  a.advance(6, 1e9);
+  assert.ok(count(a, leaves) < l0 * 0.8, 'leaves stripped');
+  assert.ok(count(a, high) < b0 * 0.95, 'branches snapped and fallen');
+  // against the trunk, one on each side: cut through, the tree comes down as one, lying along the
+  // ground (drawn as the tree lying there: render/trees.js follows its voxels)
+  const c = oak();
+  explode(c, [6.4, 0.5, 6], 3e5);
+  explode(c, [5.6, 0.5, 6], 3e5);
+  const t = c.world.trees[0];
+  assert.ok(t.fall, 'felled');
+  c.advance(6, 1e9);
+  const above = (m) => (i, w) => w.owner[i] === t.owner && w.coords(i)[1] * w.h > m;
+  assert.equal(count(c, above(4)), 0, 'nothing of it stands up any more');
+  assert.ok(count(c, (i, w) => w.owner[i] === t.owner && MATERIALS[w.mat[i]].name !== 'leaves') > 300, 'its wood lies there');
+});
+
+test('lightning in a storm strikes what stands highest, sets it alight, splits a tree; none indoors', async () => {
+  const { strike } = await import('../src/sim/lightning.js');
+  const { F_BURNING } = await import('../src/sim/world.js');
+  const sim = createSimulation({ world: { size: [12, 9, 12], h: 0.2, ground: 'soil' }, weather: { ambient: 15, humidity: 0.5 }, objects: [{ type: 'tree', params: { species: 'pine', height: 7, crownRadius: 1.8 }, x: 6, z: 6 }], noFire: true });
+  const w = sim.world;
+  const p = strike(sim, [4, 6]);
+  assert.ok(p && Math.hypot(p[0] - 6, p[2] - 6) < 2.5 && p[1] > 5, `it went to the tree's top (${p.map((v) => v.toFixed(1))})`);
+  assert.equal(w.trees[0].struck, 1);
+  sim.advance(3, 1e9);
+  let burning = 0;
+  for (let k = 0; k < w.solidCount; k++) if (w.flags[w.solids[k]] & F_BURNING) burning++;
+  assert.ok(burning > 0, 'set alight');
+  // a storm: strikes come at the rate set
+  sim.weather.lightning = 30;
+  const n0 = w.events.filter((e) => e.type === 'lightning').length;
+  sim.advance(20, 1e9);
+  assert.ok(w.events.filter((e) => e.type === 'lightning').length - n0 >= 4, 'strikes in the storm');
+  // under cover: none
+  const sc = cloneScene(SCENARIOS.carrier);
+  sc.zone = 'catacombs';
+  const under = createSimulation(sc);
+  under.weather.lightning = 60;
+  under.advance(5, 1e9);
+  assert.equal(under.world.events.filter((e) => e.type === 'lightning').length, 0);
+});

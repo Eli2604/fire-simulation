@@ -13,6 +13,7 @@ import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
+import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -127,6 +128,7 @@ export class Simulation {
     // snow: falls when it is freezing, lies, settles, melts in a fire's heat, packs under feet
     if (!w.snow && !w.noSnow && D.snowRate > 0 && !initSnow(w)) w.noSnow = true;
     if (w.snow) stepSnow(this, dt, D);
+    stepLightning(this, dt);
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
@@ -921,6 +923,7 @@ export class Simulation {
       // --- charred branches lose their strength and break off
       if (char[i] > M.charFail && !(f & (F_FALLING | F_LIQUID | F_ANCHOR | F_BROKEN)) && this.rand() < dt * 0.25) {
         f |= F_FALLING | F_BROKEN;
+        if (f & 64 && this.isTree(w.owner[i])) f &= ~64;
         w.structureDirty = true;
         this.stats.failures = (this.stats.failures ?? 0) + 1;
       }
@@ -1117,6 +1120,14 @@ export class Simulation {
 
   /** Breaking glass is loud: one noise (and sound) per spot and moment. */
   /** The glass connected to voxel i (one pane, up to a few hundred voxels) falls out. */
+  /** Is this owner a tree (models/tree.js)? */
+  isTree(owner) {
+    const w = this.world;
+    if (!w.trees?.length) return false;
+    if (this._treeOwners?.n !== w.trees.length) this._treeOwners = { n: w.trees.length, set: new Set(w.trees.map((t) => t.owner)) };
+    return this._treeOwners.set.has(owner);
+  }
+
   dropPane(i) {
     const w = this.world;
     const { nx, ny, nz, mat, flags } = w;
@@ -1422,6 +1433,9 @@ export class Simulation {
       const i = solids[k];
       if (visit[i] !== gen && structural(i)) {
         flags[i] |= F_FALLING;
+        // a tree's part that comes down (cut through by a blast, burnt through) is no longer
+        // drawn as the tree (render/trees.js): its voxels are, as they fall and lie
+        if (flags[i] & 64 && this.isTree(w.owner[i])) flags[i] &= ~64;
         detached++;
       }
     }

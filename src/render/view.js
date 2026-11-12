@@ -625,6 +625,7 @@ export class View {
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);
+    this.updateBolts();
     const r = this.renderer;
     const useVolume = volumetric && this.smoke.enabled;
     let aoDepth = null;
@@ -709,7 +710,11 @@ export class View {
     if (!w) return;
     for (; this.seenEvents < w.events.length; this.seenEvents++) {
       const e = w.events[this.seenEvents];
-      if (e.type !== 'explosion') continue;
+      if (e.type === 'lightning') {
+        this.addBolt(e.pos);
+        continue;
+      }
+      if (e.type !== 'explosion' || e.name === 'lightning') continue;
       // no white flash where there is no fireball (an eruption: rock and ash, lit by the lava)
       if (e.flash !== false) this.flash = { t: 0, pos: e.pos, power: Math.min(4, 0.5 + Math.cbrt(e.energy / 1e5)) };
       const n = Math.min(600, 150 + Math.round(e.energy / 2000));
@@ -719,6 +724,86 @@ export class View {
         const sp = 4 + Math.random() * 14;
         this.flames.spawn(e.pos[0], e.pos[1], e.pos[2], Math.sin(ph) * Math.cos(th) * sp, Math.abs(Math.cos(ph)) * sp, Math.sin(ph) * Math.sin(th) * sp, 0.6 + Math.random() * 1.6, Math.max(0.01, w.h * 0.25), 1, 1);
       }
+    }
+  }
+
+  /**
+   * A lightning bolt (sim/lightning.js): a jagged, branching channel from the clouds down to
+   * where it struck, blue-white, flickering two or three times over a quarter of a second; the
+   * sky lights up with it and its light falls on the ground round it.
+   */
+  addBolt(p) {
+    const pts = [];
+    const top = [p[0] + (Math.random() - 0.5) * 60, p[1] + 180, p[2] + (Math.random() - 0.5) * 60];
+    const main = [];
+    // a stepped leader's path: short straight runs that kink every few metres, wandering
+    const n = 70;
+    let off = [0, 0];
+    for (let k = 0; k <= n; k++) {
+      const u = k / n;
+      if (k > 0 && k < n) off = [off[0] * 0.9 + (Math.random() - 0.5) * 7, off[1] * 0.9 + (Math.random() - 0.5) * 7];
+      const q = [top[0] + (p[0] - top[0]) * u + off[0] * Math.min(1, (1 - u) * 6), top[1] + (p[1] - top[1]) * u, top[2] + (p[2] - top[2]) * u + off[1] * Math.min(1, (1 - u) * 6)];
+      main.push(q);
+    }
+    // (a glowing channel: a thin white core and a wide faint glow round it; GL lines are one pixel)
+    const group = new THREE.Group();
+    const core = new THREE.MeshBasicMaterial({ color: 0xf4f7ff, transparent: true, opacity: 1, fog: false, blending: THREE.AdditiveBlending, depthWrite: false });
+    const glow = new THREE.MeshBasicMaterial({ color: 0x9fb4ff, transparent: true, opacity: 0.22, fog: false, blending: THREE.AdditiveBlending, depthWrite: false });
+    const seg = (list, r) => {
+      const curve = new THREE.CatmullRomCurve3(list.map((q) => new THREE.Vector3(...q)), false, 'catmullrom', 0.0);
+      const n = list.length * 2;
+      group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, n, r, 5, false), core));
+      group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, n, r * 3, 6, false), glow));
+      void pts;
+    };
+    seg(main, 0.18);
+    // its branches: forks off the channel that die out in the air
+    for (let b = 0; b < 4; b++) {
+      const k0 = 8 + Math.floor(Math.random() * 45);
+      let q = main[k0].slice();
+      const dir = [(Math.random() - 0.5) * 2, -1 - Math.random(), (Math.random() - 0.5) * 2];
+      const br = [q];
+      for (let k = 0; k < 8; k++) {
+        q = [q[0] + dir[0] * 3 + (Math.random() - 0.5) * 3, q[1] + dir[1] * 3, q[2] + dir[2] * 3 + (Math.random() - 0.5) * 3];
+        br.push(q);
+      }
+      seg(br, 0.08);
+    }
+    for (const m of group.children) m.frustumCulled = false;
+    group.renderOrder = 4;
+    this.root.add(group);
+    (this.bolts ??= []).push({ line: group, t0: performance.now(), p });
+    // its light on the ground round it (a moment, bright, not a blast's fireball)
+    this.flash = { t: 0, pos: [p[0], p[1] + 25, p[2]], power: 0.35 };
+  }
+
+  updateBolts() {
+    if (!this.bolts?.length) {
+      if (this.skyLit) {
+        this.scene.background = this.skyBase?.clone() ?? this.scene.background;
+        this.skyLit = false;
+      }
+      return;
+    }
+    const now = performance.now();
+    let lit = 0;
+    this.bolts = this.bolts.filter((b) => {
+      // (boltHold: held on its first stroke, for a still)
+      const t = this.boltHold ? 0.01 : (now - b.t0) / 1000;
+      if (t > 0.45) {
+        this.root.remove(b.line);
+        b.line.traverse((o) => o.geometry?.dispose());
+        return false;
+      }
+      // the return strokes: on, off, on again
+      const on = t < 0.08 || (t > 0.13 && t < 0.2) || (t > 0.28 && t < 0.33);
+      b.line.visible = on;
+      if (on) lit = Math.max(lit, 1 - t / 0.45);
+      return true;
+    });
+    if (this.skyBase && !this.dark) {
+      this.scene.background = this.skyBase.clone().lerp(new THREE.Color(0xdde6ff), lit * 0.45);
+      this.skyLit = true;
     }
   }
 

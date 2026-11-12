@@ -2,9 +2,13 @@ import { MATERIALS, MAT } from './materials.js';
 
 // loose ground a blast digs a crater in (soil, sand, grass, gravel; weathered rock only cracks)
 const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock'].map((n) => MAT[n]).filter(Boolean));
+// a tree's wood and its foliage (models/tree.js)
+const TREE_WOOD = new Set(['oak', 'pine', 'willow', 'bark', 'deadWood'].map((n) => MAT[n]).filter(Boolean));
+const FOLIAGE = new Set(['leaves', 'needles', 'twigs'].map((n) => MAT[n]).filter(Boolean));
 import { raySolid, bulletHole } from './wounds.js';
 import { F_FALLING, F_ANCHOR } from './world.js';
 import { launchVoxel } from './vessels.js';
+import { fellTree } from './trees.js';
 
 /**
  * Explosions (hand grenades) and gas pipes.
@@ -24,6 +28,14 @@ export function explode(sim, center, E, opts = {}) {
   const craterR = 0.8 * Math.cbrt(E / 4.6e6);
   const glassR2 = (3 * blastR) ** 2;
   const victims = [];
+  // trees: the foliage is shredded and blown off further out than anything is thrown; a branch
+  // snaps where the blast meets it, the thicker the nearer (what is beyond the break falls); the
+  // trunk splinters close to it (a grenade gouges it, a rocket or a second grenade fells it)
+  const trees = new Map((w.trees ?? []).map((t) => [t.owner, t]));
+  const leafR = blastR * 1.6;
+  const severR = 0.12 * Math.cbrt(E / 1000); // ~0.8 m for a grenade
+  const trunkHit = new Map(); // tree owner -> voxel rows of its trunk the blast reached
+  const snapR = Math.min(0.2, 0.15 * Math.cbrt(E / 3e5)); // the thickest branch it snaps, right at it (m of radius)
   for (let k = 0; k < w.solidCount; k++) {
     const i = w.solids[k];
     if (!w.mat[i]) continue;
@@ -40,6 +52,56 @@ export function explode(sim, center, E, opts = {}) {
       if (d2 < rc * rc && below) victims.push([i, p, 3.5 + 4 * (1 - Math.sqrt(d2) / rc), true]);
       // (the ground is dug only as a crater, however light its voxels are)
       if (d2 < rc * rc * 4 && !(M.shatterTemp !== Infinity)) w.char[i] = Math.max(w.char[i], 0.4 * (1 - Math.sqrt(d2) / (2 * rc))); // scorched round it
+      continue;
+    }
+    if (trees.size && (FOLIAGE.has(w.mat[i]) || TREE_WOOD.has(w.mat[i])) && trees.has(w.owner[i])) {
+      const d = Math.sqrt(d2);
+      if (FOLIAGE.has(w.mat[i])) {
+        if (d > leafR) continue;
+        // shredded: most of it gone as bits, some blown off whole
+        if (sim.rand() < Math.min(1, 1.3 * (1 - d / leafR))) {
+          // (blown off whole only where a voxel is leaf-sized: at 0.4 m it would fly as a green block)
+          if (h <= 0.15 && sim.rand() < 0.25) victims.push([i, p, 4 + 10 * (1 - d / leafR)]);
+          else w.clearVoxel(i);
+        }
+        continue;
+      }
+      if (d < blastR) {
+        // how thick the tree is here (its nearest branch's radius)
+        let r = Infinity;
+        let bd = Infinity;
+        for (const s of trees.get(w.owner[i]).segs) {
+          const q = segDist(p, s.a, s.b);
+          if (q < bd) {
+            bd = q;
+            r = s.r;
+          }
+        }
+        const k = 1 - d / blastR;
+        // a branch thin enough snaps (thrown out where it broke)
+        if (r < snapR * k ** 1.5) {
+          // right at it the wood is thrown; further off the branch breaks there and drops
+          // (what is beyond the break falls with it: the support check)
+          if (k > 0.6) victims.push([i, p, 3 + 6 * k, false, true]);
+          else {
+            w.flags[i] = (w.flags[i] | F_FALLING) & ~64;
+            w.structureDirty = true;
+          }
+          continue;
+        }
+        // the trunk near it splinters: the damage adds up blast after blast (its crack), a
+        // grenade gouges it, a second one beside it (or a rocket) cuts it through and it falls
+        if (d < severR) {
+          if (!trunkHit.has(w.owner[i])) trunkHit.set(w.owner[i], new Set());
+          trunkHit.get(w.owner[i]).add(Math.floor(i / w.nx) % w.ny);
+          w.crack[i] += 1.6 * (1 - d / severR);
+          if (w.crack[i] >= 1) {
+            victims.push([i, p, 2 + 5 * k, false, true]);
+            continue;
+          }
+        }
+      }
+      if (d < blastR * 0.4 && M.combustible) w.char[i] = Math.max(w.char[i], 0.5);
       continue;
     }
     if (M.shatterTemp !== Infinity && d2 < glassR2) w.flags[i] |= F_FALLING;
@@ -62,9 +124,50 @@ export function explode(sim, center, E, opts = {}) {
     // is light enough to be torn out anyway)
     if (speed > (M.name === 'steel' || M.name === 'deckSteel' ? 8 : 3)) victims.push([i, p, speed]);
   }
+  // a trunk with half or more of its cross-section broken somewhere cannot hold the tree: what
+  // is left of it there snaps too (at coarse voxels a trunk is a voxel or two across)
+  const severed = new Map(); // tree owner -> the lowest row its trunk was cut through at
+  if (trunkHit.size) {
+    const broken = new Set(victims.map((v) => v[0]));
+    for (const [own, rows] of trunkHit) {
+      const t = trees.get(own);
+      for (const y of rows) {
+        const yc = (y + 0.5) * h;
+        const s = t.segs.find((q) => q.trunk && Math.min(q.a[1], q.b[1]) <= yc + h && Math.max(q.a[1], q.b[1]) >= yc - h) ?? t.segs[0];
+        const f = Math.max(0, Math.min(1, (yc - s.a[1]) / (s.b[1] - s.a[1] || 1)));
+        const ax = s.a[0] + (s.b[0] - s.a[0]) * f;
+        const az = s.a[2] + (s.b[2] - s.a[2]) * f;
+        const R = s.r + 0.75 * h;
+        const layer = [];
+        for (let z = Math.floor((az - R) / h); z <= Math.floor((az + R) / h); z++)
+          for (let x = Math.floor((ax - R) / h); x <= Math.floor((ax + R) / h); x++) {
+            if (x < 0 || z < 0 || x >= w.nx || z >= w.nz) continue;
+            const i = w.idx(x, y, z);
+            if (!w.mat[i] || w.owner[i] !== own || !TREE_WOOD.has(w.mat[i])) continue;
+            if (Math.hypot((x + 0.5) * h - ax, (z + 0.5) * h - az) > R) continue;
+            layer.push(i);
+          }
+        const nb = layer.filter((i) => broken.has(i)).length;
+        if (layer.length && nb >= 0.5 * layer.length) {
+          severed.set(own, Math.min(severed.get(own) ?? Infinity, y));
+          for (const i of layer)
+            if (!broken.has(i)) {
+              broken.add(i);
+              victims.push([i, w.center(...w.coords(i)), 1.5, false, true]);
+            }
+        }
+      }
+    }
+  }
   // gas pipes caught in the blast burst (before their voxels are thrown away)
   for (const gp of w.gasPipes) burstPipeNear(sim, gp, center, blastR);
-  for (const [i, p, speed, ejecta] of victims) {
+  for (const [i, p, speed, ejecta, splinter] of victims) {
+    // wood splintered off a tree: at coarse voxels it shatters (a 0.4 m block of oak flying
+    // off whole would be no splinter); fine ones fly as the splinters they are
+    if (splinter && h > 0.15) {
+      w.clearVoxel(i);
+      continue;
+    }
     let dx = p[0] - center[0];
     // (crater ejecta fly up and out, whatever side of the blast they were on)
     let dy = ejecta ? Math.hypot(dx, p[2] - center[2]) * 0.9 + 0.25 : p[1] - center[1] + 0.1;
@@ -76,6 +179,8 @@ export function explode(sim, center, E, opts = {}) {
     const l2 = Math.hypot(dx, dy, dz);
     launchVoxel(w, i, [(dx / l2) * speed, (dy / l2) * speed, (dz / l2) * speed]);
   }
+  // a tree cut through comes down as one, away from the blast (sim/trees.js)
+  for (const [own, row] of severed) fellTree(sim, trees.get(own), row, center);
   if (opts.flash !== false) {
     sim.ignite(center, blastR * 0.35);
     w.heaters.push({
@@ -96,6 +201,13 @@ export function explode(sim, center, E, opts = {}) {
   sim.ai?.blast(center, blastR);
   sim.dragonAI?.blast(center, blastR);
   sim.phoenixAI?.blast(center, blastR);
+}
+
+/** Distance from p to the segment a–b. */
+function segDist(p, a, b) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / (ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2 || 1)));
+  return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t, p[2] - a[2] - ab[2] * t);
 }
 
 /** Burst a gas pipe at its voxel closest to `p`, if within `range`. */

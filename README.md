@@ -551,6 +551,26 @@ and the leaves cast no shadows; the grass thins out to fewer, wider tufts and is
 ~70 m (the turf shows). Their simulation is the scene's voxels (a crown is ~100 m³: finer
 voxels for a tree close up would cost far more than a candle's patch).
 
+**Trees and blasts** (sim/explosions.js, sim/trees.js): a blast shreds a tree's leaves and
+blows them off (further out than it throws anything), snaps its branches (the thicker, the
+nearer: right at it the wood is thrown, further off a branch breaks and drops), and splinters
+its trunk close to it. The trunk's damage adds up blast after blast: a grenade at the bark
+gouges it, a second one (or a rocket) cuts it through, and when half of its cross-section is
+gone the rest snaps. A tree cut through comes down as one: it swings over about the cut, away
+from the blast, slowly at first and faster, and lies along the ground (on top of what is
+there), the stump left standing; its voxels lie where it came down (it burns there).
+
+**Lightning** (sim/lightning.js; Weather: "Lightning (strikes a minute)", the Storm preset
+sets 3, "Lightning strike now"; `&strike=x,z` in the link): in a thunderstorm a strike goes to
+what stands highest round where it comes down (a tree, the church's tower and roof, a mast).
+Where it hits the current heats what it passes in an instant: the wood under it for a few
+metres is scorched and split along its length, a burst of steam at the top blows off leaves,
+bark and loose parts (a roof's tiles crack), and what can burn there catches (a struck tree
+burns, the grass round it catches). A tree is split by a strike and now and then breaks and
+comes down (more likely struck a second time). Drawn as a jagged, forking channel that flickers
+two or three times in a quarter of a second, the sky lighting up with it; thunder (the crack,
+then the rumble). Not under cover: indoors, underground, in space.
+
 **Lava in water** (sim/volcano.js): lava that runs into the sea is quenched (it sets in
 seconds, the sea boils off it). Lava that runs into the canal or the pond boils them where
 it touches: ~1 MW/m² of contact (three times that while it is molten and shatters), the

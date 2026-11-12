@@ -46,9 +46,9 @@ vec3 tp = mvPosition.xyz;
 float hr = clamp((tp.y - uBase.y) / uHt, 0.0, 1.0);
 float rr = clamp(length(tp.xz - uBase.xz) / (0.5 * uHt), 0.0, 1.5);
 float ph = dot(uBase.xz, vec2(0.37, 0.71));
-float sway = uWindStr * (0.65 + 0.35 * sin(uTime * 0.9 + ph)) + 0.06;
+float sway = uWindStr * (0.55 + 0.45 * sin(uTime * 0.9 + ph)) + 0.06;
 vec2 dd = uWindDir * sway * 0.05 * uHt * hr * hr;
-dd += vec2(sin(uTime * 2.1 + tp.x * 1.3 + ph), cos(uTime * 1.7 + tp.z * 1.1 + ph)) * 0.02 * uHt * rr * hr * (uWindStr + 0.08);
+dd += vec2(sin(uTime * 2.1 + tp.x * 1.3 + ph), cos(uTime * 1.7 + tp.z * 1.1 + ph)) * 0.03 * uHt * rr * hr * (uWindStr + 0.08);
 tp.xz += dd;
 tp.y -= 0.3 * dot(dd, dd) / max(uHt * hr, 0.1);
 ${leaf ? 'tp += vec3(sin(uTime * 9.0 + tp.y * 7.0 + ph), sin(uTime * 11.0 + tp.x * 5.0), cos(uTime * 8.0 + tp.z * 6.0)) * 0.012 * (0.25 + uWindStr);' : ''}
@@ -422,6 +422,21 @@ export class TreeRenderer {
       });
       if (best >= 0 && bd < h * 1.2) segVox[best].push(i);
     }
+    t.segs.forEach((s, k) => {
+      if (segVox[k].length || !wood.length) return;
+      const m = [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2, (s.a[2] + s.b[2]) / 2];
+      let best = -1;
+      let bd = Infinity;
+      for (const i of wood) {
+        const c = w.center(...w.coords(i));
+        const d = (c[0] - m[0]) ** 2 + (c[1] - m[1]) ** 2 + (c[2] - m[2]) ** 2;
+        if (d < bd) {
+          bd = d;
+          best = i;
+        }
+      }
+      segVox[k].push(best);
+    });
     // --- bark: one instanced, tapered unit cylinder per segment
     const geo = new THREE.CylinderGeometry(0.82, 1, 1, 10, 1, false);
     geo.translate(0, 0.5, 0);
@@ -505,7 +520,7 @@ export class TreeRenderer {
     this.group.add(segMesh, leafMesh);
     for (const i of wood) w.flags[i] |= F_HIDDEN;
     for (const i of leaves) w.flags[i] |= F_HIDDEN;
-    const it = { t, segMesh, leafMesh, segVox, leaves, cards, meshes: [segMesh, leafMesh], tick: -1, n, TU, foot, rmin: 0 };
+    const it = { t, segMesh, leafMesh, segVox, leaves, cards, meshes: [segMesh, leafMesh], tick: -1, n, TU, foot, rmin: 0, geo, bark };
     this.shade(it);
     return it;
   }
@@ -604,9 +619,9 @@ export class TreeRenderer {
           hot = Math.max(hot, w.skin[i]);
         }
       const there = vox.length === 0 ? true : left >= vox.length * 0.5;
-      // (far off the thin twigs are not drawn: the leaves cover them)
-      if (!there || s.r < it.rmin) segMesh.setMatrixAt(k, zero);
-      else this.placeSeg(segMesh, k, s, w.h);
+      // (far off the thin twigs are not drawn: the leaves cover them; felled, the stump is its own)
+      if (!there || s.r < it.rmin || it.stumpOnly?.has(k)) segMesh.setMatrixAt(k, zero);
+      else this.placeSeg(segMesh, k, it.cutSeg?.get(k) ?? s, w.h);
       const c = left ? 1 - 0.85 * (ch / left) : 1;
       const glow = Math.max(0, Math.min(1, (hot - 450) / 500));
       col[k * 3] = c + glow * 1.5;
@@ -720,10 +735,69 @@ export class TreeRenderer {
     }
   }
 
+  /**
+   * A tree felled (sim/trees.js, `t.fall`): its voxels lie where it came down; the drawn tree
+   * follows them (their new places), the stump below the cut stands, and the rest topples
+   * about the cut, slowly at first and faster (as a falling tree does), and lies still.
+   */
+  fall(it) {
+    const f = it.t.fall;
+    const w = this.world;
+    if (!it.fallen) {
+      it.fallen = true;
+      const m = (i) => f.map.get(i) ?? i;
+      it.segVox = it.segVox.map((l) => l.map(m));
+      it.leaves = it.leaves.map((i) => f.map.get(i) ?? (Math.floor(i / w.nx) % w.ny < Math.floor(f.cutY / w.h) ? i : -1));
+      // the stump: the trunk below the cut, drawn upright (a mesh of its own)
+      it.stumpOnly = new Set();
+      it.cutSeg = new Map();
+      const stump = [];
+      it.t.segs.forEach((s, k) => {
+        const lo = Math.min(s.a[1], s.b[1]);
+        const hi = Math.max(s.a[1], s.b[1]);
+        if (hi <= f.cutY) {
+          it.stumpOnly.add(k);
+          stump.push(s);
+        } else if (lo < f.cutY) {
+          const u = (f.cutY - s.a[1]) / (s.b[1] - s.a[1]);
+          const c = [s.a[0] + (s.b[0] - s.a[0]) * u, f.cutY, s.a[2] + (s.b[2] - s.a[2]) * u];
+          stump.push({ ...s, b: c });
+          it.cutSeg.set(k, { ...s, a: c });
+        }
+      });
+      if (stump.length) {
+        const sm = new THREE.InstancedMesh(it.geo, it.bark, stump.length);
+        sm.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(stump.length * 3).fill(0.85), 3);
+        stump.forEach((s, k) => this.placeSeg(sm, k, s, w.h));
+        sm.castShadow = sm.receiveShadow = true;
+        this.group.add(sm);
+        it.meshes.push(sm);
+      }
+      // (lying, it does not sway)
+      it.TU.uHt.value = 1e6;
+      for (const ms of [it.segMesh, it.leafMesh]) {
+        ms.matrixAutoUpdate = false;
+        ms.frustumCulled = false;
+      }
+      it.tick = -1;
+    }
+    // how far over it is: as a falling tree, the angle grows ~ with the square of the time
+    const k = Math.min(1, ((w.time - f.t0) / 2.5) ** 2);
+    if (it.fallK === k) return;
+    it.fallK = k;
+    const P = new THREE.Vector3(...f.pivot);
+    const M = new THREE.Matrix4().makeTranslation(P.x, P.y, P.z).multiply(new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(...f.axis), f.angle * k)).multiply(new THREE.Matrix4().makeTranslation(-P.x, -P.y, -P.z));
+    for (const ms of [it.segMesh, it.leafMesh]) {
+      ms.matrix.copy(M);
+      ms.matrixWorldNeedsUpdate = true;
+    }
+  }
+
   update(time, cam) {
     this.windU.uTime.value = time;
     if (!this.world) return;
     if (cam) this.lod(cam);
+    for (const it of this.items) if (it.t?.fall) this.fall(it);
     const tick = Math.floor(time * 2);
     for (const it of this.items) {
       if (it.tick === tick) continue;

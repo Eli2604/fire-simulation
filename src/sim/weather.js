@@ -13,6 +13,7 @@ export function defaultWeather() {
     rain: 0, // mm/h of precipitation (water): rain, or snow when the air is at freezing
     fog: 0, // 0..1
     sunshine: 1, // 0 overcast .. 1 a clear sky (the sun on the ground: it melts snow, dries things)
+    lightning: 0, // strikes per minute somewhere in the scene (a thunderstorm: sim/lightning.js)
     season: 'summer', // spring | summer | autumn | winter: the leaves, the grass, the light
     snowCover: 0, // m of snow lying when the scene starts
   };
