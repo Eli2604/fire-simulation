@@ -71,6 +71,7 @@ test('only changed chunks are rebuilt, and colours follow the voxels', () => {
 
 test('smooth surfaces build for every scenario', () => {
   for (const [name, desc] of Object.entries(SCENARIOS)) {
+    if (desc.page) continue; // a link to a page of its own
     const sim = createSimulation(cloneScene(desc));
     const s = meshOf(sim.world);
     assert.ok(triangles(s) > 100, `${name}: ${triangles(s)} triangles`);

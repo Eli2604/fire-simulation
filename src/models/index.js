@@ -24,6 +24,9 @@ import candelabra from './candelabra.js';
 import clothesline from './clothesline.js';
 import scannedProp from './scannedProp.js';
 import torch from './torch.js';
+import wall from './wall.js';
+import crate from './crate.js';
+import squad from './squad.js';
 
 /**
  * Model registry. Every model is:
@@ -34,7 +37,7 @@ import torch from './torch.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad };
 
 export function resolveParams(model, given = {}) {
   const out = {};

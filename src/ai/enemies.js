@@ -148,7 +148,7 @@ export class EnemyAI {
     this.heardUpTo = w.time;
     if (w.noises.length > 200) w.noises.splice(0, w.noises.length - 100);
     for (const e of w.enemies) {
-      if (e.dead) continue;
+      if (e.dead || e.squad) continue; // a fire team has its own AI (ai/squad.js)
       e.timer = (e.timer ?? 0) - dt;
       e.lureCooldown = (e.lureCooldown ?? 10 + Math.random() * 10) - dt;
       e.repath = (e.repath ?? 0) - dt;

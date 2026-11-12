@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test test/",
-    "headless": "node scripts/headless.js"
+    "headless": "node scripts/headless.js",
+    "build:rig": "node scripts/build-rig-artifact.mjs"
   },
   "dependencies": {
     "lil-gui": "0.19.2",

@@ -19,7 +19,7 @@ const countOwned = (world, owner) => {
 test('every model builds voxels with its default parameters', () => {
   for (const type of Object.keys(MODELS)) {
     const { world } = buildScene({ world: { size: [10, 8, 10], h: 0.1 }, objects: [{ type, x: 5, z: 5 }] });
-    if (type === 'enemy') {
+    if (type === 'enemy' || type === 'squad') {
       assert.ok(world.enemies.length > 0, 'enemies are characters, not voxels');
       continue;
     }
@@ -58,6 +58,7 @@ test('default params are complete for every model', () => {
 
 test('all scenarios run without NaN and the render layers update', () => {
   for (const [name, desc] of Object.entries(SCENARIOS)) {
+    if (desc.page) continue; // a link to a page of its own (the soldier rig test)
     const sim = createSimulation(cloneScene(desc));
     const w = sim.world;
     for (let k = 0; k < 15; k++) sim.step(sim.dt);

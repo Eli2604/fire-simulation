@@ -216,7 +216,7 @@ function scheduleRestart() {
 // GUI
 const gui = new GUI({ title: 'Fire simulation' });
 const scenarioNames = Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [v.name, k]));
-gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => load(cloneScene(SCENARIOS[k])));
+gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (SCENARIOS[k].page ? (location.href = SCENARIOS[k].page) : load(cloneScene(SCENARIOS[k]))));
 gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
 gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
@@ -345,7 +345,7 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Place new object (click)': 'place', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Place new object (click)': 'place', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Squad: set the threat (click)': 'squadThreat', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
   .onChange(() => {
     toolChanged();
@@ -369,6 +369,13 @@ function setTool(t) {
 fT.add(state, 'toolRadius', 0.01, 3, 0.01).name('Radius (m)');
 fT.add(state, 'torchPower', 100, 50000, 100).name('Torch power (W)');
 fT.add(state, 'grenadeKg', 0.05, 2, 0.05).name('Grenade explosive (kg TNT)');
+// fire teams (ai/squad.js): their AI on or off, and what it shows
+const squadState = { ai: true, paths: true, radio: true };
+const fSquad = gui.addFolder('Squads (fire teams)').close();
+fSquad.add(squadState, 'ai').name('Squad AI').onChange((v) => { for (const s of sim?.squads ?? []) s.on = v; });
+fSquad.add(squadState, 'paths').name('Show routes, trails, tags').onChange((v) => { if (view.enemies.viz) view.enemies.viz.show = v; });
+fSquad.add(squadState, 'radio').name('Radio voices').onChange((v) => import('./audio/radio.js').then((r) => r.setRadioSound(v)));
+fSquad.add({ rig: () => (location.href = 'rig.html') }, 'rig').name('Open the soldier rig test page');
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')
@@ -531,7 +538,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
+const EVENT_TEXT = { radio: '(radio)', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
@@ -569,6 +576,7 @@ const HINTS = {
   walkstart: 'Click where the walk-through should start; you will face the way the camera looks',
   place: 'Click where the new object should go (choose its type under Scene objects › Add object); the scene restarts',
   grenade: 'Click to throw a hand grenade at a spot (it goes off after 2.5 s)',
+  squadThreat: 'Click where the threat is: the fire teams report it on the radio and advance on it',
   door: 'Click a door (or next to it) to open or close it',
   inert: 'Click inside a room to flood it with inert gas (removes the oxygen; leaks if the room is open)',
   water: 'Click to throw a bucket of water',
@@ -699,6 +707,9 @@ canvas.addEventListener('pointerup', (e) => {
       sim.inertRoom(p);
       break;
     }
+    case 'squadThreat':
+      for (const s of sim.squads ?? []) s.setThreat(hit.point);
+      break;
     case 'grenade': {
       // lob it from the camera so that it lands on the clicked spot
       const from = [view.camera.position.x, view.camera.position.y, view.camera.position.z];
@@ -767,7 +778,8 @@ if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
 // no graphics card (rendering in software): fewer close-up objects at once
 if (view.softwareGpu) PATCH.maxActive = 4;
-if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
+if (SCENARIOS[qs.get('scenario')]?.page) location.replace(SCENARIOS[qs.get('scenario')].page);
+else if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
 {
   const sc = cloneScene(SCENARIOS[state.scenario]);
   if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');

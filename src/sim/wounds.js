@@ -125,7 +125,7 @@ export function raySolid(w, from, dir, max) {
  * A shot (hitscan, a rifle bullet) from `from` along `dir`: hits the first person
  * (by hit zone) or wall in its way. `shooter` is not hit. Returns what it hit.
  */
-export function shoot(sim, from, dir, { shooter = null, player = null, range = 80 } = {}) {
+export function shoot(sim, from, dir, { shooter = null, player = null, range = 80, ignore = null } = {}) {
   const w = sim.world;
   const l = Math.hypot(...dir) || 1;
   const d = dir.map((v) => v / l);
@@ -136,7 +136,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   for (let t = 0.2; t < maxT; t += 0.05) {
     const p = [from[0] + d[0] * t, from[1] + d[1] * t, from[2] + d[2] * t];
     for (const e of w.enemies) {
-      if (e === shooter || e.dead) continue;
+      if (e === shooter || e.dead || ignore?.(e)) continue;
       if (Math.abs(p[0] - e.p[0]) > 0.4 || Math.abs(p[2] - e.p[2]) > 0.4) continue;
       const z = hitZone(e, p);
       if (z) {

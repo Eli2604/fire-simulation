@@ -5,7 +5,7 @@ import { createSimulation } from '../src/sim/createSimulation.js';
 import { MATERIALS } from '../src/sim/materials.js';
 import { F_LIQUID } from '../src/sim/world.js';
 
-const names = process.argv[2] && process.argv[2] !== 'all' ? [process.argv[2]] : Object.keys(SCENARIOS);
+const names = process.argv[2] && process.argv[2] !== 'all' ? [process.argv[2]] : Object.keys(SCENARIOS).filter((k) => !SCENARIOS[k].page);
 const total = Number(process.argv[3] ?? 120);
 
 for (const name of names) {

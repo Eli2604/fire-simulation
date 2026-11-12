@@ -971,3 +971,36 @@ src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers
 test/           node:test suites
 ```
+
+## Soldiers: the operator rig and fire teams
+
+Every enemy is drawn as a sculpted, rigged soldier (`src/operator/`), built once in the browser
+(in workers, a few seconds) and shared by all of them; until it is ready (and in Node) the old
+guard figures stand in.
+
+- **Sculpt** (`operator/sculpt.js`): a signed-distance-field sculpt (body, multicam, plate
+  carrier, backpack, high-cut helmet, beard and hair, gloves, a carbine), turned into meshes by
+  surface nets with baked ambient occlusion. Each separable object is its own closed mesh.
+- **Surface** (`operator/shader.js`): one physically based material, coloured per pixel by
+  material id: multicam ripstop with seams and dust, MOLLE, shemagh weave, suede, skin, worn metal.
+- **Rig** (`operator/rig.js`): 21 bones; the hands hold the rifle by inverse kinematics, so they
+  can let go and come back. 24 clips: idle, walk, run (arm swing), crouch, aim, shoot, crouch
+  aim/fire, aim-walk, prone aim/fire, reload (magazine out, a new one from the back pouch),
+  throw a grenade, radio, draw the secondary, flame gun, jump, crawl, swim, three hand signals,
+  hit, die, pick up a rifle; each with an unarmed version.
+- **Objects**: the person, the rifle (with its magazine), the helmet and the backpack are
+  separate; any can drop off as a rigid body. Everyone carries a compact carbine on his back
+  and draws it when the rifle is gone. A flame trooper carries a flame gun (fires standing only).
+- **Hit zones**: cylinders on the bones with a damage multiplier each.
+
+**Fire teams** (`ai/squad.js`, model `squad`): a commander, a gunner and two riflemen advance on
+a threat by bounding overwatch, from cover to cover (walls and crates: models `wall`, `crate`),
+covering each other with real rounds, throwing grenades, crawling and firing prone when both legs
+are hit. Teams talk on the radio (spoken, `audio/radio.js`): contact, the threat moving, a man
+down; the first team leads and sends the others to a flank, tells them to hold off or continue,
+and calls a pursuit when the threat moves away. Scenario **Squad on a range**; the tool *Squad:
+set the threat* moves the threat.
+
+**Soldier rig test** (`rig.html`): the soldier on a range of its own, with every clip, the hit
+areas (shown and adjustable), the gear, an FPS readout and the squad AI on a range you edit.
+`node scripts/build-rig-artifact.mjs [out.html]` builds it as one self-contained HTML file.

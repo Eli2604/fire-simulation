@@ -370,6 +370,26 @@ export const SCENARIOS = {
       },
     },
   },
+  squadRange: {
+    name: 'Squad on a range: bounding overwatch',
+    description: 'A fire team of sculpted, rigged soldiers (a commander, a gunner and two riflemen) advances on a threat across a desert range by bounding overwatch: one team runs or walks with rifles up to cover behind the brick walls and wooden crates while the other covers it, crouched and firing bursts (real rounds: tracers and holes in the walls), then the commander signals and they swap. On first contact, when the threat moves and when a man is down, the radio man of each team calls it in on the radio on his chest and the other team (Bravo, on the left flank) answers. The second rifleman of Bravo is a flame trooper: close to the threat he stands up and fires his flame gun (it sets the crates alight); he cannot fire it crouched. Everyone carries a compact carbine on his back. A rifleman throws hand grenades at the threat (the same grenades and blasts as the grenade tool). Throw your own grenades at them, place walls and crates (Place new object) or move the threat (tool: Squad: set the threat). The rig test page (Soldier rig test) has every animation, the hit areas and the gear on its own.',
+    world: { size: [36, 5, 36], h: 0.2, ground: 'quarrySand' },
+    weather: w({ ambient: 31, humidity: 0.2, windSpeed: 2 }),
+    timeScale: 1,
+    view: { camera: [14, 16, 26] },
+    objects: [
+      ...[['wall', 14.5, 23.5, 0], ['crate', 20.6, 24.2, 0], ['crate', 21.7, 24.2, 0], ['wall', 22.6, 19.5, 90], ['crate', 16.8, 19.6, 0], ['wall', 13, 16.5, 90], ['wall', 16.5, 14.4, 0],
+        ['crate', 21.2, 13.8, 0], ['wall', 23.4, 10.6, 0], ['crate', 14.4, 10.2, 0], ['crate', 18.6, 9.4, 0]].map(([type, x, z, rotation]) => ({ type, params: {}, x, z, rotation })),
+      { type: 'squad', params: { unit: 'Alpha', threatX: 0, threatZ: -21 }, x: 18, z: 29 },
+      // a second team on the left flank: the two talk on the radio
+      { type: 'squad', params: { unit: 'Bravo', threatX: 12, threatZ: -21, flameTrooper: true }, x: 6, z: 29 },
+    ],
+  },
+  rigTest: {
+    name: 'Soldier rig test (animations, hit areas, gear)',
+    description: 'The sculpted operator on its own page: every animation, the hit areas, the detachable gear, and the squad AI on a range you edit.',
+    page: 'rig.html',
+  },
   rainyHouse: {
     name: 'House fire in the rain',
     description: 'A furnished house fire in steady rain. Rain cannot reach the fire inside, which still breaks through the roof, but the soaked grass and the tree do not catch, and rain on hot surfaces makes steam.',

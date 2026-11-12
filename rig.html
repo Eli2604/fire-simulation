@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Enemy Rig Test</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: full-bleed range; tabbed control panel docked left; FPS readout top-right; build progress centered */
+:root{
+  --sky:#2a6db5; --panel:rgba(24,27,21,.88); --line:rgba(201,185,148,.32);
+  --sand:#c9b994; --ink:#f1ead8; --muted:#b4ab95; --accent:#d9a441; --hurt:#d4553b; --ok:#8fb36a;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif; --body:"Barlow",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--sky);color:var(--ink);font-family:var(--body);overflow:hidden}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+.panel{position:fixed;left:max(16px,env(safe-area-inset-left,0px));top:calc(16px + env(safe-area-inset-top,0px));
+  width:min(330px,calc(100vw - 32px));max-height:calc(100% - 32px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px 16px;backdrop-filter:blur(6px);display:grid;gap:12px;align-content:start}
+.panel h1{margin:0;font-family:var(--display);font-weight:700;font-size:21px;letter-spacing:.06em;text-transform:uppercase;color:var(--sand)}
+.lab{font-family:var(--display);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+.sel{display:grid;gap:6px}
+.selrow{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-family:var(--display);letter-spacing:.06em;text-transform:uppercase}
+.selrow b{font-size:17px}
+.selrow span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hp{height:5px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden}
+.hp i{display:block;height:100%;width:100%;background:var(--ok);transition:width .2s}
+.tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.tabs button{padding:6px 4px;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.grid button{padding:6px 4px;font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:6px}
+section{display:grid;gap:10px}
+button{font-family:var(--display);font-weight:500;font-size:14px;letter-spacing:.06em;text-transform:uppercase;
+  background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:7px 9px;cursor:pointer}
+button:hover{border-color:var(--sand)}
+button[aria-pressed="true"],button.on{background:var(--sand);color:#1d1f18;border-color:var(--sand)}
+button.warn{border-color:rgba(212,85,59,.6)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+p.hint{margin:0;font-size:13px;line-height:1.45;color:var(--muted)}
+.legend{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;font-size:13px;color:var(--muted);align-items:center}
+.sw{width:22px;height:4px;border-radius:2px}
+label.sl{display:grid;grid-template-columns:76px 1fr 44px;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+label.sl output{font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
+select{font-family:var(--body);font-size:14px;background:#1d1f18;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:6px}
+input[type=range]{width:100%;accent-color:var(--sand)}
+pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.5;background:rgba(0,0,0,.25);padding:10px;border-radius:3px;overflow-x:auto}
+#fps{position:fixed;right:max(16px,env(safe-area-inset-right,0px));top:calc(16px + env(safe-area-inset-top,0px));background:var(--panel);border:1px solid var(--line);
+  border-radius:4px;padding:8px 12px;font-family:var(--mono);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums;min-width:150px}
+#fps b{font-family:var(--display);font-size:24px;letter-spacing:.04em}
+#fps .g{color:var(--ok)}#fps .y{color:var(--accent)}#fps .r{color:var(--hurt)}
+#fps canvas{display:block;width:100%;height:28px;margin-top:4px}
+#build{position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);display:grid;gap:8px;width:min(300px,calc(100vw - 32px));
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px 16px}
+#build[hidden]{display:none}
+#build .bar{height:4px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+#build .bar i{display:block;height:100%;width:0;background:var(--sand)}
+#build .l{display:flex;justify-content:space-between}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);
+  border-radius:4px;padding:8px 14px;font-family:var(--display);letter-spacing:.06em;text-transform:uppercase;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
+@media (max-width:640px){.panel{top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-height:48%}#fps{min-width:0}}
+</style>
+<style>[hidden]{display:none!important}html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+</head>
+<body>
+
+
+<div id="stage"></div>
+<div id="build" role="status" aria-live="polite">
+  <div class="l lab"><span>Sculpting torso &amp; kit</span><span id="pb-body">0%</span></div><div class="bar"><i id="bb-body"></i></div>
+  <div class="l lab"><span>Sculpting legs</span><span id="pb-legs">0%</span></div><div class="bar"><i id="bb-legs"></i></div>
+  <div class="l lab"><span>Sculpting head &amp; helmet</span><span id="pb-head">0%</span></div><div class="bar"><i id="bb-head"></i></div>
+  <div class="l lab"><span>Sculpting carbine &amp; hands</span><span id="pb-rifle">0%</span></div><div class="bar"><i id="bb-rifle"></i></div>
+</div>
+<div id="fps" aria-label="Performance"><b id="fpsN" class="g">--</b> fps<div id="fpsD">-- ms</div><div id="fpsT">--</div><canvas id="fpsG" width="150" height="28"></canvas></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<aside class="panel" aria-label="Enemy controls">
+  <div class="lab" id="stats">Skinned sculpt · 21 bones · 20 clips</div>
+  <h1>Enemy Rig Test</h1>
+  <div class="sel">
+    <div class="selrow"><b id="selName">Enemy 1</b><span id="selState">idle · 100 HP</span></div>
+    <div class="hp"><i id="selHp"></i></div>
+  </div>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="squad" class="on">Squad</button>
+    <button type="button" role="tab" data-tab="anim">Animate</button>
+    <button type="button" role="tab" data-tab="hit">Hit areas</button>
+    <button type="button" role="tab" data-tab="gear">Gear</button>
+  </div>
+
+  <section data-pane="squad">
+    <div class="row">
+      <button id="aiStart" type="button" class="on">Stop squad AI</button>
+      <button id="aiRestart" type="button">Restart run</button>
+      <button id="tgPaths" type="button" aria-pressed="true">Paths</button>
+    </div>
+    <div><div class="lab" style="margin-bottom:6px">Edit the range (click the ground)</div>
+      <div class="grid" id="tools">
+        <button type="button" data-tool="select" class="on">Select</button>
+        <button type="button" data-tool="wall">Wall</button>
+        <button type="button" data-tool="crate">Crate</button>
+        <button type="button" data-tool="erase">Erase</button>
+        <button type="button" data-tool="threat">Threat</button>
+        <button type="button" id="rotBtn">Wall 0°</button>
+      </div></div>
+    <div class="legend">
+      <i class="sw" style="background:#e7c35a"></i><span>CMD, commander: picks bounds, signals</span>
+      <i class="sw" style="background:#e0604a"></i><span>MG, gunner: holds cover, suppresses</span>
+      <i class="sw" style="background:#5aa9e6"></i><span>R1, rifleman with the commander (team A)</span>
+      <i class="sw" style="background:#7cc46a"></i><span>R2, rifleman with the gunner (team B)</span>
+    </div>
+    <div class="row"><button id="tgRadio" type="button" aria-pressed="true">Radio voices</button><button id="tgBravo" type="button" aria-pressed="true">Team Bravo</button></div>
+    <p class="hint" id="squadStatus">Bounding overwatch: one team moves to cover nearer the threat while the other covers it, then they swap. Dashed lines are planned routes, solid lines are trails, rings are chosen cover. On contact, when the threat moves and when a man is down, the radio man calls it in and team Bravo (on the flank) answers.</p>
+  </section>
+
+  <section data-pane="anim" hidden>
+    <div class="grid" id="anims"></div>
+    <div class="row">
+      <button id="tgAll" type="button" aria-pressed="false">Apply to all</button>
+      <button id="tgFire" type="button" aria-pressed="false">Damage on click</button>
+    </div>
+    <p class="hint">Playing a clip pauses the squad AI. Grenade throws at the threat; Radio keys the chest radio. Moving clips (walk, run, aim-walk, crawl, swim) send the soldier round a patrol loop. Once-only clips (reload, jump, signals, hit) return to the previous state.</p>
+    <details><summary class="lab">Code API</summary>
+<pre>const e = Enemies.spawn({ position:[2,0,0] });
+e.play('reload');      // any clip: radio,
+                       // throwGrenade, crawl...
+e.damage(25, 'head');  // zone multiplier
+e.detach('helmet');    // a physics body
+e.fig.parts.rifle / .helmet / .pack / .mag
+Enemies.squads[0].setThreat([0,0,-8]);</pre></details>
+  </section>
+
+  <section data-pane="hit" hidden>
+    <div class="row"><button id="tgZones" type="button" aria-pressed="false">Show hit areas</button><button id="tgFire2" type="button" aria-pressed="false">Damage on click</button></div>
+    <label class="sl" for="zoneSel"><span>Zone</span><select id="zoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Radius</span><input type="range" id="zR" min="0.03" max="0.35" step="0.005"><output id="zRo"></output></label>
+    <label class="sl"><span>Length</span><input type="range" id="zL" min="0.5" max="1.8" step="0.01"><output id="zLo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" id="zM" min="0.1" max="5" step="0.1"><output id="zMo"></output></label>
+    <p class="hint" id="lastHit">Changes apply to every soldier. Clicks register on these cylinders: a headshot (×4) kills in one hit.</p>
+  </section>
+
+  <section data-pane="gear" hidden>
+    <div class="lab">Selected soldier's separate objects</div>
+    <div class="grid">
+      <button type="button" data-det="rifle">Drop rifle</button>
+      <button type="button" data-det="helmet">Knock helmet</button>
+      <button type="button" data-det="pack">Drop pack</button>
+    </div>
+    <div class="row"><button id="reequip" type="button">Re-equip</button><button id="swapLoad" type="button">Rifle ⇄ flame gun</button><button id="tgDrop" type="button" aria-pressed="true">Drop rifle on death</button></div>
+    <p class="hint">The person, rifle (with magazine), helmet and backpack are separate, closed objects on their own bones (without the helmet you see his hair). Drop the rifle and he draws the compact carbine from his back; with that gone too, he runs back for the rifle. The flame trooper fires only standing. Detached, each becomes a rigid body with gravity, bounce and friction that collides with the ground, walls and crates.</p>
+  </section>
+</aside>
+
+
+<script type="module" src="./src/rig/main.js"></script>
+</body>
+</html>

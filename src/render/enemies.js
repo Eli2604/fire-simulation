@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { loadOperatorAssets, OperatorFigure, PhysicsWorld, MOVING, ONCE } from '../operator/rig.js';
+import { SquadViz } from '../operator/squadviz.js';
+import { radioSay } from '../audio/radio.js';
 
 /**
  * The guards: soldiers in armour, with human proportions (1.8 m), built from
@@ -335,8 +338,110 @@ export class EnemyRenderer {
     f.glow.emissiveIntensity = mood === 'dead' ? 0 : 2.5;
   }
 
+  /**
+   * In the browser everyone is drawn as the sculpted operator (operator/rig.js) once it is built
+   * (a few seconds, in workers); until then, and in Node, as the guards above.
+   */
+  useOperator(world) {
+    if (this.op) return true;
+    if (!this.opLoading && (world?.enemies?.length ?? 0) > 0 && typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      this.opLoading = true;
+      loadOperatorAssets({ lod: 'game' }).then((a) => (this.op = a), () => {});
+    }
+    return false;
+  }
+
+  updateOperators(world, time) {
+    const list = world.enemies;
+    const dt = this.lastTime == null ? 0 : Math.min(0.1, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    for (const f of this.figures) f.g.visible = false;
+    if (this.opWorld !== world) {
+      // a new scene: new figures and physics
+      for (const f of this.ops ?? []) f.dispose();
+      this.ops = [];
+      this.opWorld = world;
+      this.seenEvents = world.events.length;
+      this.physics = new PhysicsWorld({
+        ground: () => -100,
+        solid: (x, y, z) => {
+          const i = world.voxelAt(x, y, z);
+          return i >= 0 && world.mat[i] > 0;
+        },
+      });
+      this.viz ??= new SquadViz(this.scene);
+    }
+    while (this.ops.length < list.length) {
+      const f = new OperatorFigure(this.op, { zones: false, loadout: list[this.ops.length]?.loadout });
+      f.autoFlash = false;
+      this.scene.add(f.group);
+      this.ops.push(f);
+    }
+    list.forEach((e, k) => this.driveOperator(this.ops[k], e, world, time, dt, k));
+    this.physics.step(dt);
+    // the squads: routes, trails, tags, signals, threats; radio traffic
+    const threats = [...new Set(list.filter((e) => e.squad && e.aimAt).map((e) => e.aimAt))];
+    this.viz.update(list, threats, time);
+    for (; this.seenEvents < world.events.length; this.seenEvents++) {
+      const ev = world.events[this.seenEvents];
+      if (ev.type === 'radio') radioSay(ev.name, { reply: ev.kind === 'reply' });
+    }
+  }
+
+  driveOperator(f, e, world, time, dt, k) {
+    const g = f.group;
+    g.visible = !e.devoured;
+    if (e.devoured) return;
+    g.position.set(e.p[0], e.p[1], e.p[2]);
+    g.rotation.set(0, e.yaw ?? 0, 0);
+    if ((e.stains?.length ?? 0) > (f.stainsSeen ?? 0)) {
+      f.stainsSeen = e.stains.length;
+      f.hitFlash();
+    }
+    // a hand that cannot hold the rifle drops it
+    if (e.canFire === false && f.armed && !e.dead) f.detach('rifle', this.physics, this.scene);
+    if ((e.flashUntil ?? -1) > (world.time ?? 0)) f.muzzle(0.05);
+    // how fast they really go (for the step rate)
+    const sp = f.prev ? Math.hypot(e.p[0] - f.prev[0], e.p[2] - f.prev[2]) / Math.max(dt, 1e-3) : 0;
+    f.prev = e.p.slice();
+    f.speed = (f.speed ?? 0) * 0.8 + sp * 0.2;
+    let name;
+    if (e.held) {
+      // seized by the dragon: held crosswise in its jaws, flailing
+      g.rotation.set(-(e.heldPitch ?? 0), (e.heldYaw ?? 0) + Math.PI / 2, Math.PI / 2, 'YXZ');
+      g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(g.rotation));
+      name = 'swim';
+    } else if (e.dead) name = 'die';
+    else if (e.squad) name = e.anim ?? 'crouchAim';
+    else if (e.crawling) name = 'crawl';
+    else if (e.state === 'lure') name = 'crouch';
+    else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
+    else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
+    else name = e.state === 'investigate' ? 'aim' : 'idle';
+    if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(e.squad && ONCE[name] && e.animT !== f.animT) && !e.dead) {
+      // let a draw, a throw or a radio call finish
+    } else if (e.squad && ONCE[name] && e.animT !== f.animT) {
+      f.animT = e.animT;
+      f.play(name, { restart: true, fade: 0.15 });
+    } else if (!ONCE[name] || f.shown !== name) f.play(name);
+    if (MOVING[f.state]) {
+      const moving = e.squad ? e.moving : sp > 0.05 || e.moving;
+      f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (e.squad ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
+    }
+    f.setAim(e.squad ? e.aimAt : null);
+    f.update(dt);
+    if (e.state === 'lure' && !e.dead && this.flames) {
+      const p = new THREE.Vector3();
+      f.bones.handL.getWorldPosition(p);
+      this.flames.spawn(p.x, p.y + 0.15, p.z, 0, 0.8, 0, 0.25, 0.12, 0, 0.8);
+    }
+    if (e.onFire > 0 && this.flames)
+      for (let k2 = 0; k2 < 4; k2++) this.flames.spawn(e.p[0] + (Math.random() - 0.5) * 0.5, e.p[1] + Math.random() * 1.7, e.p[2] + (Math.random() - 0.5) * 0.5, 0, 1, 0, 0.3, 0.25, 0, 0.8);
+  }
+
   update(world, time) {
     const list = world?.enemies ?? [];
+    if (world && this.useOperator(world)) return this.updateOperators(world, time);
     while (this.figures.length < list.length) this.figures.push(this.figure());
     this.figures.forEach((f, k) => {
       const e = list[k];

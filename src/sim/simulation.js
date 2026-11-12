@@ -11,6 +11,8 @@ import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
+import { SquadAI } from '../ai/squad.js';
+import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
 import { stepLightning } from './lightning.js';
@@ -170,6 +172,10 @@ export class Simulation {
     }
     if (w.enemies.length) {
       this.ai.step(dt);
+      if (w.enemies.some((e) => e.squad)) {
+        this.squads ??= [...new Set(w.enemies.filter((e) => e.squad).map((e) => e.unit ?? 'Alpha'))].map((u) => this.makeSquadAI(u));
+        for (const s of this.squads) s.step(dt);
+      }
       this.ai.debrisHits();
     }
     if (w.dragons.length) this.dragonAI.step(dt);
@@ -1443,8 +1449,50 @@ export class Simulation {
     return detached;
   }
 
+  /** The fire team's AI (ai/squad.js) on this world: voxel walls for cover, real rounds and grenades. */
+  makeSquadAI(unit) {
+    const w = this.world;
+    const squad = w.enemies.filter((e) => e.squad && (e.unit ?? 'Alpha') === unit);
+    const ref = squad[0].p[1];
+    const ai = new SquadAI({
+      members: () => w.enemies,
+      solid: (x, y, z) => this.ai.solidAt(x, y, z),
+      floor: (x, z) => {
+        const y = this.ai.floorAt(x, z, ref + 1.2);
+        return y ?? ref;
+      },
+      bounds: [0.6, 0.6, w.size[0] - 0.6, w.size[2] - 0.6],
+      threat: squad[0].threat,
+      unit,
+      peers: () => this.squads ?? [],
+      radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
+      fire: (e, target) => {
+        const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.6, e.p[1] + 1.1, e.p[2] + Math.cos(e.yaw) * 0.6];
+        e.flashUntil = w.time + 0.06;
+        shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad });
+      },
+      grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
+      // the flame gun: burning fuel along a 2-7 m stream; it lights what it reaches
+      flame: (e, target) => {
+        const d = [target[0] - e.p[0], target[2] - e.p[2]], l = Math.hypot(...d) || 1;
+        for (let r = 2; r <= Math.min(7, l + 0.5); r += 1) {
+          const p = [e.p[0] + (d[0] / l) * r, e.p[1] + 1.1 - r * 0.08, e.p[2] + (d[1] / l) * r];
+          const a = this.airCellAt(...p);
+          if (a >= 0) w.flameAcc[a] += 50000;
+          if (r >= l - 1) this.ignite(p, 0.6);
+        }
+      },
+    });
+    return ai;
+  }
+
   // ---------------------------------------------------------------------------
   // Interaction tools
+
+  /** The first fire team's AI (or null). */
+  get squadAI() {
+    return this.squads?.[0] ?? null;
+  }
 
   /** Throw a hand grenade (energy in J; ~0.18 kg of explosive ≈ 0.8 MJ). */
   throwGrenade(from, vel, energy = 8e5, fuse = 2.5) {
