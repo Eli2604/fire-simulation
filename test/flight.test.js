@@ -58,11 +58,11 @@ function fly(c, f, seconds, control = () => {}) {
 test('jet: catapult take-off, climb, fly to the island (built on the way) and rocket it', () => {
   const c = carrierWorld();
   const f = c.board();
-  assert.equal(c.deck.world.vehicles.length, 0, 'boarded: the parked voxels are gone');
+  assert.equal(c.deck.world.vehicles.length, 15, 'boarded: its parked voxels are gone (the others stay)');
   // point at the island
   const isl = c.scene.zones.island;
   const target = new THREE.Vector3(isl.origin[0] + 20, 6, isl.origin[2] + 14);
-  f.heading = Math.atan2(-(target.z - f.pos.z), target.x - f.pos.x);
+  f.heading = 0; // (along its catapult: off the bow, clear of the deck park)
   f.keys = new Set(['KeyW']);
   f.throttle = 1;
   fly(c, f, 1.2);
@@ -72,7 +72,7 @@ test('jet: catapult take-off, climb, fly to the island (built on the way) and ro
   assert.ok(f.pos.y > f.seaLevel + 4, `airborne (alt ${(f.pos.y - f.seaLevel).toFixed(1)} m)`);
   assert.equal(c.zones.built('island'), false, `the island is not built yet (jet at x ${f.pos.x.toFixed(0)})`);
   // 120 m out at 30 m altitude: aim at the island and fire a salvo, pulling up in between
-  f.pos.set(target.x - 120, f.seaLevel + 30, target.z);
+  f.pos.set(target.x, f.seaLevel + 30, target.z - 120); // (from the north: the carrier lies to the west now)
   f.heading = 0;
   f.speed = 70;
   const aim = (fl) => {

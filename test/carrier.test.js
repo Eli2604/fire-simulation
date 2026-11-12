@@ -17,9 +17,9 @@ test('carrier: only the starting zone is built; hatch and ladder lead between th
   scene.zones.deck.world.size.forEach((s, k) => assert.ok(Math.abs(w.size[k] - s) < 1, 'deck zone size'));
   assert.ok(w.sea, 'at sea');
   assert.equal(w.portals[0].to, 'below');
-  assert.equal(w.vehicles.length, 1, 'a jet to fly');
+  assert.equal(w.vehicles.length, 16, 'a deck park of jets to fly');
   const jet = w.vehicles[0];
-  assert.ok(Math.abs(jet.base[1] - (w.h + 7)) < 1e-6, 'parked on the flight deck');
+  assert.ok(Math.abs(jet.base[1] - (w.h + 11)) < 1e-6, 'parked on the flight deck');
   let alu = 0;
   for (let i = 0; i < w.N; i++) if (w.mat[i] === MAT.aluminium && w.owner[i] === jet.owner) alu++;
   assert.ok(alu > 100, 'the jet is voxels while parked');

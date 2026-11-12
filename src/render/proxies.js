@@ -106,8 +106,12 @@ export class ProxyRenderer {
       const at = hint.at ?? [sx / 2, 0, sz / 2];
       hull.position.set(...at);
       g.add(hull);
-      const tower = new THREE.Mesh(new THREE.BoxGeometry(11, 9, 4.5), new THREE.MeshStandardMaterial({ color: 0x8a8f95, roughness: 0.7 }));
-      tower.position.set(at[0] + L * 0.125, at[1] + Dk + 4.5, at[2] + B / 2 - 3);
+      // (its island as models/carrier.js has it)
+      const IL = Math.max(11, B * 0.45);
+      const IW = Math.max(4.5, B * 0.15);
+      const IH = Math.max(6, B * 0.19) + 3;
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(IL, IH, IW), new THREE.MeshStandardMaterial({ color: 0x8a8f95, roughness: 0.7 }));
+      tower.position.set(at[0] + (L / 2) * (L > 80 ? 0.15 : 0.25), at[1] + Dk + IH / 2, at[2] + B / 2 - IW / 2 - 0.75);
       g.add(tower);
       return g;
     }

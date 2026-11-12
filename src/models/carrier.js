@@ -1,9 +1,11 @@
 /**
  * Aircraft carrier zones.
  *
- *  carrierDeck   a section of the flight deck above the sea: steel deck with
- *                markings, the island (bridge with windows), a hatch down below
- *                deck (a portal to the below-deck zone)
+ *  carrierDeck   the flight deck above the sea (most of a Nimitz-class carrier's: room
+ *                for a deck park of jets, four catapults, the angled landing deck with
+ *                its arresting wires, helicopter spots): steel deck with markings, the
+ *                island (bridge with windows), a hatch down below deck (a portal to the
+ *                below-deck zone)
  *  jet           a jet fighter parked on deck: aluminium airframe, canopy glass,
  *                fuel tank (a pressure vessel), rockets under the wings; it can
  *                be boarded and flown (see walk/flight.js)
@@ -17,10 +19,11 @@ const thinOf = (h) => (m) => Math.min(1, Math.max(0.003, m / h));
 export const carrierDeck = {
   label: 'Carrier flight deck',
   params: {
-    length: { value: 46, min: 20, max: 80, step: 1, label: 'Deck length (m)' },
-    beam: { value: 18, min: 10, max: 30, step: 0.5, label: 'Deck width (m)' },
-    deckHeight: { value: 7, min: 4, max: 15, step: 0.5, label: 'Deck above the keel (m)' },
-    draft: { value: 2.5, min: 1, max: 6, step: 0.1, label: 'Waterline above the keel (m)' },
+    length: { value: 210, min: 20, max: 330, step: 1, label: 'Deck length (m)' },
+    beam: { value: 48, min: 10, max: 80, step: 0.5, label: 'Deck width (m)' },
+    deckHeight: { value: 11, min: 4, max: 25, step: 0.5, label: 'Deck above the keel (m)' },
+    draft: { value: 4, min: 1, max: 12, step: 0.1, label: 'Waterline above the keel (m)' },
+    helipads: { value: 3, min: 0, max: 6, step: 1, label: 'Helicopter spots' },
     boatTo: { value: '', label: 'Zone the boat at the stern goes to (empty: none)' },
   },
   build(p, { h }) {
@@ -49,11 +52,12 @@ export const carrierDeck = {
     // the island on the starboard side (+z), as on a Nimitz: a tall stepped steel tower
     // with the navigation bridge (windows all round) on top of the main block, the
     // flight-control tier above it, a lattice mast and the radars (drawn as props)
-    const ix = hx * 0.25;
-    const iz = hz - 3;
-    const IL = 11;
-    const IW = 4.5;
-    const top = D + 6;
+    // (its size goes with the deck's: ~22 × 7 m and 9 m tall on a 48 m wide deck)
+    const IL = Math.max(11, B * 0.45);
+    const IW = Math.max(4.5, B * 0.15);
+    const ix = hx * (L > 80 ? 0.15 : 0.25);
+    const iz = hz - IW / 2 - 0.75;
+    const top = D + Math.max(6, B * 0.19);
     const grey = [0.55, 0.57, 0.6];
     prims.push(
       { shape: 'box', min: [ix - IL / 2, D, iz - IW / 2], max: [ix + IL / 2, top, iz + IW / 2], ...steel, density: thin(0.01), color: grey },
@@ -80,14 +84,58 @@ export const carrierDeck = {
       { type: 'radarArray', p: [ix - 3.2, top + 2.2, iz + 0.4], w: 1.6, h: 0.9, rate: 2.4 },
       { type: 'whip', p: [ix + IL / 2 - 0.4, top, iz - IW / 2 + 0.3], h: 5 },
       { type: 'whip', p: [ix - IL / 2 + 0.4, top, iz + IW / 2 - 0.3], h: 4 },
-      { type: 'catapult', p: [-hx * 0.15, D, -3.0], len: hx * 1.12 },
-      { type: 'catapult', p: [-hx * 0.15, D, 3.2], len: hx * 1.1 },
-      { type: 'wires', p: [-hx + 2.5, D, 0], n: 3, step: 2.6, w: B * 0.75 },
+      ...(L > 80
+        ? [
+            // two bow catapults, two in the waist (on the angled deck, to port)
+            { type: 'catapult', p: [hx * 0.3, D, -6], len: hx * 0.68 },
+            { type: 'catapult', p: [hx * 0.3, D, 4], len: hx * 0.68 },
+            { type: 'catapult', p: [-hx * 0.25, D, -hz * 0.65], len: hx * 0.5 },
+            { type: 'catapult', p: [-hx * 0.25, D, -hz * 0.2], len: hx * 0.5 },
+            // four arresting wires across the landing area aft, ~12 m apart
+            { type: 'wires', p: [-hx + 18, D, -hz * 0.35], n: 4, step: 12, w: B * 0.45 },
+          ]
+        : [
+            { type: 'catapult', p: [-hx * 0.15, D, -3.0], len: hx * 1.12 },
+            { type: 'catapult', p: [-hx * 0.15, D, 3.2], len: hx * 1.1 },
+            { type: 'wires', p: [-hx + 2.5, D, 0], n: 3, step: 2.6, w: B * 0.75 },
+          ]),
       { type: 'net', p: [-hx, D, -hz], len: L, heading: Math.PI },
       { type: 'net', p: [-hx, D, hz], len: L },
       { type: 'number', p: [hx - 5, D, 0], text: '68', w: 5, h: 3.5, turn: -Math.PI / 2 },
       { type: 'carrierHull', p: [0, 0, 0], hx, hz, D, draft: p.draft, number: '68' },
     ];
+    // the angled landing deck: its edge lines and dashed centre line, 9° off the ship's axis to port
+    if (L > 80) {
+      const ang = (9 * Math.PI) / 180;
+      const along = (x0, z0, len, off, dash) => {
+        for (let s = 0; s < len; s += dash ? 6 : 1.5) {
+          const x = x0 + Math.cos(ang) * s;
+          const z = z0 - Math.sin(ang) * s + off;
+          if (x > hx - 1 || z < -hz + 0.5 || z > hz - 0.5) continue;
+          prims.push({ shape: 'box', min: [x, D - h, z - 0.18], max: [x + (dash ? 3.5 : 1.5), D, z + 0.18], ...deck, density: thin(0.03), color: [0.9, 0.9, 0.86], mode: 'replace' });
+        }
+      };
+      const z0 = -hz * 0.15;
+      along(-hx, z0, L * 0.6, 0, true);
+      along(-hx, z0, L * 0.6, -11, false);
+      along(-hx, z0, L * 0.6, 11, false);
+      // the foul line: the landing area's edge, red-and-white, where nothing may be parked
+      for (let s = 0; s < L * 0.55; s += 3) {
+        const x = -hx + Math.cos(ang) * s;
+        const z = z0 - Math.sin(ang) * s + 13;
+        if (z > hz - 0.5) continue;
+        prims.push({ shape: 'box', min: [x, D - h, z - 0.2], max: [x + 1.5, D, z + 0.2], ...deck, density: thin(0.03), color: (s / 3) % 2 ? [0.9, 0.9, 0.86] : [0.75, 0.12, 0.1], mode: 'replace' });
+      }
+    }
+    // helicopter spots along the starboard side aft: a painted ring and its number
+    for (let k = 0; k < (L > 80 ? p.helipads : 0); k++) {
+      const c = [-hx + 14 + k * 17, hz - 7.5];
+      prims.push(
+        { shape: 'cylinder', a: [c[0], D - h, c[1]], b: [c[0], D, c[1]], r: 4, ...deck, density: thin(0.03), color: [0.95, 0.85, 0.15], mode: 'replace' },
+        { shape: 'cylinder', a: [c[0], D - h, c[1]], b: [c[0], D, c[1]], r: 3.3, ...deck, density: thin(0.03), color: [0.36, 0.37, 0.38], mode: 'replace' },
+      );
+      props.push({ type: 'helipad', p: [c[0], D, c[1]], r: 3.3, text: String(k + 1) });
+    }
     // the hatch down below deck, next to the island
     const hatch = [ix - IL / 2 - 2.5, D, iz - 1];
     prims.push(

@@ -3,7 +3,8 @@ import * as THREE from 'three';
 /**
  * The whole carrier around the simulated slice of its flight deck (models/carrier.js,
  * carrierDeck): the slice is a box of voxels; this draws the ship it belongs to, in
- * the proportions of a Nimitz-class carrier (length ≈ 4.3 × the deck's width):
+ * the proportions of a Nimitz-class carrier (length ≈ 4.3 × the deck's width; when the slice is
+ * most of the deck, the bow narrows beyond it):
  *
  *  - the hull, lofted from cross sections: a raked stem with the hull narrowing to
  *    it under a broad flight deck at the bow, flared sides, a round bilge, and a flat
@@ -25,10 +26,11 @@ export function buildCarrierHull(pr) {
   const D = pr.D;
   const T = pr.draft;
   // the ship's ends: about 4.3 × the beam long, the slice a little aft of amidships
+  // (a slice that is most of the deck: the stern just aft of it, the bow narrowing beyond it)
   const B = 2 * hz;
   const len = 4.3 * B;
-  const xStern = -hx - Math.max(4, len * 0.18);
-  const xBow = xStern + len;
+  const xStern = -hx - Math.max(4, Math.min(len * 0.18, (len - 2 * hx) * 0.3));
+  const xBow = Math.max(xStern + len, hx + B * 0.8);
   const xStem = xBow - 3.5; // the stem at the waterline (it rakes forward above)
 
   // ---- the hull

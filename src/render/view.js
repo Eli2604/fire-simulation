@@ -620,7 +620,7 @@ export class View {
     this.vehicles.update(this.time);
     this.props.update(dt);
     this.doors.update(dt);
-    this.trees.update(this.time);
+    this.trees.update(this.time, this.cameraLocal());
     this.volcanoes.update(this.time);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));

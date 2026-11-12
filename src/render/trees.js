@@ -3,12 +3,24 @@ import { MATERIALS } from '../sim/materials.js';
 import { F_HIDDEN, F_FALLING } from '../sim/world.js';
 
 // the wind in the grass (vertex shader, in place of three.js project_vertex)
-const WIND_GLSL = `vec4 mvPosition = vec4(transformed, 1.0);
-#ifdef USE_INSTANCING
-mvPosition = instanceMatrix * mvPosition;
+const WIND_GLSL = `#ifdef USE_INSTANCING
 vec3 gBase = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 #else
 vec3 gBase = vec3(0.0);
+#endif
+// detail by distance: further off, fewer tufts (each a little wider), none past ~70 m
+float gDist = distance((modelMatrix * vec4(gBase, 1.0)).xyz, cameraPosition);
+float gKeep = clamp((70.0 - gDist) / 50.0, 0.0, 1.0);
+float gRand = fract(sin(dot(gBase.xz, vec2(12.9898, 78.233))) * 43758.5453);
+if (gRand > gKeep) {
+  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+  return;
+}
+vec3 gT = transformed;
+gT.xz *= 1.0 + 0.6 * (1.0 - gKeep);
+vec4 mvPosition = vec4(gT, 1.0);
+#ifdef USE_INSTANCING
+mvPosition = instanceMatrix * mvPosition;
 #endif
 // the wind bends the blades: more at the tips, in gusts that roll across the field
 float gH = clamp(position.y / uCardH, 0.0, 1.0);
@@ -21,6 +33,28 @@ vGPos = gBase + position;
 vGH = gH;
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`;
+
+// trees in the wind (vertex shader, bark and leaf cards alike, so that the leaves stay on their
+// twigs): the whole tree leans with the wind and sways in its gusts, more towards the top;
+// the branches swing on their own, more towards their tips; the leaves flutter. Per tree:
+// uBase (the foot of the trunk), uHt (its height), uLeafScale (cards scaled up far off)
+const TREE_WIND_GLSL = (leaf) => `vec4 mvPosition = vec4(transformed${leaf ? ' * uLeafScale' : ''}, 1.0);
+#ifdef USE_INSTANCING
+mvPosition = instanceMatrix * mvPosition;
+#endif
+vec3 tp = mvPosition.xyz;
+float hr = clamp((tp.y - uBase.y) / uHt, 0.0, 1.0);
+float rr = clamp(length(tp.xz - uBase.xz) / (0.5 * uHt), 0.0, 1.5);
+float ph = dot(uBase.xz, vec2(0.37, 0.71));
+float sway = uWindStr * (0.65 + 0.35 * sin(uTime * 0.9 + ph)) + 0.06;
+vec2 dd = uWindDir * sway * 0.05 * uHt * hr * hr;
+dd += vec2(sin(uTime * 2.1 + tp.x * 1.3 + ph), cos(uTime * 1.7 + tp.z * 1.1 + ph)) * 0.02 * uHt * rr * hr * (uWindStr + 0.08);
+tp.xz += dd;
+tp.y -= 0.3 * dot(dd, dd) / max(uHt * hr, 0.1);
+${leaf ? 'tp += vec3(sin(uTime * 9.0 + tp.y * 7.0 + ph), sin(uTime * 11.0 + tp.x * 5.0), cos(uTime * 8.0 + tp.z * 6.0)) * 0.012 * (0.25 + uWindStr);' : ''}
+mvPosition = modelViewMatrix * vec4(tp, 1.0);
+gl_Position = projectionMatrix * mvPosition;`;
+const TREE_HEAD = 'uniform float uTime, uWindStr, uHt, uLeafScale;\nuniform vec2 uWindDir;\nuniform vec3 uBase;';
 
 // dew and hoar frost on the blades (fragment shader, after the colour): when the air is at its
 // dew point the blades bead with drops (a glossy, glinting wet); below freezing the water
@@ -372,6 +406,8 @@ export class TreeRenderer {
       if (WOOD.has(name)) wood.push(i);
       else if (LEAF.has(name)) leaves.push(i);
     }
+    // (in a shuffled order: drawing only the first part of them far off thins the crown evenly)
+    leaves.sort((a, b) => hash(a, 0, 7) - hash(b, 0, 7));
     const segVox = t.segs.map(() => []);
     for (const i of wood) {
       const c = w.center(...w.coords(i));
@@ -390,6 +426,19 @@ export class TreeRenderer {
     const geo = new THREE.CylinderGeometry(0.82, 1, 1, 10, 1, false);
     geo.translate(0, 0.5, 0);
     const bark = new THREE.MeshStandardMaterial({ map: barkTex(t.species), roughness: 0.95 });
+    // the tree in the wind (TREE_WIND_GLSL): its foot and height; its leaf cards' scale (far off)
+    let foot = t.segs[0]?.a ?? [0, 0, 0];
+    let top = foot[1] + 1;
+    for (const s of t.segs) {
+      if (s.a[1] < foot[1]) foot = s.a;
+      top = Math.max(top, s.b[1]);
+    }
+    const TU = { ...this.windU, uBase: { value: new THREE.Vector3(...foot) }, uHt: { value: Math.max(1, top - foot[1]) }, uLeafScale: { value: 1 } };
+    bark.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, TU);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + TREE_HEAD).replace('#include <project_vertex>', () => TREE_WIND_GLSL(false));
+    };
+    bark.customProgramCacheKey = () => 'bark-wind-v1';
     bark.color.setRGB(1.7, 1.6, 1.5); // the bark texture is dark; lit like the leaves
     if (bark.map) bark.map.repeat.set(1, 2);
     const segMesh = new THREE.InstancedMesh(geo, bark, t.segs.length);
@@ -406,7 +455,8 @@ export class TreeRenderer {
     // autumn colours, winter's dead leaves, snow on the crown: the photo's light and shade, the season's hue
     const LU = this.leafUniforms(t.species);
     leafMat.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, LU, { uDew: this.windU.uDew, uFrost: this.windU.uFrost });
+      Object.assign(sh.uniforms, LU, TU);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\n' + TREE_HEAD).replace('#include <project_vertex>', () => TREE_WIND_GLSL(true));
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\nuniform vec3 uLeafTint;\nuniform float uLeafAmt, uLeafSnow, uDew, uFrost;\nfloat lDrop = 0.0;')
         // dew beads on the leaves (glossy, glinting), hoar frost whitens them, as on the grass
@@ -429,7 +479,7 @@ export class TreeRenderer {
           }`,
         );
     };
-    leafMat.customProgramCacheKey = () => 'leaf-season-dew-v3';
+    leafMat.customProgramCacheKey = () => 'leaf-season-dew-wind-v4';
     const leafMesh = new THREE.InstancedMesh(cardGeo, leafMat, Math.max(1, leaves.length * cards));
     leafMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, leaves.length * cards) * 3), 3);
     leafMesh.castShadow = true;
@@ -455,7 +505,7 @@ export class TreeRenderer {
     this.group.add(segMesh, leafMesh);
     for (const i of wood) w.flags[i] |= F_HIDDEN;
     for (const i of leaves) w.flags[i] |= F_HIDDEN;
-    const it = { t, segMesh, leafMesh, segVox, leaves, cards, meshes: [segMesh, leafMesh], tick: -1 };
+    const it = { t, segMesh, leafMesh, segVox, leaves, cards, meshes: [segMesh, leafMesh], tick: -1, n, TU, foot, rmin: 0 };
     this.shade(it);
     return it;
   }
@@ -486,7 +536,7 @@ export class TreeRenderer {
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.2, max(uDew * 0.7, gDrop));')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.35, 0.37, 0.4) * gDrop;');
     };
-    mat.customProgramCacheKey = () => 'grass-wind-dew-v2';
+    mat.customProgramCacheKey = () => 'grass-wind-dew-lod-v3';
     const turf = (i) => {
       const [x, y, z] = w.coords(i);
       if (y === 0) return true;
@@ -554,7 +604,9 @@ export class TreeRenderer {
           hot = Math.max(hot, w.skin[i]);
         }
       const there = vox.length === 0 ? true : left >= vox.length * 0.5;
-      if (!there) segMesh.setMatrixAt(k, zero);
+      // (far off the thin twigs are not drawn: the leaves cover them)
+      if (!there || s.r < it.rmin) segMesh.setMatrixAt(k, zero);
+      else this.placeSeg(segMesh, k, s, w.h);
       const c = left ? 1 - 0.85 * (ch / left) : 1;
       const glow = Math.max(0, Math.min(1, (hot - 450) / 500));
       col[k * 3] = c + glow * 1.5;
@@ -647,9 +699,31 @@ export class TreeRenderer {
     if (U > 1e-3) this.windU.uWindDir.value.set(wx / U, wz / U);
   }
 
-  update(time) {
+  /**
+   * Detail by distance (`cam`: the camera, world-local): close up every leaf card and twig;
+   * further off fewer, bigger cards (the crown thinned evenly) and only the thicker branches,
+   * and no shadows from the leaves far away. (The grass thins out in its shader.)
+   */
+  lod(cam) {
+    for (const it of this.items) {
+      if (it.grass || !it.foot) continue;
+      const d = Math.hypot(cam[0] - it.foot[0], cam[1] - it.foot[1], cam[2] - it.foot[2]);
+      const f = d < 20 ? 1 : Math.max(0.12, (20 / d) ** 1.5);
+      it.leafMesh.count = Math.max(1, Math.round(it.n * f));
+      it.TU.uLeafScale.value = Math.min(2.5, 1 / Math.sqrt(f));
+      it.leafMesh.castShadow = d < 45;
+      const rmin = d < 25 ? 0 : Math.min(0.12, (d - 25) * 0.002);
+      if (Math.abs(rmin - it.rmin) > 0.005 || (rmin === 0) !== (it.rmin === 0)) {
+        it.rmin = rmin;
+        it.tick = -1;
+      }
+    }
+  }
+
+  update(time, cam) {
     this.windU.uTime.value = time;
     if (!this.world) return;
+    if (cam) this.lod(cam);
     const tick = Math.floor(time * 2);
     for (const it of this.items) {
       if (it.tick === tick) continue;

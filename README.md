@@ -324,7 +324,8 @@ Its cry is a raptor's scream, made live like the other sounds.
 
 ### Flying the jet (carrier scenario)
 
-Walk up to the jet on the flight deck and press **E**. W/S sets the throttle (on the deck,
+Walk up to any of the jets on the flight deck and press **E** (the two on the bow catapults
+face down the deck, clear of the deck park). W/S sets the throttle (on the deck,
 full throttle fires the catapult), the mouse pitches and rolls, A/D works the rudder, and
 **Space or a click fires a rocket** from under the wings. A rocket's motor burns for 3 s,
 then it flies on ballistically. It explodes in whatever it hits: the island's hills, the house,
@@ -412,7 +413,7 @@ The carrier scenario is split into five **zones**:
 
 | Zone | Voxel size | Size | Cost per step |
 |---|---|---|---|
-| Flight deck | 0.4 m | ~20k solids | ~14 ms |
+| Flight deck (210 × 48 m, 16 jets) | 0.5 m | ~115k solids | ~55 ms |
 | Below deck: corridors, mess, berthing, store room, server room | 0.2 m | ~70k solids | ~25 ms |
 | The island | 0.4 m | ~20k solids | ~20 ms |
 | The catacombs under the island | 0.2 m | ~56k solids | ~40 ms |
@@ -542,11 +543,26 @@ snow slows you down in the walk-through. The other islands of the group turn whi
 Steam is drawn only where the air cannot hold it (over its saturation): a fire's or a hose's
 steam, not the little the sea gives off over a whole scene.
 
+**Trees and grass in the wind; detail by distance** (render/trees.js): the trees sway with
+the wind (more towards the top, in its gusts), their branches swing, more towards their
+tips, and the leaves flutter; the grass bends. Close up every leaf card and twig is drawn;
+further off the crown is thinned evenly to fewer, bigger cards, the thin twigs are left out
+and the leaves cast no shadows; the grass thins out to fewer, wider tufts and is gone past
+~70 m (the turf shows). Their simulation is the scene's voxels (a crown is ~100 m³: finer
+voxels for a tree close up would cost far more than a candle's patch).
+
+**Lava in water** (sim/volcano.js): lava that runs into the sea is quenched (it sets in
+seconds, the sea boils off it). Lava that runs into the canal or the pond boils them where
+it touches: ~1 MW/m² of contact (three times that while it is molten and shatters), the
+water heats to boiling and goes up as steam, a voxel of it boiled dry is gone, and the lava
+sets with a dark crust against it. (A pond's bed holds its water: it seeps into the soil only
+as far as the soil is not wet through.)
+
 **Breath, dew and frost** (render/breath.js, render/trees.js; Weather: "Misty morning",
 `&dew=1`): in cold air the guards' breath and your own show (what you breathe out is warm and
 saturated: mixed into cold air it condenses, more the colder and damper; every few seconds,
-faster when running). When the air is at its dew point the grass beads with dew (wet, glossy,
-the drops glinting); below freezing it is white with hoar frost. Dead fuels take up water
+faster when running). When the air is at its dew point the grass and the leaves of the trees
+bead with dew (wet, glossy, the drops glinting); below freezing they are white with hoar frost. Dead fuels take up water
 towards what the damp air holds (they are harder to light).
 
 **Light close up**: candles standing together (an altar's, a candelabra's) are one soft light
@@ -611,10 +627,16 @@ in the wind (its strength and direction, gusts running across). A lighter sets i
 your head out, riding the waves; hold C / Ctrl to dive and Space to come up; under water
 you swim where you look (W and the mouse) and breathe from your mask.
 
-The **carrier** is drawn whole round the simulated slice of its flight deck (render/hull.js):
-a flared hull narrowing to a raked stem under a broad bow, red antifouling and a black
-boot-top, the angled landing deck overhanging to port with its markings, deck-edge
-elevators, sponsons with catwalks and nets, the hull number.
+The **carrier**: its flight deck is simulated over 210 × 48 m (a ship of ~250 m drawn round
+it, render/hull.js: a flared hull narrowing to a raked stem under a broad bow, red
+antifouling and a black boot-top, the angled landing deck overhanging to port, deck-edge
+elevators, sponsons with catwalks and nets, the hull number). On deck: a deck park of 16
+jets (two on the bow catapults, two on the waist catapults, rows along both sides of the bow
+with their tails over the deck edge, and the "corral" aft of the island), the angled landing
+deck's lines and its red-and-white foul line, four arresting wires, three numbered
+helicopter spots aft to starboard, and the island (bridge, flight control, mast, radars).
+Every jet is voxels (airframe, fuel tank, rockets): a fire or a blast on deck can spread
+from one to the next.
 
 The **server room** has a raised floor full of cables, rows of racks, a suspended ceiling,
 and a locked glass door. A rack catches fire after 25 s (an electrical fault). Heat

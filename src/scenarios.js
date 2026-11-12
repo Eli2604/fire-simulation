@@ -248,22 +248,33 @@ export const SCENARIOS = {
       ],
     },
     zones: {
+      // the flight deck of a carrier: 210 × 48 m simulated (the ship drawn round it is ~250 m),
+      // its deck park: two jets on the bow catapults, two on the waist catapults, rows parked
+      // along the bow and aft of the island, helicopter spots aft to starboard. (Its sea level
+      // is 4.5 m above its keel: the zone sits 1.6 m lower to put it with the islands'.)
       deck: {
         name: 'Flight deck',
-        origin: [0, 0, 0],
-        world: { size: [44, 19, 21], h: 0.4, ground: 'none' },
-        view: { camera: [-14, 20, 30], walk: true },
-        proxy: { shape: 'carrier', length: 40, beam: 18, deck: 7, draft: 2.5, at: [22, 0, 10.5], color: '#6d7175', height: 8, fill: 0.9, sea: 2.9 },
+        origin: [-160, -1.6, -10],
+        world: { size: [212, 25, 52], h: 0.5, ground: 'none' },
+        view: { camera: [-40, 45, 85], walk: true },
+        proxy: { shape: 'carrier', length: 210, beam: 48, deck: 11, draft: 4, at: [106, 0, 26], color: '#6d7175', height: 8, fill: 0.9, sea: 4 },
         objects: [
-          { type: 'carrierDeck', params: { length: 40, beam: 18, deckHeight: 7, boatTo: 'island' }, x: 22, z: 10.5 },
-          { type: 'jet', params: {}, x: 13, z: 7.5, y: 7, rotation: 0 },
+          { type: 'carrierDeck', params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' }, x: 106, z: 26 },
+          // on the catapults: two at the bow, two in the waist (each one's run clear of the parked
+          // ones' wings; their tails overhang the deck edge, as they do on a carrier)
+          ...[[145, 20], [145, 30], [85, 10.4], [85, 21.2]].map(([x, z], k) => ({ type: 'jet', params: { color: k % 2 ? '#7a8590' : '#6f7b86' }, x, z, y: 11, rotation: 0 })),
+          // parked along the bow, both sides, tails to the deck edge
+          ...[150, 161, 172, 183].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 42.5, y: 11, rotation: 90 })),
+          ...[160, 171, 182, 193].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 7.4, y: 11, rotation: -90 })),
+          // and aft of the island (the "corral")
+          ...[62, 73, 84, 95].map((x) => ({ type: 'jet', params: { rockets: 0, fuelLiters: 800 }, x, z: 42.5, y: 11, rotation: 90 })),
           // a tow tractor, oxygen and propane bottles by the island
-          { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 20, z: 15.5, y: 'auto', rotation: 90 },
-          { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 23.2, z: 18.6, y: 'auto' },
-          { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 23.9, z: 18.7, y: 'auto' },
+          { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 104.5, z: 39.5, y: 'auto', rotation: 90 },
+          { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 107.6, z: 48.2, y: 'auto' },
+          { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 108.3, z: 48.3, y: 'auto' },
           // two oil drums by the island (models/scannedProp.js)
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 25.4, z: 18.4, y: 'auto' },
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 26.1, z: 18.5, y: 'auto', rotation: 40 },
+          { type: 'scannedProp', params: { asset: 'drum' }, x: 109.4, z: 48.1, y: 'auto' },
+          { type: 'scannedProp', params: { asset: 'drum' }, x: 110.1, z: 48.2, y: 'auto', rotation: 40 },
         ],
       },
       below: {

@@ -184,6 +184,15 @@ export class PropsRenderer {
         m.rotation.z = pr.turn ?? 0;
         return g;
       }
+      case 'helipad': {
+        // a helicopter spot's number painted in its ring (the ring itself is the deck's voxels)
+        const t = canvasText(pr.text ?? 'H', 2.6, 2.6, '#f0d22a');
+        if (!t) return null;
+        const m = this.mesh(new THREE.PlaneGeometry(2.6, 2.6), new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }), g, 0, 0.02, 0);
+        m.rotation.x = -Math.PI / 2;
+        m.rotation.z = Math.PI / 2;
+        return g;
+      }
       case 'statueMesh': {
         // a scanned object over its voxels, losing what is blown off, sooted, glowing (render/statue.js)
         this.drawings.push(new StatueDrawing(pr, this.world, g));

@@ -129,7 +129,7 @@ test("the voxel size is a scene setting: a factor on each scene's (zone's) own",
   sc.zone = 'deck';
   sc.voxelScale = 1.5;
   const sim = createSimulation(sc);
-  assert.ok(Math.abs(sim.world.h - 0.6) < 1e-9);
+  assert.ok(Math.abs(sim.world.h - 0.75) < 1e-9); // (the deck's own 0.5 m × 1.5)
   sim.advance(1, 1e9);
 });
 
