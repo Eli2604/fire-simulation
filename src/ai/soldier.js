@@ -36,7 +36,8 @@ export const ARMS = {
 };
 
 // Base times (s) of the animations (operator/rig.js), scaled by the expertise
-export const TIMES = { reload: 2.8, toKnife: 1.5, toRifle: 1.3, toSecondary: 1.2, stab: 0.7, stabHit: 0.35, flash: 1.6, flashRelease: 0.9 };
+// (operator/rig.js: RELOAD_TIME, SWITCH_TIME, STAB_HIT, THROW_FLASH_RELEASE)
+export const TIMES = { reload: 2.8, toKnife: 1.6, toRifle: 1.8, toSecondary: 2.0, stab: 0.7, stabHit: 0.36, flash: 1.6, flashRelease: 1.0 };
 export const KNIFE_REACH = 1.6; // m: he stabs from here
 const CLOSE = 2.0; // m: an enemy this close (in arm's reach and a step): the knife
 const CLEAR = 4.5; // m: no one this close any more: back to the rifle

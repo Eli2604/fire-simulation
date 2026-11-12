@@ -12,6 +12,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, placeZone, LABELS, MOVING, ONCE } from '../operator/rig.js';
 import { SquadViz } from '../operator/squadviz.js';
 import { SquadAI } from '../ai/squad.js';
+import { driveFromAI } from '../operator/drive.js';
 import { radioSay, setRadioSound, shoutSay, flashBang } from '../audio/radio.js';
 import { WEAPONS } from '../sim/wounds.js';
 import { SCENARIOS } from '../scenarios.js';
@@ -252,10 +253,15 @@ class Enemy {
     this.fig.zones.forEach((m) => (m.userData.enemy = this));
     scene.add(this.fig.group);
     // the member the squad AI moves (and the patrol below when it is off)
-    this.d = { p: o.position.slice(), yaw: o.facing ?? 0, squad: o.squad, unit: o.unit, loadout: this.loadout === 'torch' ? 'torch' : undefined, dead: false };
+    this.d = { p: o.position.slice(), yaw: o.facing ?? 0, squad: o.squad, unit: o.unit, loadout: this.loadout === 'torch' ? 'torch' : undefined, dead: false, armour: o.armour ?? true, skill: o.skill ?? { CMD: 'veteran', R2: 'recruit' }[o.squad] ?? 'regular' };
     this.fig.onRelease = (p) => {
       if (!(SQ.on && this.d.squad)) throwGrenade(p.toArray(), aimVel(p.toArray(), WORLD.threat));
     };
+    // the flash-bang flies at the threat and goes off (here a flash only; the simulation does the rest)
+    this.fig.onFlashRelease = (p) => {
+      if (!(SQ.on && this.d.squad)) throwGrenade(p.toArray(), aimVel(p.toArray(), WORLD.threat), true);
+    };
+    applyGear(this.fig);
     this.fig.onFinished = (name) => {
       if (name === 'pickup' && !SQ.on) this.fig.reequip(['rifle']);
     };
@@ -310,7 +316,9 @@ class Enemy {
     this.fig.group.userData.enemy = this;
     this.fig.zones.forEach((m) => (m.userData.enemy = this));
     this.fig.onRelease = old.onRelease;
+    this.fig.onFlashRelease = old.onFlashRelease;
     this.fig.onFinished = old.onFinished;
+    applyGear(this.fig);
     scene.add(this.fig.group);
     old.dispose();
     this.d.loadout = l === 'torch' ? 'torch' : undefined;
@@ -328,19 +336,7 @@ class Enemy {
     const d = this.d, f = this.fig, g = f.group;
     if (SQ.on && d.squad) {
       // the squad AI moves it: show what it says
-      if (d.dead) f.play('die');
-      else if (ONCE[f.shown] && f.current?.isRunning() && !(ONCE[d.anim] && d.animT !== this.animT)) {
-        // let a draw, a throw or a radio call finish
-      } else {
-        const name = d.anim ?? 'crouchAim';
-        if (ONCE[name] && d.animT !== this.animT) {
-          this.animT = d.animT;
-          if (name === 'deployDrone') f.deployDrone();
-          else f.play(name, { restart: true, fade: 0.15 });
-        } else if (!ONCE[name]) f.play(name);
-        if (MOVING[f.state]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, d.speed / MOVING[f.state])) : 0.001);
-      }
-      f.setAim(d.aimAt);
+      driveFromAI(f, d, (this.aiState ??= {})); // operator/drive.js
       f.droneGoal = d.droneGoal ? V(d.droneGoal) : null;
     } else if (this.patrol && !d.dead && MOVING[f.state] && f.shown === f.state) {
       const tgt = this.patrol.pts[this.patrol.i];
@@ -376,22 +372,27 @@ function aimVel(from, to) {
   return [(to[0] - from[0]) / T, (to[1] - from[1] + 4.905 * T * T) / T, (to[2] - from[2]) / T];
 }
 function throwGrenade(from, vel, kind = 'frag') {
+  const isFlash = kind === 'flash' || kind === true;
   const m = new THREE.Group();
-  m.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
-  if (kind === 'flash') m.scale.set(0.8, 1.25, 0.8); // the flashbang: a slimmer can
+  if (isFlash) m.add(A.flashbang.clone());
+  else m.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
   m.position.set(...from);
   m.castShadow = true;
   scene.add(m);
-  nades.push({ m, v: V(vel), fuse: kind === 'flash' ? 1.5 : 2.5, kind });
+  nades.push({ m, v: V(vel), fuse: isFlash ? 1.5 : 2.5, flash: isFlash });
 }
-/** A flashbang: a blinding flash and a bang; hostiles who have it in view are stunned a few seconds. */
+/** A flashbang: a blinding flash and a bang, no blast; hostiles who have it in view are stunned a few seconds. */
 function flash(p) {
-  makeNoise([p.x, 0, p.z], 60, undefined, true);
+  makeNoise([p.x, 0, p.z], 70, undefined, true);
   flashBang();
-  const light = new THREE.PointLight(0xfff8ee, 4000, 30, 1.5);
-  light.position.copy(p).add(V([0, 0.3, 0]));
+  const light = new THREE.PointLight('#fff8ee', 4000, 30, 1.5);
+  light.position.copy(p).add(new THREE.Vector3(0, 0.4, 0));
   scene.add(light);
-  blasts.push({ t: 0, light, parts: [], flash: true });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  s.position.copy(light.position);
+  s.scale.setScalar(3);
+  scene.add(s);
+  blasts.push({ light, parts: [], t: 0, flash: s });
   for (const h of HOSTILES) {
     const d = Math.hypot(h.d.p[0] - p.x, h.d.p[2] - p.z);
     if (!h.d.dead && d < 10 && lineOfSight([p.x, 0, p.z], h.d.p)) h.d.stunnedUntil = noiseClock + 5 * (1 - d / 12);
@@ -475,8 +476,7 @@ function stepGrenades(dt) {
       }
     }
     if (n.fuse <= 0) {
-      if (n.kind === 'flash') flash(n.m.position.clone());
-      else explode(n.m.position.clone());
+      (n.flash ? flash : explode)(n.m.position.clone());
       scene.remove(n.m);
       nades.splice(i, 1);
     }
@@ -485,6 +485,10 @@ function stepGrenades(dt) {
     const b = blasts[i];
     b.t += dt;
     b.light.intensity = b.flash ? (b.t < 0.15 ? 4000 : 0) : Math.max(0, 60 * (1 - b.t / 0.35));
+    if (b.flash) {
+      b.flash.material.opacity = Math.max(0, 1 - b.t / 0.25);
+      b.flash.scale.setScalar(3 + b.t * 10);
+    }
     for (const s of b.parts) {
       s.position.addScaledVector(s.userData.v, dt);
       s.userData.v.multiplyScalar(s.userData.fire ? 0.9 : 0.97);
@@ -494,6 +498,7 @@ function stepGrenades(dt) {
     }
     if (b.t > 4) {
       scene.remove(b.light, ...b.parts);
+      if (b.flash) scene.remove(b.flash);
       blasts.splice(i, 1);
     }
   }
@@ -810,6 +815,49 @@ $('rotBtn').onclick = (ev) => {
 document.querySelectorAll('[data-det]').forEach((b) => (b.onclick = () => selected?.detach(b.dataset.det)));
 $('reequip').onclick = () => selected?.reequip();
 $('swapLoad').onclick = () => selected && (selected.setLoadout(selected.loadout === 'torch' ? 'rifle' : 'torch'), onChange());
+/* ---------- weapon in hand, armour, reload speed, look up / down ---------- */
+const GEAR = { armour: true, reload: 1, look: 0 };
+/** The team-wide settings on a (new) figure. */
+function applyGear(f) {
+  f.setArmour(GEAR.armour);
+  f.setClipSpeed('reload', GEAR.reload);
+  f.setLook(GEAR.look);
+}
+const gearTargets = () => (allMode ? Enemies.list : [selected]).filter((e) => e && !e.d.dead);
+{
+  const box = document.createElement('div');
+  box.innerHTML = `<div class="lab">Weapon in hand</div>
+    <div class="grid" id="weapons"><button type="button" data-w="rifle">Rifle</button><button type="button" data-w="secondary">Carbine</button><button type="button" data-w="knife">Knife</button></div>
+    <div class="row"><button id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
+    <label class="sl"><span>Reload ×</span><input type="range" id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output id="reloadO">×1.00</output></label>
+    <label class="sl"><span>Look</span><input type="range" id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output id="lookO">0°</output></label>
+    <p class="hint">Switching puts the weapon in his hands away (the rifle onto his back, the carbine over the shoulder, the knife into its sheath on the right thigh), then draws the other. Without armour he fights in his shirt. A veteran reloads faster. Look bends the head and upper body, the rifle with them, over any clip.</p>`;
+  document.querySelector('section[data-pane="gear"] p.hint').before(box);
+}
+document.querySelectorAll('#weapons button').forEach((b) => (b.onclick = () => {
+  for (const e of gearTargets()) {
+    const s = e.fig.switchWeapon(b.dataset.w);
+    toast(s ? `${b.textContent} in ${s.toFixed(1)} s` : `${e.name}: already in hand, or gone`);
+  }
+}));
+tg('tgArmour', (v) => {
+  GEAR.armour = v;
+  for (const e of [...Enemies.list, ...HOSTILES]) e.fig.setArmour(v);
+});
+$('reloadS').oninput = () => {
+  GEAR.reload = +$('reloadS').value;
+  $('reloadO').textContent = '×' + GEAR.reload.toFixed(2);
+  for (const e of Enemies.list) e.fig.setClipSpeed('reload', GEAR.reload);
+};
+$('lookS').oninput = () => {
+  const v = +$('lookS').value;
+  $('lookO').textContent = Math.round((v * 180) / Math.PI) + '°';
+  for (const e of gearTargets()) e.fig.setLook(v);
+};
+function setRange(id, v) {
+  $(id).value = v;
+  $(id).oninput();
+}
 // hit-area editor
 const zSel = $('zoneSel');
 ZONES.forEach((z, i) => {
@@ -905,7 +953,7 @@ function setProg(n, p) {
   el.textContent = v;
   $('bb-' + n).style.width = v;
 }
-const BAR = { person: 'body', pack: 'body', legs: 'legs', face: 'head', helmet: 'head', hands: 'rifle', gun: 'rifle', mag: 'rifle' };
+const BAR = { person: 'body', carrier: 'body', pack: 'body', legs: 'legs', face: 'head', helmet: 'head', hands: 'rifle', gun: 'rifle', mag: 'rifle' };
 const prog = {};
 loadOperatorAssets({ lod: qs.get('lod') || 'game', sync: !!qs.get('sync'), onProgress: (n, p) => {
   prog[n] = p;
@@ -925,6 +973,13 @@ loadOperatorAssets({ lod: qs.get('lod') || 'game', sync: !!qs.get('sync'), onPro
   if (qs.get('det')) for (const p of qs.get('det').split(',')) Enemies.list[0]?.detach(p);
   if (qs.get('load')) for (const e of Enemies.list) e.setLoadout(qs.get('load'));
   if (qs.get('anim2')) for (const e of Enemies.list) e.play(qs.get('anim2'));
+  // ?weapon=knife|secondary|rifle  ?armour=0  ?look=<rad>  ?reload=<speed>
+  if (qs.get('armour') === '0') $('tgArmour').click();
+  if (qs.get('reload')) setRange('reloadS', qs.get('reload'));
+  if (qs.get('look')) setRange('lookS', qs.get('look'));
+  if (qs.get('weapon')) for (const e of Enemies.list) e.fig.switchWeapon(qs.get('weapon'));
+  // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
+  if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => Enemies.list.forEach((e) => e.play(qs.get('play'))) });
   if (qs.get('zones') === '1') $('tgZones').click();
   $('build').hidden = true;
   $('stats').textContent = `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips`;
@@ -956,8 +1011,10 @@ const hist = [];
 let acc = 0, frames = 0, lastShown = performance.now();
 const clock = new THREE.Clock();
 let fixedT = qs.get('t') ? +qs.get('t') : null, frozen = false, now = 0;
+const LATER = [];
 function tick(dt) {
   now += dt;
+  for (let i = LATER.length - 1; i >= 0; i--) if (now >= LATER[i].at) LATER.splice(i, 1)[0].fn();
   noiseClock += dt;
   for (const s of Enemies.squads) {
     s.time ??= 0;

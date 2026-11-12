@@ -3,6 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { loadOperatorAssets, OperatorFigure, PhysicsWorld, MOVING, ONCE } from '../operator/rig.js';
 import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
+import { driveFromAI } from '../operator/drive.js';
 
 /**
  * The guards: soldiers in armour, with human proportions (1.8 m), built from
@@ -428,18 +429,21 @@ export class EnemyRenderer {
     else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
     else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
     else name = e.state === 'investigate' ? 'aim' : 'idle';
-    if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(sq && ONCE[name] && e.animT !== f.animT) && !e.dead) {
+    if (sq && !e.held) {
+      // the squad AI's member: clip, weapon switches, reload speed, armour (operator/drive.js)
+      driveFromAI(f, e, (f.aiState ??= {}));
+    } else if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(sq && ONCE[name] && e.animT !== f.animT) && !e.dead) {
       // let a draw, a throw or a radio call finish
     } else if (sq && ONCE[name] && e.animT !== f.animT) {
       f.animT = e.animT;
       if (name === 'deployDrone') f.deployDrone();
       else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name] || f.shown !== name) f.play(name);
-    if (MOVING[f.state]) {
+    if (MOVING[f.state] && !sq) {
       const moving = sq ? e.moving : sp > 0.05 || e.moving;
       f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (sq ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
-    f.setAim(sq ? e.aimAt : null);
+    if (!sq) f.setAim(null);
     f.setGear({ thermal: !!e.thermal, light: !!e.light });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;

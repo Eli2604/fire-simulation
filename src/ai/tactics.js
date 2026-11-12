@@ -29,6 +29,8 @@
  * moves them as before (bounding, investigating).
  */
 
+import { TIMES } from './soldier.js';
+
 const NARROW = 1.6; // m: narrower than this, a file
 const DOOR = 1.3; // m: a doorway (or a gap a door would be in)
 const WIDE = 2.4; // m: a room-like space
@@ -450,12 +452,12 @@ export function breachStep(sq, g, dt) {
     m.flashbangs = (m.flashbangs ?? 2) - 1;
     sq.face(m, B.into, 1, 10);
     sq.setAnim(m, 'throwFlash');
-    m.throwAt = sq.time + 0.9;
+    m.throwAt = sq.time + TIMES.flashRelease;
     m.throwTarget = B.into;
     m.throwKind = 'flash';
     m.signal = { text: 'FLASHBANG', until: sq.time + 1.8 };
     sq.host.shout?.(m, 'Flashbang out!');
-    B.goAt = sq.time + 0.9 + 1.5 + 0.4;
+    B.goAt = sq.time + TIMES.flashRelease + 1.5 + 0.4;
   }
   if (sq.time >= B.goAt) {
     sq.breach = null;

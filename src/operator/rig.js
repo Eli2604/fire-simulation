@@ -18,6 +18,13 @@
  *    quadcopter out, places it ahead of him, pulls his FPV goggles down and takes the controller;
  *    the drone spins up, climbs and circles over its target (droneTarget) while he stays put;
  *    given a droneGoal it flies there instead (scouting), higher and faster.
+ *  - Weapon switching (switchWeapon): the rifle goes onto his back, the carbine back over the
+ *    shoulder, the combat knife (sheathed on the right thigh) comes out into a fighting stance and
+ *    stabs. Each put-away ends and each draw begins with the hands free at his sides. A flash-bang
+ *    on the belt, bowled underarm.
+ *  - Armour: the plate carrier is a mesh of its own over the shirt (setArmour). setLook bends the
+ *    upper body up or down over any clip, the rifle with it. He rappels down a wall on a rope and
+ *    peeks down over an edge lying prone.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -167,6 +174,10 @@ export function pose0() {
     lT: Z3(), lG: 1, lH: 1, lPole: Z3(), rT: Z3(), rG: 1, rH: 1, rPole: Z3(), lMag: 0, lMagOff: Z3(), mag: 0, magFall: -1, magHide: 0,
     // hand targets in figure space (blended in by lW / rW), the backpack (its centre) and the drone
     lTW: Z3(), rTW: Z3(), lW: 0, rW: 0, bagP: PACK_C.slice(), bagR: Z3(), droneP: [0, 1.25, -0.25], droneR: Z3(),
+    // the rifle slung across the back (the other diagonal from the carbine); the knife in the right
+    // hand: kW turns the hand so the blade points along kDir with its edge towards kEdge (chest
+    // space), and the right-hand target becomes the knife's grip instead of the wrist
+    sling2: 0, kW: 0, kDir: [0, 0, 1], kEdge: [0, -1, 0],
   };
 }
 function lerpPose(a, b, t) {
@@ -192,7 +203,25 @@ const AIM_BUTT = new THREE.Vector3(-0.15, 1.43, 0.1);
 const SL_DIR = new THREE.Vector3(-0.45, 0.89, 0).normalize();
 const SL_UP = new THREE.Vector3(0.89, 0.45, 0);
 const SL_BUTT = new THREE.Vector3(0.2, 0.97, -0.375);
-const POLE = { R: [V3([-1, -0.45, -0.35]), V3([-1, -0.7, -0.1])], L: [V3([1, -0.5, -0.25]), V3([0.5, -1, 0])] };
+// the rifle on the back for the knife or the carbine: butt low on the right, muzzle up over the
+// left shoulder, just outside the carbine (which crosses it the other way)
+const SL2_DIR = new THREE.Vector3(0.45, 0.89, 0).normalize();
+const SL2_UP = new THREE.Vector3(-0.89, 0.45, 0);
+const SL2_BUTT = new THREE.Vector3(-0.2, 0.97, -0.435);
+// the knife in the fist: held like the pistol grip, the blade out of the top of the fist (the
+// grip's axis upwards), the edge where the fingers are
+const K_B0 = rl2w(0.343, 0.939, 0);
+const K_E0 = rl2w(0.939, -0.343, 0);
+const K_GRIP = V3(P.rw(P.pg.c));
+const K_G0 = K_GRIP.clone().sub(V3(P.WR));
+const KQ0i = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(K_B0, K_E0, K_B0.clone().cross(K_E0))).invert();
+/** The hand rotation (chest space) that points the blade along dir with the edge towards edge. */
+function knifeQuat(dir, edge) {
+  const x = dir.clone().normalize();
+  const y = edge.clone().addScaledVector(x, -x.dot(edge)).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, x.clone().cross(y))).multiply(KQ0i);
+}
+const POLE = { R:[V3([-1, -0.45, -0.35]), V3([-1, -0.7, -0.1])], L: [V3([1, -0.5, -0.25]), V3([0.5, -1, 0])] };
 const REL = [0, -0.14, 0.06];
 function ikV(S, H, a, b, pole) {
   const dir = H.clone().sub(S);
@@ -227,6 +256,10 @@ export function solve(ps) {
     q.slerp(frameQuat(SL_DIR, SL_UP), ps.sling);
     b.lerp(SL_BUTT, ps.sling);
   }
+  if (ps.sling2 > 0) {
+    q.slerp(frameQuat(SL2_DIR, SL2_UP), ps.sling2);
+    b.lerp(SL2_BUTT, ps.sling2);
+  }
   out.weapon = q;
   out.weaponPos = b.clone().sub(REST.chest);
   const toW = (v) => b.clone().add(v.clone().sub(B).applyQuaternion(q));
@@ -246,6 +279,9 @@ export function solve(ps) {
     const T = V3(ps[l + 'T']);
     if (s === 'L' && ps.lMag > 0) T.lerp(magGrab.clone().add(V3(ps.lMagOff)), ps.lMag);
     if (ps[l + 'W'] > 0) T.lerp(toChest(V3(ps[l + 'TW'])), ps[l + 'W']);
+    // the knife hand: turned to the blade's direction, the target is where the grip goes
+    const qK = s === 'R' && ps.kW > 0 ? knifeQuat(V3(ps.kDir), V3(ps.kEdge)) : null;
+    if (qK) T.addScaledVector(K_G0.clone().applyQuaternion(qK), -ps.kW);
     const Wt = T.lerp(Wg, ps[l + 'G']);
     const cp = V3(ps[l + 'Pole']);
     const pole = cp.lengthSq() > 1e-6 ? cp : POLE[s][0].clone().lerp(POLE[s][1], ps.aim);
@@ -254,6 +290,7 @@ export function solve(ps) {
     const qF = new THREE.Quaternion().setFromUnitVectors(W0.clone().sub(E0).normalize(), Wt.clone().sub(E1).normalize().applyQuaternion(qU.clone().invert()));
     const qArm = qU.clone().multiply(qF);
     const qHW = qArm.clone().slerp(q, ps[l + 'H']);
+    if (qK) qHW.slerp(qK, ps.kW);
     out['upperArm' + s] = qU;
     out['foreArm' + s] = qF;
     out['hand' + s] = qArm.clone().invert().multiply(qHW);
@@ -426,6 +463,166 @@ const THROW_UK = THROW_K.map(([k, v]) => [k / 1.6, v]); // keyed in seconds -> c
 /** When the grenade leaves the hand, and when it is in it (s). */
 export const THROW_RELEASE = 1.0;
 export const THROW_HOLD = [0.25, 1.0];
+
+/* ---------- weapons: the rifle slung, the carbine, the knife; the flash-bang ---------- */
+/** The magazine change (s, at speed 1). */
+export const RELOAD_TIME = 2.8;
+const PUT_T = 0.8; // putting a weapon away: the rifle slung, the carbine over the shoulder, the knife sheathed
+const DRAW_T = { rifle: 1.0, secondary: 1.2, knife: 0.8 };
+/** Seconds to switch to a weapon from another (put that one away, then draw this one). */
+export const SWITCH_TIME = { rifle: PUT_T + DRAW_T.rifle, secondary: PUT_T + DRAW_T.secondary, knife: PUT_T + DRAW_T.knife };
+/** The hand closes on the knife in drawKnife, and lets go of it in sheathKnife (s). */
+export const KNIFE_T = { grab: 0.3 };
+KNIFE_T.release = PUT_T * (1 - KNIFE_T.grab / DRAW_T.knife);
+/** When the blade lands in stab (s). */
+export const STAB_HIT = 0.36;
+/** When the flash-bang leaves the hand, and when it is in it (s into throwFlash). */
+export const THROW_FLASH_RELEASE = 1.0;
+export const FLASH_HOLD = [0.25, 1.0];
+/**
+ * Rappelling: the figure faces the wall, which is `wall` m ahead of its root; rappelStart begins
+ * standing on the roof `top` m above the root, and rappelEnd ends standing on the ground at the
+ * root. Over a peek-over edge (peekOver, peekOverAim) the edge is `peekEdge` m ahead of the root.
+ */
+export const RAPPEL = { wall: 0.56, top: 1.0, peekEdge: 0.25 };
+// the knife's grip in its sheath on the right thigh (blade down), as the standing hand finds it
+const KNIFE_SHEATH = [-0.205, 1.0, -0.065];
+const FREE_R = [-0.25, 0.97, 0.07], FREE_L = [0.25, 0.97, 0.07];
+/** Hands free at his sides: where every put-away ends and every draw begins. */
+function handsFree(p) {
+  p.rG = p.lG = p.rH = p.lH = 0;
+  p.rT = FREE_R.slice();
+  p.lT = FREE_L.slice();
+  return p;
+}
+/**
+ * Putting the rifle on the back (u: 0 at the ready .. 1 slung): muzzle up in front of the right
+ * shoulder, round his right side, onto the sling across the back. The left hand lets go first,
+ * the right once the rifle is behind him.
+ */
+function holster(u) {
+  const p = stance(pose0());
+  const k = (a, b) => pathK([[0, a], [0.35, a], [0.65, b], [1, b]], u);
+  p.cw = sm01(u / 0.35);
+  p.cButt = k([-0.22, 1.0, 0.3], [-0.36, 0.95, -0.05]);
+  p.cDir = k([0, 1, 0.12], [0.05, 1, -0.25]);
+  p.cUp = k([0, 0, -1], [-0.7, 0, -0.7]);
+  p.sling2 = sm01((u - 0.6) / 0.4);
+  p.rG = p.rH = 1 - sm01((u - 0.5) / 0.3);
+  p.lG = p.lH = 1 - sm01(u / 0.25);
+  p.rT = FREE_R.slice();
+  p.lT = FREE_L.slice();
+  p.head = [0, -0.3 * env(u, 0.25, 0.45, 0.7, 0.95), 0];
+  return p;
+}
+/** The knife fighting stance: left foot forward, knees bent, weight forward; the knife low and forward, edge down, the free hand up guarding. */
+function knifeStance(p, f = 0) {
+  const b = sin(f);
+  p.hipsPos = [0, -0.1 - 0.008 * b, 0.03];
+  p.thighL = [-0.6, 0, 0.1]; p.shinL = [0.85, 0, 0]; p.footL = [-0.25, 0, 0];
+  p.thighR = [0.3, 0, -0.12]; p.shinR = [0.35, 0, 0]; p.footR = [-0.65, 0, 0];
+  p.spine = [0.2, 0.1, 0]; p.chest = [0.06 + 0.015 * b, 0.06, 0]; p.neck = [-0.08, 0, 0]; p.head = [-0.2, -0.14, 0];
+  p.sling2 = 1;
+  p.rG = p.lG = p.rH = p.lH = 0;
+  p.kW = 1; p.kDir = [0.05, 0.3, 1]; p.kEdge = [0.15, -1, 0.3];
+  p.rT = [-0.15, 1.1 + 0.008 * b, 0.36]; p.lT = [0.1, 1.42 + 0.01 * sin(f + 1), 0.3];
+  p.rPole = [-1, -0.7, -0.2]; p.lPole = [1, -0.8, -0.3];
+  return p;
+}
+/** Drawing the knife (t s): the right hand down to the sheath, the knife out and up into the stance. */
+function knifeDraw(t) {
+  const u = t / DRAW_T.knife, g = KNIFE_T.grab / DRAW_T.knife, m = (g + 1) / 2;
+  const K = knifeStance(pose0());
+  const p = lerpPose(stance(pose0()), K, sm01((t - KNIFE_T.grab) / (DRAW_T.knife - KNIFE_T.grab)));
+  p.sling2 = 1;
+  p.rG = p.lG = p.rH = p.lH = 0;
+  p.kW = sm01(t / 0.22);
+  const sh = KNIFE_SHEATH;
+  p.rT = pathK([[0, FREE_R], [g, sh], [m, [-0.24, 1.12, 0.14]], [1, K.rT]], u);
+  p.kDir = pathK([[0, [0, -1, 0]], [g, [0, -1, 0]], [m, [0, 0.3, 1]], [1, K.kDir]], u);
+  p.kEdge = pathK([[0, [0, 0, 1]], [g, [0, 0, 1]], [m, [0, -1, 0.3]], [1, K.kEdge]], u);
+  p.rPole = pathK([[0, [-1, -0.45, -0.35]], [g, [-1, 0.1, -0.6]], [1, K.rPole]], u);
+  p.lT = lerpA(FREE_L, K.lT, sm01((t - 0.15) / 0.6));
+  p.lPole = lerpA([1, -0.5, -0.25], K.lPole, sm01((t - 0.15) / 0.6));
+  return p;
+}
+/** The lunge: chamber the knife back, step in off the front foot and drive it in at chest height, recover. */
+function stabPose(t) {
+  const p = knifeStance(pose0());
+  const ch = env(t, 0, 0.12, 0.16, 0.26), th = env(t, 0.16, STAB_HIT, 0.42, 0.7);
+  p.rT = lerpA(lerpA(p.rT, [-0.2, 1.16, 0.2], ch), [-0.3, 1.62, 0.55], th);
+  p.kDir = lerpA(p.kDir, [0.08, 0.12, 1], th);
+  p.kEdge = lerpA(p.kEdge, [0.1, -1, 0.12], th);
+  p.lT = lerpA(p.lT, [0.17, 1.35, 0.16], th);
+  p.spine[1] += 0.2 * th - 0.08 * ch; p.chest[1] += 0.1 * th; p.head[1] -= 0.4 * th; p.spine[0] += 0.04 * th;
+  p.hipsPos = [0, -0.1 - 0.07 * th, 0.03 + 0.2 * th];
+  p.thighL[0] -= 0.3 * th; p.shinL[0] += 0.15 * th; p.footL[0] += 0.15 * th;
+  p.thighR[0] += 0.25 * th; p.shinR[0] -= 0.1 * th; p.footR[0] -= 0.15 * th;
+  return p;
+}
+// the flash-bang, underarm: the right hand to the belt, up to the chest (the pin), swing back low, bowl it
+const FLASH_K = [[0, [-0.2, 1.02, 0.14]], [0.25, [-0.13, 0.97, 0.13]], [0.45, [-0.08, 1.28, 0.28]], [0.8, [-0.26, 0.86, -0.2]], [1.0, [-0.14, 0.98, 0.42]], [1.15, [-0.08, 1.2, 0.55]], [1.6, [-0.2, 1.05, 0.15]]]
+  .map(([k, v]) => [k / 1.6, v]);
+/** On the rope: leaning back from the wall, feet flat on it; u: one bound (knees in, push off, swing out and back, land). */
+function rappelPose(p, u) {
+  const crouch = env(u, 0, 0.15, 0.2, 0.32), out = sin(Math.PI * sm01((u - 0.22) / 0.62)), land = env(u, 0.78, 0.86, 0.88, 1);
+  const bend = crouch + 0.5 * land + 0.25 * out;
+  p.hips = [-0.6 + 0.1 * out, 0, 0];
+  const hz = -0.3 + 0.08 * crouch - 0.3 * out;
+  p.hipsPos = [0, -0.1, hz];
+  for (const [s, z] of [['R', -0.08], ['L', 0.08]]) {
+    p['thigh' + s] = [-0.6 - 0.35 * bend, 0, z];
+    p['shin' + s] = [0.2 + 0.7 * bend, 0, 0];
+    p['foot' + s] = [-1.57 - p.hips[0] - p['thigh' + s][0] - p['shin' + s][0], 0, 0]; // soles flat on the wall
+  }
+  p.spine = [0.1, 0, 0]; p.chest = [0.05, 0, 0]; p.head = [0.35 + 0.2 * out, -0.5 * out, 0];
+  p.sling2 = 1;
+  handsFree(p);
+  // the guide hand high on the rope, the brake hand low behind the hip (it eases off in the swing)
+  p.lW = p.rW = 1;
+  p.lTW = [0.05, 1.42, hz + 0.25];
+  p.rTW = [-0.26 - 0.04 * out, 0.74, hz - 0.18 + 0.1 * out];
+  p.lPole = [1, -0.5, -0.3]; p.rPole = [-1, 0, -0.5];
+  return p;
+}
+const RAPPEL_START = (() => {
+  const top = RAPPEL.top;
+  const rope = (p) => {
+    p.sling2 = 1;
+    handsFree(p);
+    p.lT = [0.06, 1.3, 0.38]; p.rT = [-0.22, 0.9, -0.15]; p.lPole = [1, -0.5, -0.3]; p.rPole = [-1, 0, -0.5];
+    return p;
+  };
+  // standing on the roof, back to the drop; sitting back into the rope at the edge; feet onto the wall
+  const k0 = rope(stance(pose0()));
+  k0.hipsPos = [0, top - 0.02, 0.85];
+  const k1 = rope(J({ hips: [-0.5, 0, 0], hipsPos: [0, top - 0.21, 0.25], thighR: [-0.5, 0, -0.08], thighL: [-0.5, 0, 0.08], shinR: [1.2, 0, 0], shinL: [1.2, 0, 0], footR: [-0.2, 0, 0], footL: [-0.2, 0, 0], spine: [0.15, 0, 0], head: [0.3, 0, 0] }));
+  const k2 = rappelPose(pose0(), 0);
+  Object.assign(k2, { hipsPos: [0, 0.35, -0.2], thighR: [-0.6, 0, -0.08], thighL: [-0.6, 0, 0.08], shinR: [0.55, 0, 0], shinL: [0.55, 0, 0], footR: [-0.92, 0, 0], footL: [-0.92, 0, 0], head: [0.4, 0, 0] });
+  k2.lTW = [0.05, 1.7, -0.05]; k2.rTW = [-0.26, 1.05, -0.38];
+  return [[0, k0], [0.7, k1], [1.2, k2], [1.8, rappelPose(pose0(), 0)]];
+})();
+const RAPPEL_END = (() => {
+  const k1 = rappelPose(pose0(), 0);
+  Object.assign(k1, { hips: [-0.15, 0, 0], hipsPos: [0, -0.04, -0.12], thighR: [0.05, 0, -0.08], thighL: [0.05, 0, 0.08], shinR: [0.15, 0, 0], shinL: [0.15, 0, 0], footR: [-0.05, 0, 0], footL: [-0.05, 0, 0], head: [0.2, 0, 0] });
+  k1.lTW = [0.05, 1.42, 0.12]; k1.rTW = [-0.26, 0.85, -0.22];
+  // unclipping: both hands at the harness, eyes on it
+  const k2 = handsFree(stance(pose0()));
+  Object.assign(k2, { sling2: 1, head: [0.4, 0, 0], lT: [0.05, 0.96, 0.21], rT: [-0.05, 0.96, 0.21], lPole: [1, -0.6, -0.4], rPole: [-1, -0.6, -0.4] });
+  const k3 = handsFree(stance(pose0()));
+  k3.sling2 = 1;
+  return [[0, rappelPose(pose0(), 0)], [0.6, k1], [1.0, k2], [1.4, k3]];
+})();
+/** Prone at an edge, head and shoulders out over it, looking down (about 60 degrees); aim: the rifle down at the shoulder too. */
+function peek(p, f, aim) {
+  prone(p);
+  p.spine = [0.25, 0.04 * sin(f), 0]; p.chest = [0.35, 0, 0]; p.neck = [-0.2, 0, 0];
+  p.head = [-0.8 + (aim ? 0 : 0.06 * sin(2 * f)), aim ? 0.12 : 0.35 * sin(f), 0];
+  p.cButt = aim ? [-0.13, 1.3, -0.03] : [-0.1, 1.24, 0.02];
+  p.cDir = aim ? [0.04, 1, 0.48] : [0.08, 1, 0.12];
+  p.wOff = aim ? [0.003 * sin(f), 0, 0.002 * sin(2 * f)] : [0, 0, 0];
+  return p;
+}
 
 const CLIPS = {
   idle: [2.4, (t, u) => {
@@ -636,18 +833,51 @@ const CLIPS = {
     p.rPole = [-0.4, -0.2, -1]; p.lPole = [0.4, -0.2, -1];
     return p;
   }],
+  // weapon switching: each put-away ends with the hands free at his sides, each draw starts there
+  holsterRifle: [PUT_T, (t) => holster(t / PUT_T)],
+  drawRifle: [DRAW_T.rifle, (t) => holster(1 - t / DRAW_T.rifle)],
+  holsterSecondary: [PUT_T, (t) => CLIPS.drawSecondary[1](DRAW_T.secondary * (1 - t / PUT_T))],
+  drawKnife: [DRAW_T.knife, (t) => knifeDraw(t)],
+  sheathKnife: [PUT_T, (t) => knifeDraw(DRAW_T.knife * (1 - t / PUT_T))],
+  knifeReady: [2.0, (t, u) => knifeStance(pose0(), TAU * u)],
+  stab: [0.7, (t) => stabPose(t)],
+  throwFlash: [1.6, (t) => {
+    const p = stance(pose0());
+    const e = env(t, 0, 0.2, 1.25, 1.55);
+    // the left hand keeps the rifle, muzzle down; the right bowls the flash-bang underarm
+    p.wRot = [0.9 * e, 0.2 * e, 0.3 * e]; p.wOff = [0.06 * e, -0.08 * e, 0.08 * e];
+    p.rG = 1 - e; p.rH = 0; p.rPole = [-1, -0.5, -0.2]; p.rT = pathK(FLASH_K, t / 1.6);
+    const wind = env(t, 0.5, 0.8, 0.82, 1.0), thr = env(t, 0.85, 1.0, 1.1, 1.5), c = Math.max(wind, thr);
+    p.hipsPos = [0, -0.1 * c, 0];
+    p.thighL = [-0.12 - 0.45 * c, 0, 0.05]; p.shinL = [0.16 + 0.6 * c, 0, 0]; p.footL = [-0.15 * c, 0, 0];
+    p.thighR = [0.12 + 0.05 * c, 0, -0.05]; p.shinR = [0.12 + 0.35 * c, 0, 0]; p.footR = [-0.2 - 0.3 * c, 0, 0];
+    p.spine = [0.25 * c, -0.25 * wind + 0.15 * thr, 0]; p.head = [0.15 * env(t, 0.1, 0.3, 0.4, 0.55) - 0.2 * c, 0.3 * wind - 0.15 * thr, 0];
+    return p;
+  }],
+  rappel: [1.8, (t, u) => rappelPose(pose0(), u)],
+  rappelStart: [1.8, (t) => keyed(RAPPEL_START, t)],
+  rappelEnd: [1.4, (t) => keyed(RAPPEL_END, t)],
+  peekOver: [3.0, (t, u) => peek(pose0(), TAU * u, false)],
+  peekOverAim: [2.4, (t, u) => peek(pose0(), TAU * u, true)],
 };
 
-export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1 };
+export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1 };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
-  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
+  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
+  holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
+  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim' };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
-/** Clips that do not care whether he has a rifle. */
-const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1 };
+/** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
+const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
+/** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
+const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
+const PRONE = { crawl: 1, proneAim: 1, proneShoot: 1, peekOver: 1, peekOverAim: 1 };
 /** A flame trooper cannot shoot or reload; he fires the flame gun standing only. */
 const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle' };
 
@@ -670,7 +900,7 @@ function unarm(name, base) {
     } else if (name === 'aim' || name === 'crouchAim' || name === 'shoot' || name === 'crouchShoot') {
       R = [-0.13, 1.28, 0.27]; L = [0.13, 1.3, 0.3];
       pr = [-1, -1, 0]; pl = [1, -1, 0];
-    } else if (name === 'crawl' || name === 'proneAim') {
+    } else if (PRONE[name]) {
       R = [-0.2, 1.78 + 0.08 * s, 0.13]; L = [0.2, 1.78 - 0.08 * s, 0.13];
       pr = [-1, 0, 0.6]; pl = [1, 0, 0.6];
     }
@@ -686,8 +916,42 @@ function unarm(name, base) {
     return p;
   };
 }
+/**
+ * The knife version of a clip: the rifle on his back, the knife in the right hand (low at his side
+ * standing and walking, pumping when he runs, forward on guard crouched), the left hand free.
+ * A hand the clip itself uses (a throw, a signal) keeps doing that.
+ */
+function knifeAs(name, base) {
+  return (t, u) => {
+    const p = base(t, u);
+    const s = sin(TAU * u);
+    const K = knifeStance(pose0(), TAU * u);
+    let R = [-0.21, 1.0, 0.16], L = FREE_L, pr = [-0.6, -0.3, -1], pl = [0.4, -0.2, -1], kd = [0, 0.2, 1], ke = [0.1, -1, 0.2];
+    if (name === 'walk') {
+      R = [-0.21, 1.01, 0.16 - 0.08 * s];
+      L = [0.25, 0.98, 0.07 + 0.14 * s];
+    } else if (name === 'run') {
+      R = [-0.24, 1.12 + 0.1 * mx0(-s) + 0.04 * mx0(s), 0.06 - 0.22 * s];
+      L = [0.25, 1.14 + 0.1 * mx0(s) + 0.04 * mx0(-s), 0.04 + 0.25 * s];
+      pr = [-1, -0.2, -1]; pl = [1, -0.2, -1]; kd = [0, 0.6, 1];
+    } else if (name === 'crouch' || name === 'jump') {
+      R = K.rT; L = K.lT; pr = K.rPole; pl = K.lPole; kd = K.kDir; ke = K.kEdge;
+    } else if (PRONE[name]) {
+      R = [-0.2, 1.78 + 0.08 * s, 0.13]; L = [0.2, 1.78 - 0.08 * s, 0.13];
+      pr = [-1, 0, 0.6]; pl = [1, 0, 0.6]; kd = [0, 1, -0.2]; ke = [0, 0, 1];
+    }
+    const blend = (cur, def, g) => (g >= 1 ? def : lerpA(cur, def, g));
+    p.rT = blend(p.rT, R, p.rG); p.lT = blend(p.lT, L, p.lG);
+    if (p.rG > 0.5) p.rPole = pr;
+    if (p.lG > 0.5) p.lPole = pl;
+    p.kW = p.rG; p.kDir = kd; p.kEdge = ke;
+    p.rG = 0; p.lG = 0; p.rH = 0; p.lH = 0; p.lMag = 0; p.mag = 0;
+    p.aim = 0; p.cw = 0; p.sling = 0; p.sling2 = 1;
+    return p;
+  };
+}
 let CLIP_CACHE = null;
-/** The clips (baked once): armed ones by name, unarmed ones as name + '_u'. */
+/** The clips (baked once): armed ones by name, unarmed ones as name + '_u', knife ones as name + '_k'. */
 export function operatorClips() {
   if (CLIP_CACHE) return CLIP_CACHE;
   const c = {};
@@ -695,6 +959,7 @@ export function operatorClips() {
     c[k] = makeClip(k, CLIPS[k][0], CLIPS[k][1]);
     if (k === 'swim') c.swim_u = c.swim;
     else if (!UNARMED_AS[k] && !NO_UNARMED[k]) c[k + '_u'] = makeClip(k + '_u', CLIPS[k][0], unarm(k, CLIPS[k][1]));
+    if (!KNIFE_AS[k] && !NO_UNARMED[k]) c[k + '_k'] = makeClip(k + '_k', CLIPS[k][0], knifeAs(k, CLIPS[k][1]));
   }
   CLIP_CACHE = c;
   return c;
@@ -752,11 +1017,11 @@ export function placeZone(m, z) {
 }
 
 /* ================= assets: sculpt every part (in workers), skin, split ================= */
-const PARTS = ['person', 'legs', 'face', 'hands', 'pack', 'helmet', 'gun', 'mag'];
+const PARTS = ['person', 'carrier', 'legs', 'face', 'hands', 'pack', 'helmet', 'gun', 'mag'];
 export const LOD = {
-  full: { person: 0.0045, legs: 0.005, face: 0.0021, hands: 0.0026, pack: 0.0045, helmet: 0.0021, gun: 0.0026, mag: 0.0022 },
-  game: { person: 0.006, legs: 0.0065, face: 0.003, hands: 0.0035, pack: 0.006, helmet: 0.003, gun: 0.0035, mag: 0.003 },
-  far: { person: 0.009, legs: 0.009, face: 0.0045, hands: 0.005, pack: 0.009, helmet: 0.0045, gun: 0.005, mag: 0.0045 },
+  full: { person: 0.0045, carrier: 0.0045, legs: 0.005, face: 0.0021, hands: 0.0026, pack: 0.0045, helmet: 0.0021, gun: 0.0026, mag: 0.0022 },
+  game: { person: 0.006, carrier: 0.006, legs: 0.0065, face: 0.003, hands: 0.0035, pack: 0.006, helmet: 0.003, gun: 0.0035, mag: 0.003 },
+  far: { person: 0.009, carrier: 0.009, legs: 0.009, face: 0.0045, hands: 0.005, pack: 0.009, helmet: 0.0045, gun: 0.005, mag: 0.0045 },
 };
 const cache = {};
 /** Overridable: how to create a sculpt worker (the single-file build inlines it). */
@@ -826,6 +1091,7 @@ function assemble(R) {
   toFigure(P.R, R.hands);
   const A = {
     person: [geometryOf(R.person, null, 'body'), geometryOf(R.legs, null, 'legs'), geometryOf(R.face, null, 'face'), geometryOf(R.hands, null, 'hands')],
+    carrier: geometryOf(R.carrier, null, 'body'),
     pack: geometryOf(R.pack, REST.chest),
     helmet: geometryOf(R.helmet, REST.head),
     rifle: geometryOf(R.gun, REST.weapon),
@@ -865,9 +1131,9 @@ function assemble(R) {
   A.grenadeFuse = new THREE.CylinderGeometry(0.008, 0.01, 0.025, 8).translate(0, 0.05, 0);
   A.grenadeMat = new THREE.MeshStandardMaterial({ color: 0x3d4a2a, roughness: 0.6, metalness: 0.3 });
   A.flashTex = flashTexture();
-  Object.assign(A, secondaryAndTorch(A), droneKit());
+  Object.assign(A, secondaryAndTorch(A), droneKit(), weaponKit());
   A.clips = operatorClips();
-  A.tris = [...A.person, A.pack, A.helmet, A.rifle, A.mag].reduce((s, g) => s + g.index.count / 3, 0);
+  A.tris = [...A.person, A.carrier, A.pack, A.helmet, A.rifle, A.mag].reduce((s, g) => s + g.index.count / 3, 0);
   return A;
 }
 /** Rifle-local (x along the barrel) to weapon-bone space. */
@@ -936,7 +1202,9 @@ function secondaryAndTorch(A) {
     c.castShadow = true;
     tanks.add(c);
   }
-  return { secondary: g, slungPos: sl.weaponPos.clone(), slungQ: sl.weapon.clone(), torchGun: torch, torchTanks: tanks, nozzle: rl2w(1.0, 0.03, 0) };
+  // where the rifle rides on the back when the carbine is in his hands
+  const sl2 = solve(Object.assign(pose0(), { sling2: 1 }));
+  return { secondary: g, slungPos: sl.weaponPos.clone(), slungQ: sl.weapon.clone(), slung2Pos: sl2.weaponPos.clone(), slung2Q: sl2.weapon.clone(), torchGun: torch, torchTanks: tanks, nozzle: rl2w(1.0, 0.03, 0) };
 }
 /** A small quadcopter (in drone-bone space, ~0.3 m across), FPV goggles (head frame) and a controller. */
 function droneKit() {
@@ -991,6 +1259,98 @@ function droneKit() {
   ctrl.position.set(0, 1.12 - REST.chest.y, 0.3);
   ctrl.rotation.x = -0.5;
   return { drone, droneProps: props.length, goggles, ctrl };
+}
+/**
+ * The combat knife (knife-local: the grip's centre at the origin, the blade along +y, the edge
+ * towards +x, the flats facing z): a clip-point blade with a fuller, a guard, a ribbed black grip
+ * and a pommel; its sheath on the right thigh (thigh-bone space) and where the knife sits in the
+ * fist (hand-bone space) and in the sheath.
+ */
+function knifeKit() {
+  const steel = new THREE.MeshStandardMaterial({ color: '#3b3e42', roughness: 0.3, metalness: 0.85 });
+  const fullerM = new THREE.MeshStandardMaterial({ color: '#202224', roughness: 0.45, metalness: 0.8 });
+  const gripM = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.85, metalness: 0.05 });
+  const polyM = new THREE.MeshStandardMaterial({ color: '#1c1d1b', roughness: 0.6, metalness: 0.1 });
+  const webM = new THREE.MeshStandardMaterial({ color: '#5e5040', roughness: 0.95 });
+  const knife = new THREE.Group();
+  const add = (grp, geo, mat, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    grp.add(m);
+    return m;
+  };
+  // the blade: the spine straight, then the clip falling to the point; the edge with its belly
+  const y0 = 0.062;
+  const s = new THREE.Shape();
+  s.moveTo(-0.012, y0);
+  s.lineTo(-0.012, y0 + 0.112);
+  s.quadraticCurveTo(-0.007, y0 + 0.15, 0.001, y0 + 0.178);
+  s.quadraticCurveTo(0.016, y0 + 0.135, 0.016, y0 + 0.085);
+  s.lineTo(0.016, y0 + 0.01);
+  s.lineTo(0.011, y0);
+  s.lineTo(-0.012, y0);
+  const blade = new THREE.ExtrudeGeometry(s, { depth: 0.0024, bevelEnabled: true, bevelThickness: 0.0012, bevelSize: 0.0026, bevelSegments: 1, curveSegments: 10 });
+  blade.translate(0, 0, -0.0012);
+  add(knife, blade, steel);
+  add(knife, new THREE.BoxGeometry(0.0045, 0.085, 0.0053), fullerM, -0.0045, y0 + 0.058); // the fuller, both flats
+  add(knife, new THREE.BoxGeometry(0.058, 0.008, 0.017), fullerM, 0.001, y0 - 0.004); // guard
+  add(knife, new THREE.CylinderGeometry(0.0125, 0.0135, 0.11, 12), gripM);
+  for (let i = -2; i <= 2; i++) {
+    const r = add(knife, new THREE.TorusGeometry(0.0132, 0.0018, 5, 14), gripM, 0, i * 0.019);
+    r.rotation.x = Math.PI / 2;
+  }
+  add(knife, new THREE.CylinderGeometry(0.0135, 0.012, 0.012, 12), steel, 0, -0.061); // pommel
+  // in the fist: as the pistol grip is held, the blade out of the top of the fist
+  const knifeHand = { p: K_G0.clone(), q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(K_E0, K_B0, K_E0.clone().cross(K_B0))) };
+  // in the sheath: blade down, edge forward, on the outside of the right thigh
+  const knifeSheath = { p: V3(KNIFE_SHEATH).sub(REST.thighR), q: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(V3([0, 0, 1]), V3([0, -1, 0]), V3([1, 0, 0]))) };
+  const sheath = new THREE.Group();
+  const inner = new THREE.Group();
+  inner.position.copy(knifeSheath.p);
+  inner.quaternion.copy(knifeSheath.q);
+  sheath.add(inner);
+  add(inner, new THREE.BoxGeometry(0.05, 0.17, 0.021), polyM, 0.002, 0.145);
+  add(inner, new THREE.BoxGeometry(0.056, 0.018, 0.027), polyM, 0.002, 0.066); // the mouth, the retention strap over the guard
+  add(inner, new THREE.BoxGeometry(0.022, 0.03, 0.03), webM, -0.004, 0.047);
+  const tip = add(inner, new THREE.CylinderGeometry(0.001, 0.034, 0.04, 4), polyM, 0.002, 0.25);
+  tip.rotation.y = Math.PI / 4;
+  tip.scale.set(1, 1, 0.45);
+  // the leg strap round the thigh, and the hanger up to the belt
+  const band = new THREE.TorusGeometry(0.086, 0.006, 6, 28);
+  band.rotateX(Math.PI / 2);
+  band.scale(1, 2.2, 1);
+  const thighAt = (y) => V3([-0.1, 0.95, 0]).lerp(V3([-0.115, 0.52, 0.045]), (0.95 - y) / 0.43).sub(REST.thighR);
+  add(sheath, band, webM, ...thighAt(0.82).toArray());
+  add(sheath, new THREE.BoxGeometry(0.006, 0.07, 0.026), webM, ...V3([-0.195, 1.04, -0.065]).sub(REST.thighR).toArray());
+  return { knife, knifeHand, knifeSheath, sheath };
+}
+/** The flash-bang (axis along y, centred): a short perforated cylinder, its fuse, spoon and pin; on the belt (hips space) and in the hand. */
+function flashKit() {
+  const body = new THREE.MeshStandardMaterial({ color: '#3a3f30', roughness: 0.55, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#15171a', roughness: 0.6, metalness: 0.4 });
+  const steel = new THREE.MeshStandardMaterial({ color: '#8a8d8f', roughness: 0.35, metalness: 0.9 });
+  const g = new THREE.Group();
+  const add = (geo, mat, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  };
+  add(new THREE.CylinderGeometry(0.021, 0.021, 0.09, 16), body);
+  for (const y of [-0.026, 0.026]) add(new THREE.CylinderGeometry(0.0215, 0.0215, 0.009, 16), dark, 0, y); // the vent holes
+  add(new THREE.CylinderGeometry(0.009, 0.011, 0.022, 10), steel, 0, 0.056);
+  add(new THREE.BoxGeometry(0.005, 0.075, 0.013), steel, 0.023, 0.02).rotation.z = 0.06;
+  const ring = add(new THREE.TorusGeometry(0.011, 0.0017, 5, 14), steel, -0.016, 0.068);
+  ring.rotation.y = Math.PI / 2;
+  const flashBelt = { p: V3([-0.115, 1.0, 0.105]).sub(REST.hips), q: new THREE.Quaternion() };
+  const flashHand = { p: V3(P.rw([0.285, -0.075, 0.035])).sub(REST.handR), q: new THREE.Quaternion().setFromUnitVectors(UP, K_B0.clone().normalize()) };
+  return { flashbang: g, flashBelt, flashHand };
+}
+/** The knife with its sheath and the flash-bang, and where they sit (plain three.js: tests use it headless). */
+export function weaponKit() {
+  return Object.assign(knifeKit(), flashKit());
 }
 function flashTexture() {
   const c = document.createElement('canvas');
@@ -1143,6 +1503,11 @@ export class PhysicsWorld {
 /* ================= one animated soldier ================= */
 const HEAD_FRAME = V3(P.H.o);
 const NO_TWIST = 2.3;
+const ROPE_L = V3(P.rw(P.fgp.c)).sub(REST.handL); // the left palm (where it holds the foregrip)
+const ROPE_H = V3([0, 0.92, 0.17]).sub(REST.hips); // the belay device on the harness
+// aiming at a point on the ground (where the target stands): at his chest, from the shooter's eyes
+const AIM_H = 1.2;
+const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0 };
 /**
  * An operator: build it from loaded assets, add .group to the scene, and each frame call
  * update(dt). play(name) cross-fades to a clip; setAim(point) twists the upper body towards a
@@ -1221,8 +1586,42 @@ export class OperatorFigure {
     sec.position.copy(A.slungPos);
     sec.quaternion.copy(A.slungQ);
     bones.chest.add(sec);
-    this.parts = { person, rifle, mag, helmet, pack, secondary: sec };
-    this.restParent = { rifle: bones.weapon, mag: bones.mag, helmet: bones.head, pack: bones.chest, secondary: bones.chest };
+    // the plate carrier with its pouches: a skinned mesh of its own over the shirt (setArmour)
+    const carrier = new THREE.SkinnedMesh(A.carrier, mat);
+    carrier.name = 'carrier';
+    carrier.frustumCulled = false;
+    carrier.castShadow = carrier.receiveShadow = true;
+    person.add(carrier);
+    carrier.bind(skel);
+    this.armour = true;
+    // the knife (in its sheath on the right thigh until drawn) and the flash-bang on the belt
+    const knife = A.knife.clone();
+    knife.name = 'knife';
+    bones.thighR.add(A.sheath.clone());
+    const flashBelt = A.flashbang.clone();
+    flashBelt.position.copy(A.flashBelt.p);
+    bones.hips.add(flashBelt);
+    this.flashBelt = flashBelt;
+    const flashHand = (this.flashHand = A.flashbang.clone());
+    flashHand.position.copy(A.flashHand.p);
+    flashHand.quaternion.copy(A.flashHand.q);
+    flashHand.visible = false;
+    bones.handR.add(flashHand);
+    this.parts = { person, rifle, mag, helmet, pack, secondary: sec, knife, carrier };
+    this.restParent = { rifle: bones.weapon, mag: bones.mag, helmet: bones.head, pack: bones.chest, secondary: bones.chest, knife: bones.thighR };
+    this.holdKnife(false);
+    // the rope, while he rappels: anchor - guide hand - harness - brake hand - the tail
+    const ropeM = new THREE.MeshStandardMaterial({ color: '#2f3527', roughness: 0.9 });
+    const ropeG = new THREE.CylinderGeometry(0.0055, 0.0055, 1, 6);
+    this.rope = new THREE.Group();
+    for (let i = 0; i < 4; i++) this.rope.add(new THREE.Mesh(ropeG, ropeM));
+    this.rope.visible = false;
+    this.rope.children.forEach((m) => (m.frustumCulled = false));
+    g.add(this.rope);
+    this.look = 0;
+    this.bent = []; // [bone, undo] for the twist and look laid over the clip
+    this.pitch = 0;
+    this.clipSpeed = {};
     if (loadout === 'torch') {
       // a flame trooper: the flame gun in place of the rifle, the tanks on his back
       rifle.visible = mag.visible = this.sling.visible = false;
@@ -1294,7 +1693,7 @@ export class OperatorFigure {
     this.actions = {};
     for (const k in A.clips) {
       const a = this.mixer.clipAction(A.clips[k]);
-      if (ONCE[k.replace('_u', '')]) {
+      if (ONCE[k.replace(/_[uk]$/, '')]) {
         a.setLoop(THREE.LoopOnce);
         a.clampWhenFinished = true;
       }
@@ -1316,14 +1715,36 @@ export class OperatorFigure {
         this.drawing = false;
         this.armed = true;
       }
+      // a weapon put away: empty-handed (the rifle on his back) until he draws another
+      if (was === 'holsterRifle' || was === 'sheathKnife') this.weapon = 'none';
+      if (was === 'holsterSecondary') {
+        this.stowSecondary();
+        this.unstowRifle();
+        this.weapon = 'none';
+      }
+      if (was === 'rappelEnd') this.resume = this.state = 'idle';
       this.onFinished?.(was, this);
-      if (this.shown === was) this.play(this.resume || 'idle', { fade: 0.2 });
+      if (this.shown !== was) return;
+      const next = this.switching;
+      this.switching = null;
+      // switching weapons: the draw follows the put-away (it starts where that ended)
+      if (next) this.play(next, { fade: 0, restart: true });
+      // off the rope, the rifle comes back round from his back
+      else if (was === 'rappelEnd' && this.weapon === 'primary' && this.parts.rifle.parent === this.bones.weapon) this.play('drawRifle', { fade: 0.1 });
+      else this.play(this.resume || 'idle', { fade: 0.2 });
     });
     this.play('idle', { fade: 0 });
   }
-  /** The clip actually played for a name (unarmed versions without a rifle). */
+  /**
+   * The clip actually played for a name: unarmed versions without a rifle, knife versions with
+   * the knife out or empty-handed after putting a weapon away (weapon 'knife' or 'none').
+   */
   clipName(name) {
     if (NO_UNARMED[name]) return name;
+    if (this.weapon === 'knife' || this.weapon === 'none') {
+      const n = KNIFE_AS[name] ?? name;
+      return NO_UNARMED[n] ? n : n + '_k';
+    }
     if (!this.armed) return (UNARMED_AS[name] ?? name) + '_u';
     if (this.weapon === 'torch') return TORCH_AS[name] ?? name;
     return name === 'flame' ? 'aim' : name;
@@ -1409,18 +1830,142 @@ export class OperatorFigure {
   /** Reach back and draw the carbine (when the rifle is gone). */
   drawSecondary() {
     if (!this.hasSecondary || this.weapon === 'secondary' || this.shown === 'die') return false;
-    // it rides on the weapon bone from the start: the clip begins with that bone in the slung pose
-    const sec = this.parts.secondary;
-    this.bones.weapon.add(sec);
-    sec.position.set(0, 0, 0);
-    sec.quaternion.identity();
-    this.weapon = 'secondary';
-    this.drawing = true;
     this.play('drawSecondary', { fade: 0.15 });
-    return true;
+    return this.weapon === 'secondary';
   }
+  /**
+   * Switch weapons: put the one in his hands away (the rifle onto his back, the carbine back over
+   * the shoulder, the knife into its sheath), then draw the other. to: 'rifle' | 'secondary' |
+   * 'knife'. Returns the time it takes (s; SWITCH_TIME[to] when he had another weapon in his hands),
+   * 0 when he cannot (he has it already, it is gone, he is down, or a flame trooper).
+   */
+  switchWeapon(to) {
+    const want = to === 'rifle' || to === 'primary' ? 'primary' : to;
+    const draw = { primary: 'drawRifle', secondary: 'drawSecondary', knife: 'drawKnife' }[want];
+    const P = this.parts, W = this.bones.weapon;
+    if (!draw || this.shown === 'die' || this.loadout === 'torch' || want === this.weapon) return 0;
+    if (P[want === 'primary' ? 'rifle' : want].userData.pivot) return 0;
+    const put = this.weapon === 'knife' ? 'sheathKnife'
+      : this.weapon === 'secondary' && P.secondary.parent === W ? 'holsterSecondary'
+      : this.weapon === 'primary' && this.armed && P.rifle.parent === W ? 'holsterRifle' : null;
+    const dur = (n) => this.A.clips[n].duration;
+    this.play(put ?? draw, { fade: 0.15, restart: true });
+    if (put) this.switching = draw;
+    return (put ? dur(put) : 0) + dur(draw);
+  }
+  /**
+   * Before a weapon clip: the weapons where the clip needs them (on the weapon bone, slung on the
+   * chest, the knife in its sheath). Returns the clip to play, or null when he cannot.
+   */
+  arrange(name) {
+    const P = this.parts, W = this.bones.weapon;
+    const torch = this.loadout === 'torch';
+    switch (name) {
+      case 'holsterRifle':
+        if (this.weapon === 'secondary') return P.secondary.parent === W ? 'holsterSecondary' : null;
+        return !torch && this.weapon === 'primary' && this.armed && P.rifle.parent === W ? name : null;
+      case 'holsterSecondary':
+        return this.weapon === 'secondary' && P.secondary.parent === W ? name : null;
+      case 'drawRifle':
+        if (torch || P.rifle.userData.pivot) return null;
+        this.stowSecondary();
+        this.unstowRifle();
+        this.weapon = 'primary';
+        this.armed = true;
+        return name;
+      case 'drawSecondary':
+        if (P.secondary.userData.pivot) return null;
+        if (P.secondary.parent !== W) {
+          // it rides on the weapon bone from the start: the clip begins with that bone in the slung pose
+          this.stowRifle();
+          W.add(P.secondary);
+          P.secondary.position.set(0, 0, 0);
+          P.secondary.quaternion.identity();
+        }
+        this.weapon = 'secondary';
+        this.drawing = true;
+        return name;
+      case 'drawKnife':
+        if (torch || P.knife.userData.pivot) return null;
+        if (P.secondary.parent === W) {
+          this.stowSecondary();
+          this.unstowRifle();
+        }
+        this.weapon = 'knife';
+        return name;
+      case 'sheathKnife':
+        return this.weapon === 'knife' ? name : null;
+    }
+    return name;
+  }
+  /** The rifle (with its magazine) onto his back while the carbine is in his hands. */
+  stowRifle() {
+    const { rifle, mag } = this.parts;
+    if (rifle.parent !== this.bones.weapon) return;
+    rifle.add(mag);
+    mag.position.copy(MGRAB).sub(REST.weapon);
+    mag.quaternion.identity();
+    mag.scale.set(1, 1, 1);
+    this.bones.chest.add(rifle);
+    rifle.position.copy(this.A.slung2Pos);
+    rifle.quaternion.copy(this.A.slung2Q);
+  }
+  /** The rifle back on the weapon bone (and the magazine on its own). */
+  unstowRifle() {
+    const { rifle, mag } = this.parts;
+    if (rifle.parent !== this.bones.chest) return;
+    this.bones.weapon.add(rifle);
+    rifle.position.set(0, 0, 0);
+    rifle.quaternion.identity();
+    this.bones.mag.add(mag);
+    mag.position.set(0, 0, 0);
+    mag.quaternion.identity();
+    mag.scale.set(1, 1, 1);
+  }
+  /** The carbine back across his back. */
+  stowSecondary() {
+    const sec = this.parts.secondary;
+    if (sec.parent !== this.bones.weapon) return;
+    this.bones.chest.add(sec);
+    sec.position.copy(this.A.slungPos);
+    sec.quaternion.copy(this.A.slungQ);
+  }
+  /** The knife in the right hand, or in its sheath. */
+  holdKnife(inHand) {
+    const k = this.parts.knife;
+    const par = inHand ? this.bones.handR : this.bones.thighR;
+    if (k.userData.pivot || k.parent === par) return;
+    par.add(k);
+    const T = inHand ? this.A.knifeHand : this.A.knifeSheath;
+    k.position.copy(T.p);
+    k.quaternion.copy(T.q);
+  }
+  /** With armour (the plate carrier, its plates and pouches) or in his shirt. */
+  setArmour(on) {
+    this.armour = !!on;
+    this.parts.carrier.visible = this.armour;
+    return this;
+  }
+  /** How fast a clip plays from now on (e.g. a veteran's reload, 0.7..1.5). */
+  setClipSpeed(name, k) {
+    this.clipSpeed[name] = k;
+    if (this.shown === name) this.current?.setEffectiveTimeScale(k);
+    return this;
+  }
+  /** Look up (+) or down (-), radians (about +-1.1): the head, neck and upper body bend, the arms and rifle with them, over any clip. */
+  setLook(pitch) {
+    this.look = Math.max(-1.2, Math.min(1.2, pitch || 0));
+    return this;
+  }
+  /**
+   * Play a clip by name (o.fade: cross-fade s; o.restart; o.speed: its speed, else the one set by
+   * setClipSpeed). Weapon clips (drawRifle, drawKnife, holsterRifle...) move the weapons too.
+   */
   play(name, o = {}) {
     if (this.shown === 'die' && name !== 'die' && !o.force) return this;
+    this.switching = null;
+    name = this.arrange(name);
+    if (!name) return this;
     const key = this.clipName(name);
     const a = this.actions[key];
     if (!a) return this;
@@ -1428,7 +1973,7 @@ export class OperatorFigure {
     if (this.current === a && !ONCE[name] && !o.restart) return this;
     if (ONCE[name] && !ONCE[this.shown]) this.resume = this.state;
     a.reset();
-    a.setEffectiveTimeScale(o.timeScale ?? 1);
+    a.setEffectiveTimeScale(o.speed ?? o.timeScale ?? this.clipSpeed[name] ?? 1);
     a.setEffectiveWeight(1);
     a.time = ONCE[name] || o.restart ? 0 : Math.random() * a.getClip().duration;
     a.play();
@@ -1452,13 +1997,23 @@ export class OperatorFigure {
   setSpeed(k) {
     this.current?.setEffectiveTimeScale(k);
   }
-  /** World point the upper body turns to while it moves (null: look where you go). */
+  /**
+   * World point the upper body turns to while it moves (null: look where you go). Taken as where
+   * the target stands: while aiming he pitches the rifle up or down at its chest (1.2 m above it).
+   */
   setAim(p) {
     this.aimAt = p ? (Array.isArray(p) ? new THREE.Vector3(p[0], p[1], p[2]) : p.clone()) : null;
   }
   update(dt) {
     this.clock += dt;
     const g = this.group;
+    // last frame's twist and look off again first: the mixer only writes a bone when its clip moves it
+    for (let i = this.bent.length - 1; i >= 0; i--) this.bent[i][0].quaternion.premultiply(this.bent[i][1]);
+    this.bent.length = 0;
+    const bend = (b, q) => {
+      b.quaternion.premultiply(q);
+      this.bent.push([b, q.clone().invert()]);
+    };
     this.mixer.update(dt);
     // upper-body twist towards the aim point while moving (not when it is behind: no spinning)
     let want = 0;
@@ -1471,14 +2026,33 @@ export class OperatorFigure {
     this.twist += (want - this.twist) * Math.min(1, dt * 5);
     if (Math.abs(this.twist) > 1e-3) {
       const q = new THREE.Quaternion().setFromAxisAngle(UP, this.twist * 0.5);
-      this.bones.spine.quaternion.premultiply(q);
-      this.bones.chest.quaternion.premultiply(q);
+      bend(this.bones.spine, q);
+      bend(this.bones.chest, q);
+    }
+    // looking up or down (setLook, and the aim point's height while aiming): the spine and chest
+    // bend about his side axis; the head, the arms and the rifle on the chest go with them
+    let pitch = this.look;
+    if (this.aimAt && AIMING[this.shown]) {
+      const dx = this.aimAt.x - g.position.x, dz = this.aimAt.z - g.position.z;
+      pitch += Math.atan2(this.aimAt.y + AIM_H - g.position.y - (EYE_H[this.shown] ?? 1.45), Math.max(0.5, Math.hypot(dx, dz)));
+    }
+    if (this.shown === 'die') pitch = 0;
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    this.pitch += (pitch - this.pitch) * Math.min(1, dt * 6);
+    if (Math.abs(this.pitch) > 1e-3) {
+      const side = new THREE.Vector3(Math.cos(this.twist), 0, -Math.sin(this.twist));
+      const Pq = this.bones.hips.quaternion.clone();
+      for (const [b, k] of [[this.bones.spine, 0.4], [this.bones.chest, 0.6]]) {
+        const ax = side.clone().applyQuaternion(Pq.clone().invert());
+        bend(b, new THREE.Quaternion().setFromAxisAngle(ax, -k * this.pitch));
+        Pq.multiply(b.quaternion);
+      }
     }
     const u = this.mat.userData.uHit;
     if (u.value > 0) u.value = Math.max(0, u.value - dt * 3.5);
     // muzzle flash: told (flashUntil) or from the firing clips
     const a = this.current;
-    const hasRifle = this.armed && this.weapon !== 'torch' && (this.weapon === 'secondary' || !this.parts.rifle.userData.pivot);
+    const hasRifle = this.armed && (this.weapon === 'secondary' || (this.weapon === 'primary' && !this.parts.rifle.userData.pivot));
     const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'proneShoot') && a;
     this.flash.position.copy(rl2w(this.weapon === 'secondary' ? 0.82 : 1.03, 0.045, 0));
     if (this.loadout === 'torch') this.updateFlame(dt);
@@ -1499,6 +2073,44 @@ export class OperatorFigure {
         this.onRelease?.(p, this);
       }
     } else this.nade.visible = false;
+    // the flash-bang: off the belt, in the hand, bowled (onFlashRelease(worldPos, figure))
+    if (this.shown === 'throwFlash' && a) {
+      this.flashHand.visible = a.time > FLASH_HOLD[0] && a.time < FLASH_HOLD[1];
+      this.flashBelt.visible = a.time <= FLASH_HOLD[0];
+      if (!this.released && a.time >= THROW_FLASH_RELEASE) {
+        this.released = true;
+        const p = new THREE.Vector3();
+        this.flashHand.getWorldPosition(p);
+        this.onFlashRelease?.(p, this);
+      }
+    } else {
+      this.flashHand.visible = false;
+      this.flashBelt.visible = true;
+    }
+    // the knife: in the hand from the moment he grips it until he lets go in the sheath
+    let inHand = this.weapon === 'knife';
+    if (a && this.shown === 'drawKnife') inHand = a.time >= KNIFE_T.grab;
+    else if (a && this.shown === 'sheathKnife') inHand = a.time < KNIFE_T.release;
+    this.holdKnife(inHand);
+    // the rifle's sling goes with the rifle (not with the carbine on the weapon bone)
+    if (this.loadout !== 'torch') this.sling.visible = this.parts.rifle.parent === this.bones.weapon;
+    const roped = this.shown === 'rappel' || this.shown === 'rappelStart' || (this.shown === 'rappelEnd' && a && a.time < 1.0);
+    this.rope.visible = !!roped;
+    if (roped) this.updateRope();
+  }
+  /** The rope: from high on the wall through the guide hand, the harness and the brake hand, down. */
+  updateRope() {
+    const g = this.group;
+    g.updateMatrixWorld(true);
+    const loc = (bone, v) => g.worldToLocal(bone.localToWorld(v.clone()));
+    const guide = loc(this.bones.handL, ROPE_L), harness = loc(this.bones.hips, ROPE_H), brake = loc(this.bones.handR, K_G0);
+    const pts = [new THREE.Vector3(guide.x, guide.y + 40, RAPPEL.wall), guide, harness, brake, brake.clone().add(new THREE.Vector3(0, -40, 0))];
+    this.rope.children.forEach((m, i) => {
+      const d = pts[i + 1].clone().sub(pts[i]);
+      m.position.copy(pts[i]).addScaledVector(d, 0.5);
+      m.scale.set(1, Math.max(1e-3, d.length()), 1);
+      m.quaternion.setFromUnitVectors(UP, d.normalize());
+    });
   }
   /** The flame gun: a stream of burning fuel from the nozzle while he fires standing. */
   updateFlame(dt) {
@@ -1582,7 +2194,9 @@ export class OperatorFigure {
       obj.attach(this.parts.mag);
       this.sling.visible = false;
       if (this.weapon === 'primary') this.setArmed(false);
+      else if (this.weapon === 'knife' || this.weapon === 'none') this.armed = false; // the rifle off his back
     }
+    if (name === 'knife' && this.weapon === 'knife') this.weapon = 'none';
     const box = new THREE.Box3().setFromObject(obj);
     const c = box.getCenter(new THREE.Vector3());
     const pivot = new THREE.Group();
@@ -1630,6 +2244,10 @@ export class OperatorFigure {
       obj.position.set(0, 0, 0);
       obj.quaternion.identity();
       obj.scale.set(1, 1, 1);
+      if (k === 'knife') {
+        obj.position.copy(this.A.knifeSheath.p);
+        obj.quaternion.copy(this.A.knifeSheath.q);
+      }
       pv.parent?.remove(pv);
       obj.userData.physics.remove(obj.userData.body);
       obj.userData.pivot = obj.userData.body = obj.userData.physics = null;
@@ -1657,7 +2275,7 @@ export class OperatorFigure {
     for (const s of this.flames ?? []) s.parent?.remove(s);
     this.drone.parent?.remove(this.drone);
     if (this.parts.pack.userData.onGround) this.parts.pack.parent?.remove(this.parts.pack);
-    for (const k of ['rifle', 'helmet', 'pack']) {
+    for (const k of ['rifle', 'helmet', 'pack', 'knife']) {
       const o = this.parts[k];
       if (o.userData.pivot) {
         o.userData.pivot.parent?.remove(o.userData.pivot);
