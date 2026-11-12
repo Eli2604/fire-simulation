@@ -17,6 +17,7 @@ import { radioSay, setRadioSound, shoutSay, flashBang } from '../audio/radio.js'
 import { WEAPONS } from '../sim/wounds.js';
 import { SCENARIOS } from '../scenarios.js';
 import { DragonRig } from './dragon.js';
+import { goPage } from '../pages.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -184,29 +185,146 @@ function addObstacle(type, x, z, rot) {
   ['wall', 5.4, -7.4, 0], ['crate', -3.6, -7.8, 0], ['crate', 0.6, -8.6, 0]].forEach((o) => addObstacle(...o));
 // a low mound behind the walls: the gunner's high ground
 const MOUND = { x: 6, z: 7.5, r: 3.6, h: 1.5 };
-const floorAt = (x, z) => {
+const moundAt = (x, z) => {
   const d = Math.hypot(x - MOUND.x, z - MOUND.z) / MOUND.r;
   return d >= 1 ? 0 : MOUND.h * 0.5 * (1 + Math.cos(Math.PI * d));
+};
+// a two-floor structure west of the walls: an open ground floor under a deck 3 m up, a staircase
+// along its east side, glass rails (they stop you, not your sight)
+const DECK = { x0: -13, x1: -5.8, z0: -4, z1: 2, h: 3 };
+const STAIRS = { x0: -7, x1: -5.8, z0: 2, z1: 8 }; // from the ground at z1 up to the deck at z0
+const stairY = (z) => (DECK.h * (STAIRS.z1 - z)) / (STAIRS.z1 - STAIRS.z0);
+const onStairs = (x, z) => x >= STAIRS.x0 && x <= STAIRS.x1 && z >= STAIRS.z0 && z <= STAIRS.z1;
+const onDeck = (x, z) => x >= DECK.x0 && x <= DECK.x1 && z >= DECK.z0 && z <= DECK.z1;
+/** The floor under (x, z) for someone at height `from`: the deck, the stairs, or the ground. */
+const floorAt = (x, z, from = 0) => {
+  if (onStairs(x, z)) {
+    const ys = stairY(z);
+    if (from > ys - 1.2) return ys; // on the flight (below it: walking under the stairs)
+  }
+  if (onDeck(x, z) && from > DECK.h / 2) return DECK.h;
+  return moundAt(x, z);
 };
 {
   const g = new THREE.CircleGeometry(MOUND.r, 48, 0, Math.PI * 2);
   g.rotateX(-Math.PI / 2);
   const pa = g.attributes.position;
-  for (let i = 0; i < pa.count; i++) pa.setY(i, floorAt(pa.getX(i) + MOUND.x, pa.getZ(i) + MOUND.z) + 0.01);
+  for (let i = 0; i < pa.count; i++) pa.setY(i, moundAt(pa.getX(i) + MOUND.x, pa.getZ(i) + MOUND.z) + 0.01);
   g.computeVertexNormals();
   const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: '#a99070', roughness: 1 }));
   m.position.set(MOUND.x, 0, MOUND.z);
   m.receiveShadow = true;
   scene.add(m);
 }
-const solid = (x, y, z) => WORLD.obstacles.some(({ box: b }) => x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y && y < b.max.y);
+/* ---------- the two-floor structure: deck, pillars, staircase, glass rails ---------- */
+const STRUCT = { meshes: [], boxes: [], glass: [] };
+{
+  const concrete = new THREE.MeshStandardMaterial({ color: '#9c9890', roughness: 0.9 });
+  const steel = new THREE.MeshStandardMaterial({ color: '#3d4247', roughness: 0.35, metalness: 0.8 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: '#d6eef2', roughness: 0.04, metalness: 0, transmission: 0.92, thickness: 0.02, ior: 1.5, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
+  const box = (w, h, d, x, y, z, mat, solidToo = true) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = mat !== glass;
+    m.receiveShadow = true;
+    scene.add(m);
+    STRUCT.meshes.push(m);
+    if (solidToo) STRUCT.boxes.push(new THREE.Box3().setFromObject(m));
+    return m;
+  };
+  const { x0, x1, z0, z1, h } = DECK;
+  // the deck slab and its four pillars
+  box(x1 - x0, 0.25, z1 - z0, (x0 + x1) / 2, h - 0.125, (z0 + z1) / 2, concrete);
+  for (const [px, pz] of [[x0 + 0.3, z0 + 0.3], [x1 - 0.3, z0 + 0.3], [x0 + 0.3, z1 - 0.3], [x1 - 0.3, z1 - 0.3]]) box(0.35, h - 0.25, 0.35, px, (h - 0.25) / 2, pz, concrete);
+  // the steps (20 x 0.3 m, 0.15 m rise) on a concrete flight
+  const n = 20, run = (STAIRS.z1 - STAIRS.z0) / n, sw = STAIRS.x1 - STAIRS.x0, sx = (STAIRS.x0 + STAIRS.x1) / 2;
+  for (let i = 0; i < n; i++) {
+    const z = STAIRS.z1 - (i + 0.5) * run, top = ((i + 1) * h) / n;
+    box(sw, 0.06, run + 0.02, sx, top - 0.03, z, concrete, false);
+    box(sw, h / n, 0.04, sx, top - h / n / 2, z + run / 2, concrete, false);
+  }
+  const flight = new THREE.Mesh(new THREE.BoxGeometry(sw, 0.2, Math.hypot(STAIRS.z1 - STAIRS.z0, h)), concrete);
+  flight.position.set(sx, h / 2 - 0.16, (STAIRS.z0 + STAIRS.z1) / 2);
+  flight.rotation.x = Math.atan2(h, STAIRS.z1 - STAIRS.z0);
+  flight.castShadow = flight.receiveShadow = true;
+  scene.add(flight);
+  STRUCT.meshes.push(flight);
+  // glass rails: panels 1 m high with a steel handrail on top
+  const RAIL = 1.0;
+  const rail = (ax, az, bx, bz, ya, yb) => {
+    const L = Math.hypot(bx - ax, bz - az), cx = (ax + bx) / 2, cz = (az + bz) / 2, cy = (ya + yb) / 2;
+    const pane = new THREE.Mesh(new THREE.PlaneGeometry(L, RAIL), glass);
+    pane.position.set(cx, cy + RAIL / 2, cz);
+    pane.rotation.order = 'YXZ';
+    pane.rotation.y = Math.atan2(bz - az, -(bx - ax)) + Math.PI;
+    pane.rotation.z = Math.atan2(yb - ya, L) * (bx - ax !== 0 ? Math.sign(bx - ax) : 1) * (bx - ax !== 0 ? 1 : 0);
+    if (bx === ax) pane.rotation.x = 0;
+    scene.add(pane);
+    STRUCT.meshes.push(pane);
+    // a sloping pane (the stairs): shear it into a parallelogram along the flight
+    if (ya !== yb) {
+      pane.rotation.set(0, Math.PI / 2, 0);
+      const g = pane.geometry, p = g.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + ((p.getX(i) / L) * (yb - ya)) * (az < bz ? -1 : 1));
+      p.needsUpdate = true;
+      g.computeBoundingSphere();
+    }
+    const hr = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, Math.hypot(L, yb - ya), 8), steel);
+    hr.position.set(cx, cy + RAIL + 0.02, cz);
+    hr.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(bx - ax, yb - ya, bz - az).normalize());
+    scene.add(hr);
+    STRUCT.meshes.push(hr);
+    for (const [px, pz, py] of [[ax, az, ya], [bx, bz, yb]]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, RAIL, 8), steel);
+      post.position.set(px, py + RAIL / 2, pz);
+      scene.add(post);
+      STRUCT.meshes.push(post);
+    }
+    STRUCT.glass.push({ ax, az, bx, bz, ya, yb });
+  };
+  rail(x0, z0, x1, z0, h, h); // north
+  rail(x0, z0, x0, z1, h, h); // west
+  rail(x1, z0, x1, z1, h, h); // east
+  rail(x0, z1, STAIRS.x0, z1, h, h); // south, up to the head of the stairs
+  rail(STAIRS.x0, STAIRS.z0, STAIRS.x0, STAIRS.z1, h, 0); // both sides of the flight
+  rail(STAIRS.x1, STAIRS.z0, STAIRS.x1, STAIRS.z1, h, 0);
+}
+/** Is (x, y, z) inside a glass rail (within 0.1 m of its line, between the floor and the handrail)? */
+const inRail = (x, y, z) =>
+  STRUCT.glass.some(({ ax, az, bx, bz, ya, yb }) => {
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+    const t = ((x - ax) * dx + (z - az) * dz) / L2;
+    if (t < 0 || t > 1) return false;
+    if (Math.hypot(ax + dx * t - x, az + dz * t - z) > 0.12) return false;
+    const fy = ya + (yb - ya) * t;
+    return y > fy && y < fy + 1.0;
+  });
+/** The flight of stairs itself (a slab under the steps): low headroom under its lower half. */
+const inFlight = (x, y, z) => onStairs(x, z) && y < stairY(z) && y > stairY(z) - 0.35;
+const solidSeen = (x, y, z) =>
+  WORLD.obstacles.some(({ box: b }) => x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y && y < b.max.y) ||
+  STRUCT.boxes.some((b) => x > b.min.x && x < b.max.x && z > b.min.z && z < b.max.z && y > b.min.y && y < b.max.y) ||
+  inFlight(x, y, z);
+/** Solid to walk into: walls, crates, the structure, the glass rails (which do not block sight). */
+const solid = (x, y, z) => solidSeen(x, y, z) || inRail(x, y, z);
+/** A way between the floors: by the staircase (for the squad AI's floor-by-floor moves). */
+function path3d(a, b) {
+  const up = b[1] > a[1] + 1.5, down = a[1] > b[1] + 1.5;
+  if (!up && !down) return [b.slice()];
+  const sx = (STAIRS.x0 + STAIRS.x1) / 2, foot = [sx, 0, STAIRS.z1 + 0.6], head = [sx, DECK.h, STAIRS.z0 - 0.6];
+  const flight = [];
+  for (let z = STAIRS.z1; z >= STAIRS.z0 - 0.01; z -= 0.5) flight.push([sx, stairY(z), z]);
+  const deckPts = (p) => [0.25, 0.5, 0.75, 1].map((k) => [head[0] + (p[0] - head[0]) * k, DECK.h, head[2] + (p[2] - head[2]) * k]);
+  if (up) return [foot, ...flight, head, ...deckPts(b)];
+  return [head, ...flight.reverse(), foot, b.slice()];
+}
 const physics = new PhysicsWorld({ ground: (x, z) => floorAt(x, z), boxes: () => WORLD.obstacles });
-/** Line of sight at eye height, blocked by walls and crates. */
+/** Line of sight at eye height, blocked by walls, crates and the deck (not by the glass). */
 function lineOfSight(a, b) {
-  const n = Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.3);
+  const n = Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2], b[1] - a[1]) / 0.3);
   for (let k = 1; k < n; k++) {
     const t = k / n;
-    if (solid(a[0] + (b[0] - a[0]) * t, 1.0 + (a[1] + (b[1] - a[1]) * t), a[2] + (b[2] - a[2]) * t)) return false;
+    if (solidSeen(a[0] + (b[0] - a[0]) * t, 1.0 + (a[1] + (b[1] - a[1]) * t), a[2] + (b[2] - a[2]) * t)) return false;
   }
   return true;
 }
@@ -227,7 +345,7 @@ function applyConditions() {
 const NOISES = [];
 let noiseClock = 0;
 function makeNoise(p, loud = 30, squad, ring = !squad && loud < 45) {
-  NOISES.push({ p: [p[0], 0, p[2]], loud, time: noiseClock, squad });
+  NOISES.push({ p: [p[0], p[1] ?? 0, p[2]], loud, time: noiseClock, squad });
   if (NOISES.length > 60) NOISES.shift();
   if (!ring) return;
   const r = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), new THREE.MeshBasicMaterial({ color: '#f1ead8', transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
@@ -352,7 +470,7 @@ class Enemy {
       }
       f.setAim(null);
     } else f.setAim(null);
-    if (!(SQ.on && d.squad)) d.p[1] = floorAt(d.p[0], d.p[2]);
+    if (!(SQ.on && d.squad)) d.p[1] = floorAt(d.p[0], d.p[2], d.p[1]);
     g.position.set(d.p[0], d.p[1], d.p[2]);
     g.rotation.y = d.yaw;
     f.setGear({ thermal: !!d.thermal, light: !!d.light });
@@ -509,12 +627,20 @@ const Enemies = { list: [], squads: [], zones: ZONES, world: WORLD };
 window.Enemies = Enemies;
 const SQ = { on: true };
 const viz = new SquadViz(scene);
+/** The height the team mostly stands at (the deck or the ground): the level its grid is built on. */
+function teamLevel(unit) {
+  const al = Enemies.list.map((e) => e.d).filter((d) => d.unit === unit && !d.dead);
+  return al.length ? al.reduce((a, d) => a + d.p[1], 0) / al.length : 0;
+}
 function host(unit) {
   return {
     unit,
     members: () => Enemies.list.map((e) => e.d),
     solid,
-    floor: (x, z) => floorAt(x, z),
+    // the floor under him (the deck, the stairs or the ground); for the grid: the team's level
+    floor: (x, z, m) => floorAt(x, z, m ? m.p[1] : teamLevel(unit)),
+    path3d,
+    indoors: (p) => onDeck(p[0], p[2]) || onStairs(p[0], p[2]),
     hostiles: () => HOSTILES.map((h) => h.d),
     noises: () => NOISES,
     lineOfSight,
@@ -661,7 +787,7 @@ class Hostile {
         } else if (this.cd < 1.5) f.play('crouchAim');
       }
     }
-    d.p[1] = floorAt(d.p[0], d.p[2]);
+    d.p[1] = floorAt(d.p[0], d.p[2], d.p[1]);
     f.group.position.set(d.p[0], d.p[1], d.p[2]);
     f.group.rotation.y = d.yaw;
     f.update(dt);
@@ -695,7 +821,9 @@ function textTag(text, color) {
   return s;
 }
 function spawnHostile(p, p2) {
-  const h = new Hostile(p, p2 ?? [p[0] + 3, 0, p[2]]);
+  // his beat: 3 m along; up on the deck it stays on the deck
+  const along = p[1] > 1.5 && onDeck(p[0], p[2]) ? (p[0] + 3 < DECK.x1 - 0.5 ? 3 : -3) : 3;
+  const h = new Hostile(p, p2 ?? [p[0] + along, p[1], p[2]]);
   HOSTILES.push(h);
   return h;
 }
@@ -735,7 +863,7 @@ document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => {
   sel.id = 'sceneSel';
   sel.setAttribute('aria-label', 'All scenes');
   sel.innerHTML = '<option value="">All scenes…</option>' + Object.entries(SCENARIOS).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('');
-  sel.onchange = () => sel.value && (location.href = SCENARIOS[sel.value].page ?? './?scenario=' + sel.value);
+  sel.onchange = () => sel.value && goPage(SCENARIOS[sel.value].page, SCENARIOS[sel.value].page ? null : sel.value); // (pages.js)
   $('stats').after(sel);
 }
 const animBox = $('anims');
@@ -918,23 +1046,26 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
     for (const s of Enemies.squads) s.replan();
     return;
   }
-  const p = ray.ray.intersectPlane(gPlane, new THREE.Vector3());
+  // a point on the ground, or up on the deck / the stairs if that is what was clicked
+  const up = ray.intersectObjects(STRUCT.meshes, false)[0];
+  const p = up && up.point.y > 0.3 && (onDeck(up.point.x, up.point.z) || onStairs(up.point.x, up.point.z)) ? up.point.clone() : ray.ray.intersectPlane(gPlane, new THREE.Vector3());
   if (!p) return;
   p.x = Math.round(p.x * 2) / 2;
   p.z = Math.round(p.z * 2) / 2;
+  p.y = floorAt(p.x, p.z, p.y + 0.3);
   if (Math.abs(p.x) > 16 || Math.abs(p.z) > 16) return toast('Place inside the 32 m range');
   if (tool === 'noise') {
-    makeNoise([p.x, 0, p.z], 35);
+    makeNoise([p.x, p.y, p.z], 35);
     toast('A noise: the nearest team sends men to look');
     return;
   }
   if (tool === 'hostile') {
-    spawnHostile([p.x, 0, p.z]);
+    spawnHostile([p.x, p.y, p.z]);
     toast('A hostile: he patrols until he sees or hears the team');
     return;
   }
   if (tool === 'investigate') {
-    Enemies.squads[0]?.investigate([p.x, 0, p.z], 'location');
+    Enemies.squads[0]?.investigate([p.x, p.y, p.z], 'location');
     setTool('select');
     return;
   }

@@ -137,3 +137,25 @@ test('a building: they work their way up by the stairs and clear the floor room 
   assert.ok(log.shouts.some((x) => /Clear/.test(x.text)), 'rooms called clear');
   assert.ok(log.radio.some((r) => /floor 1 clear/.test(r.text)), 'the floor called clear');
 });
+
+test('stairs up and down, and sliding down a steep hill (not indoors)', () => {
+  const run = (floor, indoors, from, to) => {
+    const m = { p: from.slice(), yaw: 0, squad: 'R1', unit: 'Alpha', health: 100 };
+    const s = new SquadAI({ unit: 'Alpha', members: () => [m], solid: () => false, floor, bounds: [-20, -20, 20, 20], indoors: () => indoors });
+    s.follow(m, [to], 'walk');
+    const seen = new Set();
+    for (let k = 0; k < 200 && m.path; k++) {
+      s.move(m, 0.05);
+      seen.add(m.anim);
+    }
+    return seen;
+  };
+  // stairs: 0.6 rise per metre between z 0 and 5
+  const stairs = (x, z) => Math.max(0, Math.min(3, z * 0.6));
+  assert.ok(run(stairs, true, [0, 0, -1], [0, 3, 6]).has('stairsUp'));
+  const down = run(stairs, true, [0, 3, 6], [0, 0, -1]);
+  assert.ok(down.has('stairsDown') && !down.has('slide'), 'indoors: down the stairs, no sliding');
+  // a steep hillside outdoors (45°): down it he slides
+  const hill = (x, z) => Math.max(0, Math.min(6, z));
+  assert.ok(run(hill, false, [0, 6, 7], [0, 0, -2]).has('slide'));
+});

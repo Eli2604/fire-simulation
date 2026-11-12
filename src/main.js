@@ -14,6 +14,7 @@ import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
+import { goPage } from './pages.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -216,7 +217,7 @@ function scheduleRestart() {
 // GUI
 const gui = new GUI({ title: 'Fire simulation' });
 const scenarioNames = Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [v.name, k]));
-gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (SCENARIOS[k].page ? (location.href = SCENARIOS[k].page) : load(cloneScene(SCENARIOS[k]))));
+gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (SCENARIOS[k].page ? goPage(SCENARIOS[k].page) : load(cloneScene(SCENARIOS[k]))));
 gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
 gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
@@ -399,7 +400,7 @@ const fSquad = gui.addFolder('Squads (fire teams)').close();
 fSquad.add(squadState, 'ai').name('Squad AI').onChange((v) => { for (const s of sim?.squads ?? []) s.on = v; });
 fSquad.add(squadState, 'paths').name('Show routes, trails, tags').onChange((v) => { if (view.enemies.viz) view.enemies.viz.show = v; });
 fSquad.add(squadState, 'radio').name('Radio voices').onChange((v) => import('./audio/radio.js').then((r) => r.setRadioSound(v)));
-fSquad.add({ rig: () => (location.href = 'rig.html') }, 'rig').name('Open the soldier rig test page');
+fSquad.add({ rig: () => goPage('rig.html') }, 'rig').name('Open the soldier rig test page');
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')

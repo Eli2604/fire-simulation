@@ -1131,6 +1131,16 @@ way); he closes in and stabs. A man **badly hit** is called in by the nearest of
   after the bang.
 - **Buildings**: to reach something on another floor they work their way up (or down) by the
   stairs, clearing each floor room by room ("Clear!", "floor 1 clear").
+- **Stairs and hills**: going up or down stairs (or a steep climb) they use the stairs clips (knees
+  high, leaning in; knees bent, eyes on the steps); down a steep hill outdoors they slide, seated,
+  feet first. The guards too.
+
+The rig page's range has a **two-floor structure**: an open ground floor under a deck 3 m up, a
+staircase with glass rails (they stop you, not your sight); the tools place noises, hostiles and
+investigations up on the deck too, and the squad works its way up the stairs to them.
+
+**Hosted pages**: built with  (), each page knows where the
+others are hosted and its scene list opens them ().
 
 ## Drone operations camp
 

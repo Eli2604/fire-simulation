@@ -413,6 +413,9 @@ export class EnemyRenderer {
     if ((e.flashUntil ?? -1) > (world.time ?? 0)) f.muzzle(0.05);
     // how fast they really go (for the step rate)
     const sp = f.prev ? Math.hypot(e.p[0] - f.prev[0], e.p[2] - f.prev[2]) / Math.max(dt, 1e-3) : 0;
+    // up or down (stairs, a slope): how fast he rises against how fast he goes
+    const slope = f.prev ? (e.p[1] - f.prev[1]) / Math.max(dt, 1e-3) / Math.max(0.3, sp) : 0;
+    f.slope = (f.slope ?? 0) + (slope - (f.slope ?? 0)) * Math.min(1, dt * 6);
     f.prev = e.p.slice();
     f.speed = (f.speed ?? 0) * 0.8 + sp * 0.2;
     let name;
@@ -427,6 +430,9 @@ export class EnemyRenderer {
     else if (e.crawling) name = 'crawl';
     else if (e.state === 'lure') name = 'crouch';
     else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
+    else if (e.moving && f.slope > 0.3) name = 'stairsUp';
+    else if (e.moving && f.slope < -1.0) name = 'slide';
+    else if (e.moving && f.slope < -0.3) name = 'stairsDown';
     else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
     else name = e.state === 'investigate' ? 'aim' : 'idle';
     if (sq && !e.held) {

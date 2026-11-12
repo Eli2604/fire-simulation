@@ -685,6 +685,50 @@ const CLIPS = {
     aimUpper(p, 1); p.wOff = [0, 0.006 * sin(2 * f), 0];
     return p;
   }],
+  // stairs (or a steep climb): the knee comes up high onto the next step, the body leans into it
+  // and rises step by step; the rifle at the low ready
+  stairsUp: [1.05, (t, u) => {
+    const p = pose0(), f = TAU * u;
+    for (const [k, o] of [['R', 0], ['L', Math.PI]]) {
+      const g = f + o, up = mx0(sin(g));
+      p['thigh' + k] = [-0.35 - 0.75 * up + 0.3 * mx0(-sin(g)), 0, 0];
+      p['shin' + k] = [0.25 + 1.0 * Math.pow(mx0(sin(g + 0.5)), 1.2), 0, 0];
+      p['foot' + k] = [-0.25 * up, 0, 0];
+    }
+    p.hipsPos = [0, -0.05 + 0.035 * sin(2 * f), 0.02];
+    p.hips = [0, 0.06 * sin(f), 0.02 * cos(f)];
+    p.spine = [0.2, -0.08 * sin(f), 0]; p.chest = [0.04, -0.03 * sin(f), 0]; p.head = [-0.16, 0.03 * sin(f), 0];
+    p.wOff = [0, -0.012 * sin(2 * f), 0];
+    return p;
+  }],
+  // down stairs: knees bent, the body upright and set back a little, eyes on the steps
+  stairsDown: [1.0, (t, u) => {
+    const p = pose0(), f = TAU * u;
+    for (const [k, o] of [['R', 0], ['L', Math.PI]]) {
+      const g = f + o;
+      p['thigh' + k] = [-0.2 - 0.3 * sin(g), 0, 0];
+      p['shin' + k] = [0.45 + 0.55 * Math.pow(mx0(-cos(g)), 1.3), 0, 0];
+      p['foot' + k] = [0.15 * mx0(sin(g)), 0, 0];
+    }
+    p.hipsPos = [0, -0.09 + 0.03 * sin(2 * f), -0.02];
+    p.hips = [0, 0.05 * sin(f), 0.025 * cos(f)];
+    p.spine = [-0.04, -0.06 * sin(f), 0]; p.chest = [0, -0.02 * sin(f), 0]; p.head = [0.22, 0.02 * sin(f), 0];
+    p.wOff = [0, 0.01 * sin(2 * f), 0];
+    return p;
+  }],
+  // sliding down a steep hill: seated, feet first, leaning back; the leading leg out straight, the
+  // other bent to steer; the left hand drags behind as a brake, the right keeps the rifle up
+  slide: [1.2, (t, u) => {
+    const p = pose0(), f = TAU * u, j = 0.012 * sin(6 * f) + 0.006 * sin(17 * f);
+    p.hipsPos = [0, -0.72 + j, -0.12];
+    p.hips = [0, 0.08, 0.04 * sin(f)];
+    p.thighR = [-1.35, 0, -0.1]; p.shinR = [0.2, 0, 0]; p.footR = [-0.2, 0, 0];
+    p.thighL = [-1.0, 0, 0.18]; p.shinL = [1.25, 0, 0]; p.footL = [-0.3, 0, 0];
+    p.spine = [-0.38, 0, 0.04]; p.chest = [-0.05, 0.1, 0]; p.head = [0.42, -0.08 + 0.03 * sin(f), 0];
+    p.lG = 0; p.lW = 1; p.lTW = [0.34, 0.22 + j, -0.38]; p.lPole = [1, -0.4, -0.6];
+    p.wOff = [0, j, 0];
+    return p;
+  }],
   reload: [2.8, (t) => {
     const p = stance(pose0());
     const tl = env(t, 0, 0.3, 2.45, 2.8);
@@ -864,9 +908,9 @@ const CLIPS = {
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1 };
 /** Ground speed each moving clip is made for (m/s). */
-export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6 };
+export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
-export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
+export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stairs up', stairsDown: 'Stairs down', slide: 'Slide (hill)', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim' };

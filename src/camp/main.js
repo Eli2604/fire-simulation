@@ -16,6 +16,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets } from '../operator/rig.js';
 import { Simulation } from '../../vendor/drones/src/core/sim.js';
 import { SCENARIOS } from '../scenarios.js';
+import { goPage } from '../pages.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -415,7 +416,7 @@ $('btnRestart').onclick = () => restart();
 {
   const sel = $('sceneSel');
   sel.innerHTML = '<option value="">All scenes…</option>' + Object.entries(SCENARIOS).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('');
-  sel.onchange = () => sel.value && (location.href = SCENARIOS[sel.value].page ?? './?scenario=' + sel.value);
+  sel.onchange = () => sel.value && goPage(SCENARIOS[sel.value].page, SCENARIOS[sel.value].page ? null : sel.value); // (pages.js)
 }
 let placing = false;
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();

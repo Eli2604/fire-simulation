@@ -61,6 +61,9 @@ const head = html
 const tag = html.match(/<script type="module" src="[^"]+"><\/script>/)[0];
 const bodyOpen = html.match(/<body[^>]*>/);
 const body = html.slice(bodyOpen.index + bodyOpen[0].length, html.indexOf(tag));
+// PAGE_URLS='{"sim":"https://...","rig":...,"camp":...}': where each page is hosted (src/pages.js opens them)
+const pagesScript = process.env.PAGE_URLS ? `<script>globalThis.__PAGES = ${JSON.stringify(JSON.parse(process.env.PAGE_URLS))};</script>
+` : '';
 const bodyAttrs = bodyOpen[0].slice(5, -1);
 const doc = `<!doctype html>
 <html lang="en">
@@ -71,7 +74,7 @@ ${head}
 </head>
 <body${bodyAttrs}>
 ${body}
-<script type="module">
+${pagesScript}<script type="module">
 ${code}
 </script>
 </body>

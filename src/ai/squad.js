@@ -611,13 +611,31 @@ export class SquadAI {
     let dy = Math.atan2(dx, dz) - (m.yaw ?? 0);
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
-    const sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
+    let sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
+    // the ground ahead: stairs (or a steep climb) up or down; down a steep hill outdoors he slides
+    let anim = mode;
+    if (mode !== 'crawl' && sp > 0.05) {
+      const ax = m.p[0] + Math.sin(m.yaw) * 0.5, az = m.p[2] + Math.cos(m.yaw) * 0.5;
+      const ay = this.host.floor(ax, az, m);
+      const slope = ay != null ? (ay - m.p[1]) / 0.5 : 0;
+      m.slope = m.slope == null ? slope : m.slope + (slope - m.slope) * Math.min(1, dt * 6);
+      if (m.slope < -0.75 && !(this.host.indoors?.(m.p) ?? false)) {
+        anim = 'slide';
+        sp = Math.max(sp, 2.6);
+      } else if (m.slope > 0.3) {
+        anim = 'stairsUp';
+        sp *= 0.7;
+      } else if (m.slope < -0.3) {
+        anim = 'stairsDown';
+        sp *= 0.8;
+      }
+    }
     const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
     const fy = this.host.floor(nx, nz, m);
     m.p = [nx, fy ?? m.p[1], nz];
     m.moving = sp > 0.05;
     m.speed = sp;
-    this.setAnim(m, mode);
+    this.setAnim(m, anim);
   }
   face(m, p, dt, rate = 2.4) {
     let dy = Math.atan2(p[0] - m.p[0], p[2] - m.p[2]) - (m.yaw ?? 0);
