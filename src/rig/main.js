@@ -10,7 +10,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, placeZone, LABELS, MOVING, ONCE } from '../operator/rig.js';
 import { SquadViz } from '../operator/squadviz.js';
 import { SquadAI } from '../ai/squad.js';
-import { radioSay, setRadioSound } from '../audio/radio.js';
+import { radioSay, setRadioSound, shoutSay, flashBang } from '../audio/radio.js';
+import { WEAPONS } from '../sim/wounds.js';
 import { SCENARIOS } from '../scenarios.js';
 
 const qs = new URLSearchParams(location.search);
@@ -371,13 +372,27 @@ function aimVel(from, to) {
   const d = Math.hypot(to[0] - from[0], to[2] - from[2]), T = Math.max(0.9, Math.min(1.6, d / 12));
   return [(to[0] - from[0]) / T, (to[1] - from[1] + 4.905 * T * T) / T, (to[2] - from[2]) / T];
 }
-function throwGrenade(from, vel) {
+function throwGrenade(from, vel, kind = 'frag') {
   const m = new THREE.Group();
   m.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
+  if (kind === 'flash') m.scale.set(0.8, 1.25, 0.8); // the flashbang: a slimmer can
   m.position.set(...from);
   m.castShadow = true;
   scene.add(m);
-  nades.push({ m, v: V(vel), fuse: 2.5 });
+  nades.push({ m, v: V(vel), fuse: kind === 'flash' ? 1.5 : 2.5, kind });
+}
+/** A flashbang: a blinding flash and a bang; hostiles who have it in view are stunned a few seconds. */
+function flash(p) {
+  makeNoise([p.x, 0, p.z], 60, undefined, true);
+  flashBang();
+  const light = new THREE.PointLight(0xfff8ee, 4000, 30, 1.5);
+  light.position.copy(p).add(V([0, 0.3, 0]));
+  scene.add(light);
+  blasts.push({ t: 0, light, parts: [], flash: true });
+  for (const h of HOSTILES) {
+    const d = Math.hypot(h.d.p[0] - p.x, h.d.p[2] - p.z);
+    if (!h.d.dead && d < 10 && lineOfSight([p.x, 0, p.z], h.d.p)) h.d.stunnedUntil = noiseClock + 5 * (1 - d / 12);
+  }
 }
 const puffTex = (() => {
   const c = document.createElement('canvas');
@@ -457,7 +472,8 @@ function stepGrenades(dt) {
       }
     }
     if (n.fuse <= 0) {
-      explode(n.m.position.clone());
+      if (n.kind === 'flash') flash(n.m.position.clone());
+      else explode(n.m.position.clone());
       scene.remove(n.m);
       nades.splice(i, 1);
     }
@@ -465,7 +481,7 @@ function stepGrenades(dt) {
   for (let i = blasts.length - 1; i >= 0; i--) {
     const b = blasts[i];
     b.t += dt;
-    b.light.intensity = Math.max(0, 60 * (1 - b.t / 0.35));
+    b.light.intensity = b.flash ? (b.t < 0.15 ? 4000 : 0) : Math.max(0, 60 * (1 - b.t / 0.35));
     for (const s of b.parts) {
       s.position.addScaledVector(s.userData.v, dt);
       s.userData.v.multiplyScalar(s.userData.fire ? 0.9 : 0.97);
@@ -499,13 +515,23 @@ function host(unit) {
     bounds: [-16, -16, 16, 16],
     threat: WORLD.threat,
     peers: () => Enemies.squads,
-    fire: (m, target) => {
+    // a round at target (already scattered by his expertise, ai/soldier.js): a hit if it lands on
+    // a hostile's body (less of him shows behind cover); damage by the weapon
+    fire: (m, target, weapon = 'rifle') => {
       makeNoise(m.p, 45, m.unit);
       const h = HOSTILES.filter((x) => !x.d.dead).sort((a, b) => Math.hypot(a.d.p[0] - target[0], a.d.p[2] - target[2]) - Math.hypot(b.d.p[0] - target[0], b.d.p[2] - target[2]))[0];
-      if (h && Math.hypot(h.d.p[0] - target[0], h.d.p[2] - target[2]) < 3 && lineOfSight(m.p, h.d.p) && Math.random() < (h.d.covered ? 0.12 : 0.3)) h.damage(35);
+      const miss = h ? Math.hypot(h.d.p[0] - target[0], h.d.p[2] - target[2], (h.d.p[1] + 1.0 - target[1]) * 0.5) : Infinity;
+      if (h && miss < (h.d.covered ? 0.18 : 0.38) && lineOfSight(m.p, h.d.p)) h.damage(35 * (WEAPONS[weapon]?.dmg ?? 1));
       Enemies.list.find((e) => e.d === m)?.fig.muzzle(0.05);
     },
     grenade: (m, from, vel) => throwGrenade(from, vel),
+    flashbang: (m, from, vel) => throwGrenade(from, vel, 'flash'),
+    stab: (m, h) => HOSTILES.find((x) => x.d === h)?.damage(45),
+    shout: (m, text) => {
+      if (radioOn) shoutSay(text);
+      $('squadStatus').textContent = 'Shout: ' + text;
+    },
+    now: () => noiseClock,
     droneLaunch: (m, T) => {
       const e = Enemies.list.find((x) => x.d === m);
       if (e) e.fig.droneTarget = V(T);
@@ -591,6 +617,11 @@ class Hostile {
   }
   update(dt) {
     const d = this.d, f = this.fig;
+    // blinded by a flashbang: he staggers, does nothing else
+    if (!d.dead && (d.stunnedUntil ?? 0) > noiseClock) {
+      f.play('hit');
+      return;
+    }
     if (!d.dead) {
       const squad = Enemies.list.filter((e) => !e.d.dead);
       const range = COND.night ? 12 : visibility();

@@ -1506,13 +1506,22 @@ export class Simulation {
       noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, kind: n.kind, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
       peers: () => this.squads ?? [],
       radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
-      fire: (e, target) => {
+      fire: (e, target, weapon = 'rifle') => {
         const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.6, e.p[1] + 1.1, e.p[2] + Math.cos(e.yaw) * 0.6];
         e.flashUntil = w.time + 0.06;
-        const hit = shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad, player: pl() });
-        if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle });
+        const hit = shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad, player: pl(), weapon });
+        if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle, weapon });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
+      flashbang: (e, from, vel) => w.projectiles.push({ type: 'flash', p: from.slice(), v: vel.slice(), fuse: 1.5, by: e.unit, resting: false }),
+      // the knife: into you (the torso, or the neck over the collar of your gear)
+      stab: (e, h) => {
+        if (h === pl()) w.playerHits.push({ zone: Math.random() < 0.3 ? 'head' : 'torso', time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'knife' });
+      },
+      shout: (e, text) => w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text }),
+      now: () => w.time,
+      // a way to another floor (stairs): the guard AI's 3D paths over floors and stairs (ai/enemies.js)
+      path3d: (a, b) => this.ai.path(a, b, 6000),
       // the flame gun: burning fuel along a 2-7 m stream; it lights what it reaches
       flame: (e, target) => {
         const d = [target[0] - e.p[0], target[2] - e.p[2]], l = Math.hypot(...d) || 1;

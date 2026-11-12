@@ -67,9 +67,12 @@
  * For the renderer each member gets: anim (clip name), aimAt, path / pathI, cover, track (where he went, [x, z]),
  * signal { text, until }, moving, speed.
  */
+import { analyse, openGround, moveGroup, endGroup, stepGroups, clearTo, stepClearing, joinUp, doorOnPath, startBreach, breachStep } from './tactics.js';
+import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES } from './soldier.js';
+
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
-const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, throwGrenade: 1.6, pickup: 1.3, radio: 2.4 };
+const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
 export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
@@ -327,14 +330,21 @@ export class SquadAI {
           continue;
         }
         this.fy[k] = y;
-        outer: for (const [ox, oz] of [[0, 0], [0.18, 0], [-0.18, 0], [0, 0.18], [0, -0.18]])
+        outer: for (const [ox, oz] of [[0, 0], [0.13, 0], [-0.13, 0], [0, 0.13], [0, -0.13]])
           for (const hy of [0.5, 1.0, 1.45])
             if (this.host.solid(x + ox, y + hy, z + oz)) {
               raw[k] = 1;
               break outer;
             }
       }
-    // keep a body's width off walls
+    // keep a body's width off walls, where there is room for it (a corridor or a door narrower
+    // than ~1.6 m they go through the middle of)
+    const run = (i, j, di, dj) => {
+      let n = 1;
+      for (const s of [1, -1])
+        for (let a = i + di * s, b = j + dj * s; a >= 0 && b >= 0 && a < nx && b < nz && !raw[b * nx + a]; a += di * s, b += dj * s) n++;
+      return n;
+    };
     const bl = new Uint8Array(nx * nz);
     for (let j = 0; j < nz; j++)
       for (let i = 0; i < nx; i++) {
@@ -344,7 +354,7 @@ export class SquadAI {
         }
         for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const a = i + di, b = j + dj;
-          if (a >= 0 && b >= 0 && a < nx && b < nz && raw[b * nx + a]) bl[j * nx + i] = 2;
+          if (a >= 0 && b >= 0 && a < nx && b < nz && raw[b * nx + a] && run(i, j, Math.abs(di), Math.abs(dj)) >= 4) bl[j * nx + i] = 2;
         }
       }
     this.blocked = bl.map((v) => (v ? 1 : 0));
@@ -372,6 +382,7 @@ export class SquadAI {
     this.cost = new Float32Array(nx * nz);
     for (let k = 0; k < nx * nz; k++) this.cost[k] = d[k] <= 3 ? 1 : 1.7;
     this.computeCovers();
+    analyse(this); // widths, doorways (ai/tactics.js)
   }
 
   computeCovers() {
@@ -519,11 +530,30 @@ export class SquadAI {
   }
 
   /* ---------- per member ---------- */
-  setAnim(m, a) {
-    if (m.anim === a) return;
+  setAnim(m, a, dur) {
+    if (m.anim === a && !dur) return;
     m.anim = a;
     m.animT = this.time;
-    if (ONCE_T[a]) m.animUntil = this.time + ONCE_T[a];
+    m.animDur = dur ?? ONCE_T[a];
+    if (ONCE_T[a] || dur) m.animUntil = this.time + (dur ?? ONCE_T[a]);
+  }
+  /** A grenade or flashbang leaving the hand (thrown at m.throwTarget, or the threat). */
+  release(m, T) {
+    if (m.throwAt == null || this.time < m.throwAt) return;
+    m.throwAt = null;
+    const c = Math.cos(m.yaw), s = Math.sin(m.yaw);
+    const from = [m.p[0] + -0.12 * c + 0.5 * s, m.p[1] + 1.62, m.p[2] + 0.12 * s + 0.5 * c];
+    const G = m.throwTarget ?? T ?? m.p;
+    m.throwTarget = null;
+    const d = dist2(from, G), Tf = Math.max(0.9, Math.min(1.6, d / 12));
+    const vel = [(G[0] - from[0]) / Tf, (G[1] - from[1] + 4.905 * Tf * Tf) / Tf, (G[2] - from[2]) / Tf];
+    if (m.throwKind === 'flash') this.host.flashbang?.(m, from, vel);
+    else this.host.grenade?.(m, from, vel);
+    m.throwKind = null;
+  }
+  /** What the radio calls him ("rifleman two"). */
+  name(m) {
+    return NAME[m.squad] ?? 'rifleman';
   }
   busy(m) {
     return m.animUntil > this.time;
@@ -543,6 +573,31 @@ export class SquadAI {
     const mode = m.crawling ? 'crawl' : m.moveMode;
     const tgt = m.path[m.pathI];
     const dx = tgt[0] - m.p[0], dz = tgt[2] - m.p[2], dist = Math.hypot(dx, dz);
+    // narrow (a corridor, a gap): one behind the other; wait while a man is right ahead
+    m.inFile = false;
+    if (!m.group && this.width && dist > 0.05) {
+      const k = this.cellOf(m.p[0], m.p[2]);
+      if (k >= 0 && this.width[k] < 1.6) {
+        m.inFile = true;
+        const ux = dx / dist, uz = dz / dist;
+        const ahead = this.members().find((o) => o !== m && !o.dead && Math.hypot(o.p[0] - m.p[0], o.p[2] - m.p[2]) < 1.7 && ((o.p[0] - m.p[0]) * ux + (o.p[2] - m.p[2]) * uz) > 0.4 && (o.moving || o.path));
+        if (ahead && (m.fileWait = (m.fileWait ?? 0) + dt) < 3) {
+          this.setAnim(m, 'aim');
+          return;
+        }
+      }
+    }
+    m.fileWait = 0;
+    // a doorway into a room ahead: the team stacks up, a flashbang goes in first (ai/tactics.js)
+    if (!m.group && !this.breach && this.threat) {
+      const D = doorOnPath(this, m);
+      if (D) {
+        const al = this.members().filter((o) => !o.dead && o.squad !== 'UAV' && !o.group && !this.host.ownMove?.(o));
+        const end = m.path[m.path.length - 1];
+        startBreach(this, { men: al, anchor: m.p.slice(), goal: end, leader: al.find((o) => o.squad === 'CMD') ?? m }, D.room, D.p);
+      }
+    }
+    if (this.breach?.men.includes(m) && !m.group && !(this.breach.g?.route) && !m.stackAt) return;
     if (dist < (m.pathI === m.path.length - 1 ? 0.22 : 0.45)) {
       m.pathI++;
       if (m.pathI >= m.path.length) {
@@ -674,6 +729,13 @@ export class SquadAI {
    */
   investigate(p, why = 'location', { urgent = false } = {}) {
     const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
+    // on another floor of a building: the whole team, clearing floor by floor (ai/tactics.js)
+    const c0 = al.length ? centroid(al) : null;
+    if (c0 && Math.abs((p[1] ?? c0[1]) - c0[1]) > 2 && this.host.path3d && !this.clearing) {
+      this.inv = { p: p.slice(), why, men: al, t: this.time, look: 0, clearing: true };
+      if (clearTo(this, p, why, () => this.endInvestigation(true))) return;
+      this.inv = null;
+    }
     const men = al.filter((m) => m.squad === 'R1' || m.squad === 'R2');
     let pick = urgent ? al : (men.length ? men : al.filter((m) => m.squad !== 'CMD')).slice(0, 2);
     if (!pick.length) pick = al.slice(0, 1); // alone: he goes himself
@@ -713,17 +775,24 @@ export class SquadAI {
     // sightings
     const range = this.sight();
     let seen = null, nSeen = 0;
+    this.seen = [];
     for (const h of H.hostiles?.() ?? []) {
       if (h.dead) continue;
       const spot = al.find((m) => dist2(m.p, h.p) < range && (H.lineOfSight?.(m.p, h.p) ?? true));
       if (!spot) continue;
       nSeen++;
+      this.seen.push(h);
       h.marked = true;
       if (!seen || dist2(spot.p, h.p) < dist2(spot.p, seen.p)) seen = h;
     }
     if (seen) {
       this.lastSeen = this.time;
       if (this.inv) this.endInvestigation(false);
+      if (this.clearing) {
+        for (const g of [...(this.groups ?? [])]) endGroup(this, g);
+        this.clearing = null;
+      }
+      if (this.split) joinUp(this); // contact: one team again
       if (!this.threat || dist2(this.threat, seen.p) > 1.5) {
         if (!this.threat) {
           this.threat = seen.p.slice();
@@ -762,6 +831,8 @@ export class SquadAI {
         m.cover = to;
         this.follow(m, this.route(m.p, to), 'aimWalk', (q) => (q.arrived = true));
       }
+    } else if (this.inv?.clearing) {
+      // clearing a building: tactics.js moves them (stepClearing)
     } else if (this.inv) {
       const I = this.inv;
       if (I.men.every((m) => m.dead || m.arrived)) {
@@ -829,12 +900,18 @@ export class SquadAI {
     if (!ms.length) return;
     // no threat yet: listen, look, send men to investigate; hold where they are
     if (this.on) this.senses(dt);
+    stepGroups(this, dt);
+    stepClearing(this);
+    if (this.breach && !this.breach.g?.route) breachStep(this, this.breach.g, dt);
     if (!this.threat) {
       for (const m of ms) {
         if (m.dead || this.host.ownMove?.(m)) continue;
         m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
+        kit(m);
+        this.release(m, null);
+        if (!this.busy(m)) manage(this, m, dt, this.host.hostiles?.() ?? []);
         this.move(m, dt);
-        if (!m.path && !this.busy(m) && !this.inv?.men.includes(m)) {
+        if (!m.path && !this.busy(m) && !this.inv?.men.includes(m) && !m.group) {
           if (this.inv) this.face(m, this.inv.p, dt);
           this.setAnim(m, m.squad === 'UAV' ? 'crouch' : 'crouchAim');
         }
@@ -861,6 +938,7 @@ export class SquadAI {
       if (this.host.ownMove?.(m)) continue;
       m.squadInit ??= (m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
       m.track ??= [];
+      kit(m);
       this.move(m, dt);
       // the trail behind them
       const last = m.track[m.track.length - 1];
@@ -869,6 +947,7 @@ export class SquadAI {
         if (m.track.length > 160) m.track.shift();
       }
     }
+    casualties(this, al);
     for (const m of ms)
       if (m.dead && !m.reportedDown) {
         m.reportedDown = true;
@@ -928,14 +1007,13 @@ export class SquadAI {
     const cmd = al.find((m) => m.squad === 'CMD') ?? al[0];
     for (const m of al) {
       if (this.host.ownMove?.(m)) continue;
-      // a grenade leaving the hand
-      if (m.throwAt != null && this.time >= m.throwAt) {
-        m.throwAt = null;
-        const c = Math.cos(m.yaw), s = Math.sin(m.yaw);
-        const from = [m.p[0] + -0.12 * c + 0.5 * s, m.p[1] + 1.62, m.p[2] + 0.12 * s + 0.5 * c];
-        const d = dist2(from, T), Tf = Math.max(0.9, Math.min(1.6, d / 12));
-        this.host.grenade?.(m, from, [(T[0] - from[0]) / Tf, (T[1] - from[1] + 4.905 * Tf * Tf) / Tf, (T[2] - from[2]) / Tf]);
+      // blinded and deafened by a flashbang: he can do nothing for a few seconds
+      if (m.stunnedUntil && m.stunnedUntil > (this.host.now?.() ?? this.time)) {
+        m.path = null;
+        this.setAnim(m, 'crouch');
+        continue;
       }
+      this.release(m, T);
       if (m.droneAt != null && this.time >= m.droneAt) {
         m.droneAt = null;
         this.host.droneLaunch?.(m, T);
@@ -945,6 +1023,7 @@ export class SquadAI {
         if (m.anim === 'throwGrenade') this.face(m, T, dt, 4);
         continue;
       }
+      if (m.group) continue;
       if (m.squad === 'UAV') {
         // the drone operator: deploy once in contact, then fly it from where he kneels
         if (!m.deployed && this.contacted && !m.path) {
@@ -970,6 +1049,8 @@ export class SquadAI {
         } else if (!m.deployed) this.setAnim(m, 'crouchAim');
         continue;
       }
+      // his weapon: reloading, switching, out of ammo, the knife in close combat
+      if (!m.goingFor && manage(this, m, dt, this.host.hostiles?.() ?? [])) continue;
       if (m.anim === 'pickup' && m.goingFor) {
         this.host.pickup?.(m);
         m.goingFor = null;
@@ -1013,10 +1094,12 @@ export class SquadAI {
       m.fireT = (m.fireT ?? 1) - dt;
       if (m.anim === SHOOT) {
         m.shotT = (m.shotT ?? 0) - dt;
-        if (m.shotT <= 0 && m.rounds > 0) {
+        if (m.shotT <= 0 && m.rounds > 0 && canShoot(m)) {
           m.rounds--;
-          m.shotT = 0.12;
-          this.host.fire?.(m, [T[0] + (Math.random() - 0.5) * 2, T[1] + 0.4 + Math.random() * 1.2, T[2] + (Math.random() - 0.5) * 2]);
+          m.shotT = m.squad === 'MG' ? 0.09 : 0.12;
+          spend(m);
+          const aim = this.seen?.length ? this.seen.reduce((a, h) => (dist2(h.p, m.p) < dist2(a.p, m.p) ? h : a)).p : T;
+          this.host.fire?.(m, aimPoint(m, aim), weaponKind(m));
         }
         if (m.fireT <= 0) {
           this.setAnim(m, AIM);
@@ -1028,10 +1111,24 @@ export class SquadAI {
           if (covering) {
             this.setAnim(m, SHOOT);
             m.fireT = m.squad === 'MG' ? 1.3 : 0.7;
-            m.rounds = m.squad === 'MG' ? 9 : 3;
+            m.rounds = (m.weapon === 'secondary' ? ARMS.secondary : ARMS[m.primary ?? 'rifle']).burst;
             m.shotT = 0;
           } else m.fireT = 0.5;
         }
+      }
+      // under heavy fire from one side: a grenade that way (not too close to his own men), shouted
+      const heavy = !lie && m.squad !== 'MG' && m.grenades > 0 && this.time >= (this.heavyCd ?? 0) ? heavyFire(this, al, this.seen ?? []) : null;
+      if (heavy && dist2(m.p, heavy) > 7 && dist2(m.p, heavy) < 26 && !this.host.members().some((o) => o.squad && !o.dead && dist2(o.p, heavy) < 7.5)) {
+        m.grenades--;
+        this.heavyCd = this.time + 9;
+        this.grenadeCd = Math.max(this.grenadeCd, 6);
+        this.face(m, heavy, 1, 10);
+        this.setAnim(m, 'throwGrenade');
+        m.throwAt = this.time + 1.0;
+        m.throwTarget = heavy;
+        m.signal = { text: 'FRAG OUT!', until: this.time + 1.8 };
+        this.host.shout?.(m, 'Frag out!');
+        continue;
       }
       // a covering rifleman throws a grenade when the threat is in range
       const d = dist2(m.p, T);
@@ -1042,6 +1139,7 @@ export class SquadAI {
         this.setAnim(m, 'throwGrenade');
         m.throwAt = this.time + 1.0;
         m.signal = { text: 'FRAG OUT', until: this.time + 1.8 };
+        this.host.shout?.(m, 'Frag out!');
       }
     }
     // held at the threat a while, no one hit, nothing moving: the area is safe, send the drone scouting
@@ -1055,8 +1153,39 @@ export class SquadAI {
     if (u && !u.scouting && u.scoutOrdered && this.phase !== 'hold') u.scoutOrdered = false;
     if (this.pursuit || this.holdOff === true || this.holdOff === 'asked-continue') {
       // in pursuit, or told to hold off: no bounds
+    } else if (this.phase === 'formation') {
+      this.formT = (this.formT ?? 0) - dt;
+      if (this.formT <= 0) {
+        this.formT = 1;
+        const G = this.goal ?? T, c = centroid(al);
+        const hit = al.some((m) => m.lastHitT != null && (this.host.now?.() ?? 0) - m.lastHitT < 4);
+        if (dist2(c, G) < 22 || hit || (this.seen ?? []).some((h) => dist2(h.p, c) < 18) || !this.groups?.length) {
+          for (const g of [...(this.groups ?? [])]) endGroup(this, g);
+          this.phase = 'bound';
+          this.assigned = false;
+          this.t = 0;
+          if (cmd) {
+            this.setAnim(cmd, 'signalMove');
+            cmd.signal = { text: 'BOUNDING OVERWATCH', until: this.time + 2 };
+          }
+          this.status = 'Close to the threat (or under fire): the commander signals bounding overwatch.';
+        }
+      }
     } else if (this.phase === 'bound') {
-      if (!this.assigned) this.assignBound();
+      if (!this.assigned) {
+        const G = this.goal ?? T, c = centroid(al);
+        const hit = al.some((m) => m.lastHitT != null && (this.host.now?.() ?? 0) - m.lastHitT < 4);
+        if (this.navAge !== Infinity && this.width && dist2(c, G) > 28 && openGround(this, c) && !hit && al.length > 1) {
+          // far off and in the open: move as one, in formation, to ~22 m from it
+          const l = dist2(c, G), to = [G[0] + ((c[0] - G[0]) / l) * 21, G[1], G[2] + ((c[2] - G[2]) / l) * 21];
+          this.phase = 'formation';
+          this.formT = 2;
+          moveGroup(this, al.filter((m) => m.squad !== 'UAV' || !m.deployed), to);
+          this.status = 'Far off in the open: the team moves as one, in formation, each man watching his sector.';
+          return;
+        }
+        this.assignBound();
+      }
       const movers = al.filter((m) => teamOf(m) === this.moving);
       if (movers.every((m) => m.arrived && !m.path) || this.t > 18) {
         const G = this.goal ?? T;

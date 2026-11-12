@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { loadOperatorAssets, OperatorFigure, PhysicsWorld, MOVING, ONCE } from '../operator/rig.js';
 import { SquadViz } from '../operator/squadviz.js';
-import { radioSay } from '../audio/radio.js';
+import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 
 /**
  * The guards: soldiers in armour, with human proportions (1.8 m), built from
@@ -385,7 +385,16 @@ export class EnemyRenderer {
     for (; this.seenEvents < world.events.length; this.seenEvents++) {
       const ev = world.events[this.seenEvents];
       if (ev.type === 'radio') radioSay(ev.name, { reply: ev.kind === 'reply' });
+      else if (ev.type === 'shout' && ev.name !== 'enemy') shoutSay(ev.name);
+      else if (ev.type === 'flashbang') {
+        // the flash: a blinding light for an instant, then the bang
+        this.flashLight ??= this.scene.add(new THREE.PointLight(0xfff8ee, 0, 30, 1.5)).children.at(-1);
+        this.flashLight.position.set(ev.pos[0], ev.pos[1] + 0.3, ev.pos[2]);
+        this.flashUntil = time + 0.18;
+        flashBang();
+      }
     }
+    if (this.flashLight) this.flashLight.intensity = time < (this.flashUntil ?? 0) ? 4000 : 0;
   }
 
   driveOperator(f, e, world, time, dt, k) {

@@ -8,7 +8,7 @@ import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
-import { shoot } from '../sim/wounds.js';
+import { shoot, WEAPONS } from '../sim/wounds.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -162,8 +162,10 @@ export class Walkthrough {
       }
       if (e.code === 'KeyM') this.toggleMask();
       if (e.code === 'KeyR' && this.tool === 'rifle' && !this.reloading && (this.ammo ?? 30) < 30) {
-        this.reloading = 2;
-        this.say('Reloading…', 2);
+        if ((this.mags ?? 4) > 0) {
+          this.reloading = 2;
+          this.say('Reloading…', 2);
+        } else this.say('No magazines left', 2);
       }
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
@@ -468,6 +470,7 @@ export class Walkthrough {
     g.position.set(hip[0] + (eye[0] - hip[0]) * a + sway, hip[1] + (eye[1] - hip[1]) * a - lower - 0.06 * rl + Math.abs(sway) * 0.5, hip[2] + (eye[2] - hip[2]) * a + 0.035 * this.kick);
     g.rotation.set(0.05 * this.kick * (1 - 0.5 * a) - 0.35 * rl - lower, 0.06 * (1 - a), 0.5 * rl);
     this.flashT = Math.max(0, (this.flashT ?? 0) - dt);
+    if (this.flashK > 0) this.flashK *= Math.exp(-dt / 1.8); // the flashbang's white fades
     this.gunFlash.visible = this.flashT > 0;
     if (this.gunFlash.visible) this.gunFlash.rotation.y = Math.random() * Math.PI;
     this.gunLight.intensity = this.flashT > 0 ? 6 : 0;
@@ -769,6 +772,11 @@ export class Walkthrough {
     const H = (c.height = c.clientHeight);
     const g = c.getContext('2d');
     g.clearRect(0, 0, W, H);
+    // blinded by a flashbang: white, fading
+    if (this.flashK > 0.01) {
+      g.fillStyle = `rgba(255,255,250,${Math.min(1, this.flashK)})`;
+      g.fillRect(0, 0, W, H);
+    }
     // the helmet lamp lights up the smoke right in front of you ("white wall")
     if (this.lampOn && smokeSigma > 0.05) {
       const k = Math.min(0.75, 1 - Math.exp(-smokeSigma * 1.5));
@@ -1277,17 +1285,22 @@ export class Walkthrough {
     }
     // where you are, for the enemies (they see your head)
     sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving };
-    // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine, R reloads
+    // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine and 4 spare
+    // magazines (ammunition is limited, as for the soldiers), R reloads
     this.ammo ??= 30;
+    this.mags ??= 4;
     this.shotCd = Math.max(0, (this.shotCd ?? 0) - dt);
     if (this.reloading) {
       this.reloading = Math.max(0, this.reloading - dt);
-      if (!this.reloading) this.ammo = 30;
+      if (!this.reloading) {
+        this.ammo = 30;
+        this.mags = Math.max(0, this.mags - 1);
+      }
     }
     if (this.trigger && locked && this.tool === 'rifle' && !this.downed && !this.reloading && this.shotCd <= 0) {
       if (this.ammo <= 0) {
         this.trigger = false;
-        this.say('Magazine empty – R to reload', 2);
+        this.say(this.mags > 0 ? 'Magazine empty – R to reload' : 'Out of ammunition', 2);
       } else {
         this.ammo--;
         this.shotCd = 0.11;
@@ -1305,10 +1318,11 @@ export class Walkthrough {
     // shots that hit you
     for (const hit of w.playerHits.splice(0)) {
       if (this.downed) continue;
-      const dmg = { head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20;
+      // what hit you matters as much as where (sim/wounds.js WEAPONS)
+      const dmg = ({ head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20) * (WEAPONS[hit.weapon ?? 'rifle']?.dmg ?? 1);
       this.hurt(dmg);
       if (hit.zone === 'head') this.damageMask(0.35, 0.5, 0.4);
-      this.say(`You are hit – ${hit.zone}!`, 2);
+      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : `You are hit – ${hit.zone}!`, 2);
     }
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
     if (this.lampOn && !this.downed) {
@@ -1321,6 +1335,14 @@ export class Walkthrough {
     for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++) {
       const ev = sim.world.events[this.seenEv];
       if (ev.type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
+      // a flashbang in view: blinded for a few seconds
+      else if (ev.type === 'flashbang' && !this.downed) {
+        const d = Math.hypot(ev.pos[0] - head[0], ev.pos[1] - head[1], ev.pos[2] - head[2]);
+        if (d < 14 && sim.ai.sees(head, [ev.pos[0], ev.pos[1] + 0.2, ev.pos[2]])) {
+          this.flashK = Math.max(this.flashK ?? 0, 1.15 - d / 14);
+          this.say('FLASHBANG – blinded, ears ringing', 3);
+        }
+      }
       // the dragon
       else if (ev.type === 'roar' && !this.downed) this.say('A DRAGON ROARS', 2.5);
       else if (ev.type === 'dragonFire' && !this.downed) {
@@ -1364,7 +1386,7 @@ export class Walkthrough {
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
-    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'}${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
+    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'} · ${this.mags ?? 4} mags${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
     // the mask off: no display in the visor, only what you know (how you are, what you hold)
     const bare = this.maskK < 0.6;
     this.el.hud.classList.toggle('bare', bare);

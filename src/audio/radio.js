@@ -65,3 +65,41 @@ export function radioSay(text, { reply = false } = {}) {
     // no audio here
   }
 }
+
+/** A shout ("Frag out!", "Medic!", "Go, go, go!"): the voice straight, no handset. */
+export function shoutSay(text) {
+  if (!enabled || typeof window === 'undefined') return;
+  try {
+    const ss = window.speechSynthesis;
+    if (!ss) return;
+    const u = new SpeechSynthesisUtterance(text.toLowerCase());
+    u.rate = 1.3;
+    u.pitch = 0.9;
+    u.volume = 1;
+    ss.speak(u);
+  } catch {
+    // no speech here
+  }
+}
+
+/** A flashbang's bang: a short, very loud crack of noise. */
+export function flashBang() {
+  if (!enabled || typeof window === 'undefined') return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx ??= new AC();
+    const t = ctx.currentTime, n = ctx.sampleRate * 0.6;
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.08));
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = 0.9;
+    src.connect(g).connect(ctx.destination);
+    src.start(t);
+  } catch {
+    // no audio here
+  }
+}

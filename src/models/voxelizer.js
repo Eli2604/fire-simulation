@@ -225,7 +225,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const p = toWorld(...en.p);
     // the patrol area in world coordinates (its corners, so a rotated object rotates it)
     const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
-    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat) } : {}) });
+    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}) });
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });

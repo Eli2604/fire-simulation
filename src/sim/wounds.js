@@ -11,6 +11,12 @@ import { F_FALLING } from './world.js';
  *    bleeding clots. Blood drips from the wound (a trail where they go), sprays
  *    onto the wall or floor behind a hit, and soaks into their clothes there.
  *  - Bullets and arrows that hit a wall leave a hole (a decal); glass breaks.
+ *  - What hits matters as much as where (WEAPONS): a rifle round, the gunner's heavier
+ *    round, the compact secondary's pistol-calibre round, a knife, grenade fragments, an
+ *    arrow each do their own damage and bleeding.
+ *  - Body armour (e.armour: plates front and back; e.helmet: a helmet) stops most rounds to the torso (a
+ *    bruise, no wound), the heavier ones less often; a knife cannot get through a plate.
+ *    The helmet (unless knocked off) turns some rounds and most fragments.
  *
  * Blood on surfaces and bullet holes are decals (world.decals); falling drops are
  * world.drops, stepped here; the renderer draws both (render/blood.js).
@@ -24,6 +30,28 @@ const ZONES = {
   legL: { bullet: 32, arrow: 26, bleed: 1.1 },
   legR: { bullet: 32, arrow: 26, bleed: 1.1 },
 };
+
+/**
+ * Weapons, relative to a rifle round: damage, how often it gets through a plate (pen), how
+ * often through the helmet (penHelmet), and how much the wound bleeds.
+ */
+export const WEAPONS = {
+  rifle: { dmg: 1, pen: 0.3, penHelmet: 0.7, bleed: 1 }, // 5.56 mm
+  mg: { dmg: 1.25, pen: 0.55, penHelmet: 0.8, bleed: 1.15 }, // the gunner's 7.62 mm
+  carbine: { dmg: 0.7, pen: 0.05, penHelmet: 0.4, bleed: 0.9 }, // the compact secondary, pistol calibre
+  knife: { dmg: 0.75, pen: 0, penHelmet: 0, bleed: 1.7 },
+  fragment: { dmg: 0.5, pen: 0.1, penHelmet: 0.25, bleed: 1 },
+  arrow: { dmg: 1, pen: 0.05, penHelmet: 0.2, bleed: 1.2 },
+};
+const weaponOf = (kind) => WEAPONS[kind === 'bullet' ? 'rifle' : kind] ?? WEAPONS.rifle;
+
+/** Did armour stop it? (torso: the plates; head: the helmet, if still on) */
+export function armourStops(e, zone, kind, rand = Math.random) {
+  const W = weaponOf(kind);
+  if (zone === 'torso' && e.armour) return rand() > W.pen;
+  if (zone === 'head' && e.helmet && !e.helmetOff && kind !== 'knife') return rand() > W.penHelmet;
+  return false;
+}
 
 /** Which part of a standing person at e (facing e.yaw) a point p is in, or null if it misses. */
 export function hitZone(e, p) {
@@ -51,22 +79,33 @@ export function hitZone(e, p) {
   return side > 0 ? 'legR' : 'legL';
 }
 
-/** Someone is hit in `zone` by a `kind` ('bullet' | 'arrow') coming along dir. */
+/**
+ * Someone is hit in `zone` by a `kind` (a WEAPONS name; 'bullet' is a rifle round) coming
+ * along dir. Stopped by armour: a bruise ({ stopped: true }), no wound.
+ */
 export function wound(sim, e, zone, kind, p, dir) {
   const w = sim.world;
   const Z = ZONES[zone];
+  const W = weaponOf(kind);
+  if (armourStops(e, zone, kind, () => sim.rand())) {
+    sim.ai?.damage(e, kind === 'knife' ? 2 : 6 * W.dmg);
+    e.lastHitT = w.time;
+    w.events.push({ type: 'armourHit', pos: p.slice(), time: w.time, name: zone === 'head' ? 'helmet' : 'plate' });
+    return { stopped: true };
+  }
   e.wounds ??= {};
   e.wounds[zone] = (e.wounds[zone] ?? 0) + 1;
-  e.bleed = (e.bleed ?? 0) + Z.bleed;
+  e.bleed = (e.bleed ?? 0) + Z.bleed * W.bleed;
+  e.lastHitT = w.time;
   e.stains ??= [];
   e.stains.push({ zone, at: [p[0] - e.p[0], p[1] - e.p[1], p[2] - e.p[2]], t: w.time });
   if (zone === 'armL' || zone === 'armR') e.canFire = false; // a hand that cannot hold the rifle
   const legs = (e.wounds.legL ?? 0) + (e.wounds.legR ?? 0);
   e.speedFactor = legs >= 2 || (e.wounds.legL && e.wounds.legR) ? 0.18 : legs ? 0.45 : 1;
   e.crawling = !!(e.wounds.legL && e.wounds.legR);
-  sim.ai?.damage(e, Z[kind] ?? 40);
+  sim.ai?.damage(e, kind === 'arrow' ? Z.arrow : Z.bullet * W.dmg);
   // the spray behind the wound, onto whatever is there
-  splatter(sim, p, dir, zone === 'head' ? 2.2 : zone === 'torso' ? 1.6 : 1);
+  splatter(sim, p, dir, (zone === 'head' ? 2.2 : zone === 'torso' ? 1.6 : 1) * (kind === 'knife' ? 0.6 : 1));
   w.events.push({ type: 'enemyHit', pos: p.slice(), time: w.time, name: zone });
   return Z;
 }
@@ -125,7 +164,7 @@ export function raySolid(w, from, dir, max) {
  * A shot (hitscan, a rifle bullet) from `from` along `dir`: hits the first person
  * (by hit zone) or wall in its way. `shooter` is not hit. Returns what it hit.
  */
-export function shoot(sim, from, dir, { shooter = null, player = null, range = 80, ignore = null } = {}) {
+export function shoot(sim, from, dir, { shooter = null, player = null, range = 80, ignore = null, weapon = 'rifle' } = {}) {
   const w = sim.world;
   const l = Math.hypot(...dir) || 1;
   const d = dir.map((v) => v / l);
@@ -164,10 +203,13 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   w.tracers.push({ a: from.slice(), b: best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range], t: w.time });
   if (w.tracers.length > 40) w.tracers.shift();
   if (best?.enemy) {
-    wound(sim, best.enemy, best.zone, 'bullet', best.p, d);
+    best.wound = wound(sim, best.enemy, best.zone, weapon, best.p, d);
     return best;
   }
-  if (best?.player) return best;
+  if (best?.player) {
+    best.weapon = weapon;
+    return best;
+  }
   if (best?.phoenix) {
     sim.phoenixAI.wound(best.phoenix, 22);
     return best;

@@ -199,6 +199,9 @@ export class EnemyAI {
         const role = ['CMD', 'MG', 'R1', 'R2'].find((r) => !roles.has(r)) ?? (n++ % 2 ? 'R2' : 'R1');
         roles.add(role);
         m.squad = role;
+        // guards: the leader has seen action, the others are regulars or fresh; no plates
+        m.skill ??= role === 'CMD' ? 'veteran' : n % 3 === 2 ? 'recruit' : 'regular';
+        m.armour ??= false;
         m.unit = unit;
         m.guardCtl = true;
       }
@@ -245,6 +248,10 @@ export class EnemyAI {
         e.state = 'flee';
       }
       if (e.dead) continue;
+      if ((e.stunnedUntil ?? 0) > w.time) {
+        e.moving = e.aiming = false;
+        continue;
+      }
       // --- senses
       const seesPlayer = pl && this.sees(head, pl.head);
       if (seesPlayer) {

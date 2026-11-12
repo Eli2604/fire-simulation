@@ -270,6 +270,24 @@ export function stepGasPipes(sim) {
  *  rocket   thrust for a few seconds, explodes on impact (outside the simulated
  *           area it is only drawn)
  */
+/**
+ * A flashbang going off at p (thrown by the team `by`): everyone within ~10 m who has it in
+ * view is blinded and stunned for a few seconds (less further away); the bang is heard far.
+ * The player's view whites out (walk/walk.js); the renderer flashes a light.
+ */
+export function flashbang(sim, p, by = null) {
+  const w = sim.world;
+  w.events.push({ type: 'flashbang', pos: p.slice(), time: w.time, name: 'flashbang' });
+  w.noises.push({ p: p.slice(), loud: 60, time: w.time, kind: 'flashbang' });
+  for (const e of w.enemies) {
+    if (e.dead || (by && e.unit === by)) continue;
+    const d = Math.hypot(e.p[0] - p[0], e.p[1] + 1.5 - p[1], e.p[2] - p[2]);
+    if (d > 10) continue;
+    if (sim.ai?.sees && !sim.ai.sees([e.p[0], e.p[1] + 1.6, e.p[2]], [p[0], p[1] + 0.2, p[2]])) continue;
+    e.stunnedUntil = Math.max(e.stunnedUntil ?? 0, w.time + 5 * (1 - d / 12));
+  }
+}
+
 export function stepProjectiles(sim, dt) {
   const w = sim.world;
   if (!w.projectiles.length) return;
@@ -329,6 +347,12 @@ export function stepProjectiles(sim, dt) {
     if (g.gone) continue;
     if (type === 'grenade') {
       if (g.fuse <= 0) explode(sim, g.p, g.energy, { name: 'grenade' });
+      else keep.push(g);
+      continue;
+    }
+    if (type === 'flash') {
+      // a flashbang: no fragments, no fire; a blinding flash and a deafening bang
+      if (g.fuse <= 0) flashbang(sim, g.p, g.by);
       else keep.push(g);
       continue;
     }
