@@ -226,3 +226,42 @@ test('the sun melts the snow in a thaw and wets what is under it; not in a frost
   const dull = run({ ambient: 5, sunshine: 0, season: 'spring' });
   assert.ok(dull.d > thaw.d + 0.003, 'overcast, it melts more slowly');
 });
+
+test('lava in a pond boils it and sets; a pond on wet ground keeps its water', async () => {
+  const { quenchInWater } = await import('../src/sim/volcano.js');
+  const { MAT } = await import('../src/sim/materials.js');
+  const pond = (lava) => {
+    const sim = createSimulation({ world: { size: [1, 1, 1], h: 0.1, ground: 'soil' }, weather: { ambient: 15 }, objects: [], noFire: true });
+    const w = sim.world;
+    for (let z = 3; z < 7; z++) for (let x = 3; x < 7; x++) for (let y = 1; y < 3; y++) w.setVoxel(w.idx(x, y, z), MAT.water);
+    if (lava) w.setVoxel(w.idx(2, 1, 5), MAT.basalt, { temp: 1200 });
+    w.rebuildLists();
+    return sim;
+  };
+  const count = (w) => {
+    let n = 0;
+    for (let i = 0; i < w.N; i++) if (w.mat[i] === MAT.water) n++;
+    return n;
+  };
+  // left alone, it keeps its water (its bed soaks up only what it can hold; it may spread)
+  const a = pond(false);
+  for (let t = 0; t < 30; t += 0.5) a.step(0.5);
+  assert.equal(count(a.world), 32);
+  // lava against it: the water boils off as steam, the rock sets
+  const b = pond(true);
+  const w = b.world;
+  const lava = w.idx(2, 1, 5);
+  const v = { crater: [0, 0, 0] };
+  for (let t = 0; t < 60; t += 0.5) {
+    w.temp[lava] = Math.max(w.temp[lava], 1150); // lava still coming
+    quenchInWater(b, v, 0.5);
+  }
+  const steam = w.steam.reduce((s, x) => s + x, 0);
+  assert.ok(w.temp[w.idx(3, 1, 5)] >= 99, 'the water it touches boils');
+  assert.ok(steam > 0.2, `it goes up as steam: ${steam.toFixed(2)} kg`);
+  for (let t = 0; t < 120; t += 0.5) quenchInWater(b, v, 0.5);
+  // a dark crust against the water at once; the lava set solid again (below its melting point)
+  const { MATERIALS } = await import('../src/sim/materials.js');
+  assert.ok(w.skin[lava] < 400, `crust: ${w.skin[lava].toFixed(0)} °C`);
+  assert.ok(w.temp[lava] < MATERIALS[MAT.basalt].meltingPoint, `set: ${w.temp[lava].toFixed(0)} °C`);
+});

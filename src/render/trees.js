@@ -406,19 +406,30 @@ export class TreeRenderer {
     // autumn colours, winter's dead leaves, snow on the crown: the photo's light and shade, the season's hue
     const LU = this.leafUniforms(t.species);
     leafMat.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, LU);
+      Object.assign(sh.uniforms, LU, { uDew: this.windU.uDew, uFrost: this.windU.uFrost });
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uLeafTint;\nuniform float uLeafAmt, uLeafSnow;')
+        .replace('#include <common>', '#include <common>\nuniform vec3 uLeafTint;\nuniform float uLeafAmt, uLeafSnow, uDew, uFrost;\nfloat lDrop = 0.0;')
+        // dew beads on the leaves (glossy, glinting), hoar frost whitens them, as on the grass
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.25, max(uDew * 0.6, lDrop));')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.3, 0.32, 0.35) * lDrop;')
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
           // (after the leaf's own colour: the voxel's, drying and charring)
           float leafL = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
           diffuseColor.rgb = mix(diffuseColor.rgb, leafL * uLeafTint * 2.4, uLeafAmt);
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.87, 0.9) * (0.6 + leafL), uLeafSnow);`,
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.87, 0.9) * (0.6 + leafL), uLeafSnow);
+          {
+            vec2 lq = floor(vMapUv * 48.0);
+            float ln = fract(sin(dot(lq, vec2(12.9898, 78.233))) * 43758.5453);
+            float ldrop = step(1.0 - 0.07 * uDew, ln);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.92, 0.98), ldrop * 0.7);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.97) * (0.7 + 0.5 * leafL), uFrost * 0.55 * (0.8 + 0.2 * ln));
+            lDrop = ldrop * uDew + step(0.94, ln) * uFrost * 0.5;
+          }`,
         );
     };
-    leafMat.customProgramCacheKey = () => 'leaf-season-v2';
+    leafMat.customProgramCacheKey = () => 'leaf-season-dew-v3';
     const leafMesh = new THREE.InstancedMesh(cardGeo, leafMat, Math.max(1, leaves.length * cards));
     leafMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, leaves.length * cards) * 3), 3);
     leafMesh.castShadow = true;
@@ -615,8 +626,8 @@ export class TreeRenderer {
    * the winter, willows go yellow, pines stay), the grass (straw in winter), snow on the crowns.
    */
   /**
-   * Dew on the grass (0..1) when the air is at its dew point, hoar frost (0..1) when it is
-   * so below freezing.
+   * Dew on the grass and the leaves (0..1) when the air is at its dew point, hoar frost
+   * (0..1) when it is so below freezing.
    */
   setDew(dew, frost) {
     this.windU.uDew.value = dew;

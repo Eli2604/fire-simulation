@@ -365,7 +365,7 @@ export class View {
     this.season = weather.season ?? 'summer';
     this.trees.setSeason(this.season, this.snowCover ?? 0);
     // the air at its dew point (saturated: mist, fog, just after rain, a damp still night):
-    // dew on the grass; below freezing, hoar frost. (The grass is wetted by it in the
+    // dew on the grass and the leaves; below freezing, hoar frost. (They are wetted by it in the
     // simulation too: dead fuels take up water towards what the damp air holds.)
     const sat = Math.max(0, Math.min(1, (D.rh - 0.9) / 0.08));
     const cold = weather.ambient <= 0.5;

@@ -104,7 +104,19 @@ export function stepWater(sim, dt) {
       if (!mj || mj === id) continue;
       sim.addWater(j, 0.05 * h * h * dt * 10); // ~0.5 kg/(m²·s) of contact wetting
       // drain into the ground
-      if (MATERIALS[mj].name === 'soil' && j === i - nx && sim.rand() < dt / 15) remove.push(i);
+      // it seeps into the soil under it (~4 mm an hour) as far as that is not wet through: a
+      // pond's or a canal's bed holds its water, a puddle on dry ground soaks away
+      if (j === i - nx && MATERIALS[mj].name === 'soil') {
+        const Mj = MATERIALS[mj];
+        const soilMass = Mj.density * V;
+        const room = (Mj.maxMoisture * 0.95 - w.moist[j]) * soilMass;
+        if (room > 0) {
+          const take = Math.min(room, fuel[i] * voxelMass, 1e-3 * h * h * dt * (1 + 20 * Math.min(1, room / soilMass)));
+          w.moist[j] += take / soilMass;
+          fuel[i] -= take / voxelMass;
+          if (fuel[i] < 0.05) remove.push(i);
+        }
+      }
     }
   }
   for (const i of remove) if (mat[i] === id) w.clearVoxel(i);
@@ -451,13 +463,16 @@ export function stepFlood(sim, dt) {
       }
     }
   }
-  // water that ends up outside the hull rejoins the sea
+  // water that ends up outside the hull, down in the sea, rejoins it (not a pond or a canal on
+  // an island, above the sea: an island's sea box is empty, it has no hull)
   for (let k = 0; k < w.solidCount; k++) {
     const i = w.solids[k];
     if (mat[i] !== id) continue;
     const x = i % nx;
     const z = Math.floor(i / nxy);
-    if (x < x0 || x > x1 || z < z0 || z > z1) w.clearVoxel(i);
+    if (!(x < x0 || x > x1 || z < z0 || z > z1)) continue;
+    const y = Math.floor(i / nx) % ny;
+    if (y * h <= lvl((x + 0.5) * h, (z + 0.5) * h)) w.clearVoxel(i);
   }
   sim.stats.flooding = inflow;
 }

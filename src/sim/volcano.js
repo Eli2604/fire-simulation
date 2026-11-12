@@ -15,7 +15,9 @@ import { explode } from './explosions.js';
  * After `duration` seconds it dies down: no more lava, the column fades.
  *
  * Lava that runs into the sea is quenched: it sets into rock in seconds and the sea
- * boils off it in clouds of steam ("laze").
+ * boils off it in clouds of steam ("laze"). Lava that runs into a river, a canal or a pond
+ * (water voxels) boils it where they touch: the water heats to boiling and goes up as steam,
+ * the lava sets into rock against it; a small pond can boil dry, a big one stops the flow.
  */
 const LAVA_T = 1200;
 
@@ -127,11 +129,12 @@ function placeLava(sim, v) {
  */
 function quench(sim, v, dt) {
   const w = sim.world;
-  if (!w.sea) return;
   v.qAcc = (v.qAcc ?? 0) + dt;
   if (v.qAcc < 0.5) return;
   const step = v.qAcc;
   v.qAcc = 0;
+  quenchInWater(sim, v, step);
+  if (!w.sea) return;
   const { h, nx, ny, mat, temp } = w;
   const level = w.sea.level;
   const yTop = Math.floor(level / h);
@@ -159,3 +162,57 @@ function quench(sim, v, dt) {
   }
 }
 const MATERIAL_C = 2900 * 840; // basalt: density · specific heat
+
+/**
+ * Lava against water voxels (a river, a canal, a pond): boiling on contact takes its heat
+ * far faster than the water could conduct it (~1 MW/m² of contact while it is red hot, three
+ * times that while it is molten and shatters, less as it cools): the lava sets into rock, the water heats to boiling and boils off as
+ * steam over it (a water voxel boiled away is gone).
+ */
+export function quenchInWater(sim, v, step) {
+  const w = sim.world;
+  const { h, nx, ny, nz, mat, temp, fuel, solids } = w;
+  const water = MAT.water;
+  const C = MATERIAL_C * h ** 3; // J/K of a voxel of basalt
+  const Mw = 1000 * h ** 3; // kg of a water voxel
+  const A = h * h;
+  const nxy = nx * ny;
+  const gone = [];
+  let hit = 0;
+  for (let k = 0; k < w.solidCount; k++) {
+    const i = solids[k];
+    if (mat[i] !== MAT.basalt || temp[i] < 150) continue;
+    const x = i % nx;
+    const y = Math.floor(i / nx) % ny;
+    const z = Math.floor(i / nxy);
+    const nb = [x > 0 ? i - 1 : -1, x + 1 < nx ? i + 1 : -1, y > 0 ? i - nx : -1, y + 1 < ny ? i + nx : -1, z > 0 ? i - nxy : -1, z + 1 < nz ? i + nxy : -1];
+    for (const j of nb) {
+      if (j < 0 || mat[j] !== water || fuel[j] <= 0) continue;
+      hit++;
+      // boiling on contact, ~1 MW/m² while red hot (weaker below ~400 °C); molten lava
+      // shatters as it is quenched (fresh hot surface): three times that while it is liquid
+      const q = 1e6 * Math.min(1, (temp[i] - 100) / 400) * (temp[i] > 1000 ? 3 : 1) * A; // W
+      let E = Math.min(q * step, (temp[i] - 100) * C);
+      if (E <= 0) break;
+      temp[i] -= E / C;
+      // its face to the water sets at once: a dark crust (the glow goes out), red hot inside
+      w.skin[i] = Math.min(w.skin[i], 100 + (temp[i] - 100) * 0.25);
+      // the water: up to boiling, then boiled off
+      const m = fuel[j] * Mw;
+      const warm = Math.min(E, Math.max(0, 100 - temp[j]) * m * 4186);
+      temp[j] += warm / (m * 4186);
+      E -= warm;
+      if (E > 0) {
+        const ev = Math.min(m, E / 2.26e6);
+        fuel[j] -= ev / Mw;
+        w.steam[w.faceAir[j] >= 0 ? w.faceAir[j] : w.airIndexOfVoxel(j % nx, Math.min(ny - 1, (Math.floor(j / nx) % ny) + 1), Math.floor(j / nxy))] += ev;
+        if (fuel[j] < 0.05) gone.push(j);
+      }
+    }
+  }
+  for (const j of gone) if (mat[j] === water) w.clearVoxel(j);
+  if (hit && !v.boilSaid) {
+    v.boilSaid = true;
+    w.events.push({ type: 'laze', pos: v.crater.slice(), time: w.time, name: 'the lava in the water' });
+  }
+}
