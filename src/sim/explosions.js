@@ -95,6 +95,7 @@ export function explode(sim, center, E, opts = {}) {
   w.noises.push({ p: center.slice(), loud: 80, time: w.time, kind: 'explosion' });
   sim.ai?.blast(center, blastR);
   sim.dragonAI?.blast(center, blastR);
+  sim.phoenixAI?.blast(center, blastR);
 }
 
 /** Burst a gas pipe at its voxel closest to `p`, if within `range`. */

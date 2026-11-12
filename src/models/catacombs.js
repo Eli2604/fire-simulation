@@ -10,6 +10,11 @@
  * (each a small flame that lights its surroundings and uses oxygen: with the
  * entrance closed, the air slowly goes bad and the torches dim).
  *
+ * A phoenix (`phoenix`): a dungeon cell at the far end of the catacombs, a short
+ * dead-end gallery closed by a locked iron-barred gate, with a stone perch on which
+ * the bird sits (it is a creature, not voxels: see ai/phoenix.js and
+ * render/phoenix.js). The gate takes the jailer's key (models/enemy.js `key`).
+ *
  * Walls are only a couple of voxels thick around each passage, so the
  * solid volume (and the simulation) stays small.
  */
@@ -28,6 +33,7 @@ export default {
     entranceOpen: { value: true, label: 'Entrance open to the surface' },
     seed: { value: 3, min: 1, max: 999, step: 1, label: 'Random seed' },
     exitTo: { value: '', label: 'Zone the entrance stairs lead up to (empty: none)' },
+    phoenix: { value: true, label: 'A phoenix locked in a dungeon cell (needs ~5.5 m free beyond the far end)' },
   },
   build(p, { h, rng }) {
     const prims = [];
@@ -95,7 +101,29 @@ export default {
     }
     if (p.entranceOpen) prims.push({ shape: 'box', min: [ex - cw, H, ez - 6 - T - 0.01], max: [ex + cw, 99, ez - 5], mode: 'carve' });
     else prims.push({ shape: 'box', min: [ex - cw - T, 0, ez - 6 - T], max: [ex + cw + T, 99, ez - 5.8], ...stone });
+    // the dungeon cell: a gallery running on beyond the far edge of the grid (in line with
+    // the last-but-one passage along z), a barred gate, and the cell behind it. Shells first
+    // (they only fill empty space), carved below with the passages.
+    const cellX = xs[Math.max(0, nxC - 1)];
+    const zEdge = zs[nzC];
+    const zGate = zEdge + cw + 0.8; // the gate line
+    const CW = 1.6; // half width of the cell
+    const CD = 3.2; // depth of the cell
+    const CH = H + 0.3; // its height
+    const zCell = zGate + h; // the cell starts behind the gate
+    if (p.phoenix) {
+      prims.push(
+        { shape: 'box', min: [cellX - cw - T, 0, zEdge], max: [cellX + cw + T, H + T, zGate + h], ...stone, mode: 'fill' },
+        { shape: 'box', min: [cellX - CW - T, 0, zGate], max: [cellX + CW + T, CH + T, zCell + CD + T], ...stone, mode: 'fill' },
+      );
+    }
     for (const r of runs) carve(...r);
+    if (p.phoenix) {
+      prims.push(
+        { shape: 'box', min: [cellX - cw, h * 0.5, zEdge], max: [cellX + cw, H, zGate + h], mode: 'carve' },
+        { shape: 'box', min: [cellX - CW, h * 0.5, zCell], max: [cellX + CW, CH, zCell + CD], mode: 'carve' },
+      );
+    }
     for (const [a, b, alongX] of runs) {
       const line = { material: 'stone', color: [0.06, 0.055, 0.05], variation: 0.02, anchored: true, mode: 'replace' };
       if (alongX) prims.push({ shape: 'box', min: [a[0] - cw, H - h * 0.9, a[2] - h * 0.6], max: [b[0] + cw, H + h, a[2] + h * 0.6], ...line });
@@ -256,7 +284,39 @@ export default {
       }
     });
     prims.push(...doors);
+    // the cell: an iron-barred gate (every other voxel column a bar, rails top and bottom:
+    // air, smoke and light pass, people and the bird do not), a stone lintel above it, a
+    // stone perch in the cell, old bones, and the soot of a bird of fire on the back wall
+    const phoenixes = [];
+    if (p.phoenix) {
+      const gTop = Math.min(2.1, H - 0.2);
+      const gate = { material: 'steel', density: Math.min(1, 0.03 / h), color: [0.16, 0.15, 0.14], door: 'dungeon cell', doorLocked: true, doorKey: 'dungeon', doorBars: true, anchored: true };
+      prims.push({ shape: 'box', min: [cellX - cw - T, gTop, zGate], max: [cellX + cw + T, H + T, zGate + h], ...stone });
+      for (let k = Math.ceil((cellX - cw) / h); k * h < cellX + cw; k++) {
+        if (Math.abs(k) % 2 === 1) continue; // a gap
+        const c = k * h; // a voxel centre (the object's origin sits on one)
+        prims.push({ shape: 'box', min: [c - h * 0.45, h * 0.5, zGate + h * 0.05], max: [c + h * 0.45, gTop, zGate + h * 0.95], ...gate });
+      }
+      for (const y of [h * 0.5, gTop - h])
+        prims.push({ shape: 'box', min: [cellX - cw, y, zGate + h * 0.05], max: [cellX + cw, y + h * 0.95, zGate + h * 0.95], ...gate });
+      const perch = [cellX, 0.55, zCell + CD * 0.62];
+      prims.push(
+        { shape: 'box', min: [perch[0] - 0.35, h * 0.5, perch[2] - 0.3], max: [perch[0] + 0.35, perch[1], perch[2] + 0.3], ...stone },
+        { shape: 'box', min: [cellX - 1.2, 0.6, zCell + CD - h * 0.5], max: [cellX + 1.2, CH + T, zCell + CD + T], material: 'bedrock', color: [0.12, 0.1, 0.09], variation: 0.3, anchored: true, mode: 'replace' },
+        { shape: 'box', min: [cellX - CW + 0.2, h * 0.5, zCell + 0.3], max: [cellX - CW + 0.9, h * 1.5, zCell + 1.4], material: 'bone', fill: 0.5, variation: 0.2 },
+      );
+      // where it flies out: the foot of the entrance stairs, then up them (clear of the
+      // treads under the rising ceiling), and out of the top
+      const tread = (z) => {
+        const k = Math.max(0, Math.min(9, Math.floor((z - (ez - 6)) / 0.6)));
+        return (H + T) * (1 - (k + 1) / 10);
+      };
+      const flight = [ez - 0.5, ez - 2.5, ez - 4.5, ez - 5.8].map((z) => [ex, Math.max(1.4, tread(z) + 1.2), z]);
+      flight.push([ex, H + 6, ez - 6.5]);
+      phoenixes.push({ p: [perch[0], perch[1] + 0.32, perch[2]], yaw: Math.PI, gate: 'dungeon cell', exit: [ex, 0, ez - 0.5], flight });
+    }
     return {
+      phoenixes,
       prims,
       heaters,
       spawn: { p: [ex, 0, ez - 0.5], yaw: Math.PI / 2 },

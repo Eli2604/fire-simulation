@@ -145,6 +145,11 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
       }
     }
     if (best) break;
+    const bird = sim.phoenixAI?.at(p);
+    if (bird) {
+      best = { phoenix: bird, p };
+      break;
+    }
     if (player) {
       const dx = p[0] - player.p[0];
       const dz = p[2] - player.p[2];
@@ -163,6 +168,10 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     return best;
   }
   if (best?.player) return best;
+  if (best?.phoenix) {
+    sim.phoenixAI.wound(best.phoenix, 22);
+    return best;
+  }
   if (wall) {
     bulletHole(sim, wall);
     return { wall };

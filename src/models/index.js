@@ -23,6 +23,7 @@ import statue from './statue.js';
 import candelabra from './candelabra.js';
 import clothesline from './clothesline.js';
 import scannedProp from './scannedProp.js';
+import torch from './torch.js';
 
 /**
  * Model registry. Every model is:
@@ -33,7 +34,7 @@ import scannedProp from './scannedProp.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch };
 
 export function resolveParams(model, given = {}) {
   const out = {};

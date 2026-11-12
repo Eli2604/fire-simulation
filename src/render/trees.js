@@ -17,8 +17,24 @@ float flutter = 0.06 * sin(uTime * 6.0 + gBase.x * 9.0 + gBase.z * 7.0);
 float bend = (uWindStr * gust + flutter) * gH * gH;
 mvPosition.xz += uWindDir * bend * uCardH;
 mvPosition.y -= 0.45 * bend * bend * uCardH;
+vGPos = gBase + position;
+vGH = gH;
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`;
+
+// dew and hoar frost on the blades (fragment shader, after the colour): when the air is at its
+// dew point the blades bead with drops (a glossy, glinting wet); below freezing the water
+// vapour sets on them as rime instead, white crystals thickest towards the tips
+const DEW_GLSL = `#include <color_fragment>
+{
+  vec3 gq = floor(vGPos * vec3(140.0, 90.0, 140.0));
+  float gn = fract(sin(dot(gq, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+  float drop = step(1.0 - 0.1 * uDew, gn);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.92, 0.98), drop * 0.7);
+  float rime = uFrost * (0.3 + 0.6 * vGH) * (0.75 + 0.25 * gn);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.97), clamp(rime, 0.0, 0.85));
+  gDrop = drop * uDew + step(0.93, gn) * uFrost * 0.6;
+}`;
 
 /**
  * Trees drawn as trees. A tree is simulated as voxels (wood that chars and breaks
@@ -319,7 +335,10 @@ function grassTuft(H, foot) {
 
 export class TreeRenderer {
   constructor(scene) {
-    this.windU = { uTime: { value: 0 }, uWindStr: { value: 0.2 }, uWindDir: { value: new THREE.Vector2(1, 0) }, uCardH: { value: 0.4 } };
+    this.windU = { uTime: { value: 0 }, uWindStr: { value: 0.2 }, uWindDir: { value: new THREE.Vector2(1, 0) }, uCardH: { value: 0.4 }, uDew: { value: 0 }, uFrost: { value: 0 } };
+    // the season's colours of the leaves, per species (see setSeason)
+    this.leafU = {};
+    this.season = { name: 'summer', snow: 0 };
     this.group = new THREE.Group();
     scene.add(this.group);
     this.items = [];
@@ -384,6 +403,22 @@ export class TreeRenderer {
     const size = Math.max(0.35, h * (t.species === 'pine' ? 2.4 : 2.8));
     const cardGeo = t.species === 'willow' ? new THREE.PlaneGeometry(size * 0.55, size * 1.6) : new THREE.PlaneGeometry(size, size);
     const leafMat = new THREE.MeshStandardMaterial({ map: leafTex(t.species), color: 0xffffff, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 });
+    // autumn colours, winter's dead leaves, snow on the crown: the photo's light and shade, the season's hue
+    const LU = this.leafUniforms(t.species);
+    leafMat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, LU);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 uLeafTint;\nuniform float uLeafAmt, uLeafSnow;')
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          // (after the leaf's own colour: the voxel's, drying and charring)
+          float leafL = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          diffuseColor.rgb = mix(diffuseColor.rgb, leafL * uLeafTint * 2.4, uLeafAmt);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.87, 0.9) * (0.6 + leafL), uLeafSnow);`,
+        );
+    };
+    leafMat.customProgramCacheKey = () => 'leaf-season-v2';
     const leafMesh = new THREE.InstancedMesh(cardGeo, leafMat, Math.max(1, leaves.length * cards));
     leafMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, leaves.length * cards) * 3), 3);
     leafMesh.castShadow = true;
@@ -431,10 +466,16 @@ export class TreeRenderer {
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime, uWindStr, uCardH;\nuniform vec2 uWindDir;')
+        .replace('#include <common>', '#include <common>\nuniform float uTime, uWindStr, uCardH;\nuniform vec2 uWindDir;\nvarying vec3 vGPos;\nvarying float vGH;')
         .replace('#include <project_vertex>', () => WIND_GLSL);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uDew, uFrost;\nvarying vec3 vGPos;\nvarying float vGH;\nfloat gDrop = 0.0;')
+        .replace('#include <color_fragment>', () => DEW_GLSL)
+        // wet blades are glossy; the drops and the crystals catch the light
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.2, max(uDew * 0.7, gDrop));')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(0.35, 0.37, 0.4) * gDrop;');
     };
-    mat.customProgramCacheKey = () => 'grass-wind-v1';
+    mat.customProgramCacheKey = () => 'grass-wind-dew-v2';
     const turf = (i) => {
       const [x, y, z] = w.coords(i);
       if (y === 0) return true;
@@ -531,13 +572,61 @@ export class TreeRenderer {
         // the voxel's own colour (dries and browns), charred towards black
         const c = 1 - 0.9 * w.char[i];
         const v = 0.85 + 0.3 * hash(i, k, 9);
-        lc[n * 3] = (w.tint[i * 3] / 255) * c * v;
-        lc[n * 3 + 1] = (w.tint[i * 3 + 1] / 255) * c * v;
-        lc[n * 3 + 2] = (w.tint[i * 3 + 2] / 255) * c * v;
+        let r = w.tint[i * 3] / 255;
+        let g = w.tint[i * 3 + 1] / 255;
+        let b = w.tint[i * 3 + 2] / 255;
+        // grass in the season: fresh in spring, straw in winter
+        const gs = it.grass ? GRASS_SEASON[this.season.name] : null;
+        if (gs) {
+          const a = gs[3] * (0.75 + 0.5 * hash(i, k, 11));
+          r += (gs[0] - r) * a;
+          g += (gs[1] - g) * a;
+          b += (gs[2] - b) * a;
+        }
+        lc[n * 3] = r * c * v;
+        lc[n * 3 + 1] = g * c * v;
+        lc[n * 3 + 2] = b * c * v;
       }
     }
     leafMesh.instanceMatrix.needsUpdate = true;
     leafMesh.instanceColor.needsUpdate = true;
+  }
+
+  leafUniforms(species) {
+    if (!this.leafU[species]) {
+      this.leafU[species] = { uLeafTint: { value: new THREE.Color(1, 1, 1) }, uLeafAmt: { value: 0 }, uLeafSnow: { value: 0 } };
+      this.tintLeaves(species);
+    }
+    return this.leafU[species];
+  }
+
+  tintLeaves(sp) {
+    const U = this.leafU[sp];
+    const { name, snow } = this.season;
+    const s = LEAF_SEASON[name]?.[sp];
+    U.uLeafAmt.value = s ? s[3] : 0;
+    if (s) U.uLeafTint.value.setRGB(s[0], s[1], s[2]);
+    U.uLeafSnow.value = Math.min(0.55, snow * (sp === 'pine' ? 0.55 : 0.4));
+  }
+
+  /**
+   * The season (spring | summer | autumn | winter) and the snow lying (0..1 of the ground
+   * covered): the leaves' colours (oaks turn rust and keep their dead brown leaves through
+   * the winter, willows go yellow, pines stay), the grass (straw in winter), snow on the crowns.
+   */
+  /**
+   * Dew on the grass (0..1) when the air is at its dew point, hoar frost (0..1) when it is
+   * so below freezing.
+   */
+  setDew(dew, frost) {
+    this.windU.uDew.value = dew;
+    this.windU.uFrost.value = frost;
+  }
+
+  setSeason(name, snow = 0) {
+    this.season = { name, snow };
+    for (const sp of Object.keys(this.leafU)) this.tintLeaves(sp);
+    for (const it of this.items) it.tick = -1; // re-colour the grass
   }
 
   /** The wind the grass bends in (m/s, towards +x / +z). */
@@ -573,3 +662,18 @@ function distToSegment(p, a, b) {
   const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby + (p[2] - a[2]) * abz) / (abx * abx + aby * aby + abz * abz || 1)));
   return Math.hypot(p[0] - a[0] - abx * t, p[1] - a[1] - aby * t, p[2] - a[2] - abz * t);
 }
+
+// leaves through the year: [r, g, b] of the hue and how much of it (summer: the photo's own)
+const LEAF_SEASON = {
+  spring: { oak: [0.42, 0.62, 0.2, 0.35], willow: [0.5, 0.66, 0.22, 0.4] },
+  summer: {},
+  autumn: { oak: [0.62, 0.32, 0.1, 0.8], willow: [0.72, 0.62, 0.18, 0.75], pine: [0.3, 0.38, 0.2, 0.2] },
+  winter: { oak: [0.42, 0.27, 0.14, 0.9], willow: [0.55, 0.5, 0.32, 0.8], pine: [0.22, 0.3, 0.2, 0.3] },
+};
+// grass: [r, g, b, share]
+const GRASS_SEASON = {
+  spring: [0.36, 0.6, 0.2, 0.3],
+  summer: null,
+  autumn: [0.55, 0.52, 0.28, 0.4],
+  winter: [0.66, 0.6, 0.42, 0.7],
+};

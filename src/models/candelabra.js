@@ -1,7 +1,9 @@
 /**
  * Brass candelabra (a photo scan, CC0, Poly Haven: "brass_candleholders" by Tina): a
  * seven-branched candelabrum, a three-candle holder and a single candlestick, with their
- * candles burning (flames of ours: heat, light, soot; models/candle.js in a coarse scene).
+ * candles burning. The candles are ours, not the scan's (its are cut out of it): each is a
+ * candle as models/candle.js makes one in a coarse scene, a small burner drawn as a candle,
+ * and close up a fine world of its own (sim/patches.js) where its wax melts and drips.
  *
  * Simulated as brass voxels: each candlestick a column holding as much metal as it has
  * (at 20 cm voxels its arms are far thinner than a voxel, so its brass is spread over the
@@ -16,6 +18,9 @@ const FLAMES = [
   [0.4006, 0.8011, 0], [0.5721, 0.7166, 0.0001], [0.2285, 0.7166, 0], [0.4877, 0.7219, 0.1486], [0.3122, 0.7219, -0.1494],
   [0.4865, 0.7219, -0.1509], [0.3126, 0.7239, 0.1471], [0, 0.3771, -0.0003], [-0.1062, 0.3592, -0.0003], [0.1061, 0.3586, -0.0003], [-0.4, 0.3422, -0.0003],
 ];
+// its candles (measured on the scan): radius and length above the cup, per flame
+const CANDLES = FLAMES.map((_, k) => (k < 7 ? { r: 0.012, len: 0.165 } : k < 10 ? { r: 0.009, len: 0.115 } : { r: 0.009, len: 0.13 }));
+const WICK = 0.008;
 // the three, in the scan's frame: centre x, half sizes, height, brass in it (kg)
 const PIECES = [
   { x: 0.4, hx: 0.2, hz: 0.18, hgt: 0.81, kg: 3.0 },
@@ -42,9 +47,18 @@ export default {
       const vol = 8 * hx * hz * (hy / 2);
       prims.push({ shape: 'box', min: [q.x * k - hx, 0, -hz], max: [q.x * k + hx, hy, hz], material: 'brass', density: Math.min(1, q.kg / 8500 / vol), color: [0.75, 0.6, 0.3], hidden: true });
     }
-    const heaters = p.lit
-      ? FLAMES.map(([fx, fy, fz]) => ({ pos: [fx * k, fy * k, fz * k], power: 60, radius: 0.008, height: 0.04, light: true, label: 'candle', kind: 'candle', tag, candle: { flameOnly: true, height: 0.1, radius: 0.012, wick: 0.01 } }))
-      : [];
-    return { prims, heaters, props: [{ type: 'statueMesh', polyhaven: 'brass_candleholders', material: 'brass', p: [0, 0, 0], scale: k, hideFlames: true, tag, radius: 1.2 }] };
+    // a candle in every cup: its top where the scan's was, the flame on its wick
+    const heaters = FLAMES.map(([fx, fy, fz], n) => {
+      const c = { height: CANDLES[n].len * k, radius: CANDLES[n].r * k };
+      const params = { height: c.height, radius: c.radius, wax: 'paraffin', color: '#f4efe2', wickLength: WICK, holder: false };
+      return {
+        pos: [fx * k, fy * k + WICK, fz * k], power: p.lit ? 60 : 0, on: p.lit, radius: 0.008, height: 0.04, light: true, label: 'candle', kind: 'candle', tag,
+        candle: { ...c, wick: WICK, color: params.color, holder: false },
+        detail: { type: 'candle', params, top: c.height + WICK },
+      };
+    });
+    // (the scan's own candles cut out of it: [x, z, from, to, r] in its frame)
+    const cut = FLAMES.map(([fx, fy, fz], n) => [fx, fz, fy - CANDLES[n].len - 0.004, fy + 0.03, CANDLES[n].r + 0.005]);
+    return { prims, heaters, props: [{ type: 'statueMesh', polyhaven: 'brass_candleholders', material: 'brass', p: [0, 0, 0], scale: k, hideFlames: true, cut, tag, radius: 1.2 }] };
   },
 };

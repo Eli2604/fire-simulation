@@ -215,6 +215,14 @@ export class Walkthrough {
     if (best.door !== undefined) {
       const d0 = w.doors[best.door];
       if (d0.locked && !d0.open) {
+        // a lock that takes a key (the dungeon cell): with the jailer's keys it opens
+        if (d0.key) {
+          if (!this.carriedKeys?.has(d0.key)) return this.say(`${d0.name}: locked. The jailer carries the key`, 3);
+          d0.locked = false;
+          toggleDoor(sim, best.door, true);
+          this.sound.door?.();
+          return this.say(`You turn the jailer's key: ${d0.name} swings open`, 3);
+        }
         if (doorGlassBroken(w, best.door)) {
           // reach through the broken glass and open it from the other side
           this.arm = { mode: 'reach', t: 0, door: best.door };
@@ -228,7 +236,11 @@ export class Walkthrough {
       return this.say(`${d.name}: ${d.open ? 'opened' : 'closed'}`, 2);
     }
     const pk = best.pk;
-    if (pk.type === 'extinguisher') {
+    if (pk.type === 'key') {
+      pk.taken = true;
+      (this.carriedKeys ??= new Set()).add(pk.key);
+      this.say(`You took ${pk.label ?? 'the keys'}`, 3);
+    } else if (pk.type === 'extinguisher') {
       pk.taken = true;
       for (const i of pk.voxels) if (w.pickupTag[i]) w.clearVoxel(i);
       this.ext = { agent: pk.agent, tank: { remaining: AGENTS[pk.agent].capacity } };
@@ -820,7 +832,14 @@ export class Walkthrough {
     // wading: water round the legs holds you back; deeper, you swim (slowly, in full gear)
     const wet = this.water?.depth ?? 0;
     const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 : Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
-    const speed = (this.crawl ? 0.5 : hurry ? 2.2 : 1.2) * wade;
+    // deep snow holds you back too (fresh powder more than a trodden trail: sim/snow.js)
+    const sn = this.hooks.getSim()?.world.snow;
+    let trudge = 1;
+    if (sn) {
+      const j = sn.cell(this.pos.x, this.pos.z);
+      if (j >= 0 && sn.depth[j] > 0.08) trudge = Math.max(0.45, 1 - 0.9 * sn.depth[j] * (1 - Math.min(1, (sn.rho[j] - 150) / 350)));
+    }
+    const speed = (this.crawl ? 0.5 : hurry ? 2.2 : 1.2) * wade * trudge;
     const len = Math.hypot(fx, fz);
     let moving = 0;
     if (len > 0) {
@@ -909,7 +928,19 @@ export class Walkthrough {
     cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     cam.updateMatrixWorld();
-    this.lamp.intensity = this.lampOn ? 8 : 0;
+    // the eye adapts: close up to something (an altar cloth a metre off) the lamp's spot would
+    // burn white at the brightness that lights a passage 5 m ahead; dimmed with the square of
+    // how near what it falls on is (as far as a ~2.5 m look ahead), eased over a few frames
+    if (this.lampOn) {
+      const cp = Math.cos(this.pitch);
+      const dir = [-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp];
+      const at = [cam.position.x, cam.position.y, cam.position.z];
+      const spot = this.beamSpot(at, dir, 3);
+      const d = spot ? Math.hypot(spot[0] - at[0], spot[1] - at[1], spot[2] - at[2]) : 3;
+      const k = Math.min(1, Math.max(0.12, ((d + 0.2) / 2.7) ** 1.6));
+      this.lampK = (this.lampK ?? k) + (k - (this.lampK ?? k)) * 0.15;
+    }
+    this.lamp.intensity = this.lampOn ? 8 * this.lampK : 0;
 
     // --- the arm: swinging a strike, or reaching through broken glass to the handle
     if (this.arm) {
@@ -1065,6 +1096,8 @@ export class Walkthrough {
         this.damageMask(0.06);
         this.say('DRAGON FIRE – your gear is burning: crawl (C) to roll it out, or get water on you', 3);
       } else if (ev.type === 'devoured') this.devoured();
+      // the phoenix in the catacombs
+      else if (PHOENIX_TEXT[ev.type] && !this.downed) this.say(typeof PHOENIX_TEXT[ev.type] === 'function' ? PHOENIX_TEXT[ev.type](ev, this) : PHOENIX_TEXT[ev.type], 5);
     }
     if (this.throwRequested) {
       this.throwRequested = false;
@@ -1123,11 +1156,24 @@ export class Walkthrough {
       maskLeak: this.maskBurst,
       enemies: w.enemies,
       dragons: w.dragons,
+      phoenixes: w.phoenixes,
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });
   }
 }
+
+/** What the walk-through says when the phoenix (ai/phoenix.js) does something. */
+const PHOENIX_TEXT = {
+  phoenixCalls: (ev, walk) => `A PHOENIX is locked in this cell, calling to you. ${walk.carriedKeys?.has('dungeon') ? "Open the gate with the jailer's key (E)" : 'The jailer on the round outside carries the key'}`,
+  phoenixFreed: 'THE PHOENIX IS OUT – lead it to the entrance stairs. Guards will shoot at its light',
+  phoenixWaits: (ev) => `The phoenix cannot open doors: open ${ev.door ?? 'the door'} for it`,
+  phoenixBurns: 'THE PHOENIX BURSTS INTO FLAME – it will rise again from its ashes',
+  phoenixReborn: 'The phoenix rises from its ashes',
+  phoenixEscape: 'The phoenix sees the way out and flies up the stairs…',
+  phoenixFree: 'THE PHOENIX IS FREE – it has risen out of the catacombs into the open sky',
+  keysDropped: "The jailer dropped his keys (E to take them)",
+};
 
 function nearestSprinkler(w, p) {
   let best = null;

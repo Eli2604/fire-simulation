@@ -26,6 +26,12 @@ import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
+import { PhoenixRenderer } from './phoenix.js';
+import { PatchRenderer } from './patches.js';
+import { SnowRenderer } from './snow.js';
+import { BreathRenderer } from './breath.js';
+import { MATERIALS } from '../sim/materials.js';
+import { SNOW_COVER } from './archipelago.js';
 import { deriveWeather } from '../sim/weather.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
@@ -114,9 +120,13 @@ export class View {
     this.volume = new VolumeRenderer(this.renderer);
     this.markers = new MarkerRenderer(this.root);
     this.markers.flames = this.flames;
+    this.patches = new PatchRenderer(this.root); // fine detail close up: candles (sim/patches.js)
     this.puddles = new PuddleRenderer(this.root);
+    this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
+    this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.enemies = new EnemyRenderer(this.root, this.flames);
     this.dragons = new DragonRenderer(this.root, this.flames);
+    this.phoenixes = new PhoenixRenderer(this.root, this.flames);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
     this.flashLight = new THREE.PointLight(0xffd7a0, 0, 0, 1.4);
@@ -193,6 +203,9 @@ export class View {
     this.volcanoes.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
+    this.patches.clear();
+    this.breath.clear();
+    this.snow.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
     this.surface.setWorld(world);
@@ -235,6 +248,61 @@ export class View {
     this.controls.maxDistance = diag * 6;
     this.controls.update();
     this.sizeShadows(world, diag);
+  }
+
+  /**
+   * Who breathes here (the guards, you in the walk-through), and the air at their mouths:
+   * in the cold their breath shows (render/breath.js).
+   */
+  updateBreath(dt, sim, scale) {
+    const w = this.world;
+    const B = this.breath;
+    B.light = Math.min(1, 0.35 + (this.dark ? 0.5 : this.sun.intensity * 0.4));
+    if (w.vacuum) return B.update(dt, this.time, scale, [], () => null);
+    const mouths = [];
+    for (const e of w.enemies) {
+      if (e.dead || e.yaw == null) continue;
+      const dir = [Math.sin(e.yaw), 0, Math.cos(e.yaw)];
+      const run = ['flee', 'chase', 'charge', 'lure', 'retreat'].includes(e.state);
+      mouths.push({ id: e, p: [e.p[0] + dir[0] * 0.12, e.p[1] + 1.58, e.p[2] + dir[2] * 0.12], dir, rate: run ? 0.55 : 0.28 });
+    }
+    const pl = sim.ai?.player;
+    if (pl?.head && !w.playerHeld) {
+      const cam = this.cameraLocal();
+      // in the walk-through the camera is your eyes: your breath shows just under them
+      if (Math.hypot(cam[0] - pl.head[0], cam[1] - pl.head[1], cam[2] - pl.head[2]) < 0.6) {
+        const f = this.camera.getWorldDirection(new THREE.Vector3()).add(this.camera.position);
+        const l = this.root.worldToLocal(f);
+        const dir = [l.x - cam[0], 0, l.z - cam[2]];
+        const n = Math.hypot(dir[0], dir[2]) || 1;
+        dir[0] /= n;
+        dir[2] /= n;
+        const moving = Math.hypot(pl.v?.[0] ?? 0, pl.v?.[2] ?? 0) > 3;
+        mouths.push({ id: pl, p: [cam[0] + dir[0] * 0.14, cam[1] - 0.1, cam[2] + dir[2] * 0.14], dir, rate: moving ? 0.5 : 0.25 });
+      }
+    }
+    const rh = this.rh ?? 0.6;
+    const air = (p) => {
+      const i = w.voxelAt(p[0], p[1], p[2]);
+      if (i >= 0 && w.mat[i] && MATERIALS[w.mat[i]].fluidity >= 0.95) return null; // under water
+      if (w.sea && !w.vacuum && p[1] < w.sea.level) {
+        const [x0, z0, x1, z1] = w.sea.box ?? [0, 0, 0, 0];
+        if (!(p[0] > x0 && p[0] < x1 && p[2] > z0 && p[2] < z1)) return null;
+      }
+      const ax = Math.max(0, Math.min(w.anx - 1, Math.floor(p[0] / w.ah)));
+      const ay = Math.max(0, Math.min(w.any - 1, Math.floor(p[1] / w.ah)));
+      const az = Math.max(0, Math.min(w.anz - 1, Math.floor(p[2] / w.ah)));
+      const a = w.airIdx(ax, ay, az);
+      if ((w.o2?.[a] ?? 0.23) < 0.05) return null;
+      return { T: w.airT[a], RH: rh, wind: [w.vx[a], w.vy?.[a] ?? 0, w.vz[a]] };
+    };
+    B.update(dt, this.time, scale, mouths, air);
+  }
+
+  /** The camera's position in the world's own coordinates ([x, y, z]). */
+  cameraLocal() {
+    const c = this.root.worldToLocal(this._camLocal.copy(this.camera.position));
+    return [c.x, c.y, c.z];
   }
 
   placeCamera(target, cameraOffset) {
@@ -287,12 +355,35 @@ export class View {
     this.spaceT = 0;
     if (this.space) this.setSpaceBlend(1);
     else if (this.stars) this.stars.visible = false;
-    this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog);
+    this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog) * (0.3 + 0.7 * Math.max(0, Math.min(1, weather.sunshine ?? 1)));
     this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
     this.ocean.setWeather(weather, this.scene.background, grey);
     this.trees.setWind(D.windX, D.windZ); // the grass bends in it
+    // the season: the leaves and the grass, a lower and weaker sun in winter
+    this.season = weather.season ?? 'summer';
+    this.trees.setSeason(this.season, this.snowCover ?? 0);
+    // the air at its dew point (saturated: mist, fog, just after rain, a damp still night):
+    // dew on the grass; below freezing, hoar frost. (The grass is wetted by it in the
+    // simulation too: dead fuels take up water towards what the damp air holds.)
+    const sat = Math.max(0, Math.min(1, (D.rh - 0.9) / 0.08));
+    const cold = weather.ambient <= 0.5;
+    this.trees.setDew(cold ? 0 : sat, cold ? Math.max(sat, weather.ambient < -2 && D.rh > 0.8 ? 0.5 : 0) : 0);
+    const sunK = { spring: 0.95, summer: 1, autumn: 0.85, winter: 0.7 }[this.season] ?? 1;
+    this.sun.intensity *= sunK;
+  }
+
+  /** Snow on the ground: the islands round the scene, the crowns of the trees, the light it throws back. */
+  updateSnowCover() {
+    const c = this.snow.cover();
+    SNOW_COVER.uSnowCover.value = c;
+    if (Math.abs(c - (this.snowCover ?? 0)) > 0.04 || (c === 0 && this.snowCover > 0)) {
+      this.snowCover = c;
+      this.trees.setSeason(this.season ?? 'summer', c);
+      // snow throws the light back up: a bright ground for the sky light
+      this.hemi.groundColor.set(0x4a3f30).lerp(new THREE.Color(0xd8dde4), c * 0.8);
+    }
   }
 
   /** The sea against a ship that settles, lists and trims (water aboard): its level and tilt. */
@@ -517,6 +608,12 @@ export class View {
     this.puddles.update();
     this.enemies.update(this.world, this.time);
     this.dragons.update(this.world, this.time, dt);
+    this.phoenixes.update(this.world, this.time, dt);
+    this.patches.update(this.time, sim.patches, this.voxels.mode, dt, scale);
+    this.flames.skip = this.patches.coarseSkip;
+    this.snow.update(this.time);
+    this.updateSnowCover();
+    this.updateBreath(dt, sim, scale);
     this.updateFireLight(stats);
     this.updateTorchLights();
     this.torches.update(this.time);
@@ -557,8 +654,27 @@ export class View {
   /** The nearest burning torches each light their surroundings, flickering. */
   updateTorchLights() {
     const w = this.world;
-    const cam = this.camera.position;
-    const src = w.heaters.filter((h) => h.light && h.on).map((h) => ({ h, d: Math.hypot(h.pos[0] - cam.x, h.pos[1] - cam.y, h.pos[2] - cam.z) }));
+    const [cx, cy, cz] = this.cameraLocal();
+    // candles standing together (an altar's, a candelabra's) are one light: a point light a
+    // hand's width over a white cloth burns it white (the inverse square), where the dozen
+    // flames together light it as a soft glow from over them
+    const lit = w.heaters.filter((h) => h.light && h.on);
+    const groups = [];
+    for (const h of lit) {
+      if (h.kind !== 'candle') {
+        groups.push({ h, pos: h.pos, n: 1 });
+        continue;
+      }
+      const p = h.patchLive && h.flamePos ? h.flamePos : h.pos;
+      const k = Math.min(2, Math.max(0.3, (h.power || 70) / 70));
+      let g = groups.find((q) => q.candle && Math.hypot(q.c[0] / q.n - p[0], q.c[1] / q.n - p[1], q.c[2] / q.n - p[2]) < 0.7);
+      if (!g) groups.push((g = { h, candle: true, c: [0, 0, 0], n: 0, k: 0 }));
+      for (let i = 0; i < 3; i++) g.c[i] += p[i];
+      g.n++;
+      g.k += k;
+    }
+    for (const g of groups) if (g.candle) g.pos = [g.c[0] / g.n, g.c[1] / g.n + 0.04 + Math.min(0.3, 0.12 * Math.sqrt(g.n)), g.c[2] / g.n];
+    const src = groups.map((g) => ({ ...g, d: Math.hypot(g.pos[0] - cx, g.pos[1] - cy, g.pos[2] - cz) }));
     src.sort((a, b) => a.d - b.d);
     this.torchLights.forEach((l, k) => {
       const s = src[k];
@@ -568,7 +684,7 @@ export class View {
       }
       const o2 = w.o2[this.flames.world ? Math.max(0, Math.min(w.NA - 1, w.airIdx(Math.floor(s.h.pos[0] / w.ah), Math.floor((s.h.pos[1] + 0.2) / w.ah), Math.floor(s.h.pos[2] / w.ah)))) : 0] ?? 0.232;
       const f = Math.max(0, Math.min(1, (o2 - 0.135) / 0.097)); // a torch dims and dies as the oxygen goes
-      l.position.set(s.h.pos[0], s.h.pos[1] + (s.h.kind === 'candle' ? 0.04 : 0.25), s.h.pos[2]);
+      l.position.set(s.pos[0], s.pos[1] + (s.candle ? 0 : 0.25), s.pos[2]);
       // the nearest two cast shadows (bones, skulls, people in the light of a torch)
       const shadow = this.torchShadows && !this.qualityNoShadows && k < 2;
       if (l.castShadow !== shadow) {
@@ -581,7 +697,9 @@ export class View {
         l.shadow.radius = 3;
       }
       // (a candle: a warm pool of light round it, steadier than a torch)
-      l.intensity = s.h.kind === 'candle' ? 2.4 * f * (0.95 + 0.05 * Math.sin(this.time * 9 + k)) : 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
+      // a candle gives about a twentieth of a torch's light (its heat release, ~70 W against
+      // ~1.5 kW); a dozen of them on an altar together, each at a torch's share, burnt it white
+      l.intensity = s.candle ? 0.33 * s.k * f * (0.95 + 0.05 * Math.sin(this.time * 9 + k)) : 6.5 * f * (0.8 + 0.2 * Math.sin(this.time * 13 + k) * Math.sin(this.time * 7.7 + k * 2));
     });
   }
 

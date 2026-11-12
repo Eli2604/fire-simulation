@@ -14,6 +14,8 @@ import { doorGlassBroken } from '../sim/doors.js';
  *  - steel:     a ship's watertight door: rounded panel, a raised stiffening frame,
  *               dog levers round the edge, hinge knuckles
  *  - aluminium with glass: a framed glass door with a push bar
+ *  - bars (`doorBars`): a dungeon gate of wrought-iron bars riveted to flat straps,
+ *               with a heavy lock box (you see, and shoot, through it)
  *
  * It swings open on its hinge when the simulation opens it, darkens as its voxels
  * char, loses its glass when that breaks, and gives way to the voxels (what is left
@@ -135,7 +137,7 @@ export class DoorRenderer {
     pivot.rotation.y = wide === 0 ? 0 : -Math.PI / 2; // local +x along the door's width
     const leaf = new THREE.Group();
     pivot.add(leaf);
-    const type = main === 'steel' ? 'steel' : main === 'aluminium' ? 'glass' : glassBox ? 'office' : 'plank';
+    const type = d.bars ? 'bars' : main === 'steel' ? 'steel' : main === 'aluminium' ? 'glass' : glassBox ? 'office' : 'plank';
     const parts = this[type](leaf, W, H, T, glassBox, lo, wide);
     leaf.traverse((o) => {
       if (o.isMesh) {
@@ -155,6 +157,44 @@ export class DoorRenderer {
     m.position.set(x, y, z);
     parent.add(m);
     return m;
+  }
+
+  /** A dungeon gate: round wrought-iron bars through flat straps, hinges, a lock box. */
+  bars(leaf, W, H) {
+    const iron = this.m.iron.clone();
+    iron.color.setHex(0x3a3633);
+    iron.roughness = 0.65;
+    const n = Math.max(4, Math.round(W / 0.13));
+    const bar = new THREE.CylinderGeometry(0.014, 0.014, H - 0.02, 8);
+    for (let k = 0; k < n; k++) {
+      const m = new THREE.Mesh(bar, iron);
+      m.position.set((W * (k + 0.5)) / n, H / 2, 0);
+      leaf.add(m);
+      // a spike where the bar comes through the top strap
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.06, 6), iron);
+      tip.position.set((W * (k + 0.5)) / n, H - 0.03, 0);
+      leaf.add(tip);
+    }
+    for (const y of [0.08, H * 0.45, H - 0.12]) {
+      this.box(leaf, iron, W, 0.05, 0.022, W / 2, y, 0);
+      for (let k = 0; k < n; k++) {
+        const r = new THREE.Mesh(new THREE.SphereGeometry(0.01, 6, 4), iron);
+        r.position.set((W * (k + 0.5)) / n, y, 0.014);
+        leaf.add(r);
+      }
+    }
+    // hinge knuckles on the hinge side, the frame stile on both edges
+    this.box(leaf, iron, 0.04, H, 0.04, 0.02, H / 2, 0);
+    this.box(leaf, iron, 0.04, H, 0.04, W - 0.02, H / 2, 0);
+    for (const y of [0.2, H - 0.25]) {
+      const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.14, 10), iron);
+      knuckle.position.set(0, y, 0);
+      leaf.add(knuckle);
+    }
+    // the lock: a box on the strap at hand height, a keyhole, a hasp
+    this.box(leaf, iron, 0.14, 0.18, 0.07, W - 0.12, H * 0.45, 0.02);
+    this.box(leaf, new THREE.MeshBasicMaterial({ color: 0x050403 }), 0.012, 0.035, 0.005, W - 0.12, H * 0.45 - 0.02, 0.058);
+    return { mats: [iron] };
   }
 
   /** A plank door with iron straps (catacombs, cellars). */

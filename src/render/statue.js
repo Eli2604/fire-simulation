@@ -93,7 +93,13 @@ export class StatueDrawing {
         m.visible = false; // (our own flames burn there)
         continue;
       }
-      const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      // its own candles cut out, where ours stand instead (`pr.cut`: candles of their own, sim/patches.js)
+      if (pr.cut && /_candles$/i.test(m.material?.name ?? '')) {
+        m.visible = false;
+        continue;
+      }
+      let geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      if (pr.cut) geo = cutCylinders(geo, new THREE.Matrix4().copy(o.matrixWorld).invert().multiply(m.matrixWorld), pr.cut);
       const pos = geo.getAttribute('position');
       const slot = new Float32Array(pos.count);
       const M = new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld);
@@ -264,4 +270,39 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
     this.t = 0;
     this.refresh();
   }
+}
+
+/**
+ * The triangles of a scan inside any of the upright cylinders `cuts` ([x, z, y0, y1, r] in
+ * the scan's own frame; M: the mesh's vertices to that frame) left out: a scanned candelabra's
+ * candles, where candles of our own stand in its cups.
+ */
+function cutCylinders(geo, M, cuts) {
+  const pos = geo.getAttribute('position');
+  const v = new THREE.Vector3();
+  const keep = [];
+  for (let t = 0; t < pos.count; t += 3) {
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    for (let e = 0; e < 3; e++) {
+      v.fromBufferAttribute(pos, t + e).applyMatrix4(M);
+      cx += v.x / 3;
+      cy += v.y / 3;
+      cz += v.z / 3;
+    }
+    const inside = cuts.some(([x, z, y0, y1, r]) => cy > y0 && cy < y1 && (cx - x) ** 2 + (cz - z) ** 2 < r * r);
+    if (!inside) keep.push(t);
+  }
+  if (keep.length * 3 === pos.count) return geo;
+  const out = new THREE.BufferGeometry();
+  for (const [name, a] of Object.entries(geo.attributes)) {
+    const n = a.itemSize;
+    const arr = new a.array.constructor(keep.length * 3 * n);
+    keep.forEach((t, k) => {
+      for (let j = 0; j < 3 * n; j++) arr[k * 3 * n + j] = a.array[t * n + j];
+    });
+    out.setAttribute(name, new THREE.BufferAttribute(arr, n, a.normalized));
+  }
+  return out;
 }

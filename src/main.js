@@ -9,7 +9,9 @@ import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
 import { MATERIAL_NAMES } from './sim/materials.js';
-import { defaultWeather } from './sim/weather.js';
+import { defaultWeather, SEASONS } from './sim/weather.js';
+import { initSnow } from './sim/snow.js';
+import { PATCH } from './sim/patches.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 
@@ -41,6 +43,9 @@ const state = {
   markers: true,
   ao: true,
   torchShadows: true,
+  detail: !/[?&]patches=0/.test(location.search), // fine detail close up (candles: sim/patches.js)
+  voxelScale: 1, // factor on every scene's voxel size
+  patchScale: 1, // factor on the fine detail's voxel size
 };
 
 let scene = null; // editable scene description
@@ -158,6 +163,7 @@ function switchZone(pt) {
 // ---------------------------------------------------------------------------
 function load(desc, fresh = true) {
   scene = desc;
+  scene.voxelScale = state.voxelScale;
   if (scene.zones) {
     // a restart rebuilds the zone you are in; the others are built again when you go there
     zoneSims = {};
@@ -233,7 +239,7 @@ const wc = [
   fW.add(weather, 'humidity', 0, 1, 0.01).name('Relative humidity'),
   fW.add(weather, 'windSpeed', 0, 35, 0.1).name('Wind speed (m/s)'),
   fW.add(weather, 'windDir', 0, 360, 5).name('Wind towards (°)'),
-  fW.add(weather, 'rain', 0, 50, 0.5).name('Rain (mm/h)'),
+  fW.add(weather, 'rain', 0, 50, 0.5).name('Rain / snow (mm/h of water)'),
   fW.add(weather, 'fog', 0, 1, 0.01).name('Fog'),
 ];
 wc.forEach((c) => c.onChange(() => view.applyWeather(weather)));
@@ -246,6 +252,38 @@ const setWeather = (o) => {
 };
 fW.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 }) }, 'storm').name('Storm (gale, rain, high sea)');
 fW.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
+// the seasons: the weather of a typical day, the leaves and the grass, snow lying in winter
+// (below freezing what falls is snow: sim/snow.js)
+// (a season is the scene's: it is built again in it, its ground and walls at that day's
+// temperature, the snow lying; a warm scene put in frost would steam all over)
+function setSeason(s) {
+  const p = SEASONS[s];
+  if (!p) return;
+  Object.assign(weather, p, { season: s });
+  restart();
+  wc.forEach((c) => c.updateDisplay());
+}
+/** Snow lying now (m): a fresh layer over the scene (outdoors), or none. */
+function setSnow(v) {
+  weather.snowCover = v;
+  if (sim.weather !== weather) sim.weather.snowCover = v;
+  const w = sim.world;
+  if (v > 0) initSnow(w, v);
+  else if (w.snow) {
+    w.snow.depth.fill(0);
+    w.snow.version++;
+  }
+  wc.forEach((c) => c.updateDisplay());
+}
+wc.push(
+  fW.add(weather, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onChange(setSeason),
+  fW.add(weather, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(setSnow),
+  fW.add(weather, 'sunshine', 0, 1, 0.05).name('Sunshine (0 overcast, 1 clear)').onChange(() => view.applyWeather?.(weather)),
+);
+fW.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidity: 0.92, fog: 0.12, sunshine: 0.2 }) }, 'snowfall').name('Snowfall (−4 °C, snowing: it builds up)');
+// the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
+fW.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');
+fW.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
 
 const fV = gui.addFolder('View');
 fV.add(state, 'mode', { Realistic: 'realistic', 'Thermal camera': 'thermal' })
@@ -270,6 +308,25 @@ fV.add(state, 'smokeDensity', 0.1, 3, 0.05).name('Smoke opacity').onChange((v) =
 fV.add(state, 'fireLight').name('Fire light').onChange((v) => (view.fireLightOn = v));
 fV.add(state, 'ao').name('Ambient occlusion').onChange((v) => (view.aoOn = v));
 // slow frames (no graphics card) step resolution, ambient occlusion and shadows down
+// candles, torches and campfires close up in fine voxels of their own: wax and pitch that
+// melt, pool and drip, logs that char and fall in
+fV.add(state, 'detail').name('Fine detail close up');
+// voxel sizes, to suit the hardware: the scene's (rebuilt), the fine detail's (patches rebuilt)
+const fD = gui.addFolder('Voxel size (performance vs detail)');
+fD.add(state, 'voxelScale', { 'Finer (0.75×: ~3× the work)': 0.75, 'As designed (1×)': 1, 'Coarser (1.5×: ~1/5)': 1.5, 'Coarse (2×: ~1/16)': 2 })
+  .name('Scene voxels')
+  .onChange(() => restart());
+fD.add(state, 'patchScale', { 'Finer (0.7×)': 0.7, 'As designed (1×: candles and torches 1 cm, thin candles 5 mm, campfires 4 cm)': 1, 'Coarser (1.5×)': 1.5 })
+  .name('Close-up detail voxels')
+  .onChange((v) => {
+    PATCH.scale = v;
+    restart();
+  });
+fD.add(PATCH, 'maxActive', 0, 16, 1).name('Close-up objects at once');
+fD.add(PATCH, 'maxFine', 0, 3, 1).name('Finest candles (half the voxels, within 1.2 m)');
+fD.add(PATCH, 'torches').name('Torch heads close up (~3 candles each)');
+fD.add(PATCH, 'fires').name('Campfires close up');
+fD.close();
 fV.add(view, 'adaptive').name('Adaptive quality').onChange((v) => !v && view.setQuality(0));
 fV.add(state, 'torchShadows').name('Torch & lamp shadows').onChange((v) => {
   view.torchShadows = v;
@@ -471,7 +528,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down' };
+const EVENT_TEXT = { explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)
@@ -665,6 +722,9 @@ function frame(now) {
     // the walk-through runs in real time
     const done = sim.advance(dt * (walk.active ? 1 : state.timeScale), 22);
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
+    // the candles near the camera in fine detail (sim/patches.js), within a few ms a frame
+    if (sim.patches) sim.patches.enabled = state.detail;
+    sim.patches?.update(view.cameraLocal(), 8);
   } else speed *= 0.9;
   if (scene.zones) updateProxies();
   view.render(dt, sim);
@@ -699,12 +759,25 @@ function startWalk() {
 // deep links: ?scenario=catacombs&zone=catacombs&walk=1&at=x,y,z,yaw,pitch opens a scene
 // (and a zone of it) straight in the walk-through, standing at a given spot
 const qs = new URLSearchParams(location.search);
+// ...&voxel=1.5: every scene's voxels 1.5x their size; ...&detailvoxel=0.7: the close-up detail's
+if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
+if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
+// no graphics card (rendering in software): fewer close-up objects at once
+if (view.softwareGpu) PATCH.maxActive = 4;
 if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
 {
   const sc = cloneScene(SCENARIOS[state.scenario]);
   if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
+  // ...&season=winter: a winter's day (snow lying, snow falling)
+  if (SEASONS[qs.get('season')]) sc.weather = { ...(sc.weather ?? {}), ...SEASONS[qs.get('season')], season: qs.get('season') };
+  // ...&thaw=1: the snow lying, a sunny day above freezing (it melts, the roofs drip)
+  if (qs.get('thaw')) sc.weather = { ...(sc.weather ?? {}), ambient: 5, rain: 0, sunshine: 1, humidity: 0.7, fog: 0 };
+  // ...&dew=1: a still, misty morning, the air at its dew point (dew on the grass; frost if it is freezing)
+  if (qs.get('dew')) sc.weather = { ...(sc.weather ?? {}), humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0 };
   load(sc);
 }
+// ...&snow=0.4: that much snow lying
+if (qs.get('snow') !== null && Number.isFinite(Number(qs.get('snow')))) setSnow(Number(qs.get('snow')));
 // ...&storm=1: a gale with rain; ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
 if (qs.get('storm')) for (const [k, v] of Object.entries({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15 })) weather[k] = sim.weather[k] = v;
 for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog']]) {
@@ -732,6 +805,15 @@ if (qs.get('walk')) {
   if (at.length >= 5) walk.pitch = (at[4] * Math.PI) / 180;
   if (qs.get('lamp') === '0') walk.lampOn = false;
   if (qs.get('freeze')) state.running = false; // a still: everything where it starts
+}
+// ...&advance=60: the scene as it is a minute on (the fine detail round the walk-in spot with it)
+if (Number(qs.get('advance')) > 0) {
+  const sp = sim.spawn.p;
+  const eye = [sp[0], (sp[1] ?? 0) + 1.7, sp[2]];
+  for (let t = 0; t < Number(qs.get('advance')); t += 0.5) {
+    sim.advance(0.5, 1e9);
+    sim.patches?.update(eye, 1e9);
+  }
 }
 // F1: show / hide the information pane (the scene, its description and the figures)
 window.addEventListener('keydown', (e) => {

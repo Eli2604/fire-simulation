@@ -70,6 +70,7 @@ export class FlameRenderer {
     scene.add(this.points);
     this.enabled = true;
     this.intensity = 1;
+    this.skip = []; // boxes [x0, y0, z0, x1, y1, z1] whose flames are drawn by another (a detail patch's)
   }
 
   setWorld(world) {
@@ -91,6 +92,11 @@ export class FlameRenderer {
     this.size0[k] = size;
     this.kind[k] = kind;
     this.heat[k] = heat;
+  }
+
+  skipped(x, y, z) {
+    for (const b of this.skip) if (x > b[0] && y > b[1] && z > b[2] && x < b[3] && y < b[4] && z < b[5]) return true;
+    return false;
   }
 
   update(dt, uScale) {
@@ -119,6 +125,7 @@ export class FlameRenderer {
         const ax = a % anx;
         const ay = ((a - ax) / anx) % any;
         const az = (a - ax - ay * anx) / sxy;
+        if (this.skip.length && this.skipped((ax + 0.5) * ah, (ay + 0.5) * ah, (az + 0.5) * ah)) continue;
         while (n > 0) {
           if (n < 1 && Math.random() > n) break;
           n -= 1;
@@ -149,6 +156,7 @@ export class FlameRenderer {
       if (M.name !== 'wood' && M.name !== 'charcoal' && M.name !== 'bark' && M.name !== 'twigs' && M.name !== 'needles') continue;
       if (Math.random() > sparkChance * Math.min(3, hrr[i] / (h * h * 2e5))) continue;
       const [x, y, z] = w.coords(i);
+      if (this.skip.length && this.skipped((x + 0.5) * h, (y + 0.5) * h, (z + 0.5) * h)) continue;
       const a = w.airIndexOfVoxel(x, Math.min(w.ny - 1, y + 1), z);
       this.spawn(
         (x + Math.random()) * h, (y + 1) * h, (z + Math.random()) * h,

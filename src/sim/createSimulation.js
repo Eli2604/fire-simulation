@@ -3,6 +3,8 @@ import { Simulation } from './simulation.js';
 import { defaultWeather } from './weather.js';
 import { toggleDoor } from './doors.js';
 import { initVacuum } from './vacuum.js';
+import { DetailPatches } from './patches.js';
+import { initSnow } from './snow.js';
 
 const IGNITION_SECONDS = 40;
 
@@ -21,10 +23,15 @@ export function createSimulation(scene) {
     const z = scene.zones[scene.zone ?? scene.startZone ?? Object.keys(scene.zones)[0]];
     scene = { ...scene, world: z.world, objects: z.objects, view: z.view ?? scene.view, walkStart: z.walkStart };
   }
+  // the voxel size: the scene's own (each zone has its own), times a factor chosen for the
+  // hardware (coarser: faster; finer: more detail, ~16x the work for half the size)
+  if (scene.voxelScale && scene.voxelScale !== 1) scene = { ...scene, world: { ...scene.world, h: scene.world.h * scene.voxelScale } };
   const zoneW = scene.zones?.[scene.zone ?? scene.startZone]?.weather; // a zone can have its own (space: no wind, no rain)
   const weather = { ...defaultWeather(), ...(scene.weather ?? {}), ...(zoneW ?? {}) };
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
   world.dark = !!scene.view?.dark; // underground: a light where there should be none is noticed
+  world.indoor = !!(scene.indoor ?? scene.zones?.[scene.zone ?? scene.startZone]?.indoor); // no sky over it: no snow
+  if (weather.snowCover > 0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors)
   const sim = new Simulation(world, weather);
   // where the firefighter walk-through starts: chosen by the user, the scene's own, or the edge
   sim.spawn = scene.walkStart ?? spawn ?? defaultSpawn(world);
@@ -48,6 +55,10 @@ export function createSimulation(scene) {
     sim.markers.push({ p: ig.p, label: custom ? 'Fire start (yours)' : 'Fire start', kind: 'start' });
   }
   sim.markers.push(walkMarker(sim));
+  // candles (and the like) that get a fine world of their own close up
+  // a wall torch (a flame on a drawn torch, models/catacombs.js and others) gets its head in detail close up
+  for (const ht of world.heaters) if (ht.label === 'torch' && ht.light && !ht.kind && !ht.detail) ht.detail = { type: 'torch' };
+  if (world.heaters.some((ht) => ht.detail)) sim.patches = new DetailPatches(sim);
   for (const ht of world.heaters) {
     if (ht.start !== undefined) sim.markers.push({ p: ht.pos, label: `${ht.label ?? 'source'} (after ${ht.start} s)`, kind: 'pending', heater: ht });
   }

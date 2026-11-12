@@ -19,7 +19,7 @@ const run = (sim, seconds) => {
 test('material table resolves residues and wick fuels', () => {
   assert.equal(MATERIALS[MAT.wood].residueId, MAT.charcoal);
   assert.equal(MATERIALS[MAT.charcoal].residueId, MAT.ash);
-  assert.deepEqual(MATERIALS[MAT.wick].wickIds, [MAT.wax, MAT.beeswax]);
+  assert.deepEqual(MATERIALS[MAT.wick].wickIds, [MAT.wax, MAT.beeswax, MAT.pitch]); // (a torch's rags draw pitch)
   for (const m of MATERIALS.slice(1)) {
     assert.ok(m.density > 0 && m.specificHeat > 0 && m.conductivity > 0, `${m.name} has thermal properties`);
   }

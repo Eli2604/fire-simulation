@@ -23,6 +23,9 @@ float aNoise(vec2 p) {
   return mix(mix(aHash(i), aHash(i + vec2(1.0, 0.0)), u.x), mix(aHash(i + vec2(0.0, 1.0)), aHash(i + vec2(1.0, 1.0)), u.x), u.y);
 }`;
 
+/** Snow on the islands round the scene (0..1: as much of the scene's ground as is covered; render/snow.js). */
+export const SNOW_COVER = { uSnowCover: { value: 0 } };
+
 export class ArchipelagoRenderer {
   constructor(root) {
     this.root = root;
@@ -84,6 +87,7 @@ export class ArchipelagoRenderer {
     const own = (spec.zones ?? []).find((q) => q.box[0] - origin[0] >= -0.5 && q.box[2] - origin[0] <= sx + 0.5 && q.box[1] - origin[2] >= -0.5 && q.box[3] - origin[2] <= sz + 0.5);
     const [x0, z0, x1, z1] = world.sea.box[2] - world.sea.box[0] > 0.01 ? world.sea.box : own ? [own.box[0] - origin[0], own.box[1] - origin[2], own.box[2] - origin[0], own.box[3] - origin[2]] : [0, 0, sx, sz];
     const U = {
+      ...SNOW_COVER,
       uSea: { value: sea },
       uZone: { value: new THREE.Vector4(x0 + 0.01, z0 + 0.01, x1 - 0.01, z1 - 0.01) },
     };
@@ -95,7 +99,7 @@ export class ArchipelagoRenderer {
         .replace('#include <common>', '#include <common>\nvarying vec3 vAW;\nvarying vec3 vAN;')
         .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvAW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvAN = normalize(mat3(modelMatrix) * objectNormal);');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\nvarying vec3 vAW;\nvarying vec3 vAN;\nuniform float uSea;\nuniform vec4 uZone;\nvec3 aLocal;\n${A_NOISE}\n${PHOTO_GLSL}`)
+        .replace('#include <common>', `#include <common>\nvarying vec3 vAW;\nvarying vec3 vAN;\nuniform float uSea;\nuniform float uSnowCover;\nuniform vec4 uZone;\nvec3 aLocal;\n${A_NOISE}\n${PHOTO_GLSL}`)
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -125,6 +129,8 @@ if (ht < 0.0) {
   col = mix(col, rockC, clamp(rocky, 0.0, 1.0) * (1.0 - beach));
   col = mix(col, ashC, smoothstep(45.0, 70.0, ht) * smoothstep(0.25, 0.45, steep) * 0.6);
 }
+// snow lying on the land as it does in the scene: on the open slopes above the shore
+col = mix(col, vec3(0.9, 0.92, 0.95), uSnowCover * smoothstep(0.5, 0.85, normalize(vAN).y) * smoothstep(0.4, 1.6, ht));
 diffuseColor.rgb = col;`,
         )
         .replace(

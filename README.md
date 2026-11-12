@@ -291,6 +291,37 @@ Seeing prey, a noise or a wound interrupts the round, and afterwards it goes on.
 empty route it rests in its lair, now and then flies round the island, lands somewhere to
 crawl about, and goes home.
 
+### The phoenix (catacombs)
+
+At the far end of the catacombs a short gallery ends in a dungeon cell behind a locked gate
+of iron bars, and in it, on a stone perch, sits a phoenix: a bird of fire about 1.6 m across
+the wings (models/catacombs.js `phoenix` for the cell, ai/phoenix.js for what it does,
+render/phoenix.js for how it looks). Get it out:
+
+- **The key.** One guard on the round past the cell, the jailer, carries the key ring at his
+  belt (Enemies › `key`). Kill him and he drops it; take it with **E**, then **E** at the gate.
+  A blast that breaks the bars also opens it.
+- **Caged**, it watches you, calls to you the first time it sees you and now and then spreads
+  its wings in the cell. Its light throws the shadows of the bars down the gallery.
+- **Freed**, it flies after you through the passages, a couple of metres behind, low under
+  the ceiling (the guards' path finding, at flight height). It goes round shut doors where
+  there is a way, and otherwise waits at one and calls until you open it: it cannot open
+  doors itself.
+- **The guards** see it by its own light, shout and shoot at it when they do not see you.
+  Bullets and blasts hurt it. Fire does not, since it is made of fire.
+- **Killed**, it bursts into flame (a real flame in the simulation, which can light what is
+  close by) and falls to a heap of glowing ash. About 11 s later it is born again from the
+  ash and goes on.
+- **Out:** lead it to the foot of the entrance stairs and it flies up them and out of the
+  catacombs, free.
+
+Every feather is a flame: white-gold at the root, orange along the vane, crimson at the tip,
+where it breaks up into flickering tongues of fire (a shader). The wings are built like a
+bird of prey's (arm, forearm, hand; they beat with the wrist flexing on the upstroke and
+fold along the back when it sits). It has a train of flame streamers for a tail, a crest of
+fire, a golden hooked beak and white-hot eyes, and it sheds flames and sparks as it flies.
+Its cry is a raptor's scream, made live like the other sounds.
+
 ### Flying the jet (carrier scenario)
 
 Walk up to the jet on the flight deck and press **E**. W/S sets the throttle (on the deck,
@@ -455,6 +486,73 @@ graphics card, in software) the view steps its resolution, ambient occlusion and
 down, and back up when there is time to spare; a software renderer is recognised at the
 start and begins a step down. The scanned skulls in the ossuary are used up to ~7 m, the
 light procedural ones beyond.
+
+**Fine detail close up** (sim/patches.js, render/patches.js; View: "Fine detail close up"):
+a scene at 20 cm voxels cannot hold a candle, a torch's head or the logs of a campfire as they
+char. There they are drawn and simulated coarsely; each also carries a description of
+itself, and when you come close it gets a small world of its own at fine voxels:
+
+- a candle (within ~3.5 m): 1 cm voxels (5 mm for a candelabra's thin candles), the old
+  Candles scene's physics: the wick draws molten wax, the pool forms, wax runs down the side
+  and sets. The nearest one within 1.2 m goes finer again (5 mm), its wax and flame carried
+  over (resampled), so a drip is a drip and not a stack of cubes;
+- a wall torch (within 2.5 m): its head at 1 cm, rags soaked in pitch burning as many wicks
+  at once (models/torch.js), the pitch running and dripping; ~1–2 kW, as the coarse torch;
+- a campfire that burns (within ~8 m): its logs, kindling and stone ring at a few cm
+  (coarser for a big bonfire: at most 100k voxels), started from the coarse fire as it is
+  (what has burnt away, what is charred, what burns) and burning on in detail, with flames
+  of its own; the coarse pile and its flames are not drawn meanwhile.
+
+Each is drawn as the smooth surface of its own voxels (surface nets, rounded). The coarse air
+round it is its surroundings (temperature, oxygen, a draught). A candle's and a torch's patch
+gives back what it burns (the coarse flame's heat release, its flame drawn where the patch
+burns, as big); a campfire's coarse voxels stay the fire for the scene (its heat, its smoke).
+The nearest few run (8; 4 without a graphics card), within a time budget per frame; further
+away the coarse one stands in again. A blast nearby blows candles and torches out. The
+candelabra's own scanned candles are cut out of the scan and ours stand in its cups.
+
+Costs, per simulated second: a 1 cm candle ~30 ms, a 5 mm one ~65–270 ms, a torch's head
+~170 ms, the islet's campfire ~190 ms. The dragon's fire breath has no patch: a jet 10 m long
+that moves with the head would need a fine grid along all of it (far more than the scene
+itself); what it sets alight burns in the scene's voxels.
+
+**Voxel size** (folder "Voxel size (performance vs detail)", or `&voxel=1.5`, `&detailvoxel=0.7`
+in the link): a factor on every scene's (and zone's) own voxel size, one on the close-up
+detail's, how many close-up objects run at once, how many candles go finest, and torches and
+campfires close up on or off. Coarser is faster (1.5×: about a fifth of the work), finer is
+more detailed (half the size: ~16× the work: 8× the voxels, twice the steps).
+
+**Seasons and snow** (Weather: "Season", "Snow lying (m)", "Sunshine", "Snowfall", "Thaw";
+`&season=winter`, `&snow=0.4`, `&thaw=1`; sim/snow.js, render/snow.js): spring, summer, autumn
+and winter each start from a typical day (temperature, humidity, sunshine; the leaves turn
+rust and gold in autumn, oaks keep brown leaves through the winter, the grass goes to straw);
+a season rebuilds the scene at that day's temperature. Below freezing the precipitation is
+snow (sleet to +3 °C). Snow lies as a height field (cells of at most 0.2 m) on whatever is
+open to the sky: the ground, the roofs of the church and the house, decks, ledges (under a
+tree less of it). It builds up as it falls (10 mm of water is ~10 cm of fresh snow), settles
+over days, and melts when the heat it gets outweighs what it loses: the sun (fresh snow sends
+~85% of it back, old and trodden snow less; the season's sun, through the clouds), the air
+over it (above freezing; below, it cools it), a fire's hot gas and radiation (a burner or a
+torch near it straight onto the snow), a hot surface under it; it loses heat to a clear sky.
+334 kJ/kg, taken from the air. Its melt water soaks what lies under it (fuel under snow does
+not catch); off a roof's edge it drips: drops fall from the eaves onto the ground below, which
+gets the water. Feet press it down: a person (~13 kPa) packs fresh snow to ~400 kg/m³, a
+trail of footprints, lower and greyer; a dragon a broad groove; a blast clears it. Deep fresh
+snow slows you down in the walk-through. The other islands of the group turn white with it.
+Steam is drawn only where the air cannot hold it (over its saturation): a fire's or a hose's
+steam, not the little the sea gives off over a whole scene.
+
+**Breath, dew and frost** (render/breath.js, render/trees.js; Weather: "Misty morning",
+`&dew=1`): in cold air the guards' breath and your own show (what you breathe out is warm and
+saturated: mixed into cold air it condenses, more the colder and damper; every few seconds,
+faster when running). When the air is at its dew point the grass beads with dew (wet, glossy,
+the drops glinting); below freezing it is white with hoar frost. Dead fuels take up water
+towards what the damp air holds (they are harder to light).
+
+**Light close up**: candles standing together (an altar's, a candelabra's) are one soft light
+over them, each about a twentieth of a torch's (their heat release); the helmet lamp dims with
+how near what it falls on is (the eye adapts): a white altar cloth a metre off is no longer
+burnt white.
 
 **Blasts and the ground**: a blast at the ground digs a crater in loose ground (soil,
 sand, grass, gravel), ~0.8 m · (TNT kg)^(1/3) across (0.4 m for a grenade), throwing the

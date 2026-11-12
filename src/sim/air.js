@@ -125,7 +125,8 @@ export function stepAir(w, W, D, dt, sim) {
   const ah3 = ah * ah * ah;
   const Tamb = W.ambient;
   const sxy = anx * any;
-  const O2B = w.vacuum ? 0 : O2_AIR; // what comes in from outside the domain (nothing, in space)
+  // what comes in from outside the domain (nothing, in space; a detail patch: the coarse air round it)
+  const O2B = w.vacuum ? 0 : w.o2Out ?? O2_AIR;
   const suck = w.vacuum ? w.suck : null; // air streaming out through a hull breach
   const awake = w.airAwake ?? null; // sleeping blocks (sim/activity.js) keep their state
 

@@ -313,7 +313,7 @@ const DEFS = {
     label: 'Cotton wick', color: [0.95, 0.95, 0.92], density: 300, specificHeat: 1300, conductivity: 0.06,
     combustible: true, ignitionTemp: 255, pyrolysisTemp: 200, heatOfCombustion: 16e6, burnRate: 0.003,
     selfHeating: 0.35, residue: 0.1, smokeYield: 0.01, smokeColor: [0.15, 0.15, 0.15],
-    wicks: ['wax', 'beeswax'], wickRate: 1.7e-6, extinctionMoisture: 0.3, maxBurnTemp: 1000, // wickRate: kg/s of wax drawn by a lit wick (~70 W)
+    wicks: ['wax', 'beeswax', 'pitch'], wickRate: 1.7e-6, extinctionMoisture: 0.3, maxBurnTemp: 1000, // wickRate: kg/s of wax drawn by a lit wick (~70 W)
   },
   gasoline: {
     label: 'Gasoline', color: [0.85, 0.75, 0.35], density: 740, specificHeat: 2200, conductivity: 0.13,
@@ -389,6 +389,14 @@ const DEFS = {
     // carved sandstone (a statue): brittle, spalls in a fierce fire (flakes fly off), sooted black
     label: 'Sandstone (carved)', color: [0.62, 0.58, 0.5], density: 2200, specificHeat: 880, conductivity: 1.5,
     brittle: true, spalling: true, fragile: true, maxMoisture: 0.08, moisture: 0.03, oxidizeTemp: 150, charColor: [0.1, 0.09, 0.085], // (soot from the smoke blackens it well below that heat; this stands in for it)
+  },
+  pitch: {
+    // pine pitch with tallow (a torch's head: rags soaked in it): softens and runs when hot,
+    // the rags draw it up and burn it as a wick does (a smoky, sooty flame)
+    label: 'Pitch (torch)', color: [0.13, 0.08, 0.04], density: 1050, specificHeat: 2000, conductivity: 0.17,
+    combustible: true, ignitionTemp: 240, pyrolysisTemp: 210, heatOfCombustion: 36e6, burnRate: 0.015,
+    selfHeating: 0.3, residue: 0.02, smokeYield: 0.05, smokeColor: [0.08, 0.07, 0.06],
+    meltingPoint: 70, latentHeat: 150e3, fluidity: 0.3, liquidColor: [0.2, 0.12, 0.05],
   },
 };
 

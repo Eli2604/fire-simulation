@@ -20,6 +20,8 @@ import { hitZone, wound, shoot } from '../sim/wounds.js';
  *    torch explains) makes them come and look; so does seeing the beam itself.
  *  - Doors: their paths go through doors they can open (not locked ones). They
  *    open a closed door when they reach it and mostly close it behind them.
+ *  - A phoenix out of its cell (ai/phoenix.js): they see it by its own light, shout,
+ *    and shoot at it when they do not see you.
  */
 const EYE = 1.6;
 const R = 0.25;
@@ -282,8 +284,11 @@ export class EnemyAI {
           e.repath = 0;
         }
       }
-      // --- they fire back while they see you; otherwise walk along the route (limping if a leg is hit)
-      e.aiming = seesPlayer && this.fireAt(e, pl, dt);
+      // --- they fire back while they see you (or the escaped phoenix); otherwise walk along the route (limping if a leg is hit)
+      const bird = !seesPlayer && e.state !== 'flee' ? this.sim.phoenixAI?.seenBy(head) : null;
+      if (bird && !e.sawBird) w.events.push({ type: 'shout', pos: head, time: w.time, name: 'enemy' });
+      e.sawBird = !!bird;
+      e.aiming = (seesPlayer && this.fireAt(e, pl, dt)) || (!!bird && this.fireAt(e, bird, dt));
       if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * (e.speedFactor ?? 1));
       this.closeBehind(e);
     }
@@ -521,7 +526,7 @@ export class EnemyAI {
   }
 
   /**
-   * Firing at the player: short bursts while they can see you and still have the use
+   * Firing at the player (or another target: { p, head, moving }): short bursts while they can see it and still have the use
    * of their arms; less accurate further away, when they are wounded, or running.
    * Returns true while aiming (they stand still to shoot).
    */
@@ -541,7 +546,7 @@ export class EnemyAI {
     const spread = 0.025 + d * 0.003 + (e.bleed ? 0.04 : 0) + (pl.moving ? 0.03 : 0);
     const dir = [0, 1, 2].map((k) => target[k] - muzzle[k] + (Math.random() - 0.5) * 2 * spread * d);
     e.flashUntil = w.time + 0.06;
-    const hit = shoot(this.sim, muzzle, dir, { shooter: e, player: pl });
+    const hit = shoot(this.sim, muzzle, dir, { shooter: e, player: this.player });
     if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle });
     return true;
   }

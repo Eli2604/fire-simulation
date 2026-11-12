@@ -61,6 +61,10 @@ export default {
         prims.push({ shape: 'sphere', c: [Math.cos(a) * R, 0.04, Math.sin(a) * R], r: Math.max(0.07, h * 0.6), material: 'concrete', color: [0.5, 0.5, 0.48], variation: 0.25 });
       }
     }
-    return { prims, ignite: { p: [0, 0.08, 0], radius: Math.max(0.12, h * 1.5), materials: ['twigs', 'wood'] } };
+    // in a coarse scene (an island at 0.4 m voxels) a campfire is a few big voxels: close up
+    // it gets a world of its own at a few cm (sim/patches.js), started from those voxels.
+    // (A marker: no heat of its own; its `dir` carries the pile's rotation into the scene.)
+    const heaters = h > 0.06 ? [{ pos: [0, 0, 0], dir: [1, 0, 0], power: 0, on: false, label: 'campfire', kind: 'campfire', detail: { type: 'campfire', params: { ...p } } }] : [];
+    return { prims, heaters, ignite: { p: [0, 0.08, 0], radius: Math.max(0.12, h * 1.5), materials: ['twigs', 'wood'] } };
   },
 };

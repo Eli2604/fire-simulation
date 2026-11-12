@@ -225,9 +225,10 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const p = toWorld(...en.p);
     // the patrol area in world coordinates (its corners, so a rotated object rotates it)
     const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
-    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4 });
+    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}) });
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
+  for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const s of built.inertSystems ?? []) world.inertSystems.push({ ...s, p: toWorld(...s.p), fired: false });
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
@@ -294,7 +295,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     if (p.door) {
       let d = world.doors.findIndex((x) => x.name === p.door && x.owner === ownerIndex);
       if (d < 0) {
-        world.doors.push({ name: p.door, voxels: [], glass: [], owner: ownerIndex, open: false, startOpen: !!p.doorOpen, locked: !!p.doorLocked, center: [0, 0, 0], n: 0 });
+        world.doors.push({ name: p.door, voxels: [], glass: [], owner: ownerIndex, open: false, startOpen: !!p.doorOpen, locked: !!p.doorLocked, key: p.doorKey, bars: !!p.doorBars, center: [0, 0, 0], n: 0 });
         d = world.doors.length - 1;
       }
       doorTag = d + 1;

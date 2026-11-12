@@ -13,12 +13,13 @@ export default {
   build(p, { h }) {
     // in a coarse scene (a crypt at 0.2 m voxels) a candle is far smaller than a voxel: it
     // is drawn (render/torches.js) and simulated as its flame only, a small burner with its
-    // light (~80 W: heat, a little soot, the air it uses)
+    // light (~80 W: heat, a little soot, the air it uses). Close up it gets a fine world of its
+    // own (sim/patches.js: `detail`), where its wax melts, pools and drips.
     if (h > p.radius * 1.5) {
       const top = (p.holder ? 0.012 : 0) + p.height + p.wickLength;
       return {
         prims: [],
-        heaters: [{ pos: [0, top, 0], power: 80, radius: 0.01, height: 0.05, light: true, label: 'candle', kind: 'candle', candle: { height: p.height, radius: p.radius, wick: p.wickLength, color: p.color, holder: p.holder } }],
+        heaters: [{ pos: [0, top, 0], power: 80, radius: 0.01, height: 0.05, light: true, label: 'candle', kind: 'candle', candle: { height: p.height, radius: p.radius, wick: p.wickLength, color: p.color, holder: p.holder }, detail: { type: 'candle', params: { ...p }, top } }],
       };
     }
     const wax = p.wax === 'beeswax' ? 'beeswax' : 'wax';

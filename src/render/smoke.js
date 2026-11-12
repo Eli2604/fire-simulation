@@ -97,11 +97,20 @@ export class SmokeRenderer {
         col[o + 3] = 0;
         continue;
       }
-      // condensed (visible) part of the water vapour: hot vapour is invisible
+      // condensed (visible) part of the water vapour: hot vapour is invisible, and only what the
+      // air cannot hold condenses (over its saturation: the ambient air already holds RH of it).
+      // A plume's or a hose's steam shows (longer in cold damp air: your breath in winter); the
+      // little the sea gives off over a whole scene does not
       const T = airT[a];
       let cond = (95 - T) / 60;
       cond = cond < 0 ? 0 : cond > 1 ? 1 : cond;
-      cond *= 0.55 + 0.45 * ambientRH;
+      if (st > 0) {
+        const Tc = T < 60 ? T : 60;
+        const sat = (611.2 * Math.exp((17.67 * Tc) / (Tc + 243.5))) / (461.5 * (Tc + 273.15)); // kg/m³ (Magnus)
+        const v = st / vol;
+        const room = sat * (1 - Math.min(0.99, ambientRH));
+        cond *= v > room ? (v - room) / v : 0;
+      }
       const tauS = (K_SOOT * s * ah) / vol;
       const tauW = (K_STEAM * st * cond * ah) / vol;
       const tau = (tauS + tauW) * dens;

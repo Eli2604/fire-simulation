@@ -38,16 +38,16 @@ function catacombObjects(exitTo = '') {
     // cracks and breaks (models/statue.js)
     { type: 'statue', params: { shape: 'gothic', scale: 0.85 }, x: 27.4, z: 21.1, rotation: 90 },
     // brass candelabra at the back of the altar, their candles burning (models/candelabra.js)
-    { type: 'candelabra', params: { scale: 0.8 }, x: 30, z: 23.2, y: 1.2, rotation: 180 },
+    { type: 'candelabra', params: { scale: 0.8 }, x: 30, z: 23.2, y: 1.4, rotation: 180 },
     // a brass vase on the altar, the celebrant's gothic chair in the apse (models/scannedProp.js)
-    { type: 'scannedProp', params: { asset: 'vase', scale: 0.8 }, x: 30.8, z: 23.0, y: 1.2 },
+    { type: 'scannedProp', params: { asset: 'vase', scale: 0.8 }, x: 30.8, z: 23.0, y: 1.4 },
     { type: 'scannedProp', params: { asset: 'throne', scale: 0.85 }, x: 28.6, z: 24.4, y: 0, rotation: 150 },
-    { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 29.35, z: 23.0, y: 1.2, ignite: true },
-    { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 29.75, z: 23.1, y: 1.2, ignite: true },
-    { type: 'candle', params: { height: 0.2, radius: 0.025, wax: 'beeswax', color: '#e8c060' }, x: 30.25, z: 23.1, y: 1.2, ignite: true },
-    { type: 'candle', params: { height: 0.15, radius: 0.022 }, x: 30.65, z: 23.0, y: 1.2, ignite: true },
-    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 28.3, z: 22.8, y: 0.8, ignite: true },
-    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 31.7, z: 22.8, y: 0.8, ignite: true },
+    { type: 'candle', params: { height: 0.12, radius: 0.022 }, x: 29.35, z: 23.0, y: 1.4, ignite: true },
+    { type: 'candle', params: { height: 0.09, radius: 0.028, wax: 'beeswax', color: '#e0b04a' }, x: 29.75, z: 23.1, y: 1.4, ignite: true },
+    { type: 'candle', params: { height: 0.2, radius: 0.025, wax: 'beeswax', color: '#e8c060' }, x: 30.25, z: 23.1, y: 1.4, ignite: true },
+    { type: 'candle', params: { height: 0.15, radius: 0.022 }, x: 30.65, z: 23.0, y: 1.4, ignite: true },
+    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 28.3, z: 22.8, y: 1.0, ignite: true },
+    { type: 'candle', params: { height: 0.4, radius: 0.04, holder: false }, x: 31.7, z: 22.8, y: 1.0, ignite: true },
   ];
 }
 
@@ -268,6 +268,7 @@ export const SCENARIOS = {
       },
       below: {
         name: 'Below deck',
+        indoor: true,
         world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
         view: { camera: [16, 14, -8], walk: true },
         objects: [
@@ -280,6 +281,7 @@ export const SCENARIOS = {
       // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
       lower: {
         name: 'Lower decks (below the waterline)',
+        indoor: true,
         world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
         view: { camera: [-3, 10, 14], walk: true },
         objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],

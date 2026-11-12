@@ -3,7 +3,7 @@ import { shadeVoxel } from './voxels.js';
 import { addPatterns, PATTERN_OF_MAT } from './patterns.js';
 import { F_HIDDEN } from '../sim/world.js';
 
-const C = 16; // chunk size in voxels
+const CHUNK = 16; // chunk size in voxels
 
 /**
  * Smooth surface rendering of the voxel world (naive surface nets).
@@ -19,7 +19,13 @@ const C = 16; // chunk size in voxels
  * view all carry over.
  */
 export class SurfaceRenderer {
-  constructor(scene) {
+  /**
+   * opts.chunk: chunk size in voxels (a small world in one chunk); opts.smooth: passes of
+   * (size-keeping) smoothing over the mesh, rounding its voxel steps (a candle's wax).
+   */
+  constructor(scene, opts = {}) {
+    this.chunk = opts.chunk ?? CHUNK;
+    this.smoothPasses = opts.smooth ?? 0;
     this.group = new THREE.Group();
     scene.add(this.group);
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
@@ -41,6 +47,7 @@ export class SurfaceRenderer {
   }
 
   setWorld(world) {
+    const C = this.chunk;
     this.world = world;
     for (const ch of this.chunks ?? []) this.disposeChunk(ch);
     const cx = Math.ceil(world.nx / C);
@@ -142,6 +149,7 @@ export class SurfaceRenderer {
 
   /** Occupancy hash of the samples a chunk's mesh depends on. */
   chunkHash(ch) {
+    const C = this.chunk;
     const w = this.world;
     const x0 = ch.x * C - 1;
     const y0 = ch.y * C - 1;
@@ -157,6 +165,7 @@ export class SurfaceRenderer {
 
   buildChunk(ch) {
     if (ch.next) ch.next.geometry.dispose(); // rebuilt again before it was swapped in
+    const C = this.chunk;
     const w = this.world;
     const h = w.h;
     const x0 = ch.x * C;
@@ -224,6 +233,7 @@ export class SurfaceRenderer {
       ch.nextCorners = null;
       return;
     }
+    if (this.smoothPasses) smoothMesh(pos, idx, this.smoothPasses);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
@@ -351,5 +361,52 @@ export class SurfaceRenderer {
           }
         }
     return { voxel: best, point: [p.x, p.y, p.z], normal: [nrm.x, nrm.y, nrm.z] };
+  }
+}
+
+/**
+ * Taubin smoothing (a shrink and an inflate step per pass, so the shape keeps its size): the
+ * voxel steps rounded off. Vertices on the open bottom (y lowest) stay where they are.
+ */
+function smoothMesh(pos, idx, passes) {
+  const nv = pos.length / 3;
+  const nb = Array.from({ length: nv }, () => new Set());
+  for (let t = 0; t < idx.length; t += 3)
+    for (let e = 0; e < 3; e++) {
+      const a = idx[t + e];
+      const b = idx[t + ((e + 1) % 3)];
+      nb[a].add(b);
+      nb[b].add(a);
+    }
+  let yMin = Infinity;
+  for (let v = 0; v < nv; v++) yMin = Math.min(yMin, pos[v * 3 + 1]);
+  const tmp = new Float32Array(pos.length);
+  const step = (f) => {
+    for (let v = 0; v < nv; v++) {
+      const o = v * 3;
+      if (!nb[v].size || pos[o + 1] <= yMin + 1e-6) {
+        tmp[o] = pos[o];
+        tmp[o + 1] = pos[o + 1];
+        tmp[o + 2] = pos[o + 2];
+        continue;
+      }
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      for (const u of nb[v]) {
+        x += pos[u * 3];
+        y += pos[u * 3 + 1];
+        z += pos[u * 3 + 2];
+      }
+      const n = nb[v].size;
+      tmp[o] = pos[o] + f * (x / n - pos[o]);
+      tmp[o + 1] = pos[o + 1] + f * (y / n - pos[o + 1]);
+      tmp[o + 2] = pos[o + 2] + f * (z / n - pos[o + 2]);
+    }
+    for (let k = 0; k < pos.length; k++) pos[k] = tmp[k];
+  };
+  for (let p = 0; p < passes; p++) {
+    step(0.5);
+    step(-0.53);
   }
 }

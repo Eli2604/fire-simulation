@@ -142,6 +142,7 @@ export class World {
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding
     this.enemies = []; // AI characters (see ai/enemies.js)
     this.dragons = []; // dragons (see ai/dragon.js): flying, crawling, fire-breathing predators
+    this.phoenixes = []; // a phoenix locked in the catacombs (see ai/phoenix.js)
     this.sprinklers = []; // { p, bulb, actT, rti, rate, radius, active }
     this.pickups = []; // { type, agent?, capacity?, length?, p, taken }
     this.doors = []; // { name, voxels, center, open }

@@ -229,6 +229,15 @@ export class SoundScape {
         this.whoosh(d.chest ?? d.p, Math.min(1.2, 0.4 + 0.5 * (d.flapAmp ?? 1)));
       }
     }
+    // the phoenix: soft wingbeats, and the hiss of the fire it is made of when close
+    for (const f of state.phoenixes ?? []) {
+      if (!f.pos || f.state === 'free' || f.state === 'ashes') continue;
+      const beats = Math.floor((f.flap ?? 0) / (Math.PI * 2));
+      if (beats > (f.heardBeat ?? 0)) {
+        f.heardBeat = beats;
+        if (f.wing > 0.3) this.whoosh(f.pos, 0.22 * f.wing);
+      }
+    }
     // breathing
     if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
@@ -267,6 +276,14 @@ export class SoundScape {
       } else if (e.type === 'dragonDown') {
         this.stomp(e.pos, 2);
         this.burst(t, 1.2, 'lowpass', 250, 0.7, 1.0);
+      } else if (['phoenixCry', 'phoenixCalls', 'phoenixFreed', 'phoenixReborn', 'phoenixEscape', 'phoenixFree', 'phoenixHurt'].includes(e.type)) {
+        this.cry(e.pos, e.type === 'phoenixHurt' ? 0.7 : 1);
+      } else if (e.type === 'phoenixBurns') {
+        // a rush of flame, and its cry going up in it
+        const out = this.at(e.pos, 4);
+        this.noiseTo(out, t, 2.2, 'lowpass', 900, 0.7, 0.8);
+        this.noiseTo(out, t + 0.1, 1.4, 'bandpass', 2400, 0.8, 0.25);
+        this.cry(e.pos, 1.2);
       } else if (e.type === 'shout' || e.type === 'lightSeen') {
         this.shout(e.pos); // "who's there?"
       } else if (e.type === 'glass') {
@@ -361,6 +378,48 @@ export class SoundScape {
     const out = this.at(p, 6);
     this.noiseTo(out, t, 0.55, 'lowpass', 260, 0.6, 0.7 * level);
     this.noiseTo(out, t + 0.05, 0.35, 'bandpass', 700, 0.8, 0.15 * level);
+  }
+
+  /**
+   * The phoenix's cry: the clear, ringing scream of a big raptor (an eagle's
+   * "kee-ee-arr"): two falling, slightly rough notes with a quick vibrato.
+   */
+  cry(p, level = 1) {
+    if (!this.running) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const out = this.at(p, 4);
+    for (const [dt, dur, f0, f1, lvl] of [[0, 0.32, 2300, 1900, 0.5], [0.36, 0.7, 2100, 1300, 0.42]]) {
+      const t = t0 + dt;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t);
+      env.gain.exponentialRampToValueAtTime(lvl * level, t + 0.03);
+      env.gain.setValueAtTime(lvl * level * 0.8, t + dur * 0.6);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      const vib = ctx.createOscillator();
+      vib.frequency.value = 28;
+      const vg = ctx.createGain();
+      vg.gain.value = 60;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 2400;
+      bp.Q.value = 1.4;
+      for (const [mul, type, g0] of [[1, 'sawtooth', 0.35], [1.5, 'sine', 0.25], [0.5, 'triangle', 0.3]]) {
+        const o = ctx.createOscillator();
+        o.type = type;
+        o.frequency.setValueAtTime(f0 * mul, t);
+        o.frequency.exponentialRampToValueAtTime(f1 * mul, t + dur);
+        vib.connect(vg).connect(o.frequency);
+        const g = ctx.createGain();
+        g.gain.value = g0;
+        o.connect(g).connect(bp);
+        o.start(t);
+        o.stop(t + dur + 0.02);
+      }
+      bp.connect(env).connect(out);
+      vib.start(t);
+      vib.stop(t + dur + 0.02);
+    }
   }
 
   /** The dragon's roar: a growl from deep in the chest rising to a rasping bellow. */

@@ -10,7 +10,9 @@ import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
+import { PhoenixAI } from '../ai/phoenix.js';
 import { stepVacuum } from './vacuum.js';
+import { stepSnow, initSnow } from './snow.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -71,6 +73,7 @@ export class Simulation {
     if (world.listDirty) world.rebuildLists();
     this.ai = new EnemyAI(this);
     this.dragonAI = new DragonAI(this); // after the guards: it wraps their hit test
+    this.phoenixAI = new PhoenixAI(this);
   }
 
   rand() {
@@ -121,6 +124,9 @@ export class Simulation {
 
     this.applyHeaters(dt);
     this.applyWater(dt, D);
+    // snow: falls when it is freezing, lies, settles, melts in a fire's heat, packs under feet
+    if (!w.snow && !w.noSnow && D.snowRate > 0 && !initSnow(w)) w.noSnow = true;
+    if (w.snow) stepSnow(this, dt, D);
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
@@ -165,6 +171,7 @@ export class Simulation {
       this.ai.debrisHits();
     }
     if (w.dragons.length) this.dragonAI.step(dt);
+    if (w.phoenixes.length) this.phoenixAI.step(dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     // jet flames from vents and fireballs count as heat release too
     let extra = this.stats.ventHrr;
@@ -499,7 +506,9 @@ export class Simulation {
         this.consumeO2(a, share, dt);
         w.airQ[a] += share * (1 - RAD_FRACTION);
         w.radSrc[a] += share * RAD_FRACTION;
-        w.flameAcc[a] += share;
+        // (a candle's flame is a few cm: no flame filling a coarse air cell, burning whoever
+        // passes; it is drawn as itself, close up by its detail patch: sim/patches.js)
+        if (ht.kind !== 'candle') w.flameAcc[a] += share;
         if (ht.smokeYield) {
           const sm = (share * dt * ht.smokeYield) / 50e6;
           w.smoke[a] += sm;
@@ -1206,12 +1215,15 @@ export class Simulation {
     return true;
   }
 
-  /** Find wax a wick can draw: same level or up to 3 voxels below, molten preferred. */
+  /** Find wax a wick can draw: same level or down to ~2.5 cm below, molten preferred. */
   findWickFuel(x, y, z, ids) {
     const w = this.world;
     const { nx, ny, nz, mat, flags } = w;
     let fallback = -1;
-    for (let dy = 0; dy >= -3; dy--) {
+    // (down to ~2.5 cm under the tip whatever the voxel size: at 5 mm, three voxels would
+    // leave a thin candle's wick dry as soon as its pool has spilled)
+    const reach = Math.max(3, Math.round(0.025 / w.h));
+    for (let dy = 0; dy >= -reach; dy--) {
       const yy = y + dy;
       if (yy < 0) break;
       for (let dz = -1; dz <= 1; dz++)
