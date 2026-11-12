@@ -1075,6 +1075,44 @@ away), radio silence and backup; cover at the ends of walls and edges of crates 
 the gunner takes higher ground a little behind. On the rig page: the Noise, Hostile and
 Investigate tools, Fog, Night and Radio silence.
 
+**Guards are fire teams.** The simulation's guards are the same agents: each guard team gets a
+call sign and roles (its leader the commander). While nothing is going on the guard AI keeps
+them on their patrol (in file, through doors, on their round); once the team sees you, hears
+something or notices a lamp, the squad AI has them, and gives them back afterwards. Heat, fire
+and the dragon still make them run, and one may still slip off to light a lure.
+
+### Soldiers: expertise, ammunition, armour, the knife
+
+Each soldier (`ai/soldier.js`) has an **expertise**: recruit, regular, veteran or elite (the
+squad model's *Expertise*; mixed: a veteran commander, regulars, a recruit; guards likewise). It
+sets how far his rounds scatter (more when moving, wounded in an arm, or far off) and how fast
+he reloads and switches weapons. **Ammunition is limited** for everyone: magazines (the gunner a
+belt), reloading with the animation; dry, he goes to the compact secondary, then the knife, and
+says so on the radio. Your rifle has 30 rounds and 4 spare magazines. **Body armour** (plates,
+helmet; the model's *Body armour*) stops most rounds to the torso (a heavy round more often gets
+through, a knife never) and the helmet turns some. **Damage depends on the weapon and where it
+hits** (`sim/wounds.js` `WEAPONS`): rifle, the gunner's heavier round, the secondary's pistol
+calibre, the knife, fragments, arrows; rifle rounds hit the dragon's zones too. **Close
+combat**: an enemy within ~2 m and the rifle goes away, the knife comes out (an animation each
+way); he closes in and stabs. A man **badly hit** is called in by the nearest of his team
+("Medic!"); under **heavy fire from one side** someone throws a grenade that way and shouts it.
+
+### Team tactics: formations, files, splitting, rooms, floors
+
+`ai/tactics.js` measures the ground on the squad's grid (how wide it is, the rooms, junctions).
+- **Formations** (the commander decides each change and signals it by hand): far from the
+  threat in the open the team moves as one: two side by side, three in a wedge, four in a
+  diamond (a square at a halt), more in a wedge; each man watches his sector (front, flanks,
+  rear). Near the threat, or under fire, he signals bounding overwatch.
+- **Narrow places**: they line up in file (also while bounding: each waits for the man ahead).
+- **A T in a corridor**: the commander may split the team; the gunner becomes acting commander
+  of the other half and takes the other branch; they join up at the objective (or on contact).
+- **Into a room** they have not cleared: they stack up beside the door, one throws a
+  **flashbang** in (it stuns whoever sees it and whites out your view), and they go in right
+  after the bang.
+- **Buildings**: to reach something on another floor they work their way up (or down) by the
+  stairs, clearing each floor room by room ("Clear!", "floor 1 clear").
+
 ## Drone operations camp
 
 `camp.html` (scenario **Military camp: drone operations desk**): a camp with a swarm of drones
