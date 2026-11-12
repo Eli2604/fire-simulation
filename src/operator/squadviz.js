@@ -112,10 +112,10 @@ export class SquadViz {
       const pts = m.path && !m.dead ? [m.p, ...m.path.slice(m.pathI ?? 0)] : [];
       if (pts.length > 1) fillRibbon(it.path.geometry, pts, 0.045, true);
       it.path.visible = pts.length > 1;
-      if (m.trail?.length > 1 && (m.trail.length !== it.trailN || m.trail[m.trail.length - 1] !== it.trailLast)) {
-        it.trailN = m.trail.length;
-        it.trailLast = m.trail[m.trail.length - 1];
-        fillRibbon(it.trail.geometry, m.trail.map((q) => [q[0], m.p[1], q[1]]), 0.03, false);
+      if (m.track?.length > 1 && (m.track.length !== it.trailN || m.track[m.track.length - 1] !== it.trailLast)) {
+        it.trailN = m.track.length;
+        it.trailLast = m.track[m.track.length - 1];
+        fillRibbon(it.trail.geometry, m.track.map((q) => [q[0], m.p[1], q[1]]), 0.03, false);
       }
       it.ring.visible = !!m.cover && !!m.path && !m.dead;
       if (m.cover) it.ring.position.set(m.cover[0], m.cover[1] + 0.04, m.cover[2]);

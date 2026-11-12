@@ -61,7 +61,10 @@
  *   flame(m, target)   a flame trooper's burst of flame at target (optional)
  *   radio(m, text, kind)  m speaks on the radio (kind: contact, threat, manDown, reply, none)
  *   unit, peers()      this squad's name and the other squads' AIs (optional)
- * For the renderer each member gets: anim (clip name), aimAt, path / pathI, cover, trail,
+ *   ownMove(m)         true while m is not this AI's to move: a guard on his patrol, or
+ *                      running from fire (optional; ai/enemies.js)
+ *   hostiles(), lineOfSight(a, b), visibility(), dark(), noises()  what they can sense
+ * For the renderer each member gets: anim (clip name), aimAt, path / pathI, cover, track (where he went, [x, z]),
  * signal { text, until }, moving, speed.
  */
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
@@ -555,7 +558,7 @@ export class SquadAI {
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
     const sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
     const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
-    const fy = this.host.floor(nx, nz);
+    const fy = this.host.floor(nx, nz, m);
     m.p = [nx, fy ?? m.p[1], nz];
     m.moving = sp > 0.05;
     m.speed = sp;
@@ -665,17 +668,22 @@ export class SquadAI {
   stealthy() {
     return !this.contacted || this.time - this.lastSeen > 12;
   }
-  /** Send two men to look at p (a noise, a last known position, the operator's order). */
-  investigate(p, why = 'location') {
+  /**
+   * Send two men to look at p (a noise, a last known position, the operator's order). A blast
+   * (urgent) brings the whole team running, and they search round the place for a while.
+   */
+  investigate(p, why = 'location', { urgent = false } = {}) {
     const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
     const men = al.filter((m) => m.squad === 'R1' || m.squad === 'R2');
-    const pick = (men.length ? men : al.filter((m) => m.squad !== 'CMD')).slice(0, 2);
+    let pick = urgent ? al : (men.length ? men : al.filter((m) => m.squad !== 'CMD')).slice(0, 2);
+    if (!pick.length) pick = al.slice(0, 1); // alone: he goes himself
+    if (this.inv) for (const m of this.inv.men) if (!pick.includes(m)) m.path = null;
     if (!pick.length) return;
     if (!this.blocked || this.navAge === Infinity) {
       this.rebuildNav();
       this.navAge = 0;
     }
-    this.inv = { p: p.slice(), why, men: pick, t: this.time, look: 0 };
+    this.inv = { p: p.slice(), why, men: pick, t: this.time, look: 0, urgent, searchUntil: urgent ? this.time + 20 : 0 };
     const cmd = this.radioMan();
     const who = pick.map((m) => NAME[m.squad]).join(' and ');
     const c = centroid(al);
@@ -689,10 +697,11 @@ export class SquadAI {
       else this.say(cmd, `${this.unit}, ${why} ${where}, ${who} investigate`, 'order');
     }
     pick.forEach((m, i) => {
-      const to = [p[0] + (i ? 1.2 : -1.2), p[1], p[2]];
+      const a = (i / pick.length) * Math.PI * 2;
+      const to = urgent ? [p[0] + Math.cos(a) * 2, p[1], p[2] + Math.sin(a) * 2] : [p[0] + (i ? 1.2 : -1.2), p[1], p[2]];
       m.coverCell = -1;
       m.cover = to;
-      this.follow(m, this.route(m.p, to), 'aimWalk', (q) => (q.arrived = true));
+      this.follow(m, this.route(m.p, to), urgent ? 'run' : 'aimWalk', (q) => (q.arrived = true));
       m.aimAt = p;
     });
   }
@@ -723,7 +732,7 @@ export class SquadAI {
           this.silentUntil = 0;
         } else this.setThreat(seen.p.slice());
       }
-    } else if (this.threat && this.lastSeen > -Infinity && this.time - this.lastSeen > 25 && !this.inv && (H.hostiles?.() ?? []).length) {
+    } else if (this.threat && this.lastSeen > -Infinity && this.time - this.lastSeen > 25 && !this.inv) {
       const last = this.threat;
       const cmd = this.radioMan();
       if (cmd) this.say(cmd, `${this.unit}, lost contact, checking the last known position`, 'order');
@@ -739,10 +748,21 @@ export class SquadAI {
       const c = centroid(al);
       if (dist2(c, n.p) > n.loud) continue;
       if (this.threat) continue; // busy with the threat they have
-      if (!this.inv) this.investigate(n.p, 'noise');
+      if (n.kind === 'explosion' && !this.inv?.urgent) this.investigate(n.p, 'explosion', { urgent: true });
+      else if (!this.inv) this.investigate(n.p, 'noise');
     }
     // the investigators: look round where they got to; nothing there, come back
-    if (this.inv) {
+    if (this.inv?.urgent && this.time < this.inv.searchUntil) {
+      // searching round the place of the blast: each man on to another spot near it
+      const I = this.inv;
+      for (const m of I.men) {
+        if (m.dead || m.path || this.busy(m) || H.ownMove?.(m)) continue;
+        const a = Math.random() * Math.PI * 2, r = 1 + Math.random() * 3.5;
+        const to = [I.p[0] + Math.cos(a) * r, I.p[1], I.p[2] + Math.sin(a) * r];
+        m.cover = to;
+        this.follow(m, this.route(m.p, to), 'aimWalk', (q) => (q.arrived = true));
+      }
+    } else if (this.inv) {
       const I = this.inv;
       if (I.men.every((m) => m.dead || m.arrived)) {
         I.look += dt;
@@ -811,15 +831,15 @@ export class SquadAI {
     if (this.on) this.senses(dt);
     if (!this.threat) {
       for (const m of ms) {
-        if (m.dead) continue;
-        m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.trail = [], true);
+        if (m.dead || this.host.ownMove?.(m)) continue;
+        m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
         this.move(m, dt);
         if (!m.path && !this.busy(m) && !this.inv?.men.includes(m)) {
           if (this.inv) this.face(m, this.inv.p, dt);
           this.setAnim(m, m.squad === 'UAV' ? 'crouch' : 'crouchAim');
         }
-        const last = m.trail[m.trail.length - 1];
-        if (!last || Math.hypot(last[0] - m.p[0], last[1] - m.p[2]) > 0.25) m.trail.push([m.p[0], m.p[2]]);
+        const last = m.track[m.track.length - 1];
+        if (!last || Math.hypot(last[0] - m.p[0], last[1] - m.p[2]) > 0.25) m.track.push([m.p[0], m.p[2]]);
       }
       this.flushRadio();
       return;
@@ -838,13 +858,15 @@ export class SquadAI {
         m.moving = false;
         continue;
       }
-      m.squadInit ??= (m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = 2, m.coverCell = -1, m.trail = [], true);
+      if (this.host.ownMove?.(m)) continue;
+      m.squadInit ??= (m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
+      m.track ??= [];
       this.move(m, dt);
       // the trail behind them
-      const last = m.trail[m.trail.length - 1];
+      const last = m.track[m.track.length - 1];
       if (!last || Math.hypot(last[0] - m.p[0], last[1] - m.p[2]) > 0.25) {
-        m.trail.push([m.p[0], m.p[2]]);
-        if (m.trail.length > 160) m.trail.shift();
+        m.track.push([m.p[0], m.p[2]]);
+        if (m.track.length > 160) m.track.shift();
       }
     }
     for (const m of ms)
@@ -905,6 +927,7 @@ export class SquadAI {
     const T = this.threat;
     const cmd = al.find((m) => m.squad === 'CMD') ?? al[0];
     for (const m of al) {
+      if (this.host.ownMove?.(m)) continue;
       // a grenade leaving the hand
       if (m.throwAt != null && this.time >= m.throwAt) {
         m.throwAt = null;

@@ -415,7 +415,7 @@ $('btnRestart').onclick = () => restart();
 {
   const sel = $('sceneSel');
   sel.innerHTML = '<option value="">All scenes…</option>' + Object.entries(SCENARIOS).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('');
-  sel.onchange = () => sel.value && (location.href = SCENARIOS[sel.value].page ?? 'index.html?scenario=' + sel.value);
+  sel.onchange = () => sel.value && (location.href = SCENARIOS[sel.value].page ?? './?scenario=' + sel.value);
 }
 let placing = false;
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();

@@ -177,7 +177,13 @@ export class Simulation {
     if (w.enemies.length) {
       this.ai.step(dt);
       if (w.enemies.some((e) => e.squad)) {
-        this.squads ??= [...new Set(w.enemies.filter((e) => e.squad).map((e) => e.unit ?? 'Alpha'))].map((u) => this.makeSquadAI(u));
+        // one squad AI per unit: the soldiers' fire teams and every guard team (ai/enemies.js enlist)
+        this.squadMap ??= new Map();
+        for (const e of w.enemies) {
+          const u = e.unit ?? 'Alpha';
+          if (e.squad && !this.squadMap.has(u)) this.squadMap.set(u, this.makeSquadAI(u));
+        }
+        this.squads = [...this.squadMap.values()];
         for (const s of this.squads) s.step(dt);
       }
       this.ai.debrisHits();
@@ -1456,28 +1462,55 @@ export class Simulation {
   /** The fire team's AI (ai/squad.js) on this world: voxel walls for cover, real rounds and grenades. */
   makeSquadAI(unit) {
     const w = this.world;
+    const mine = () => w.enemies.filter((e) => e.squad && (e.unit ?? 'Alpha') === unit && !e.dead);
     const squad = w.enemies.filter((e) => e.squad && (e.unit ?? 'Alpha') === unit);
-    const ref = squad[0].p[1];
+    // the floor they are on (guards may be upstairs): the mean height of the team
+    let refT = -1, ref = squad[0].p[1];
+    const refY = () => {
+      if (refT !== w.time) {
+        refT = w.time;
+        const al = mine();
+        if (al.length) ref = al.reduce((a, e) => a + e.p[1], 0) / al.length;
+      }
+      return ref;
+    };
+    const pl = () => (this.ai.player && !this.ai.player.dead ? this.ai.player : null);
     const ai = new SquadAI({
       members: () => w.enemies,
       solid: (x, y, z) => this.ai.solidAt(x, y, z),
-      floor: (x, z) => {
-        const y = this.ai.floorAt(x, z, ref + 1.2);
-        return y ?? ref;
+      floor: (x, z, m) => {
+        const from = m ? m.p[1] : refY();
+        const y = this.ai.floorAt(x, z, from + 1.2);
+        return y ?? from;
       },
-      bounds: [0.6, 0.6, w.size[0] - 0.6, w.size[2] - 0.6],
+      // the grid they plan on: round the team and the threat (a big world would be too many cells)
+      get bounds() {
+        const pts = mine().map((e) => e.p);
+        if (ai?.threat) pts.push(ai.threat);
+        if (ai?.inv) pts.push(ai.inv.p);
+        if (!pts.length) return [0.6, 0.6, w.size[0] - 0.6, w.size[2] - 0.6];
+        const pad = 25;
+        const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[2]);
+        return [Math.max(0.6, Math.min(...xs) - pad), Math.max(0.6, Math.min(...zs) - pad), Math.min(w.size[0] - 0.6, Math.max(...xs) + pad), Math.min(w.size[2] - 0.6, Math.max(...zs) + pad)];
+      },
       threat: squad[0].threat,
+      // guards: the guard AI moves them on their patrol and when they run from fire (ai/enemies.js)
+      ownMove: (m) => !!m.guardCtl,
+      // you: seen through doorways, not through walls or thick smoke
+      hostiles: () => (pl() ? [pl()] : []),
+      lineOfSight: (a, b) => this.ai.sees([a[0], a[1] + 1.6, a[2]], [b[0], b[1] + 1.5, b[2]]),
       unit,
       // fog, smoke and darkness: how far they can see; what they hear
       visibility: () => (w.dark ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
       dark: () => !!w.dark,
-      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
+      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, kind: n.kind, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
       peers: () => this.squads ?? [],
       radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
       fire: (e, target) => {
         const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.6, e.p[1] + 1.1, e.p[2] + Math.cos(e.yaw) * 0.6];
         e.flashUntil = w.time + 0.06;
-        shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad });
+        const hit = shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad, player: pl() });
+        if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
       // the flame gun: burning fuel along a 2-7 m stream; it lights what it reaches
@@ -1496,6 +1529,11 @@ export class Simulation {
 
   // ---------------------------------------------------------------------------
   // Interaction tools
+
+  /** The squad AI of a unit (a fire team or a guard team), or null. */
+  squadFor(unit) {
+    return this.squadMap?.get(unit ?? 'Alpha') ?? null;
+  }
 
   /** The first fire team's AI (or null). */
   get squadAI() {

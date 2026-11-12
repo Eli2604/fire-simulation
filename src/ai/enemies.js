@@ -153,14 +153,56 @@ export class EnemyAI {
       this.teamsN = this.world.enemies.length;
       this.teams = new Map();
       for (const g of this.world.enemies) {
-        if (g.squad) continue;
-        const key = g.area ? JSON.stringify(g.area.corners.map((c) => c.map((v) => Math.round(v * 2)))) : `${Math.round(g.home[0] / 4)},${Math.round(g.home[2] / 4)}`;
+        if (g.squad && !g.guard) continue;
+        // the same patrol area; or (no area) posted within 4 m of one of the team
+        const near = !g.area && [...this.teams].find(([k, t]) => k.startsWith('@') && t.some((o) => Math.hypot(o.home[0] - g.home[0], o.home[2] - g.home[2]) < 4 && Math.abs(o.home[1] - g.home[1]) < 1.5));
+        const key = g.area ? JSON.stringify(g.area.corners.map((c) => c.map((v) => Math.round(v * 2)))) : near ? near[0] : `@${g.home.map((v) => v.toFixed(1)).join(',')}`;
         if (!this.teams.has(key)) this.teams.set(key, []);
         this.teams.get(key).push(g);
         g.teamKey = key;
       }
     }
     return this.teams.get(e.teamKey) ?? [e];
+  }
+
+  /**
+   * Every guard team is a fire team, the same agents as the soldiers (ai/squad.js): the
+   * leader is its commander, then a gunner and riflemen, under a call sign. While nothing is
+   * going on they patrol here (in file, doors, the round); once the team sees you, hears
+   * something or is sent to look, the squad AI has them (cover, bounds, radio, grenades),
+   * and they come back here when it is over. Heat, fire and a dragon still make them run.
+   */
+  enlist() {
+    const w = this.world;
+    if (this.enlistedN === w.enemies.length) return;
+    this.enlistedN = w.enemies.length;
+    const free = w.enemies.filter((g) => !g.squad);
+    if (!free.length) return;
+    for (const g of free) g.guard = true;
+    this.teams = null;
+    const used = new Set(w.enemies.filter((g) => g.unit).map((g) => g.unit));
+    const CALL = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet', 'Kilo', 'Lima'];
+    const done = new Set();
+    for (const g of free) {
+      const team = this.teamOf(g);
+      if (done.has(team)) continue;
+      done.add(team);
+      let unit = team.find((m) => m.unit)?.unit;
+      if (!unit) {
+        unit = CALL.find((c) => !used.has(c)) ?? `Team ${used.size + 1}`;
+        used.add(unit);
+      }
+      const roles = new Set(team.filter((m) => m.squad).map((m) => m.squad));
+      let n = 0;
+      for (const m of team) {
+        if (m.squad) continue;
+        const role = ['CMD', 'MG', 'R1', 'R2'].find((r) => !roles.has(r)) ?? (n++ % 2 ? 'R2' : 'R1');
+        roles.add(role);
+        m.squad = role;
+        m.unit = unit;
+        m.guardCtl = true;
+      }
+    }
   }
 
   /** Where a follower should be: on the leader's track, gap metres behind him. */
@@ -183,8 +225,9 @@ export class EnemyAI {
     const noises = w.noises.filter((e) => e.time >= this.heardUpTo);
     this.heardUpTo = w.time;
     if (w.noises.length > 200) w.noises.splice(0, w.noises.length - 100);
+    this.enlist();
     for (const e of w.enemies) {
-      if (e.dead || e.squad) continue; // a fire team has its own AI (ai/squad.js)
+      if (e.dead || (e.squad && !e.guard)) continue; // a soldiers' fire team has only its squad AI (ai/squad.js)
       e.timer = (e.timer ?? 0) - dt;
       e.lureCooldown = (e.lureCooldown ?? 10 + Math.random() * 10) - dt;
       e.repath = (e.repath ?? 0) - dt;
@@ -213,8 +256,13 @@ export class EnemyAI {
       }
       // a lit spot in the dark where nothing should be lit: someone is there with a lamp
       const L = this.lamp;
-      if (L && w.dark && w.time - L.time < 0.6 && !seesPlayer && !['lure', 'retreat', 'flee'].includes(e.state) && !((e.lightCooldown ?? 0) > w.time)) {
-        if (this.suspiciousLight(e, head, L)) {
+      if (L && w.dark && w.time - L.time < 0.6 && !seesPlayer && !['lure', 'retreat', 'flee', 'engage'].includes(e.state) && !((e.lightCooldown ?? 0) > w.time)) {
+        const sq = e.guard ? this.sim.squadFor?.(e.unit) : null;
+        if (sq && this.suspiciousLight(e, head, L)) {
+          // a guard tells his team: the commander sends two to look
+          e.lightCooldown = w.time + 8;
+          if (!sq.threat && !sq.inv) sq.investigate(L.spot, 'a light');
+        } else if (!sq && this.suspiciousLight(e, head, L)) {
           e.lightCooldown = w.time + 8;
           if (e.state !== 'investigate') w.events.push({ type: 'lightSeen', pos: head, time: w.time, name: 'enemy' });
           e.state = 'investigate';
@@ -223,7 +271,7 @@ export class EnemyAI {
           e.repath = 0;
         }
       }
-      for (const n of noises) {
+      for (const n of e.guard ? [] : noises) { // a guard team hears as a squad (ai/squad.js)
         const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
         if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy' && n.kind !== 'dragon') {
           e.state = 'investigate';
@@ -257,9 +305,59 @@ export class EnemyAI {
           e.route = this.path(e.p, e.goal, 1200);
         }
       } else if (e.state === 'flee' && !(e.onFire > 0)) e.state = 'patrol';
+      // a guard's team in action (a threat, or something to look into): the squad AI has him
+      if (e.guard) {
+        const sq = this.sim.squadFor?.(e.unit);
+        // the guards' own trick, in a fight too: one of them slips off to light something that
+        // draws you in (not the commander, unless he is alone), then pulls back and rejoins
+        if (sq?.threat && seesPlayer && e.lureCooldown <= 0 && !['flee', 'lure', 'retreat'].includes(e.state)) {
+          const team = this.teamOf(e).filter((g) => !g.dead);
+          if ((e.squad !== 'CMD' || team.length === 1) && !team.some((g) => g.state === 'lure')) {
+            const fuel = this.lureSpot(e, pl);
+            if (fuel) {
+              e.guardCtl = true;
+              e.path = null;
+              e.state = 'lure';
+              e.fuel = fuel;
+              e.goal = fuel.stand;
+              e.repath = 0;
+            } else e.lureCooldown = 5;
+          }
+        }
+        if (sq && (sq.threat || sq.inv) && !['flee', 'lure', 'retreat'].includes(e.state)) {
+          if (e.guardCtl) {
+            e.guardCtl = false;
+            e.route = e.goal = e.follow = e.fuel = null;
+            e.path = null;
+            e.aiming = false;
+          }
+          e.state = sq.threat ? 'engage' : 'investigate';
+          // (for the record: where he is going, and whether it is in a hurry)
+          const inv = !sq.threat && sq.inv?.men.includes(e);
+          e.goal = inv ? (e.cover ?? sq.inv.p).slice() : null;
+          e.urgent = inv && !!sq.inv.urgent;
+          const tr = (e.trail ??= []);
+          const last = tr[tr.length - 1];
+          if (!last || Math.hypot(last[0] - e.p[0], last[2] - e.p[2]) > 0.25) {
+            tr.push(e.p.slice());
+            if (tr.length > 120) tr.shift();
+          }
+          continue;
+        }
+        if (!e.guardCtl) {
+          // over: back to the patrol (from wherever the fight left him)
+          e.guardCtl = true;
+          e.path = null;
+          e.state = e.state === 'flee' ? 'flee' : 'patrol';
+          e.goal = null;
+          e.urgent = false;
+          e.repath = 0;
+          e.trail = [e.p.slice()];
+        }
+      }
       // --- decide
       if (e.state !== 'flee') {
-        if (seesPlayer && e.lureCooldown <= 0 && e.state !== 'lure' && e.state !== 'retreat') {
+        if (seesPlayer && !e.guard && e.lureCooldown <= 0 && e.state !== 'lure' && e.state !== 'retreat') {
           const fuel = this.lureSpot(e, pl);
           if (fuel) {
             e.state = 'lure';
@@ -406,7 +504,7 @@ export class EnemyAI {
     const all = w.enemies.filter((g) => !g.dead);
     const R = 0.7; // shoulder to shoulder, ~0.35 m each
     for (const e of all) {
-      if (e.squad) continue;
+      if (e.squad && !e.guardCtl) continue;
       for (const o of all) {
         if (o === e) continue;
         const dx = e.p[0] - o.p[0];

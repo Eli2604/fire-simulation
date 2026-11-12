@@ -43,7 +43,7 @@ test('a fire team bounds from cover to cover, keeps together, signals and reache
   assert.ok(log.shots > 10, 'the covering team fired');
   assert.ok(teamOf(alpha[0]) === 'A' && teamOf(alpha[1]) === 'B');
   // routes never go through a wall
-  for (const m of alpha) for (const q of m.trail) assert.ok(!(Math.abs(q[0] - 4.6) < 0.1 && Math.abs(q[1] - 1.5) < 1.4), 'not through the wall');
+  for (const m of alpha) for (const q of m.track) assert.ok(!(Math.abs(q[0] - 4.6) < 0.1 && Math.abs(q[1] - 1.5) < 1.4), 'not through the wall');
 });
 
 test('they radio contact, the other team answers; a man down is reported, and no response once alone', () => {
@@ -207,4 +207,36 @@ test('cover at corners is preferred; the gunner takes the higher ground behind',
   assert.ok(squads[0].covers.some((c) => c.corner), 'corners found');
   const mg = members.find((m) => m.unit === 'Alpha' && m.squad === 'MG');
   assert.ok(mg.highGround || mg.p[1] > 0.4, `the gunner went up (y = ${mg.p[1].toFixed(2)})`);
+});
+
+test('guards are fire teams: on patrol by the guard AI, a squad when they see you', () => {
+  const sim = createSimulation({
+    world: { size: [30, 3, 12], h: 0.1, ground: 'stone' },
+    objects: [{ type: 'enemy', params: { count: 3, spread: 1.5 }, x: 6, z: 6 }],
+    noFire: true,
+  });
+  const w = sim.world;
+  for (let k = 0; k < 10; k++) sim.step(sim.dt);
+  const g = w.enemies;
+  assert.ok(g.every((e) => e.guard && e.unit === g[0].unit), 'one team, one call sign');
+  assert.deepEqual(g.map((e) => e.squad).sort(), ['CMD', 'MG', 'R1']);
+  assert.ok(g.every((e) => e.guardCtl), 'patrolling: the guard AI has them');
+  for (const e of g) e.lureCooldown = 1e9; // no lure here: only the squad
+  sim.ai.player = { p: [20, 0.1, 6], head: [20, 1.75, 6] };
+  const sq = sim.squadFor(g[0].unit);
+  let fired = 0;
+  for (let k = 0; k < 400; k++) {
+    sim.step(sim.dt);
+    fired = Math.max(fired, w.playerHits.length + g.filter((e) => e.flashUntil > w.time - 0.1).length);
+  }
+  assert.ok(sq.threat && Math.hypot(sq.threat[0] - 20, sq.threat[2] - 6) < 1.5, 'the squad has you as its threat');
+  assert.ok(g.every((e) => e.dead || !e.guardCtl), 'the squad AI has them now');
+  assert.ok(fired > 0, 'they fire at you');
+  assert.ok(w.events.some((ev) => ev.type === 'radio'), 'and report it on the radio');
+  // you are gone and they lose you: they look at the last known position, then patrol again
+  sim.ai.player = null;
+  for (let k = 0; k < 2000 && (sq.threat || sq.inv); k++) sim.step(sim.dt);
+  for (let k = 0; k < 5; k++) sim.step(sim.dt);
+  assert.ok(!sq.threat && !sq.inv, 'it is over');
+  assert.ok(g.filter((e) => !e.dead).every((e) => e.guardCtl && e.state !== 'engage'), 'back on patrol');
 });

@@ -406,30 +406,31 @@ export class EnemyRenderer {
     f.prev = e.p.slice();
     f.speed = (f.speed ?? 0) * 0.8 + sp * 0.2;
     let name;
+    const sq = e.squad && !e.guardCtl; // the squad AI animates it (a guard on patrol: the guard AI)
     if (e.held) {
       // seized by the dragon: held crosswise in its jaws, flailing
       g.rotation.set(-(e.heldPitch ?? 0), (e.heldYaw ?? 0) + Math.PI / 2, Math.PI / 2, 'YXZ');
       g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(g.rotation));
       name = 'swim';
     } else if (e.dead) name = 'die';
-    else if (e.squad) name = e.anim ?? 'crouchAim';
+    else if (sq) name = e.anim ?? 'crouchAim';
     else if (e.crawling) name = 'crawl';
     else if (e.state === 'lure') name = 'crouch';
     else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
     else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
     else name = e.state === 'investigate' ? 'aim' : 'idle';
-    if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(e.squad && ONCE[name] && e.animT !== f.animT) && !e.dead) {
+    if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(sq && ONCE[name] && e.animT !== f.animT) && !e.dead) {
       // let a draw, a throw or a radio call finish
-    } else if (e.squad && ONCE[name] && e.animT !== f.animT) {
+    } else if (sq && ONCE[name] && e.animT !== f.animT) {
       f.animT = e.animT;
       if (name === 'deployDrone') f.deployDrone();
       else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name] || f.shown !== name) f.play(name);
     if (MOVING[f.state]) {
-      const moving = e.squad ? e.moving : sp > 0.05 || e.moving;
-      f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (e.squad ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
+      const moving = sq ? e.moving : sp > 0.05 || e.moving;
+      f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (sq ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
-    f.setAim(e.squad ? e.aimAt : null);
+    f.setAim(sq ? e.aimAt : null);
     f.setGear({ thermal: !!e.thermal, light: !!e.light });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;

@@ -695,8 +695,8 @@ document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => {
   const sel = document.createElement('select');
   sel.id = 'sceneSel';
   sel.setAttribute('aria-label', 'All scenes');
-  sel.innerHTML = '<option value="">All scenes…</option>' + Object.entries(SCENARIOS).filter(([, s]) => !s.page).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('');
-  sel.onchange = () => sel.value && (location.href = 'index.html?scenario=' + sel.value);
+  sel.innerHTML = '<option value="">All scenes…</option>' + Object.entries(SCENARIOS).map(([k, s]) => `<option value="${k}">${s.name}</option>`).join('');
+  sel.onchange = () => sel.value && (location.href = SCENARIOS[sel.value].page ?? './?scenario=' + sel.value);
   $('stats').after(sel);
 }
 const animBox = $('anims');
