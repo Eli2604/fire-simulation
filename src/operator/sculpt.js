@@ -440,8 +440,11 @@ function mapRifle(x,y,z){return runGroups(RIFLE_GROUPS,x,y,z);}
 
 // ================= UVs =================
 // combined world-space field (all chunks) for occlusion
+// the shirt under the plate carrier is shaded as if the carrier were not there (it shows when he
+// goes without armour); everything else sees the whole body
+var AO_BARE=false,mapBodyBare=null;
 function mapWorld(x,y,z){
-  var d=mapBody(x,y,z);if(y<1.1)d=Math.min(d,mapLegs(x,y,z));
+  var d=AO_BARE?mapBodyBare(x,y,z):mapBody(x,y,z);if(y<1.1)d=Math.min(d,mapLegs(x,y,z));
   var H=P.H.o,dx=x-H[0],dy=y-H[1],dz=z-H[2],hb=Math.sqrt(dx*dx+dy*dy+dz*dz)-.24;
   if(hb<d){loc(P.H,x,y,z);var a=LX,b=LY,c=LZ;d=Math.min(d,mapHead(a,b,c));}
   loc(P.R,x,y,z);var rx=LX,ry=LY,rz=LZ;
@@ -465,7 +468,10 @@ function mapOf(G,idx){var sub=idx.map(function(i){return G[i];});return function
 var CHUNKS={
   body:{map:mapBody,uv:uvBody,b:[-.42,.8,-.37,.42,1.62,.44],h:.0042},
   legs:{map:mapLegs,uv:uvNone,b:[-.26,-.01,-.14,.26,1.06,.21],h:.0045},
-  person:{map:mapOf(BODY_GROUPS,[0,1,3,4,5]),uv:uvBody,lg:BODY_GROUPS,li:[0,1,3,4,5],b:[-.42,.8,-.37,.42,1.62,.44],h:.0045},
+  // the person without the plate carrier (the torso is whole beneath it); the carrier is a closed
+  // mesh of its own, so the soldier can go without armour
+  person:{map:mapOf(BODY_GROUPS,[0,3,4,5]),uv:uvBody,lg:BODY_GROUPS,li:[0,3,4,5],bare:0,b:[-.42,.8,-.37,.42,1.62,.44],h:.0045},
+  carrier:{map:mapOf(BODY_GROUPS,[1]),uv:uvBody,lg:BODY_GROUPS,li:[1],b:[-.24,.99,-.21,.24,1.54,.25],h:.0045},
   pack:{map:mapOf(BODY_GROUPS,[2]),uv:uvBody,b:[-.25,.95,-.36,.25,1.58,.2],h:.0045},
   face:{F:P.H,map:mapOf(HEAD_GROUPS,[0,2]),uv:uvHead,b:[-.15,-.2,-.17,.15,.17,.17],h:.0021},
   helmet:{F:P.H,map:mapOf(HEAD_GROUPS,[1]),uv:uvHead,b:[-.15,-.13,-.17,.15,.17,.17],h:.0021},
@@ -540,15 +546,17 @@ function polygonize(name,prog,hOverride){
     var tx=uy2*wz2-uz2*wy2,ty=uz2*wx2-ux2*wz2,tz=ux2*wy2-uy2*wx2;
     var sd=tx*(Nm[ia*3]+Nm[ib*3]+Nm[ic*3])+ty*(Nm[ia*3+1]+Nm[ib*3+1]+Nm[ic*3+1])+tz*(Nm[ia*3+2]+Nm[ib*3+2]+Nm[ic*3+2]);
     if(sd<0){idx[fi+1]=ic;idx[fi+2]=ib;}}
-  var AO=new Float32Array(nv),F=C.F;NOFOLD=true;
-  for(p=0;p<nv;p++){var lx=P32[p*3],ly=P32[p*3+1],lz=P32[p*3+2],qx=Nm[p*3],qy=Nm[p*3+1],qz=Nm[p*3+2];
+  var LB=null,LG=C.lg?C.li.map(function(i){return C.lg[i];}):{body:BODY_GROUPS,head:HEAD_GROUPS,rifle:RIFLE_GROUPS}[name];
+  NOFOLD=true;
+  if(LG){LB=new Uint8Array(nv);for(p=0;p<nv;p++){var li=labelG(LG,P32[p*3],P32[p*3+1],P32[p*3+2]);LB[p]=C.li?C.li[li]:li;}}
+  if(C.bare!=null&&!mapBodyBare)mapBodyBare=mapOf(BODY_GROUPS,[0,2,3,4,5]);
+  var AO=new Float32Array(nv),F=C.F;
+  for(p=0;p<nv;p++){AO_BARE=C.bare!=null&&LB[p]===C.bare;var lx=P32[p*3],ly=P32[p*3+1],lz=P32[p*3+2],qx=Nm[p*3],qy=Nm[p*3+1],qz=Nm[p*3+2];
     if(F){var wx3=F.o[0]+F.x[0]*lx+F.y[0]*ly+F.z[0]*lz,wy3=F.o[1]+F.x[1]*lx+F.y[1]*ly+F.z[1]*lz,wz3=F.o[2]+F.x[2]*lx+F.y[2]*ly+F.z[2]*lz;
       var nx3=F.x[0]*qx+F.y[0]*qy+F.z[0]*qz,ny3=F.x[1]*qx+F.y[1]*qy+F.z[1]*qz,nz3=F.x[2]*qx+F.y[2]*qy+F.z[2]*qz;lx=wx3;ly=wy3;lz=wz3;qx=nx3;qy=ny3;qz=nz3;}
     AO[p]=aoAt(lx+qx*.002,ly+qy*.002,lz+qz*.002,qx,qy,qz);
     if(prog&&(p&8191)===0)prog(.88+.12*p/nv);}
-  var LB=null,LG=C.lg?C.li.map(function(i){return C.lg[i];}):{body:BODY_GROUPS,head:HEAD_GROUPS,rifle:RIFLE_GROUPS}[name];
-  if(LG){LB=new Uint8Array(nv);for(p=0;p<nv;p++){var li=labelG(LG,P32[p*3],P32[p*3+1],P32[p*3+2]);LB[p]=C.li?C.li[li]:li;}}
-  NOFOLD=false;
+  AO_BARE=false;NOFOLD=false;
   var I32=nv>65535?new Uint32Array(idx):new Uint16Array(idx);
   return {lb:LB,ao:AO,pos:P32,nrm:Nm,id:Id,uv:UV,idx:I32,evals:evals,grid:[nx,ny,nz]};
 }
