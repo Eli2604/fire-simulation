@@ -207,6 +207,11 @@ class Enemy {
     if (this.d.dead) return this;
     this.patrol = null;
     if (MOVING[name]) return this.startPatrol(name);
+    if (name === 'deployDrone') {
+      this.fig.droneTarget = V(WORLD.threat);
+      if (!this.fig.deployDrone()) toast(this.fig.droneFly ? 'His drone is already up' : 'He needs his backpack on to deploy the drone');
+      return this;
+    }
     this.fig.play(name, { restart: !!ONCE[name] });
     return this;
   }
@@ -270,7 +275,8 @@ class Enemy {
         const name = d.anim ?? 'crouchAim';
         if (ONCE[name] && d.animT !== this.animT) {
           this.animT = d.animT;
-          f.play(name, { restart: true, fade: 0.15 });
+          if (name === 'deployDrone') f.deployDrone();
+          else f.play(name, { restart: true, fade: 0.15 });
         } else if (!ONCE[name]) f.play(name);
         if (MOVING[f.state]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, d.speed / MOVING[f.state])) : 0.001);
       }
@@ -430,6 +436,10 @@ function host(unit) {
     peers: () => Enemies.squads,
     fire: () => {},
     grenade: (m, from, vel) => throwGrenade(from, vel),
+    droneLaunch: (m, T) => {
+      const e = Enemies.list.find((x) => x.d === m);
+      if (e) e.fig.droneTarget = V(T);
+    },
     rifleAt: (m) => {
       const e = Enemies.list.find((x) => x.d === m);
       const b = e?.fig.parts.rifle.userData.body;
@@ -459,7 +469,7 @@ function startSquads() {
       spawn({ name: `${unit} ${r}${loadout === 'torch' ? ' (flame)' : ''}`, position: [p.x, 0, p.z], facing: yaw, squad: r, unit, loadout });
     });
   };
-  team('Alpha', S, [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]]);
+  team('Alpha', S, [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8], ['UAV', 0, 3.4]]);
   if (bravoOn) team('Bravo', S.clone().add(new THREE.Vector3(-9, 0, 0)), [['CMD', -0.8, 0], ['MG', 0.8, 0.3], ['R2', 0, 1.6, 'torch']]);
   Enemies.squads = [...new Set(Enemies.list.map((e) => e.d.unit))].map((u) => new SquadAI(host(u)));
   for (const s of Enemies.squads) s.on = SQ.on;

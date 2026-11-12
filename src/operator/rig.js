@@ -14,6 +14,9 @@
  *    rifle is gone he reaches over his shoulder, draws it and fights on. A flame trooper
  *    (loadout 'torch') has a flame gun and a fuel tank instead of the rifle: it fires only
  *    standing (the 'flame' clip); crouched or prone he just holds it.
+ *  - Drone: a trooper with a backpack slips it off, kneels, sets it down and opens it, lifts a
+ *    quadcopter out, places it ahead of him, pulls his FPV goggles down and takes the controller;
+ *    the drone spins up, climbs and circles over its target (droneTarget) while he stays put.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -41,6 +44,7 @@ export const BONES = [
   ['upperArmR', 'chest', P.SR], ['foreArmR', 'upperArmR', SC.ARMS[0].E], ['handR', 'foreArmR', P.WR],
   ['upperArmL', 'chest', P.SL], ['foreArmL', 'upperArmL', SC.ARMS[1].E], ['handL', 'foreArmL', P.WL],
   ['weapon', 'chest', P.B], ['mag', 'weapon', MGRAB.toArray()],
+  ['bag', 'root', [0, 1.28, 0]], ['drone', 'root', [0, 1.25, -0.25]],
   ['thighR', 'hips', [-0.1, 0.95, 0]], ['shinR', 'thighR', [-0.115, 0.52, 0.045]], ['footR', 'shinR', [-0.125, 0.1, 0]],
   ['thighL', 'hips', [0.1, 0.95, 0]], ['shinL', 'thighL', [0.115, 0.52, 0.045]], ['footL', 'shinL', [0.125, 0.1, 0]],
 ];
@@ -153,12 +157,15 @@ function geometryOf(d, off, skin) {
 
 /* ================= pose solver ================= */
 const Z3 = () => [0, 0, 0];
+const PACK_C = [0, 1.22, -0.245]; // the backpack's centre when worn
 export function pose0() {
   return {
     hipsPos: Z3(), hips: Z3(), spine: Z3(), chest: Z3(), neck: Z3(), head: Z3(),
     thighR: Z3(), shinR: Z3(), footR: Z3(), thighL: Z3(), shinL: Z3(), footL: Z3(),
     aim: 0, recoil: 0, wOff: Z3(), wRot: Z3(), cw: 0, cButt: [-0.13, 1.33, 0.05], cDir: [0, 1, 0], cUp: [0, 0, -1], sling: 0,
     lT: Z3(), lG: 1, lH: 1, lPole: Z3(), rT: Z3(), rG: 1, rH: 1, rPole: Z3(), lMag: 0, lMagOff: Z3(), mag: 0, magFall: -1, magHide: 0,
+    // hand targets in figure space (blended in by lW / rW), the backpack (its centre) and the drone
+    lTW: Z3(), rTW: Z3(), lW: 0, rW: 0, bagP: PACK_C.slice(), bagR: Z3(), droneP: [0, 1.25, -0.25], droneR: Z3(),
   };
 }
 function lerpPose(a, b, t) {
@@ -199,6 +206,7 @@ const eq = (e) => new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0], e[1]
 export function solve(ps) {
   const out = {};
   for (const k of ['hips', 'spine', 'chest', 'neck', 'head', 'thighR', 'shinR', 'footR', 'thighL', 'shinL', 'footL']) out[k] = eq(ps[k]);
+  out.hipsPos = REST.hips.clone().add(V3(ps.hipsPos));
   const B = REST.weapon;
   const q = eq(ps.wRot);
   const b = B.clone().add(V3(ps.wOff));
@@ -223,6 +231,12 @@ export function solve(ps) {
   const toW = (v) => b.clone().add(v.clone().sub(B).applyQuaternion(q));
   const FGo = FG0.clone().sub(REST.handL);
   const magGrab = toW(MGRAB).sub(FGo.clone().applyQuaternion(q));
+  // where the chest is (figure space), to turn figure-space hand targets into chest space
+  const M = new THREE.Matrix4().compose(out.hipsPos ?? REST.hips.clone().add(V3(ps.hipsPos)), out.hips, new THREE.Vector3(1, 1, 1))
+    .multiply(new THREE.Matrix4().compose(REST.spine.clone().sub(REST.hips), out.spine, new THREE.Vector3(1, 1, 1)))
+    .multiply(new THREE.Matrix4().compose(REST.chest.clone().sub(REST.spine), out.chest, new THREE.Vector3(1, 1, 1)));
+  const Mi = M.clone().invert();
+  const toChest = (v) => v.clone().applyMatrix4(Mi).add(REST.chest);
   const hand = {};
   for (const s of ['R', 'L']) {
     const l = s.toLowerCase();
@@ -230,6 +244,7 @@ export function solve(ps) {
     const Wg = toW(W0);
     const T = V3(ps[l + 'T']);
     if (s === 'L' && ps.lMag > 0) T.lerp(magGrab.clone().add(V3(ps.lMagOff)), ps.lMag);
+    if (ps[l + 'W'] > 0) T.lerp(toChest(V3(ps[l + 'TW'])), ps[l + 'W']);
     const Wt = T.lerp(Wg, ps[l + 'G']);
     const cp = V3(ps[l + 'Pole']);
     const pole = cp.lengthSq() > 1e-6 ? cp : POLE[s][0].clone().lerp(POLE[s][1], ps.aim);
@@ -264,12 +279,17 @@ export function solve(ps) {
   const sc = Math.max(1e-3, 1 - ps.magHide);
   out.magScale = new THREE.Vector3(sc, sc, sc);
   out.hipsPos = REST.hips.clone().add(V3(ps.hipsPos));
+  const bq = eq(ps.bagR);
+  out.bag = bq;
+  out.bagPos = V3(ps.bagP).sub(V3(PACK_C).sub(REST.chest).applyQuaternion(bq));
+  out.drone = eq(ps.droneR);
+  out.dronePos = V3(ps.droneP);
   return out;
 }
-const QB = ['hips', 'spine', 'chest', 'neck', 'head', 'upperArmR', 'foreArmR', 'handR', 'upperArmL', 'foreArmL', 'handL', 'weapon', 'mag', 'thighR', 'shinR', 'footR', 'thighL', 'shinL', 'footL'];
+const QB = ['hips', 'spine', 'chest', 'neck', 'head', 'upperArmR', 'foreArmR', 'handR', 'upperArmL', 'foreArmL', 'handL', 'weapon', 'mag', 'thighR', 'shinR', 'footR', 'thighL', 'shinL', 'footL', 'bag', 'drone'];
 function makeClip(name, dur, fn) {
   const n = Math.max(2, Math.round(dur * 30) + 1);
-  const times = [], q = {}, hp = [], wp = [], mp = [], ms = [];
+  const times = [], q = {}, hp = [], wp = [], mp = [], ms = [], bp = [], dp = [];
   QB.forEach((b) => (q[b] = []));
   for (let i = 0; i < n; i++) {
     const t = (i / (n - 1)) * dur;
@@ -280,10 +300,13 @@ function makeClip(name, dur, fn) {
     wp.push(...s.weaponPos.toArray());
     mp.push(...s.magPos.toArray());
     ms.push(...s.magScale.toArray());
+    bp.push(...s.bagPos.toArray());
+    dp.push(...s.dronePos.toArray());
   }
   const tr = QB.map((b) => new THREE.QuaternionKeyframeTrack(b + '.quaternion', times, q[b]));
   tr.push(new THREE.VectorKeyframeTrack('hips.position', times, hp), new THREE.VectorKeyframeTrack('weapon.position', times, wp),
-    new THREE.VectorKeyframeTrack('mag.position', times, mp), new THREE.VectorKeyframeTrack('mag.scale', times, ms));
+    new THREE.VectorKeyframeTrack('mag.position', times, mp), new THREE.VectorKeyframeTrack('mag.scale', times, ms),
+    new THREE.VectorKeyframeTrack('bag.position', times, bp), new THREE.VectorKeyframeTrack('drone.position', times, dp));
   return new THREE.AnimationClip(name, dur, tr);
 }
 
@@ -333,6 +356,48 @@ function burst(t) {
   return r;
 }
 const J = (o) => Object.assign(pose0(), o);
+/** Kneeling on the right knee (e: 0 standing .. 1 down), the rifle hanging at the front, hands free. */
+function droneKneel(p, e) {
+  const K = { hipsPos: [0, -0.45, 0], thighR: [0.05, 0, -0.05], shinR: [1.5, 0, 0], footR: [-0.1, 0, 0], thighL: [-1.45, 0, 0.08], shinL: [1.45, 0, 0], footL: [0, 0, 0], spine: [0.22, 0, 0], head: [-0.12, 0, 0] };
+  for (const k in K) p[k] = K[k].map((v) => v * e);
+  p.wRot = [0.9, 0.2, 0.3]; p.wOff = [0.05, -0.15, 0.12];
+  p.lG = 0; p.rG = 0; p.lH = 0; p.rH = 0; p.lPole = [1, -0.6, -0.4]; p.rPole = [-1, -0.6, -0.4];
+  p.lT = [0.25, 0.97, 0.07]; p.rT = [-0.25, 0.97, 0.07];
+  return p;
+}
+/** Slip the pack off, kneel, open it, take the drone out, put it down, goggles, controller, launch. */
+const DRONE_K = [
+  // t, kneel, lT, rT, lTW, rTW, lW, bagP, bagR, droneP, spine lean
+  [0.0, 0, [0.25, 0.97, 0.07], [-0.25, 0.97, 0.07], null, null, 0, PACK_C, [0, 0, 0], [0, 1.25, -0.25], 0],
+  [0.5, 0, [0.13, 1.42, 0.15], [-0.13, 1.42, 0.15], null, null, 0, PACK_C, [0, 0, 0], [0, 1.25, -0.25], 0],
+  [1.0, 0, [0.22, 1.42, -0.18], [-0.13, 1.42, 0.15], null, null, 0, [0.1, 1.15, -0.28], [0, 0, -0.3], [0, 1.25, -0.25], 0],
+  [1.6, 0.2, null, null, [0.44, 1.02, 0.25], [0.17, 1.02, 0.3], 1, [0.3, 1.0, 0.25], [0, 1.6, 0], [0, 1.25, -0.25], 0.1],
+  [2.3, 1, null, null, [0.19, 0.3, 0.62], [-0.09, 0.3, 0.62], 1, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.2, 0.62], 0.35],
+  [3.0, 1, null, null, [0.27, 0.33, 0.5], [-0.17, 0.33, 0.5], 1, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.2, 0.62], 0.35],
+  [3.6, 1, null, null, [0.2, 0.74, 0.5], [-0.1, 0.74, 0.5], 1, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.74, 0.5], 0.15],
+  [4.4, 1, null, null, [0.2, 0.13, 1.08], [-0.1, 0.13, 1.08], 1, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.05, 1.15], 0.6],
+  [5.0, 1, [0.08, 1.62, 0.12], [-0.08, 1.62, 0.12], null, null, 0, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.05, 1.15], 0.2],
+  [5.6, 1, [0.075, 1.12, 0.28], [-0.075, 1.12, 0.28], null, null, 0, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.05, 1.15], 0.22],
+  [7.0, 1, [0.075, 1.12, 0.28], [-0.075, 1.12, 0.28], null, null, 0, [0.05, 0.16, 0.62], [-1.5, 3.14, 0], [0.05, 0.05, 1.15], 0.22],
+];
+/** When the drone shows (taken out), lifts off; the goggles and the controller (s into deployDrone). */
+export const DRONE_T = { show: 2.9, goggles: 5.2, controller: 5.5, launch: 6.0, packDown: 2.3 };
+function droneDeploy(t) {
+  let i = 0;
+  while (i < DRONE_K.length - 2 && t > DRONE_K[i + 1][0]) i++;
+  const a = DRONE_K[i], b = DRONE_K[i + 1], f = sm01((t - a[0]) / (b[0] - a[0]));
+  const L = (x, y) => lerpA(x, y, f);
+  const p = droneKneel(pose0(), a[1] + (b[1] - a[1]) * f);
+  const cs = (k, d) => a[k] ?? b[k] ?? d;
+  const cs2 = (k, d) => b[k] ?? a[k] ?? d;
+  p.lT = L(cs(2, p.lT), cs2(2, p.lT)); p.rT = L(cs(3, p.rT), cs2(3, p.rT));
+  p.lTW = L(cs(4) ?? [0, 0, 0], cs2(4) ?? [0, 0, 0]); p.rTW = L(cs(5) ?? [0, 0, 0], cs2(5) ?? [0, 0, 0]);
+  p.lW = p.rW = a[6] + (b[6] - a[6]) * f;
+  p.bagP = L(a[7], b[7]); p.bagR = L(a[8], b[8]); p.droneP = L(a[9], b[9]);
+  p.spine[0] += a[10] + (b[10] - a[10]) * f;
+  p.head[0] += 0.25 * env(t, 1.4, 1.8, 4.6, 5.0) - 0.15 * env(t, 4.8, 5.0, 5.3, 5.5);
+  return p;
+}
 const DIE_KEYS = (() => {
   const k3 = J({ hips: [-1.45, 0.15, 0.05], hipsPos: [0, -0.71, -0.78], thighR: [0.32, 0, -0.1], shinR: [0.22, 0, 0], thighL: [0.2, 0, 0.15], shinL: [0.5, 0, 0], chest: [-0.08, 0, 0], head: [-0.25, 0.5, 0], wOff: [0, -0.06, 0.12], wRot: [0.3, 0.3, -0.8] });
   return [[0, J({})],
@@ -472,6 +537,13 @@ const CLIPS = {
     p.head = [0, -0.35 * env(t, 0.05, 0.25, 0.45, 0.7), 0];
     return p;
   }],
+  deployDrone: [7.0, (t) => droneDeploy(t)],
+  droneControl: [3.0, (t, u) => {
+    const p = droneKneel(pose0(), 1);
+    p.lT = [0.075 + 0.006 * sin(TAU * u * 2), 1.12, 0.28]; p.rT = [-0.075 + 0.005 * sin(TAU * u * 3 + 1), 1.12, 0.28];
+    p.head = [-0.05, 0.08 * sin(TAU * u), 0];
+    return p;
+  }],
   // the flame gun: only standing, aimed from the hip
   flame: [2.0, (t, u) => {
     const p = stance(pose0()), f = TAU * u;
@@ -548,14 +620,16 @@ const CLIPS = {
   }],
 };
 
-export const ONCE = { drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1 };
+export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1 };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
-  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
+  reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die' };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
+/** Clips that do not care whether he has a rifle. */
+const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, pickup: 1, swim: 1 };
 /** A flame trooper cannot shoot or reload; he fires the flame gun standing only. */
 const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle' };
 
@@ -600,11 +674,10 @@ export function operatorClips() {
   if (CLIP_CACHE) return CLIP_CACHE;
   const c = {};
   for (const k in CLIPS) {
-    if (k !== 'pickup') c[k] = makeClip(k, CLIPS[k][0], CLIPS[k][1]);
+    c[k] = makeClip(k, CLIPS[k][0], CLIPS[k][1]);
     if (k === 'swim') c.swim_u = c.swim;
-    else if (!UNARMED_AS[k] && k !== 'drawSecondary') c[k + '_u'] = makeClip(k + '_u', CLIPS[k][0], unarm(k, CLIPS[k][1]));
+    else if (!UNARMED_AS[k] && !NO_UNARMED[k]) c[k + '_u'] = makeClip(k + '_u', CLIPS[k][0], unarm(k, CLIPS[k][1]));
   }
-  c.pickup = c.pickup_u;
   CLIP_CACHE = c;
   return c;
 }
@@ -774,7 +847,7 @@ function assemble(R) {
   A.grenadeFuse = new THREE.CylinderGeometry(0.008, 0.01, 0.025, 8).translate(0, 0.05, 0);
   A.grenadeMat = new THREE.MeshStandardMaterial({ color: 0x3d4a2a, roughness: 0.6, metalness: 0.3 });
   A.flashTex = flashTexture();
-  Object.assign(A, secondaryAndTorch(A));
+  Object.assign(A, secondaryAndTorch(A), droneKit());
   A.clips = operatorClips();
   A.tris = [...A.person, A.pack, A.helmet, A.rifle, A.mag].reduce((s, g) => s + g.index.count / 3, 0);
   return A;
@@ -846,6 +919,60 @@ function secondaryAndTorch(A) {
     tanks.add(c);
   }
   return { secondary: g, slungPos: sl.weaponPos.clone(), slungQ: sl.weapon.clone(), torchGun: torch, torchTanks: tanks, nozzle: rl2w(1.0, 0.03, 0) };
+}
+/** A small quadcopter (in drone-bone space, ~0.3 m across), FPV goggles (head frame) and a controller. */
+function droneKit() {
+  const body = new THREE.MeshStandardMaterial({ color: '#2b2d30', roughness: 0.45, metalness: 0.3 });
+  const accent = new THREE.MeshStandardMaterial({ color: '#d8742a', roughness: 0.5, emissive: '#3a1a05' });
+  const propM = new THREE.MeshStandardMaterial({ color: '#111', roughness: 0.6, transparent: true, opacity: 0.85 });
+  const glass = new THREE.MeshStandardMaterial({ color: '#0c1a26', roughness: 0.05, metalness: 0.8 });
+  const drone = new THREE.Group();
+  const add = (g, m, x, y, z, ry = 0) => {
+    const o = new THREE.Mesh(g, m);
+    o.position.set(x, y, z);
+    o.rotation.y = ry;
+    o.castShadow = true;
+    drone.add(o);
+    return o;
+  };
+  add(new THREE.BoxGeometry(0.1, 0.045, 0.15), body, 0, 0.06, 0);
+  add(new THREE.BoxGeometry(0.06, 0.02, 0.1), accent, 0, 0.088, -0.01);
+  add(new THREE.SphereGeometry(0.018, 12, 8), glass, 0, 0.06, 0.08);
+  for (const a of [Math.PI / 4, -Math.PI / 4]) add(new THREE.BoxGeometry(0.27, 0.014, 0.02), body, 0, 0.06, 0, a);
+  const props = [];
+  for (const [x, z] of [[0.095, 0.095], [-0.095, 0.095], [0.095, -0.095], [-0.095, -0.095]]) {
+    add(new THREE.CylinderGeometry(0.017, 0.017, 0.026, 12), body, x, 0.07, z);
+    const pr = add(new THREE.BoxGeometry(0.13, 0.002, 0.014), propM, x, 0.086, z);
+    props.push(pr);
+  }
+  for (const x of [0.04, -0.04]) add(new THREE.BoxGeometry(0.008, 0.04, 0.12), body, x, 0.02, 0);
+  // goggles in the head frame, over the glasses; a strap round the back of the helmet
+  const goggles = new THREE.Group();
+  const gb = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.068, 0.075), body);
+  gb.position.set(0, 0.024, 0.122);
+  const gf = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.004), glass);
+  gf.position.set(0, 0.024, 0.161);
+  const strap = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.008, 6, 28), new THREE.MeshStandardMaterial({ color: '#1b1b1b', roughness: 0.9 }));
+  strap.rotation.x = Math.PI / 2;
+  strap.position.set(0, 0.026, 0.0);
+  strap.scale.set(1, 1.18, 1);
+  goggles.add(gb, gf, strap);
+  // the controller, held in front of the chest (chest-bone space)
+  const ctrl = new THREE.Group();
+  const cb = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.035, 0.1), new THREE.MeshStandardMaterial({ color: '#3a3d40', roughness: 0.6 }));
+  ctrl.add(cb);
+  for (const x of [0.045, -0.045]) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.03, 8), body);
+    st.position.set(x, 0.03, 0);
+    ctrl.add(st);
+  }
+  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.12, 6), body);
+  ant.position.set(0.07, 0.06, -0.04);
+  ant.rotation.z = -0.3;
+  ctrl.add(ant);
+  ctrl.position.set(0, 1.12 - REST.chest.y, 0.3);
+  ctrl.rotation.x = -0.5;
+  return { drone, droneProps: props.length, goggles, ctrl };
 }
 function flashTexture() {
   const c = document.createElement('canvas');
@@ -1094,6 +1221,17 @@ export class OperatorFigure {
     const foam = new THREE.Mesh(A.foam, A.black);
     foam.position.set(0.036, -0.059, 0.115);
     hf.add(foam);
+    // the drone kit: the quadcopter (in the pack until taken out), goggles, controller
+    this.drone = A.drone.clone();
+    this.drone.visible = false;
+    bones.drone.add(this.drone);
+    this.props = this.drone.children.filter((c) => c.geometry?.parameters?.width === 0.13);
+    this.goggles = A.goggles.clone();
+    this.goggles.visible = false;
+    hf.add(this.goggles);
+    this.ctrl = A.ctrl.clone();
+    this.ctrl.visible = false;
+    bones.chest.add(this.ctrl);
     // the grenade in the right hand while throwing
     const nade = (this.nade = new THREE.Group());
     nade.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
@@ -1133,6 +1271,15 @@ export class OperatorFigure {
     this.mixer.addEventListener('finished', (e) => {
       if (e.action !== this.current || !ONCE[this.shown] || this.shown === 'die') return;
       const was = this.shown;
+      if (was === 'deployDrone') {
+        // the pack stays on the ground where he put it; he keeps flying
+        this.group.parent?.attach(this.parts.pack);
+        this.parts.pack.userData.onGround = true;
+        this.droneStage = 'flying';
+        this.resume = 'droneControl';
+        this.play('droneControl', { fade: 0.2 });
+        return;
+      }
       if (was === 'drawSecondary') {
         this.drawing = false;
         this.armed = true;
@@ -1144,10 +1291,79 @@ export class OperatorFigure {
   }
   /** The clip actually played for a name (unarmed versions without a rifle). */
   clipName(name) {
-    if (name === 'pickup' || name === 'swim' || name === 'drawSecondary') return name;
+    if (NO_UNARMED[name]) return name;
     if (!this.armed) return (UNARMED_AS[name] ?? name) + '_u';
     if (this.weapon === 'torch') return TORCH_AS[name] ?? name;
     return name === 'flame' ? 'aim' : name;
+  }
+  /**
+   * Deploy the drone from the backpack (needs the pack on his back); then he kneels at the
+   * controls. The drone circles over droneTarget (a point; default: 8 m ahead).
+   */
+  deployDrone() {
+    const pack = this.parts.pack;
+    if (this.droneFly || pack.userData.pivot || pack.parent !== this.bones.chest || this.shown === 'die') return false;
+    this.bones.bag.add(pack);
+    pack.position.set(0, 0, 0);
+    pack.quaternion.identity();
+    this.droneStage = 'deploying';
+    this.play('deployDrone', { fade: 0.25 });
+    return true;
+  }
+  updateDrone(dt) {
+    const a = this.current;
+    const deploying = this.shown === 'deployDrone' && a;
+    const at = deploying ? a.time : 0;
+    if (deploying) {
+      this.drone.visible = !this.droneFly && at > DRONE_T.show;
+      this.goggles.visible = at > DRONE_T.goggles;
+      this.ctrl.visible = at > DRONE_T.controller;
+      if (!this.droneFly && at >= DRONE_T.launch && this.group.parent) {
+        // lift-off: from here on it flies on its own
+        const scene = this.group.parent;
+        this.group.updateMatrixWorld(true);
+        scene.attach(this.drone);
+        this.droneFly = { t: 0, start: this.drone.position.clone(), ang: 0, v: new THREE.Vector3() };
+        this.onDroneLaunch?.(this);
+      }
+    } else if (this.shown === 'droneControl') {
+      this.goggles.visible = this.ctrl.visible = true;
+    } else this.goggles.visible = this.ctrl.visible = false;
+    const F = this.droneFly;
+    if (!F) return;
+    F.t += dt;
+    const d = this.drone;
+    for (const pr of this.props) pr.rotation.y += dt * (F.down ? 0 : 60);
+    if (this.shown === 'die' || F.down) {
+      // the pilot is down: it falls
+      F.down = true;
+      F.v.y -= 9.81 * dt;
+      d.position.addScaledVector(F.v, dt);
+      const gy = this.group.position.y;
+      if (d.position.y < gy) {
+        d.position.y = gy;
+        F.v.set(0, 0, 0);
+      }
+      return;
+    }
+    if (F.t < 0.6) return; // spinning up on the ground
+    const g = this.group.position;
+    const T = this.droneTarget ?? new THREE.Vector3(g.x + Math.sin(this.group.rotation.y) * 8, g.y, g.z + Math.cos(this.group.rotation.y) * 8);
+    let goal;
+    if (F.t < 2.6) goal = F.start.clone().setY(g.y + 0.1 + 3.4 * sm01((F.t - 0.6) / 2));
+    else {
+      F.ang += dt * 0.55;
+      goal = new THREE.Vector3(T.x + Math.cos(F.ang) * 3.5, g.y + 4, T.z + Math.sin(F.ang) * 3.5);
+    }
+    const want = goal.sub(d.position);
+    const sp = Math.min(4, want.length() * 1.5);
+    const vt = want.normalize().multiplyScalar(sp);
+    F.v.lerp(vt, Math.min(1, dt * 2));
+    d.position.addScaledVector(F.v, dt);
+    // banks into its motion, nose along it
+    const hv = Math.hypot(F.v.x, F.v.z);
+    if (hv > 0.2) d.rotation.y += Math.atan2(Math.sin(Math.atan2(F.v.x, F.v.z) - d.rotation.y), Math.cos(Math.atan2(F.v.x, F.v.z) - d.rotation.y)) * Math.min(1, dt * 3);
+    d.rotation.x = Math.min(0.35, hv * 0.08);
   }
   /** Has he a carbine on his back to draw? */
   get hasSecondary() {
@@ -1229,6 +1445,7 @@ export class OperatorFigure {
     const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'proneShoot') && a;
     this.flash.position.copy(rl2w(this.weapon === 'secondary' ? 0.82 : 1.03, 0.045, 0));
     if (this.loadout === 'torch') this.updateFlame(dt);
+    this.updateDrone(dt);
     const on = hasRifle && ((firing && a.time % 0.12 < 0.04) || this.flashUntil > this.clock);
     this.flash.visible = !!on;
     if (on) {
@@ -1343,6 +1560,13 @@ export class OperatorFigure {
     return pv ? pv.position.clone() : null;
   }
   reequip(names = ['rifle', 'helmet', 'pack']) {
+    const pack = this.parts.pack;
+    if (names.includes('pack') && (pack.userData.onGround || pack.parent === this.bones.bag)) {
+      this.bones.chest.add(pack);
+      pack.position.set(0, 0, 0);
+      pack.quaternion.identity();
+      pack.userData.onGround = false;
+    }
     for (const k of names) {
       const obj = this.parts[k], pv = obj.userData.pivot;
       if (!pv) continue;
@@ -1375,6 +1599,8 @@ export class OperatorFigure {
   }
   dispose() {
     for (const s of this.flames ?? []) s.parent?.remove(s);
+    this.drone.parent?.remove(this.drone);
+    if (this.parts.pack.userData.onGround) this.parts.pack.parent?.remove(this.parts.pack);
     for (const k of ['rifle', 'helmet', 'pack']) {
       const o = this.parts[k];
       if (o.userData.pivot) {

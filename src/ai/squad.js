@@ -22,6 +22,9 @@
  *    (the commander, or whoever is left) keys the radio on his chest and reports; every
  *    other team that still has someone standing answers in turn. No team left: no response.
  *    Several squads (member.unit) each have their own SquadAI; peers() gives the others.
+ *  - Drone: a drone operator (role UAV) stays back from the bounds; on contact he takes the
+ *    drone out of his backpack and launches it (host.droneLaunch), radios that it is up, and
+ *    stays at the controls.
  *  - Orders: the first squad leads. On contact its commander sends every other team to a flank
  *    of the threat ("Bravo, take the west flank"); a team that gets well ahead of the lead is
  *    told to hold off until the lead catches up, then to continue; when the threat moves away
@@ -45,10 +48,10 @@
  * signal { text, until }, moving, speed.
  */
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
-const ONCE_T = { signalMove: 1.6, signalHalt: 1.6, throwGrenade: 1.6, pickup: 1.3, radio: 2.4 };
+const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, throwGrenade: 1.6, pickup: 1.3, radio: 2.4 };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
-const NAME = { CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
-export const teamOf = (m) => (m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
+const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
+export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
 
 export class SquadAI {
   constructor(host) {
@@ -153,7 +156,7 @@ export class SquadAI {
 
   /* ---------- radio ---------- */
   radioMan() {
-    const al = this.members().filter((m) => !m.dead);
+    const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
     return al.find((m) => m.squad === 'CMD') ?? al[0];
   }
   /** Where the threat is from the squad, in words. */
@@ -602,8 +605,24 @@ export class SquadAI {
         const d = dist2(from, T), Tf = Math.max(0.9, Math.min(1.6, d / 12));
         this.host.grenade?.(m, from, [(T[0] - from[0]) / Tf, (T[1] - from[1] + 4.905 * Tf * Tf) / Tf, (T[2] - from[2]) / Tf]);
       }
+      if (m.droneAt != null && this.time >= m.droneAt) {
+        m.droneAt = null;
+        this.host.droneLaunch?.(m, T);
+        this.say(m, `${this.unit}, drone is up, eyes on the threat`, 'drone');
+      }
       if (this.busy(m)) {
         if (m.anim === 'throwGrenade') this.face(m, T, dt, 4);
+        continue;
+      }
+      if (m.squad === 'UAV') {
+        // the drone operator: deploy once in contact, then fly it from where he kneels
+        if (!m.deployed && this.contacted && !m.path) {
+          m.deployed = true;
+          this.face(m, T, 1, 10);
+          this.setAnim(m, 'deployDrone');
+          m.droneAt = this.time + 6.0;
+        } else if (m.deployed) this.setAnim(m, 'droneControl');
+        else this.setAnim(m, 'crouchAim');
         continue;
       }
       if (m.anim === 'pickup' && m.goingFor) {

@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 
-export const ROLE_COLOR = { CMD: '#e7c35a', MG: '#e0604a', R1: '#5aa9e6', R2: '#7cc46a' };
+export const ROLE_COLOR = { UAV: '#b48ce6', CMD: '#e7c35a', MG: '#e0604a', R1: '#5aa9e6', R2: '#7cc46a' };
 
 function quadGeo(max) {
   const g = new THREE.BufferGeometry();

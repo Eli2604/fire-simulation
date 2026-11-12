@@ -11,10 +11,12 @@ export default {
     threatZ: { value: -20, min: -60, max: 60, step: 0.5, label: 'Threat offset Z (m)' },
     unit: { value: 'Alpha', options: ['Alpha', 'Bravo', 'Charlie'], label: 'Team call sign' },
     flameTrooper: { value: false, label: 'Rifleman two carries a flame gun' },
+    droneOperator: { value: false, label: 'A drone operator (deploys a drone from his backpack)' },
     level: { value: 0, min: 0, max: 20, step: 0.1, label: 'Floor height (m)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
+    if (p.droneOperator) roles.push(['UAV', 0, 3.2]);
     return {
       prims: [],
       enemies: roles.map(([squad, x, z]) => ({ p: [x, p.level, z], squad, unit: p.unit, loadout: p.flameTrooper && squad === 'R2' ? 'torch' : undefined, threat: [p.threatX, p.level, p.threatZ] })),

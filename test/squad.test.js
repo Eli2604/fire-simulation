@@ -86,12 +86,16 @@ test('an unarmed soldier goes back for his rifle; grenades are not thrown with f
 test('the squad range scenario: two teams, walls and crates, no one shot by their own side', () => {
   const sim = createSimulation(cloneScene(SCENARIOS.squadRange));
   const w = sim.world;
-  assert.equal(w.enemies.filter((e) => e.squad).length, 8);
+  assert.equal(w.enemies.filter((e) => e.squad).length, 9);
+  assert.ok(w.enemies.some((e) => e.squad === 'UAV'), 'Alpha has a drone operator');
   for (let t = 0; t < 30; t += sim.dt) sim.step(sim.dt);
   assert.equal(sim.squads.length, 2);
   assert.ok(w.events.some((e) => e.type === 'radio' && e.kind === 'reply'), 'radio traffic between the teams');
   assert.ok(w.enemies.every((e) => !e.dead), 'no friendly fire');
   assert.ok(w.tracers.length > 0, 'they fired real rounds');
+  const uav = w.enemies.find((e) => e.squad === 'UAV');
+  assert.ok(uav.deployed && ['deployDrone', 'droneControl'].includes(uav.anim), 'the drone operator deploys and stays at the controls');
+  assert.ok(w.events.some((e) => e.type === 'radio' && /drone is up/.test(e.name)), 'he radios that the drone is up');
   assert.ok(SCENARIOS.rigTest.page === 'rig.html');
 });
 

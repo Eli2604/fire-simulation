@@ -422,13 +422,15 @@ export class EnemyRenderer {
       // let a draw, a throw or a radio call finish
     } else if (e.squad && ONCE[name] && e.animT !== f.animT) {
       f.animT = e.animT;
-      f.play(name, { restart: true, fade: 0.15 });
+      if (name === 'deployDrone') f.deployDrone();
+      else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name] || f.shown !== name) f.play(name);
     if (MOVING[f.state]) {
       const moving = e.squad ? e.moving : sp > 0.05 || e.moving;
       f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (e.squad ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
     f.setAim(e.squad ? e.aimAt : null);
+    if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.update(dt);
     if (e.state === 'lure' && !e.dead && this.flames) {
       const p = new THREE.Vector3();
