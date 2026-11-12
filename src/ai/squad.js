@@ -731,7 +731,11 @@ export class SquadAI {
     const al = this.members().filter((m) => !m.dead && m.squad !== 'UAV');
     // on another floor of a building: the whole team, clearing floor by floor (ai/tactics.js)
     const c0 = al.length ? centroid(al) : null;
-    if (c0 && Math.abs((p[1] ?? c0[1]) - c0[1]) > 2 && this.host.path3d && !this.clearing) {
+    if (c0 && Math.abs((p[1] ?? c0[1]) - c0[1]) > 2 && this.host.path3d && !this.clearing && (this.host.indoors?.(p) ?? true)) {
+      if (!this.blocked || this.navAge === Infinity) {
+        this.rebuildNav();
+        this.navAge = 0;
+      }
       this.inv = { p: p.slice(), why, men: al, t: this.time, look: 0, clearing: true };
       if (clearTo(this, p, why, () => this.endInvestigation(true))) return;
       this.inv = null;
