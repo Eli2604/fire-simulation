@@ -46,7 +46,13 @@ const inlineWorker = {
   },
 };
 const entry = page === 'main' ? 'src/main.js' : `src/${page}/main.js`;
-const code = (await bundle(entry, [inlineWorker])).replace(/<\/script/gi, '<\\/script');
+// SIM_PAGE=sim.html: where the scene lists find the simulation when it is not the folder's index
+const simPage = process.env.SIM_PAGE;
+const code = (await bundle(entry, [inlineWorker]))
+  .replace(/<\/script/gi, '<\\/script')
+  .replace(/'\.\/\?scenario='/g, simPage ? `'${simPage}?scenario='` : "'./?scenario='")
+  // binary models fetched next to their module (render/models/*.bin): inlined as data URLs
+  .replace(/new URL\('\.\/models\/([^']+)', import\.meta\.url\)/g, (_, f) => `'data:application/octet-stream;base64,${readFileSync(resolve(root, 'src/render/models', f)).toString('base64')}'`);
 const html = readFileSync(resolve(root, page === 'main' ? 'index.html' : `${page}.html`), 'utf8');
 // local stylesheets inline (remote ones, e.g. fonts, stay links)
 const head = html
@@ -55,8 +61,22 @@ const head = html
 const tag = html.match(/<script type="module" src="[^"]+"><\/script>/)[0];
 const bodyOpen = html.match(/<body[^>]*>/);
 const body = html.slice(bodyOpen.index + bodyOpen[0].length, html.indexOf(tag));
-const doc = `<meta charset="utf-8">
-${head}\n${body}\n<script type="module">\n${code}\n</script>\n`;
+const bodyAttrs = bodyOpen[0].slice(5, -1);
+const doc = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${head}
+</head>
+<body${bodyAttrs}>
+${body}
+<script type="module">
+${code}
+</script>
+</body>
+</html>
+`;
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, doc);
 console.log(`${out}: ${(doc.length / 1e6).toFixed(2)} MB`);
