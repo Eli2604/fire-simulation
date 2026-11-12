@@ -1139,8 +1139,8 @@ The rig page's range has a **two-floor structure**: an open ground floor under a
 staircase with glass rails (they stop you, not your sight); the tools place noises, hostiles and
 investigations up on the deck too, and the squad works its way up the stairs to them.
 
-**Hosted pages**: built with  (), each page knows where the
-others are hosted and its scene list opens them ().
+**Hosted pages**: built with `PAGE_URLS` (`scripts/build-rig-artifact.mjs`), each page knows where
+the others are hosted and its scene list opens them (`src/pages.js`).
 
 ## Drone operations camp
 
