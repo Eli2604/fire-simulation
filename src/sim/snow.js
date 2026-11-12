@@ -102,7 +102,7 @@ export class SnowField {
         }
         if (y < 0) continue;
         const i = w.idx(cx, y, cz);
-        if (NO_SNOW_ON.has(MATERIALS[mat[i]].name)) continue;
+        if (NO_SNOW_ON.has(MATERIALS[mat[i]].name) && !((w.ice?.thick[c] ?? 0) > 0.03 && w.ice.top[c] === i)) continue;
         if ((y + 1) * h < this.seaLevel + 0.05) continue; // under the sea
         surf[c] = (y + 1) * h;
         topV[c] = i;

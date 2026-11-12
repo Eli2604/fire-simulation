@@ -268,7 +268,7 @@ test('catacombs: a lamp lighting up a dark spot draws the guard who sees it; a s
   e2.lightCooldown = 0;
   ai.lamp = { from: [1, 1.8, 1], spot, time: w.time };
   ai.step(0.2);
-  assert.notEqual(e2.state === 'investigate' && Math.hypot(e2.goal[0] - spot[0], e2.goal[2] - spot[2]) < 0.5, true);
+  assert.notEqual(e2.state === 'investigate' && !!e2.goal && Math.hypot(e2.goal[0] - spot[0], e2.goal[2] - spot[2]) < 0.5, true);
 });
 
 test('catacombs: a blast brings the guards running, and they search the place', () => {

@@ -46,6 +46,9 @@ export class Ocean {
       uHasBathy: { value: 0 },
       uHull: { value: new THREE.Vector4(0, 0, 0, 0) }, // the waterline of the whole ship (foam, damping)
       uLevel: { value: 0 },
+      // the sea frozen over (sim/ice.js): no waves under the ice, and it is drawn instead
+      uIceTex: { value: null },
+      uHasIce: { value: 0 },
     };
     this.material = this.makeMaterial();
     this.weather = { windSpeed: 3, windDir: 0, rain: 0, fog: 0 };
@@ -111,6 +114,37 @@ export class Ocean {
     this.updateDepth(true);
     this.setWeather(this.weather, this.uniforms.uSky.value, this.uniforms.uGrey.value);
     return mesh;
+  }
+
+  /** Where the sea is frozen over (sim/ice.js): per column, over the zone's depth map. */
+  updateIce(ice) {
+    const w = this.world;
+    const u = this.uniforms;
+    if (!ice || !w || ice.top.length !== w.nx * w.nz) {
+      u.uHasIce.value = 0;
+      return;
+    }
+    if (ice === this.iceSeen && ice.version === this.iceVersion) return;
+    this.iceSeen = ice;
+    this.iceVersion = ice.version;
+    const { nx, nz } = w;
+    if (!this.iceData || this.iceData.length !== nx * nz) {
+      this.iceTex?.dispose();
+      this.iceData = new Uint8Array(nx * nz);
+      this.iceTex = new THREE.DataTexture(this.iceData, nx, nz, THREE.RedFormat, THREE.UnsignedByteType);
+      this.iceTex.unpackAlignment = 1; // (a row of bytes need not be a multiple of 4)
+      this.iceTex.magFilter = THREE.LinearFilter;
+      this.iceTex.minFilter = THREE.LinearFilter;
+      u.uIceTex.value = this.iceTex;
+    }
+    let any = 0;
+    for (let c = 0; c < nx * nz; c++) {
+      const v = ice.top[c] === -2 && ice.thick[c] > 0.003 ? 255 : 0;
+      this.iceData[c] = v;
+      any |= v;
+    }
+    this.iceTex.needsUpdate = true;
+    u.uHasIce.value = any ? 1 : 0;
   }
 
   /** The island group's sea floor round the zone (render/archipelago.js), or null. */
@@ -264,6 +298,7 @@ export class Ocean {
       const s = Math.min(1, Math.max(0, (d + 1) / (7 + 3 * Hs)));
       damp *= 0.6 + 0.4 * s * s * (3 - 2 * s);
     }
+    if (this.world?.ice?.at(this.world, x, z)?.sea) return 0;
     let y = 0;
     u.uWaves.value.forEach((wv, k) => {
       const om = Math.sqrt(9.81 * wv.z);
@@ -286,6 +321,15 @@ uniform sampler2D uDepthTex;
 uniform vec4 uDepthBox, uHole, uHull, uBathyBox;
 uniform sampler2D uBathy;
 uniform float uHasBathy;
+uniform sampler2D uIceTex;
+uniform float uHasIce;
+// the sea frozen over here (0..1)
+float oIce(vec2 xz) {
+  if (uHasIce < 0.5) return 0.0;
+  vec2 uv = (xz - uDepthBox.xy) / (uDepthBox.zw - uDepthBox.xy);
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return 0.0;
+  return texture2D(uIceTex, uv).r;
+}
 float oHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float oNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -358,7 +402,7 @@ vOLocal = position.xy;
 vec3 oW = (modelMatrix * vec4(position, 1.0)).xyz;
 float oDep = oDepth(oW.xz);
 vec3 oN;
-vec3 oD = oWaves(oW.xz, oDamp(oW.xz, oDep), oN);
+vec3 oD = oWaves(oW.xz, oDamp(oW.xz, oDep) * (1.0 - oIce(oW.xz)), oN);
 // local frame of the sea plane: x = world x, y = -world z, z = up
 transformed += vec3(oD.x, -oD.z, oD.y);
 vOCrest = oD.y / max(uHs * 0.5, 0.05);
@@ -371,6 +415,8 @@ vOWorld = oW + oD;`,
           /* glsl */ `#include <color_fragment>
 // the hull's footprint: no sea inside the ship
 if (uHasHole > 0.5 && vOLocal.x > uHole.x && vOLocal.x < uHole.z && -vOLocal.y > uHole.y && -vOLocal.y < uHole.w) discard;
+// frozen over: the ice is drawn there (render/ice.js), not the sea
+if (oIce(vOWorld.xz) > 0.5) discard;
 vec2 oxz = vOWorld.xz;
 float oDep = oDepth(oxz);
 float oHd = oHull(oxz);

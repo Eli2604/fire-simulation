@@ -209,7 +209,12 @@ gloves and boots; a helmet with ear guards, a dark glass visor and a breathing f
 pack and a bullpup rifle. They walk and run with knees and elbows, carry the
 rifle at low ready and raise it when they investigate, hold up a torch to set a lure fire,
 burn, and fall. A light strip under the visor shows what they are up to: cyan on patrol, amber when they come to
-look, red once they have seen you. They:
+look, red once they have seen you. The guards of one post go as a team, as soldiers do: one
+leads, the others follow in file on the way he went, about 3.5 m apart (not bunched, where one
+burst or one grenade would get them all). When the leader goes to look at something, the others
+hold back at that distance and cover him; when he turns back the way they came, the file turns
+round and the last man takes the point. No two bodies stand in one place: they step round each
+other and you. They:
 
 - **patrol**: around where they start, at random spots inside a **patrol area**, or along a
   **guard round** (the corners of the area, in turn). Areas are set per enemy group (Patrol,
@@ -568,6 +573,24 @@ trail of footprints, lower and greyer; a dragon a broad groove; a blast clears i
 snow slows you down in the walk-through. The other islands of the group turn white with it.
 Steam is drawn only where the air cannot hold it (over its saturation): a fire's or a hose's
 steam, not the little the sea gives off over a whole scene.
+
+**Ice on the water** (Weather: "Ice on the water (m)", "Ice forms / melts faster (×)", "Hard
+frost", "Watch it freeze"; `&frost=1`, `&freeze=1`, `&ice=0.08`; sim/ice.js, render/ice.js): below
+freezing the ponds, the canal and the sheltered sea (inlets and a belt along the shore, not the
+open sea, whose swell breaks it up; salt water freezes at −1.8 °C) freeze over. Open water loses
+heat to the cold air (more in a wind) and to a clear sky, and a skin forms, first along the
+banks; it then thickens from below as the heat gets out through it: at −10 °C a couple of
+millimetres the first hour, ~4-5 cm in a day (Lebedev: ~1.3·FDD^0.58 cm), as fast as real ice,
+so there is a speed-up to watch it happen. It melts from the top in a thaw, in the sun (bare
+ice keeps about half of it) and in a fire's heat, and from below where the water under it is
+warmer (lava running into the canal). A first skin is clear and dark, thicker ice greys and
+whitens, with cracks and bubbles in it; snow lies on it once it is ~3 cm thick; under it the
+sea is still (no waves). It bears a load by Gold's rule (P = A·h², A ≈ 4 kg/cm²): ~5 cm bears a
+firefighter in full gear only just (it creaks and cracks under you, and gives sooner when you
+walk than when you stand), 10 cm is safe, thinner breaks at once and you are in ice-cold water
+(it hurts; swim to the edge and haul yourself out onto it). The guards walk over it where it
+bears them well (~8 cm); a dragon needs ~30 cm, on thinner ice it breaks through. A grenade
+blasts a hole in it. Open water skins over again in the cold.
 
 **Trees and grass in the wind; detail by distance** (render/trees.js): the trees sway with
 the wind (more towards the top, in its gusts), their branches swing, more towards their

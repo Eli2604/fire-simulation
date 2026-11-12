@@ -14,6 +14,7 @@ import { SurfaceRenderer } from './surface.js';
 import { VolumeRenderer } from './volume.js';
 import { MarkerRenderer } from './markers.js';
 import { PuddleRenderer } from './puddles.js';
+import { IceRenderer } from './ice.js';
 import { TorchRenderer } from './torches.js';
 import { OssuaryRenderer } from './ossuary.js';
 import { VehicleRenderer } from './vehicles.js';
@@ -122,6 +123,7 @@ export class View {
     this.markers.flames = this.flames;
     this.patches = new PatchRenderer(this.root); // fine detail close up: candles (sim/patches.js)
     this.puddles = new PuddleRenderer(this.root);
+    this.ice = new IceRenderer(this.root); // ice on the water (sim/ice.js)
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.enemies = new EnemyRenderer(this.root, this.flames);
@@ -210,6 +212,7 @@ export class View {
     this.spray.setScale(world);
     this.surface.setWorld(world);
     this.puddles.setWorld(world);
+    this.ice.setWorld(world);
     this.volume.setWorld(world);
     this.seenEvents = 0;
     this.flash = null;
@@ -585,6 +588,7 @@ export class View {
     if (this.voxels.mesh) this.voxels.mesh.visible = !smooth;
     this.updateSea();
     if (this.sea) this.ocean.update(this.time);
+    if (this.sea) this.ocean.updateIce(this.world?.ice);
     this.lightning(dt);
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
@@ -606,6 +610,7 @@ export class View {
     this.spray.update(dt, scale, sprays);
     this.debris.update(this.world);
     this.puddles.update();
+    this.ice.update();
     this.enemies.update(this.world, this.time);
     this.dragons.update(this.world, this.time, dt);
     this.phoenixes.update(this.world, this.time, dt);

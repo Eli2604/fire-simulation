@@ -287,6 +287,8 @@ export class SoundScape {
       } else if (e.type === 'gulp' || e.type === 'dragonSnap') {
         this.stomp(e.pos, 0.5);
         this.burst(t, 0.12, 'bandpass', 900, 1.5, 0.5);
+      } else if (e.type === 'iceBreak') {
+        this.iceBreak(false, e.pos);
       } else if (e.type === 'dragonStamp') {
         // its weight coming down on a roof: the thud, and what breaks under it
         this.stomp(e.pos, 2.2);
@@ -645,6 +647,36 @@ export class SoundScape {
       this.burst(t + 0.4, 0.15, 'lowpass', 700, 0.8, 0.2); // the seal letting go
     }
     this.nextBreath = t + 1.1;
+  }
+
+  /** Ice giving way: a sharp crack running off, the sheet breaking up, the splash. */
+  iceBreak(underYou = false, pos = null) {
+    if (!this.running) return;
+    if (underYou && this.iceBrokeAt && this.ctx.currentTime - this.iceBrokeAt < 0.5) return;
+    this.iceBrokeAt = this.ctx.currentTime;
+    const t = this.ctx.currentTime;
+    const out = pos ? this.at(pos, 5) : this.master;
+    this.noiseTo(out, t, 0.08, 'highpass', 3000, 0.7, 0.9);
+    for (let n = 0; n < 6; n++) this.noiseTo(out, t + 0.03 + n * 0.04 + Math.random() * 0.03, 0.05, 'bandpass', 2500 + Math.random() * 3000, 4, 0.4);
+    this.noiseTo(out, t + 0.15, 0.7, 'lowpass', 700, 0.7, 0.8); // the splash
+  }
+
+  /** Ice creaking and cracking under a weight: a twang that runs off through the sheet. */
+  iceCreak() {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(1800 + Math.random() * 1200, t);
+    o.frequency.exponentialRampToValueAtTime(200 + Math.random() * 200, t + 0.35);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.45);
+    this.burst(t, 0.04, 'highpass', 3500, 0.7, 0.25);
   }
 
   /** A cough (smoke without the mask). */

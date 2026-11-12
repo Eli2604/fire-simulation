@@ -16,6 +16,8 @@ export function defaultWeather() {
     lightning: 0, // strikes per minute somewhere in the scene (a thunderstorm: sim/lightning.js)
     season: 'summer', // spring | summer | autumn | winter: the leaves, the grass, the light
     snowCover: 0, // m of snow lying when the scene starts
+    iceCover: 0, // m of ice on the fresh water when the scene starts (sim/ice.js)
+    iceSpeed: 1, // × how fast ice forms and melts (1: as it does; more to watch it happen)
   };
 }
 
@@ -24,10 +26,10 @@ export function defaultWeather() {
  * start from; the user can change any of them after).
  */
 export const SEASONS = {
-  spring: { ambient: 12, humidity: 0.65, rain: 0, snowCover: 0, sunshine: 0.8 },
-  summer: { ambient: 24, humidity: 0.45, rain: 0, snowCover: 0, sunshine: 1 },
-  autumn: { ambient: 9, humidity: 0.8, rain: 0, snowCover: 0, sunshine: 0.5 },
-  winter: { ambient: -3, humidity: 0.85, rain: 1.5, snowCover: 0.2, sunshine: 0.4 }, // light snow falling on 20 cm lying
+  spring: { iceCover: 0, ambient: 12, humidity: 0.65, rain: 0, snowCover: 0, sunshine: 0.8 },
+  summer: { iceCover: 0, ambient: 24, humidity: 0.45, rain: 0, snowCover: 0, sunshine: 1 },
+  autumn: { iceCover: 0, ambient: 9, humidity: 0.8, rain: 0, snowCover: 0, sunshine: 0.5 },
+  winter: { ambient: -3, humidity: 0.85, rain: 1.5, snowCover: 0.2, sunshine: 0.4, iceCover: 0.04 }, // light snow falling on 20 cm lying; thin ice on the water
 };
 
 /**

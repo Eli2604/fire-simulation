@@ -287,6 +287,30 @@ fW.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidi
 // the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
 fW.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');
 fW.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
+// ice on the ponds and the canal (sim/ice.js): it forms below freezing (slowly, as it does: the
+// speed-up to watch it), bears you from ~5 cm (only just: it creaks), 10 cm safely, a dragon 30 cm
+/** Ice lying now (m): on all the fresh water open to the sky. */
+function setIce(v) {
+  weather.iceCover = v;
+  if (sim.weather !== weather) sim.weather.iceCover = v;
+  import('./sim/ice.js').then(({ initIce }) => {
+    const w = sim.world;
+    w.noIce = false;
+    if (!w.ice) initIce(w, v);
+    else {
+      for (let c = 0; c < w.ice.thick.length; c++) if (w.ice.top[c] !== -1) w.ice.thick[c] = v;
+      w.ice.version++;
+      if (w.snow) w.snow.seenGeom = -1;
+    }
+  });
+  wc.forEach((c) => c.updateDisplay());
+}
+wc.push(
+  fW.add(weather, 'iceCover', 0, 0.6, 0.01).name('Ice on the water (m)').onFinishChange(setIce),
+  fW.add(weather, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)').onChange(() => (sim.weather.iceSpeed = weather.iceSpeed)),
+);
+fW.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
+fW.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
 
 const fV = gui.addFolder('View');
 fV.add(state, 'mode', { Realistic: 'realistic', 'Thermal camera': 'thermal' })
@@ -788,6 +812,9 @@ else if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
   // ...&thaw=1: the snow lying, a sunny day above freezing (it melts, the roofs drip)
   if (qs.get('thaw')) sc.weather = { ...(sc.weather ?? {}), ambient: 5, rain: 0, sunshine: 1, humidity: 0.7, fog: 0 };
   // ...&dew=1: a still, misty morning, the air at its dew point (dew on the grass; frost if it is freezing)
+  if (qs.get('frost')) sc.weather = { ...(sc.weather ?? {}), ambient: -12, rain: 0, windSpeed: 3, sunshine: 0.6, iceCover: 0.15, season: 'winter', snowCover: 0.05 };
+  if (qs.get('freeze')) sc.weather = { ...(sc.weather ?? {}), ambient: -15, rain: 0, windSpeed: 4, sunshine: 0.3, iceCover: 0, iceSpeed: 600, season: 'winter' };
+  if (Number.isFinite(Number(qs.get('ice'))) && qs.get('ice')) sc.weather = { ...(sc.weather ?? {}), iceCover: Number(qs.get('ice')), ambient: Math.min(sc.weather?.ambient ?? 0, -2) };
   if (qs.get('dew')) sc.weather = { ...(sc.weather ?? {}), humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0 };
   load(sc);
 }

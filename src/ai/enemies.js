@@ -45,7 +45,9 @@ export class EnemyAI {
   solidAt(x, y, z) {
     const w = this.world;
     const i = w.voxelAt(x, y, z);
-    if (i < 0 || w.mat[i] === 0 || MATERIALS[w.mat[i]].fluidity >= 0.95) return false;
+    if (i < 0 || w.mat[i] === 0) return !!w.ice && w.ice.seaBears(w, x, y, z, 250);
+    // water is no floor; frozen over and thick enough to bear them well, its ice is
+    if (MATERIALS[w.mat[i]].fluidity >= 0.95) return !!w.ice && w.ice.bearsAt(w, i, 250);
     // planning a route: a door that can be opened is no wall
     if (this.passDoors && w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked) return false;
     return true;
@@ -137,6 +139,41 @@ export class EnemyAI {
       if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * len;
       return tau > 2.5;
     });
+  }
+
+  /**
+   * The guards of one post (one group in the scene: the same patrol) go as a team, as soldiers
+   * do: one leads, the others follow in file along the way he went, ~3.5 m apart (not
+   * bunched: one burst, one grenade would get them all), and when the leader goes to look at
+   * something the others hold back at that distance and cover him. Each for himself when
+   * shot at, fleeing, or seeing you (they fire from where they are).
+   */
+  teamOf(e) {
+    if (!this.teams || this.teamsN !== this.world.enemies.length) {
+      this.teamsN = this.world.enemies.length;
+      this.teams = new Map();
+      for (const g of this.world.enemies) {
+        if (g.squad) continue;
+        const key = g.area ? JSON.stringify(g.area.corners.map((c) => c.map((v) => Math.round(v * 2)))) : `${Math.round(g.home[0] / 4)},${Math.round(g.home[2] / 4)}`;
+        if (!this.teams.has(key)) this.teams.set(key, []);
+        this.teams.get(key).push(g);
+        g.teamKey = key;
+      }
+    }
+    return this.teams.get(e.teamKey) ?? [e];
+  }
+
+  /** Where a follower should be: on the leader's track, gap metres behind him. */
+  trailPoint(leader, gap) {
+    const tr = leader.trail;
+    if (!tr?.length) return null;
+    let d = Math.hypot(leader.p[0] - tr[tr.length - 1][0], leader.p[2] - tr[tr.length - 1][2]);
+    for (let k = tr.length - 1; k > 0; k--) {
+      const s = Math.hypot(tr[k][0] - tr[k - 1][0], tr[k][2] - tr[k - 1][2]);
+      if (d + s >= gap) return tr[k - 1].slice();
+      d += s;
+    }
+    return tr[0].slice();
   }
 
   step(dt) {
@@ -240,7 +277,60 @@ export class EnemyAI {
             e.repath = 0;
           }
         }
-        if (e.state === 'patrol' && (!e.goal || e.timer <= 0)) {
+        // in a team: the leader decides where it goes; the others follow in file
+        const team = this.teamOf(e);
+        const leader = team.find((g) => !g.dead);
+        const rank = team.filter((g) => !g.dead).indexOf(e);
+        e.follow = null;
+        if (rank > 0 && leader && ['patrol', 'investigate'].includes(e.state) && !['flee', 'retreat'].includes(leader.state)) {
+          const gap = 3.5 * rank;
+          const dl = Math.hypot(leader.p[0] - e.p[0], leader.p[2] - e.p[2]);
+          e.follow = leader;
+          e.state = leader.state === 'investigate' ? 'investigate' : 'patrol';
+          e.urgent = leader.urgent;
+          if (dl <= gap + 0.3) {
+            // far enough behind: hold here, watching where he is going (covering him)
+            e.goal = null;
+            e.route = null;
+            e.watch = leader.goal ?? leader.p;
+          } else if (e.repath <= 0 || !e.route?.length) {
+            const tp = this.trailPoint(leader, gap) ?? leader.p.slice();
+            e.goal = tp;
+            e.route = this.path(e.p, tp, 1500);
+            e.repath = 1;
+            e.watch = null;
+          }
+        }
+        // the leader turning back the way they came, into the man behind him: the file turns
+        // round (the last becomes the point, takes the way on; he falls in behind)
+        if (rank === 0 && e.route?.length && ['patrol', 'investigate'].includes(e.state)) {
+          const back = team.find((g) => g !== e && !g.dead && g.follow === e && Math.hypot(g.p[0] - e.p[0], g.p[2] - e.p[2]) < 4.5);
+          const t = e.route[Math.min(1, e.route.length - 1)];
+          if (back) {
+            const ax = t[0] - e.p[0];
+            const az = t[2] - e.p[2];
+            const bx = back.p[0] - e.p[0];
+            const bz = back.p[2] - e.p[2];
+            const la = Math.hypot(ax, az);
+            const lb = Math.hypot(bx, bz);
+            if (la > 0.05 && lb > 0.05 && (ax * bx + az * bz) / (la * lb) > 0.6) {
+              team.splice(team.indexOf(back), 1);
+              team.unshift(back);
+              back.follow = null;
+              back.state = e.state;
+              back.urgent = e.urgent;
+              back.goal = e.goal;
+              back.timer = e.timer;
+              back.leg = e.leg;
+              back.route = this.path(back.p, e.goal);
+              back.repath = 3;
+              back.trail = [back.p.slice()];
+              e.goal = null;
+              e.route = null;
+            }
+          }
+        }
+        if (e.state === 'patrol' && !e.follow && (!e.goal || e.timer <= 0)) {
           e.goal = this.patrolGoal(e);
           e.timer = 6 + Math.random() * 6;
           e.repath = 0;
@@ -251,7 +341,7 @@ export class EnemyAI {
         }
       }
       // --- arrived?
-      const atGoal = e.goal && Math.hypot(e.goal[0] - e.p[0], e.goal[2] - e.p[2]) < 0.7;
+      const atGoal = !e.follow && e.goal && Math.hypot(e.goal[0] - e.p[0], e.goal[2] - e.p[2]) < 0.7;
       if (atGoal) {
         if (e.state === 'lure' && e.fuel) {
           // light it, shout to draw the player in, then pull back
@@ -290,7 +380,66 @@ export class EnemyAI {
       e.aiming = (seesPlayer && this.fireAt(e, pl, dt)) || (!!bird && this.fireAt(e, bird, dt));
       if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * (e.speedFactor ?? 1));
       this.closeBehind(e);
+      const tr = (e.trail ??= []);
+      const last = tr[tr.length - 1];
+      if (!last || Math.hypot(last[0] - e.p[0], last[2] - e.p[2]) > 0.25) {
+        tr.push(e.p.slice());
+        if (tr.length > 120) tr.shift();
+      }
+      if (e.follow && !e.moving && !e.aiming && e.watch) {
+        const want = Math.atan2(e.watch[0] - e.p[0], e.watch[2] - e.p[2]);
+        let dy = want - e.yaw;
+        while (dy > Math.PI) dy -= 2 * Math.PI;
+        while (dy < -Math.PI) dy += 2 * Math.PI;
+        e.yaw += Math.max(-3 * dt, Math.min(3 * dt, dy));
+      }
     }
+    this.separate(dt);
+  }
+
+  /**
+   * No two bodies in one place: a guard does not walk into another (or a soldier, or you), and
+   * two that ended up overlapping (a door, a corner) step apart.
+   */
+  separate(dt) {
+    const w = this.world;
+    const all = w.enemies.filter((g) => !g.dead);
+    const R = 0.7; // shoulder to shoulder, ~0.35 m each
+    for (const e of all) {
+      if (e.squad) continue;
+      for (const o of all) {
+        if (o === e) continue;
+        const dx = e.p[0] - o.p[0];
+        const dz = e.p[2] - o.p[2];
+        const d = Math.hypot(dx, dz);
+        if (d >= R || Math.abs(e.p[1] - o.p[1]) > 1.2) continue;
+        const ux = d > 1e-3 ? dx / d : Math.cos(e.yaw ?? 0);
+        const uz = d > 1e-3 ? dz / d : Math.sin(e.yaw ?? 0);
+        const s = Math.min((R - d) * 0.5, dt * 1.2);
+        const nx = e.p[0] + ux * s;
+        const nz = e.p[2] + uz * s;
+        const fy = this.floorAt(nx, nz, e.p[1] + 0.5);
+        if (fy === null || Math.abs(fy - e.p[1]) > 0.45 || this.blocked(nx, nz, fy)) continue;
+        e.p[0] = nx;
+        e.p[2] = nz;
+      }
+    }
+  }
+
+  /** Would a step to (x, z) take e into someone else's body? */
+  crowded(e, x, z) {
+    const pl = this.player;
+    for (const o of this.world.enemies) {
+      if (o === e || o.dead) continue;
+      if (Math.abs(o.p[1] - e.p[1]) > 1.2) continue;
+      const dn = Math.hypot(o.p[0] - x, o.p[2] - z);
+      if (dn < 0.7 && dn < Math.hypot(o.p[0] - e.p[0], o.p[2] - e.p[2])) return true;
+    }
+    if (pl && Math.abs(pl.p[1] - e.p[1]) < 1.2) {
+      const dn = Math.hypot(pl.p[0] - x, pl.p[2] - z);
+      if (dn < 0.7 && dn < Math.hypot(pl.p[0] - e.p[0], pl.p[2] - e.p[2])) return true;
+    }
+    return false;
   }
 
   move(e, dt, speed) {
@@ -309,6 +458,7 @@ export class EnemyAI {
     const s = Math.min(d, speed * dt);
     const nx = e.p[0] + (dx / d) * s;
     const nz = e.p[2] + (dz / d) * s;
+    if (this.crowded(e, nx, nz)) return;
     const fy = this.floorAt(nx, nz, e.p[1] + 0.5);
     if (fy === null || fy - e.p[1] > 0.45 || this.blocked(nx, nz, fy)) {
       // a closed door in the way: open it (unless it is locked)

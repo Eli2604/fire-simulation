@@ -1,5 +1,8 @@
 import { traceVoxels } from './sight.js';
 import { crush } from '../sim/crush.js';
+import { iceBears } from '../sim/ice.js';
+
+const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
 
 /**
@@ -103,12 +106,16 @@ export function groundAt(w, x, z, from = w.size[1]) {
   const s = w.sea;
   const sea = s && !(x > s.box[0] && x < s.box[2] && z > s.box[1] && z < s.box[3]) ? s.level : -Infinity;
   if (ix < 0 || iz < 0 || ix >= w.nx || iz >= w.nz) return { y: sea > 0 ? sea - 3 : 0, water: sea > 0 ? 3 : 0 };
+  // (the sea frozen over thick enough for a dragon: the ice is its ground)
+  if (w.ice && sea > -Infinity && from > sea && w.ice.seaBears(w, x, sea - 0.05, z, DRAGON_KG)) return { y: sea, water: 0 };
   let top = null;
   for (let y = Math.min(w.ny - 1, Math.floor(from / h)); y >= 0; y--) {
     const m = w.mat[w.idx(ix, y, iz)];
     if (!m) continue;
     const M = MATERIALS[m];
     if (M.fluidity >= 0.95) {
+      // (frozen over thick enough for a dragon: the ice is its ground)
+      if (top == null && w.ice && w.ice.bearsAt(w, w.idx(ix, y, iz), DRAGON_KG)) return { y: (y + 1) * h, water: 0 };
       top ??= (y + 1) * h;
       continue;
     }
@@ -1334,6 +1341,9 @@ export class DragonAI {
       const z = P[2] + side[2] * sd * (rx + 0.5) * k;
       const y = d.cling ? P[1] : groundAt(w, x, z, P[1] + 0.5 * k).y;
       d.footfalls.push({ p: [x, y, z], t: w.time, weight: (heavy ? 2 : 0.5 + 0.5 * Math.min(1, d.speed / (4 * k))) * k * k });
+      // ice too thin for its weight: it breaks through
+      const ice = w.ice?.at(w, x, z);
+      if (ice && iceBears(ice.thick) < DRAGON_KG * k ** 3) w.ice.breakAt(w, x, z, 1.1 * k);
       if (impact > 0) {
         const broke = crush(this.sim, [x, y, z], 0.9 * k, impact * k, [P[0], P[1] + 3 * k, P[2]]);
         if (broke) w.events.push({ type: 'dragonStamp', pos: [x, y, z], time: w.time, name: 'the dragon', broke });

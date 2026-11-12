@@ -889,8 +889,11 @@ export class Walkthrough {
   solidAt(x, y, z) {
     const w = this.hooks.getSim().world;
     const i = w.voxelAt(x, y, z);
-    // water (and other free liquids) is no floor: you wade through it, or swim
-    return i >= 0 && w.mat[i] !== 0 && !(MATERIALS[w.mat[i]].fluidity >= 0.95);
+    // water (and other free liquids) is no floor: you wade through it, or swim; frozen over,
+    // its ice is (where there is enough of it to stand on: it may still give, see update)
+    if (i < 0 || w.mat[i] === 0) return !!w.ice && w.ice.seaBears(w, x, y, z, 40);
+    if (MATERIALS[w.mat[i]].fluidity >= 0.95) return !!w.ice && w.ice.bearsAt(w, i, 40);
+    return true;
   }
 
   isWater(x, y, z) {
@@ -908,6 +911,7 @@ export class Walkthrough {
     if (x > x0 && x < x1 && z > z0 && z < z1) return false; // inside the hull
     if (y >= this.seaSurface(x, z)) return false;
     const i = w.voxelAt(x, y, z);
+    if (w.ice?.seaBears(w, x, y, z, 40)) return false; // (in the ice, not the sea)
     return !(i >= 0 && w.mat[i] !== 0);
   }
 
@@ -927,7 +931,8 @@ export class Walkthrough {
     // the open sea: its surface is the waves', not a voxel's top
     if (this.inSea(x, floor + h * 0.5, z)) surface = this.seaSurface(x, z);
     const depth = Math.max(0, surface - floor);
-    const air = y < w.size[1] && !this.solidAt(x, y, z) && !this.solidAt(x, y + h, z);
+    // (under ice there is no air: what you came through is the hole)
+    const air = y < w.size[1] && !this.solidAt(x, y, z) && !this.solidAt(x, y + h, z) && !((w.ice?.at(w, x, z)?.thick ?? 0) > 0.02);
     return { depth, surface, air };
   }
 
@@ -1016,7 +1021,9 @@ export class Walkthrough {
         const nz = this.pos.z + az;
         // allow stepping up small obstacles (fallen tiles, debris)
         const floor = this.floorAt(nx, nz, this.pos.y + 0.45);
-        if (floor - this.pos.y > 0.42) continue;
+        // (swimming in a hole in the ice, you can haul yourself out onto its edge)
+        const ledge = this.swimming && w.ice && Math.abs(floor - (this.water?.surface ?? -9)) < 0.3;
+        if (floor - this.pos.y > (ledge ? 2 : 0.42)) continue;
         if (this.blocked(nx, nz, floor, eye)) continue;
         this.pos.x = nx;
         this.pos.z = nz;
@@ -1062,11 +1069,34 @@ export class Walkthrough {
       this.say('The sea is pouring in – the inrush pushes you back', 3);
       this.inrushWarned = true;
     } else if (this.inrush < 0.5) this.inrushWarned = false;
+    // on ice: it bears you (about 5 cm does, only just: it creaks and cracks and can give,
+    // sooner when you walk than when you stand still; 10 cm is safe), or it gives way
+    if (w.ice && !this.downed && !this.swimming) {
+      const ice = w.ice.at(w, this.pos.x, this.pos.z);
+      if (ice && Math.abs(ice.y - this.pos.y) < 0.15) {
+        const r = w.ice.load(w, this.pos.x, this.pos.z, 110, dt, this.moving);
+        if (r === 'breaks') {
+          this.say('THE ICE GIVES WAY – you are in the water', 4);
+          this.sound.iceBreak?.(true);
+        } else if (r === 'creaks') {
+          if (Math.random() < dt * 1.5) this.sound.iceCreak?.();
+          if (w.time > this.messageUntil) this.say(`The ice creaks under you – it is thin (${Math.round(ice.thick * 100)} cm). Get off it`, 2);
+        } else if (!this.onIceSaid) {
+          this.say(`On the ice (${Math.round(ice.thick * 100)} cm): it holds`, 2.5);
+          this.onIceSaid = true;
+        }
+      } else this.onIceSaid = false;
+    }
     const floor = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
     // deep water: you float with your head out, as long as there is air above it;
     // with the space full to the ceiling your gear takes you down and you walk the bottom
     this.water = this.waterAt(this.pos.x, this.pos.z, floor);
     this.swimming = this.water.depth > 1.3 && this.water.air;
+    if (w.ice && this.water.depth > 0.6 && !this.downed && sim.weather.ambient <= 2) {
+      this.hurt(dt * (this.sealed ? 0.4 : 0.8));
+      if (!this.coldSaid) this.say('The water is ice cold – get out (onto the ice edge, or the bank)', 4);
+      this.coldSaid = true;
+    } else if (this.water.depth < 0.3) this.coldSaid = false;
     // swimming: at the surface you float with your head out (riding the waves); hold C / Ctrl
     // to dive, Space to come up; under water you swim where you look (W, the mouse). Your
     // gear is about neutral: you drift slowly up when you stop swimming.

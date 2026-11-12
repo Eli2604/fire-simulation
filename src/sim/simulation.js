@@ -15,6 +15,7 @@ import { SquadAI } from '../ai/squad.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
+import { stepIce, initIce } from './ice.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
@@ -130,6 +131,9 @@ export class Simulation {
     // snow: falls when it is freezing, lies, settles, melts in a fire's heat, packs under feet
     if (!w.snow && !w.noSnow && D.snowRate > 0 && !initSnow(w)) w.noSnow = true;
     if (w.snow) stepSnow(this, dt, D);
+    // ice on the ponds, the canal and the rivers: forms in a frost, thickens, bears, melts
+    if (!w.ice && !w.noIce && (this.weather.ambient <= 0 || (this.weather.iceCover ?? 0) > 0) && !initIce(w, this.weather.iceCover ?? 0)) w.noIce = true;
+    if (w.ice) stepIce(this, dt, D);
     stepLightning(this, dt);
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
