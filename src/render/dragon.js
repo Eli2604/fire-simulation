@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLAN, bodyRadius, smoothGround, dragonZones, dragonWoundPoint } from '../ai/dragon.js';
+import { PLAN, bodyRadius, smoothGround, dragonZones, dragonWoundPoint, wingPose } from '../ai/dragon.js';
 import { splatTexture } from './blood.js';
 
 /**
@@ -1015,11 +1015,13 @@ export class DragonRenderer {
     const W0 = fr.p.clone().addScaledVector(upV, fr.ry * 0.72).addScaledVector(out, fr.rx * 0.5);
     const toW = (o, u, z) => new THREE.Vector3().addScaledVector(out, o).addScaledVector(upV, u).addScaledVector(fwd, z);
     const ph = (d.flapPhase ?? 0) * Math.PI * 2;
-    const amp = d.flapAmp ?? 0;
-    const fold = Math.max(0, Math.min(1, d.fold ?? 0));
+    // (a hurt wing beats weakly or not at all, and hangs half folded: wingPose)
+    const P = wingPose(d, W.side > 0 ? 'wingL' : 'wingR', d.flapAmp ?? 0, Math.max(0, Math.min(1, d.fold ?? 0)));
+    const amp = P.amp;
+    const fold = Math.max(0, Math.min(1, P.fold));
     const flex = amp * 0.4 * Math.max(0, -Math.sin(ph)); // upstroke: the wrist bends, the wing shortens
     const fl = d.flare ?? 0;
-    const th = [0.12 + amp * 0.6 * Math.cos(ph), 0.08 + amp * 0.65 * Math.cos(ph - 0.35), 0.1 + amp * 0.75 * Math.cos(ph - 0.7)];
+    const th = [0.12 + amp * 0.6 * Math.cos(ph) - P.droop, 0.08 + amp * 0.65 * Math.cos(ph - 0.35) - P.droop, 0.1 + amp * 0.75 * Math.cos(ph - 0.7) - P.droop];
     const spread = [[1, 0.1, -0.15 + 0.3 * fl], [1, 0, 0.12 + 0.2 * fl], [1, -0.05, -0.1]];
     // folded in a Z against its flank, as a bird folds its wing
     const folded = [[0.3, 0.08, -1], [0.18, -0.06, 1], [0.12, -0.1, -1]];

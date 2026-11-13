@@ -435,8 +435,8 @@ export function stepDebris(sim, dt) {
       if (ax >= 0 && ay >= 0 && az >= 0 && ax < w.anx && ay < w.any && az < w.anz) {
         const q = (M.burnTime > 0 ? (M.density * d.dens * h ** 3) / M.burnTime : M.burnRate * h * h * 4) * M.heatOfCombustion;
         const a = w.airIdx(ax, ay, az);
-        w.flameAcc[a] += q;
-        w.airQ[a] += q * 0.5;
+        w.flameAcc[a] += q * (sim.airShare ?? 1);
+        w.airQ[a] += q * 0.5 * (sim.airShare ?? 1);
       }
     }
     if (!landed && !gone) keep.push(d);

@@ -300,17 +300,30 @@ export class World {
   rebuildLists() {
     const { N, mat } = this;
     let count = 0;
-    for (let i = 0; i < N; i++) if (mat[i]) count++;
-    if (this.solids.length < count) this.solids = new Int32Array(Math.ceil(count * 1.25) + 64);
-    let k = 0;
-    for (let i = 0; i < N; i++) if (mat[i]) this.solids[k++] = i;
+    if (N <= 1 << 23) {
+      // one pass over the grid into a scratch list (debris lands every frame after a blast)
+      if (!this.scanBuf || this.scanBuf.length < N) this.scanBuf = new Int32Array(N);
+      const b = this.scanBuf;
+      for (let i = 0; i < N; i++) if (mat[i]) b[count++] = i;
+      if (this.solids.length < count) this.solids = new Int32Array(Math.ceil(count * 1.25) + 64);
+      this.solids.set(b.subarray(0, count));
+    } else {
+      for (let i = 0; i < N; i++) if (mat[i]) count++;
+      if (this.solids.length < count) this.solids = new Int32Array(Math.ceil(count * 1.25) + 64);
+      let k = 0;
+      for (let i = 0; i < N; i++) if (mat[i]) this.solids[k++] = i;
+    }
     this.solidCount = count;
     this.listDirty = false;
-    this.updateDerived();
+    // (in a running simulation the air's view of the solids is brought up to date by its own
+    // step, a few times a second: debris landing every frame after a blast would redo it each frame)
+    if (this.lazyDerived) this.derivedDirty = true;
+    else this.updateDerived();
   }
 
   /** Occupancy of the air cells and the top-most solid per column (for rain). */
   updateDerived() {
+    this.derivedDirty = false;
     const { nx, ny, nz, anx, any, mat, occ, colTop } = this;
     occ.fill(0);
     colTop.fill(-1);

@@ -301,6 +301,14 @@ moves and hunts, render/dragon.js for how it looks). It is about 9 m from nose t
   ground under where it crawls or flies), sprays onto what is behind the hit, and stains its
   scales. Badly hurt, it flies back to its lair to rest and heal. Killed, it falls out of
   the sky and lies on its side.
+- **Its wings** tear: each counts the full damage of what hits it (WING in ai/dragon.js: three
+  arrows or four bullets make a wing badly hurt, twice that makes it useless; a rocket or a
+  close blast at once). A badly hurt wing beats weakly and hangs half folded: in the air the
+  dragon comes down at once, as steeply as it can, on open ground ahead (anywhere, if there
+  is none), and it cannot take off until the wing mends (lying still, a few minutes). A
+  useless wing does not beat at all: it falls, the good wing flailing, spinning towards the
+  bad one, and crashes (the faster it comes down the more it hurts; it breaks what it lands
+  on). The rig page's Dragon tab has both as acts (*Wing hit: lands*, *Wing shot: falls*).
 
 **Its route** is set on the dragon object (*Route*) as waypoints in the zone's metres:
 `"x,z action; x,z action; …"`. The actions are:
@@ -955,6 +963,13 @@ Big scenes are split twice over:
   way. Only awake blocks go through the solid passes and the air model; every 50th step runs
   fully awake. Rain, an extinguisher in use, sprinklers or a decompression keep everything
   awake.
+- **The heat at 20 Hz** (Simulation.step): the heat, the air, fire and smoke and the weather
+  step at most 20 times a second; at 60 frames a second they take every third frame (with
+  the time since they last stepped), while the soldiers, projectiles, debris and water move
+  every frame. Thermal radiation is blurred only round what radiates, and the air's view of
+  the solids (open faces, occupancy) is updated at most 5 times a second while debris keeps
+  landing. A grenade in the squad range: the simulation's share of a frame went from 15-25 ms
+  to about 4-5 ms while the crates it set alight burn.
 
 | Scene, quiet | All awake | With sleeping blocks |
 |---|---|---|

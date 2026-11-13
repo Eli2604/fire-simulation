@@ -24,6 +24,7 @@ const SIGMA = 5.670374e-8; // Stefan–Boltzmann
 const LV = 2.26e6; // latent heat of vaporisation of water, J/kg
 const CW = 4186; // specific heat of water, J/(kg·K)
 const RAD_FRACTION = 0.3; // share of combustion heat leaving as radiation
+const THERMO_HZ = 20; // the heat, air and fire step at most this often (step())
 const MAX_TEMP = 3000;
 /** 0..1 how freely a flame can burn at oxygen mass fraction o (0 below ~15 % by volume). */
 export function oxygenFactor(o) {
@@ -76,6 +77,7 @@ export class Simulation {
     this.burnouts = [];
     this.movers = [];
     if (world.listDirty) world.rebuildLists();
+    world.lazyDerived = true; // (thermoStep updates the air's view of the solids)
     this.ai = new EnemyAI(this);
     this.dragonAI = new DragonAI(this); // after the guards: it wraps their hit test
     this.phoenixAI = new PhoenixAI(this);
@@ -118,13 +120,40 @@ export class Simulation {
     const W = this.weather;
     const D = deriveWeather(W);
     w.ambient = W.ambient;
-    w.airG.fill(0);
-    w.airGT.fill(0);
-    w.airQ.fill(0);
-    w.radSrc.fill(0);
-    w.flameAcc.fill(0);
+    // The heat, the air, the fire and the weather (the costly part) step at most THERMO_HZ
+    // times a second: at 60 frames a second they take every third frame's time, with all
+    // that time at once (they are stable at far longer steps: up to 0.2 s). The soldiers,
+    // projectiles, debris and water move every step. Steps of 1/THERMO_HZ s or longer
+    // (every test, a scene running fast) are as before.
+    this.frameDt = dt;
+    this.thermoAcc = (this.thermoAcc ?? 0) + dt;
+    // what moving things (a burning arrow, a rocket's exhaust, burning debris) add to the air's
+    // heat and flames is a rate: it counts for its share of the time till the air next steps
+    this.airShare = Math.min(1, dt * THERMO_HZ);
+    if (this.thermoAcc + 1e-9 >= 1 / THERMO_HZ || this.noSleep) {
+      const tdt = this.thermoAcc;
+      this.thermoAcc = 0;
+      this.thermoStep(tdt, W, D);
+    }
+    this.motionStep(dt, D);
+    w.time += dt;
+    this.stats.steps++;
+  }
 
+  /** The heat, the air, fire and smoke, the weather: dt is the time since they last stepped. */
+  thermoStep(dt, W, D) {
+    const w = this.world;
+    this.thermoSteps = (this.thermoSteps ?? 0) + 1;
+    this.inThermo = true;
+    // (the sources the air takes in are cleared once it has: what moving things added since
+    // the last air step is in them)
     this.stats.ventHrr = 0;
+    // the solids changed: the air's faces, occupancy and roofs (in real time at most 5 times a
+    // second; with steps of 1/THERMO_HZ s or longer every step)
+    if (w.derivedDirty && (this.frameDt >= 1 / THERMO_HZ || w.time - (this.lastDerived ?? -Infinity) >= 0.2)) {
+      w.updateDerived();
+      this.lastDerived = w.time;
+    }
     updateRegions(w); // only does work when walls / doors / windows changed
 
     this.applyHeaters(dt);
@@ -144,6 +173,21 @@ export class Simulation {
     stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
+    w.airG.fill(0);
+    w.airGT.fill(0);
+    w.airQ.fill(0);
+    w.radSrc.fill(0);
+    w.flameAcc.fill(0);
+    this.inThermo = false;
+    // jet flames from vents and fireballs count as heat release too
+    let extra = this.stats.ventHrr;
+    for (const ht of w.heaters) if ((ht.fireball || ht.jet) && ht.on && !(ht.start !== undefined && w.time < ht.start)) extra += ht.power;
+    this.stats.hrr += extra;
+  }
+
+  /** What moves: falling voxels, debris, projectiles, water, the soldiers, the dragon. */
+  motionStep(dt, D) {
+    const w = this.world;
     this.structure(dt);
     stepDebris(this, dt);
     stepProjectiles(this, dt);
@@ -193,12 +237,7 @@ export class Simulation {
     if (w.dragons.length) this.dragonAI.step(dt);
     if (w.phoenixes.length) this.phoenixAI.step(dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
-    // jet flames from vents and fireballs count as heat release too
-    let extra = this.stats.ventHrr;
-    for (const ht of w.heaters) if ((ht.fireball || ht.jet) && ht.on && !(ht.start !== undefined && w.time < ht.start)) extra += ht.power;
-    this.stats.hrr += extra;
-    w.time += dt;
-    this.stats.steps++;
+    void D;
   }
 
   /**
@@ -362,7 +401,7 @@ export class Simulation {
   coolGas(a, m, dt, airT, airQ, steam, fgas) {
     if (m <= 0 || airT[a] <= 100) return;
     const E = m * (LV + CW * 80);
-    airQ[a] -= E / dt;
+    airQ[a] -= (E / dt) * (this.inThermo ? 1 : this.airShare ?? 1);
     steam[a] += m;
     fgas[a] = Math.max(0, fgas[a] - E * 0.5);
   }

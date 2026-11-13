@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { createDragonStage, DRAGON_ACTS } from './dragonStage.js';
-import { DRAGON_ZONES, dragonZones, dragonRayHit } from '../ai/dragon.js';
+import { DRAGON_ZONES, dragonZones, dragonRayHit, wingDamage, WING } from '../ai/dragon.js';
 import { DragonRenderer } from '../render/dragon.js';
 import { FlameRenderer } from '../render/flames.js';
 import { BloodRenderer } from '../render/blood.js';
@@ -228,8 +228,10 @@ export class DragonRig {
     }
     const s = this.$('dState');
     if (s && (this.statusT = (this.statusT ?? 0) + 1) % 6 === 0) {
-      const what = d.health <= 0 ? (d.mode === 'falling' ? 'falling' : 'dead') : DRAGON_ACTS[this.stage.act];
-      s.textContent = `${what} · ${Math.ceil(d.health)} HP${d.bleed > 0.05 ? ` · bleeding ${d.bleed.toFixed(1)}/s` : ''}`;
+      const [wd] = wingDamage(d);
+      const what = d.health <= 0 ? (d.mode === 'falling' ? 'falling' : 'dead') : d.mode === 'falling' ? 'wing useless: falling' : d.forcedSpot ? 'wing hurt: coming down' : DRAGON_ACTS[this.stage.act];
+      const wing = wd >= WING.hurt ? ` · wing ${Math.round(wd * 100)}% (can't fly)` : wd > 0.05 ? ` · wing ${Math.round(wd * 100)}%` : '';
+      s.textContent = `${what} · ${Math.ceil(d.health)} HP${d.bleed > 0.05 ? ` · bleeding ${d.bleed.toFixed(1)}/s` : ''}${wing}`;
       document.querySelectorAll('#dAnims button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.stage.act && d.health > 0));
     }
   }

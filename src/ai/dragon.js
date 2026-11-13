@@ -456,6 +456,40 @@ export const DRAGON_ZONES = {
 /** Base damage of one hit, before the zone's multiplier. */
 const HIT_DAMAGE = { arrow: 30, bullet: 22, rocket: 350 };
 
+/**
+ * The wings: each takes the raw damage of what hits it (not the zone's small multiplier:
+ * a wing does not kill it, but it tears). `hurt`: badly hurt, it cannot hold itself up
+ * for long: in the air it comes down at once, as steeply as it can, wherever it can,
+ * and on the ground it cannot take off. `useless`: the wing cannot be used at all: in the
+ * air it falls, flapping the good wing and spinning towards the bad one, and crashes.
+ * Lying still the wings mend (`heal` a second).
+ */
+export const WING = { hp: 160, hurt: 0.5, useless: 1, heal: 0.25 };
+
+/** How badly its worse wing is hurt (0 whole, 1 useless), and which one: [w, 'wingL' | 'wingR']. */
+export function wingDamage(d) {
+  const h = d.wingHurt;
+  if (!h) return [0, null];
+  const L = h.wingL ?? 0;
+  const Rr = h.wingR ?? 0;
+  return L >= Rr ? [L / WING.hp, 'wingL'] : [Rr / WING.hp, 'wingR'];
+}
+
+/** Can it fly (its wings are not badly hurt)? */
+export const canFly = (d) => wingDamage(d)[0] < WING.hurt;
+
+/**
+ * How a wing moves as it is hurt (for the pose and the renderer): the beat weakens and stops
+ * (a useless wing does not beat), and the wing hangs half folded, drooping.
+ * Returns { amp, fold, droop } for the wing `key`, from the dragon's own amp and fold.
+ */
+export function wingPose(d, key, amp, fold) {
+  const limp = Math.min(1, (d.wingHurt?.[key] ?? 0) / WING.hp);
+  if (limp <= 0) return { amp, fold, droop: 0 };
+  const weak = Math.max(0, (limp - 0.25) / 0.75);
+  return { amp: amp * (1 - 0.9 * weak), fold: fold + (1 - fold) * 0.35 * weak, droop: 0.45 * weak * (1 - fold) };
+}
+
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const add3 = (a, b, s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
 const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -603,19 +637,25 @@ export function dragonZones(d, w = null) {
     const [rx, ry] = bodyRadius(iw * PLAN.ds).map((v) => v * k);
     const ph = (d.flapPhase ?? 0) * Math.PI * 2;
     const amp = d.flapAmp ?? 0;
-    const fold = clamp(d.fold ?? 0, 0, 1);
-    const flex = amp * 0.4 * Math.max(0, -Math.sin(ph));
+    const foldAll = clamp(d.fold ?? 0, 0, 1);
     const fl = d.flare ?? 0;
-    const th = [0.12 + amp * 0.6 * Math.cos(ph), 0.08 + amp * 0.65 * Math.cos(ph - 0.35), 0.1 + amp * 0.75 * Math.cos(ph - 0.7)];
+    const th0 =(a) => [0.12 + a * 0.6 * Math.cos(ph), 0.08 + a * 0.65 * Math.cos(ph - 0.35), 0.1 + a * 0.75 * Math.cos(ph - 0.7)];
     const spread = [[1, 0.1, -0.15 + 0.3 * fl], [1, 0, 0.12 + 0.2 * fl], [1, -0.05, -0.1]];
     const folded = [[0.3, 0.08, -1], [0.18, -0.06, 1], [0.12, -0.1, -1]];
-    const fEff = [fold, Math.min(1, fold + flex * 0.6), Math.min(1, fold + flex)];
+    const fEff0 = (a, f) => {
+      const flex = a * 0.4 * Math.max(0, -Math.sin(ph));
+      return [f, Math.min(1, f + flex * 0.6), Math.min(1, f + flex)];
+    };
     const rot = (v, a) => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a), v[2]];
     const lerpN = (a, b, t) => norm(lerp3(a, b, t));
     const lens = [1.5, 1.8, 1.1];
     // the skin at each joint: [bone, ray direction, ray length] (the rays fan out along the hand)
     const RAYS = [[0, [0.05, 0, -1], 1.1], [1, [0.2, 0, -1], 1.75], [2, [Math.sin(0.35), 0, -Math.cos(0.35)], 2.0], [2, [Math.sin(1.5), 0, -Math.cos(1.5)], 2.55]];
     for (const [key, side] of [['wingL', 1], ['wingR', -1]]) {
+      const P = wingPose(d, key, amp, foldAll);
+      const fold = P.fold;
+      const th = th0(P.amp).map((a) => a - P.droop);
+      const fEff = fEff0(P.amp, fold);
       const out = fr.s.map((v) => v * side);
       const toW = (v) => add3(add3(out.map((x) => x * v[0]), fr.u, v[1]), fr.t, v[2]);
       const bones = [add3(add3(fr.p, fr.u, ry * 0.72), out, rx * 0.5)];
@@ -848,6 +888,19 @@ export class DragonAI {
       }
     }
 
+    // lying still, the wings mend
+    if (d.wingHurt && d.mode === 'ground' && (d.state === 'rest' || d.speed < 0.3))
+      for (const key of ['wingL', 'wingR']) d.wingHurt[key] = Math.max(0, (d.wingHurt[key] ?? 0) - WING.heal * dt);
+
+    // --- a wing too badly hurt to stay up: nothing else matters until it is down
+    if (this.wingTrouble(d, w, dt)) {
+      this.breath(d, w, dt);
+      this.animate(d, dt);
+      this.updateTrail(d);
+      pose(d, w, dt);
+      return;
+    }
+
     // --- behaviour
     if (d.health < d.maxHealth * 0.25 && d.state !== 'devour') d.state = 'flee';
     else if (d.state === 'flee' && d.health > d.maxHealth * 0.6) d.state = 'rest';
@@ -959,6 +1012,7 @@ export class DragonAI {
     switch (r.phase) {
       case 'takeoff':
         if (d.mode === 'air') r.phase = 'fly';
+        else if (!canFly(d)) r.phase = 'walk';
         else this.takeoff(d, w, dt);
         break;
       case 'fly': {
@@ -1059,7 +1113,7 @@ export class DragonAI {
       return;
     }
     const flyLeg = d.legFly || wp.acts.has('fly');
-    if (flyLeg && dh > 6 * k && d.mode === 'ground') {
+    if (flyLeg && dh > 6 * k && d.mode === 'ground' && canFly(d)) {
       d.legFly = true;
       this.takeoff(d, w, dt);
       return;
@@ -1100,10 +1154,10 @@ export class DragonAI {
     const L = d.lair;
     const dh = Math.hypot(L[0] - d.p[0], L[2] - d.p[2]);
     if (d.mode === 'ground') {
-      if (dh > 10 * d.k) return this.takeoff(d, w, dt), false;
+      if (dh > 10 * d.k && canFly(d)) return this.takeoff(d, w, dt), false;
       if (dh > 0.8 * d.k) {
         this.groundMove(d, w, dt, L, (fleeing ? 3 : 1.8) * Math.sqrt(d.k));
-        if (d.blocked > 2) this.takeoff(d, w, dt);
+        if (d.blocked > 2 && canFly(d)) this.takeoff(d, w, dt);
         return false;
       }
       this.groundMove(d, w, dt, null, 0);
@@ -1212,7 +1266,7 @@ export class DragonAI {
     }
     const stop = reach ? 0 : 6 * k;
     this.groundMove(d, w, dt, dh > stop ? T.p : null, (dm > 2.4 * k ? 5.5 : 2.5) * Math.sqrt(k));
-    if (d.blocked > 2.5) {
+    if (d.blocked > 2.5 && canFly(d)) {
       // no way round on foot: from the air
       d.blocked = 0;
       d.takeoffT = 0;
@@ -1649,6 +1703,12 @@ export class DragonAI {
       d.forceTakeoff = false;
       return true;
     }
+    if (!canFly(d)) {
+      // it tries, and the wing will not hold it
+      d.takeoffT = 0;
+      d.forceTakeoff = false;
+      return false;
+    }
     d.takeoffT = (d.takeoffT ?? 0) + dt;
     d.speed = approach(d.speed, 2.5 * d.k, 3, dt);
     d.fold = approach(d.fold, 0, 4, dt);
@@ -1705,16 +1765,18 @@ export class DragonAI {
   }
 
   /** Come down at `spot` (a flare and deep wingbeats at the end). Returns true once down. */
-  land(d, w, dt, spot) {
+  land(d, w, dt, spot, steep = false) {
     const k = d.k;
     if (d.mode === 'ground') return true;
     const dh = Math.hypot(spot[0] - d.p[0], spot[2] - d.p[2]);
     const g = groundAt(w, spot[0], spot[2]).y;
     const here = groundAt(w, d.p[0], d.p[2], d.p[1] + 1).y;
     d.flare = approach(d.flare ?? 0, dh < 7 * k ? 1 : 0, 3, dt);
-    const alt = g + PLAN.clear * k + Math.max(0, dh - 1.5 * k) * 0.35;
-    this.airMove(d, w, dt, spot, alt, clamp(dh * 0.45, 3, 11), dh < 6 * k ? 0.7 : 2.2);
-    if (dh < 2.4 * k && d.p[1] - here < PLAN.clear * k + 1.0 * k) {
+    // (steep: a hurt wing will not carry it far: straight down, and down anywhere near)
+    const alt = g + PLAN.clear * k + Math.max(0, dh - 1.5 * k) * (steep ? 0.08 : 0.35);
+    this.airMove(d, w, dt, spot, alt, clamp(dh * 0.45, 3, 11), dh < 6 * k ? 0.7 : steep ? 1.2 : 2.2);
+    if (steep && d.vy < -1) d.vy = Math.max(d.vy, -9); // (airMove limits the dive to -7; a hurt dragon drops faster)
+    if ((dh < 2.4 * k || (steep && dh < 6 * k)) && d.p[1] - here < PLAN.clear * k + 1.0 * k) {
       // the impact: its weight coming down on all four feet at once (harder the faster it came
       // in): on a roof, tiles and boards break and stone cracks; land on it often and it gives
       const impact = 0.55 + 0.06 * d.speed + 0.12 * Math.abs(d.vy ?? 0);
@@ -1807,6 +1869,102 @@ export class DragonAI {
   }
 
   // ---------------------------------------------------------------------------
+  // a hurt wing
+
+  /**
+   * In the air with a badly hurt wing: down at once, as steeply as it can, on open ground
+   * ahead (anywhere, if there is none), and it stays down until the wing mends. A useless
+   * wing: it falls (fall()). Returns true while this is what it is doing.
+   */
+  wingTrouble(d, w, dt) {
+    if (d.mode === 'falling') {
+      this.fall(d, w, dt);
+      return true;
+    }
+    const [wd, bad] = wingDamage(d);
+    if (d.mode !== 'air' || wd < WING.hurt) {
+      d.forcedSpot = null;
+      return false;
+    }
+    const k = d.k;
+    if (wd >= WING.useless) {
+      d.mode = 'falling';
+      d.fallSide = bad === 'wingL' ? 1 : -1;
+      d.forcedSpot = null;
+      d.breathT = d.windT = 0;
+      w.events.push({ type: 'dragonFalls', pos: d.chest.slice(), time: w.time, name: 'the dragon' });
+      this.roar(d, w);
+      this.fall(d, w, dt);
+      return true;
+    }
+    if (!d.forcedSpot) {
+      const f = [Math.sin(d.yaw), 0, Math.cos(d.yaw)];
+      const ahead = [d.p[0] + f[0] * (d.speed * 1.5 + 4 * k), 0, d.p[2] + f[2] * (d.speed * 1.5 + 4 * k)];
+      d.forcedSpot =
+        this.landingSpot(d, w, ahead, 8 * k) ??
+        this.landingSpot(d, w, d.p, 20 * k) ?? [clamp(ahead[0], 3 * k, w.size[0] - 3 * k), 0, clamp(ahead[2], 3 * k, w.size[2] - 3 * k)];
+      d.forcedSpot[1] = groundAt(w, d.forcedSpot[0], d.forcedSpot[2]).y;
+      w.events.push({ type: 'dragonWingHurt', pos: d.chest.slice(), time: w.time, name: 'the dragon' });
+    }
+    // the bad wing drags: it slews towards it
+    d.yaw += (bad === 'wingL' ? 1 : -1) * 0.25 * dt;
+    if (this.land(d, w, dt, d.forcedSpot, true)) {
+      d.forcedSpot = null;
+      d.forceTakeoff = false;
+      d.roam = { phase: 'walk', until: 15 };
+      if (d.state === 'roam' || d.state === 'route') d.state = 'roam';
+    }
+    return true;
+  }
+
+  /**
+   * Falling with a useless wing: the good one beats hard (it slows the fall a little), the bad
+   * one trails, and it spins down towards it. It hits the ground (or a roof) hard: the faster
+   * it comes down, the more it hurts; it breaks what it lands on and whoever is under it.
+   */
+  fall(d, w, dt) {
+    const k = d.k;
+    const side = d.fallSide ?? 1;
+    d.vy = Math.max(-22, (d.vy ?? 0) - G * 0.7 * dt);
+    const turn = side * 1.6;
+    d.yaw += turn * dt;
+    d.speed = Math.max(2, d.speed * (1 - 0.4 * dt));
+    d.p[0] += Math.sin(d.yaw) * d.speed * dt;
+    d.p[2] += Math.cos(d.yaw) * d.speed * dt;
+    d.p[1] += d.vy * dt;
+    d.bank = approach(d.bank, side * 0.9, 2, dt);
+    d.pitch = approach(d.pitch, Math.atan2(d.vy, d.speed) * 0.6, 2, dt);
+    d.flapAmp = approach(d.flapAmp, 1.4, 4, dt); // (wingPose keeps the bad wing still)
+    d.fold = approach(d.fold, 0, 3, dt);
+    d.flare = 0;
+    d.look = null;
+    const g = Math.max(groundAt(w, d.p[0], d.p[2], d.p[1] + 1).y, w.sea?.level ?? -Infinity);
+    if (d.p[1] > g + 0.6 * k) return;
+    // the crash
+    const v = Math.abs(d.vy);
+    d.p[1] = g + 0.6 * k;
+    d.mode = 'ground';
+    d.speed = 0;
+    d.vy = 0;
+    d.pitch = 0;
+    d.crouch = 1;
+    d.cling = 0;
+    d.forcedSpot = null;
+    d.forceTakeoff = false;
+    d.roam = { phase: 'walk', until: 15 };
+    if (d.state === 'roam' || d.state === 'route') d.state = 'roam';
+    const dmg = Math.max(0, v - 5) * 18;
+    d.health = Math.max(0, d.health - dmg);
+    d.hurtFlash = 0.4;
+    d.bleed = (d.bleed ?? 0) + dmg / 150;
+    w.events.push({ type: 'dragonCrash', pos: d.p.slice(), time: w.time, name: 'the dragon', damage: dmg });
+    w.noises.push({ p: d.p.slice(), loud: 40, time: w.time, kind: 'dragon' });
+    this.footfall(d, w, 1, 1 + v * 0.08); // its whole weight on what it hits
+    this.sim.ai?.blast?.(d.p, 2.5 * k); // whoever it lands on
+    if (d.health <= 0) w.events.push({ type: 'dragonHit', pos: d.chest.slice(), time: w.time, name: 'the dragon (the fall)' });
+  }
+
+  // ---------------------------------------------------------------------------
   // wounds
 
   /** A projectile at p (g: the projectile, its velocity v): did it hit a dragon? By the zone it is in. */
@@ -1850,6 +2008,11 @@ export class DragonAI {
     const dmg = (HIT_DAMAGE[type] ?? 60) * Z.mult;
     d.wounds ??= {};
     d.wounds[hz.k] = (d.wounds[hz.k] ?? 0) + 1;
+    // a wing tears (its own measure: see WING)
+    if (hz.k.startsWith('wing')) {
+      d.wingHurt ??= {};
+      d.wingHurt[hz.k] = Math.min(WING.hp * 1.5, (d.wingHurt[hz.k] ?? 0) + (HIT_DAMAGE[type] ?? 60));
+    }
     d.bleed = (d.bleed ?? 0) + Z.bleed * (type === 'rocket' ? 2.5 : type === 'bullet' ? 0.7 : 1);
     // where it went in, round the zone's axis (so the stain follows the pose from now on)
     const F = zoneFrame(hz.Z, hz.i, hz.t);
@@ -1902,6 +2065,9 @@ export class DragonAI {
       if (dd < radius * 1.8) {
         const f = 1 - dd / (radius * 1.8);
         d.bleed = (d.bleed ?? 0) + 3 * f;
+        // the blast tears the wings' skin
+        d.wingHurt ??= {};
+        for (const key of ['wingL', 'wingR']) d.wingHurt[key] = Math.min(WING.hp * 1.5, (d.wingHurt[key] ?? 0) + 140 * f);
         this.wound(d, 320 * f);
       }
     }

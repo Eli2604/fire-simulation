@@ -359,7 +359,7 @@ export function stepProjectiles(sim, dt) {
     if (type === 'rocket') {
       if (inside(g.p)) {
         const a = sim.airCellAt(...g.p);
-        if (a >= 0 && g.age < (g.burn ?? 3)) w.flameAcc[a] += 40000; // exhaust flame
+        if (a >= 0 && g.age < (g.burn ?? 3)) w.flameAcc[a] += 40000 * (sim.airShare ?? 1); // exhaust flame
       }
       if (hit) explode(sim, g.hitPos ?? g.p, g.energy ?? 1.5e6, { name: 'rocket' });
       else if (g.age < 14) keep.push(g);
@@ -376,8 +376,8 @@ export function stepProjectiles(sim, dt) {
       // the burning rag on the arrow head
       const a = inside(g.p) ? sim.airCellAt(...g.p) : -1;
       if (a >= 0) {
-        w.flameAcc[a] += 1500;
-        w.airQ[a] += 600;
+        w.flameAcc[a] += 1500 * (sim.airShare ?? 1);
+        w.airQ[a] += 600 * (sim.airShare ?? 1);
         sim.consumeO2(a, 1500, dt);
       }
       keep.push(g);

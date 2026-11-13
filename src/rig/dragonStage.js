@@ -15,7 +15,7 @@
  */
 import { createSimulation } from '../sim/createSimulation.js';
 import { stepWounds } from '../sim/wounds.js';
-import { initDragon, pose, groundAt, PLAN, dragonZones, dragonWoundPoint } from '../ai/dragon.js';
+import { initDragon, pose, groundAt, PLAN, dragonZones, dragonWoundPoint, canFly, WING } from '../ai/dragon.js';
 
 /** What the dragon really does, as buttons. */
 export const DRAGON_ACTS = {
@@ -35,6 +35,8 @@ export const DRAGON_ACTS = {
   land: 'Land',
   die: 'Die',
   fall: 'Shot down',
+  wingHurt: 'Wing hit: lands',
+  wingGone: 'Wing shot: falls',
 };
 /** The acts that need it on the ground (in the air, it lands first). */
 const GROUND = new Set(['rest', 'walk', 'run', 'sniff', 'roar', 'breathe', 'bite', 'stamp', 'climb']);
@@ -137,7 +139,9 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
         d.state = st.act === 'rest' ? 'rest' : 'roam';
         d.alert = st.act === 'rest' ? Math.max(0, (d.alert ?? 0) - dt * 0.3) : 1;
         d.look = d.breathT > 0 || d.windT > 0 ? d.aim ?? null : null;
-        if (GROUND.has(st.act) && d.mode !== 'ground') landFirst(d, dt);
+        if (ai.wingTrouble(d, w, dt)) {
+          // a badly hurt wing: down first, whatever the act (and no take-off till it mends)
+        } else if (GROUND.has(st.act) && d.mode !== 'ground') landFirst(d, dt);
         else ACTS[st.act]?.(d, dt);
         ai.breath(d, w, dt);
         ai.animate(d, dt);
@@ -173,6 +177,10 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
   /** Off the ground first (a run-up, a leap), for an act in the air. */
   const airborne = (d, dt) => {
     if (d.mode === 'air') return true;
+    if (!canFly(d)) {
+      ai.groundMove(d, w, dt, null, 0); // (the wing will not carry it: it stands)
+      return false;
+    }
     ai.takeoff(d, w, dt);
     return false;
   };
@@ -289,6 +297,13 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
         st.spot = null;
       }
     },
+    // in the air, a wing badly hurt (it comes straight down), or torn useless (it falls and crashes)
+    wingHurt(d, dt) {
+      wingAct(d, dt, 0.6);
+    },
+    wingGone(d, dt) {
+      wingAct(d, dt, 1.05);
+    },
     // in the air: it takes a few beats to get up, then it is killed and falls
     fall(d, dt) {
       if (!airborne(d, dt)) return;
@@ -299,6 +314,18 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
       }
     },
   };
+  /** Up, a few seconds round the field, then the left wing hit (to `frac` of WING.hp). */
+  function wingAct(d, dt, frac) {
+    if (st.phase === 'done') return ai.groundMove(d, w, dt, null, 0);
+    if (!airborne(d, dt)) return;
+    flyRound(d, dt, 12, 10, 11);
+    if ((st.airT = (st.airT ?? 0) + dt) > 4) {
+      st.airT = 0;
+      st.phase = 'done';
+      d.wingHurt ??= {};
+      d.wingHurt.wingL = Math.max(d.wingHurt.wingL ?? 0, WING.hp * frac);
+    }
+  }
   st.dragon.timer = 1e9;
   return st;
 }

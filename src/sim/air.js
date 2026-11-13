@@ -43,34 +43,65 @@ export function blurRadiation(w, gain) {
   const { anx, any, anz } = w;
   const f = w.radField;
   const b = w.tmpA;
-  f.set(w.radSrc);
+  const src = w.radSrc;
+  // only round what radiates (two passes spread it 2r cells): most of the time nothing does
+  let x0 = anx, x1 = -1, y0 = any, y1 = -1, z0 = anz, z1 = -1;
+  for (let a = 0; a < src.length; a++) {
+    if (src[a] === 0) continue;
+    const x = a % anx;
+    const yz = (a - x) / anx;
+    const y = yz % any;
+    const z = (yz - y) / any;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    if (z < z0) z0 = z;
+    if (z > z1) z1 = z;
+  }
+  if (x1 < 0) {
+    if (!w.radFieldZero) f.fill(0);
+    w.radFieldZero = true;
+    return;
+  }
+  w.radFieldZero = false;
+  const B = [Math.max(0, x0 - 2 * r), Math.min(anx - 1, x1 + 2 * r), Math.max(0, y0 - 2 * r), Math.min(any - 1, y1 + 2 * r), Math.max(0, z0 - 2 * r), Math.min(anz - 1, z1 + 2 * r)];
+  f.set(src);
+  b.fill(0);
   for (let pass = 0; pass < 2; pass++) {
-    box1D(f, b, anx, any, anz, r, 0);
-    box1D(b, f, anx, any, anz, r, 1);
-    box1D(f, b, anx, any, anz, r, 2);
+    box1D(f, b, anx, any, anz, r, 0, B);
+    box1D(b, f, anx, any, anz, r, 1, B);
+    box1D(f, b, anx, any, anz, r, 2, B);
     f.set(b);
   }
   // Irradiance can not exceed that of a black body at flame temperature.
-  for (let i = 0; i < f.length; i++) {
-    const v = f[i] * gain;
-    f[i] = v > MAX_IRRADIANCE ? MAX_IRRADIANCE : v;
-  }
+  for (let z = B[4]; z <= B[5]; z++)
+    for (let y = B[2]; y <= B[3]; y++)
+      for (let x = B[0], i = B[0] + anx * (y + any * z); x <= B[1]; x++, i++) {
+        const v = f[i] * gain;
+        f[i] = v > MAX_IRRADIANCE ? MAX_IRRADIANCE : v;
+      }
 }
 
 const MAX_IRRADIANCE = 200e3; // W/m²
 
-function box1D(src, dst, nx, ny, nz, r, axis) {
+/**
+ * A box blur of radius r along one axis, within the box B = [x0, x1, y0, y1, z0, z1] (the
+ * whole grid without it); zero outside it (and outside the grid).
+ */
+function box1D(src, dst, nx, ny, nz, r, axis, B = [0, nx - 1, 0, ny - 1, 0, nz - 1]) {
   const inv = 1 / (2 * r + 1);
   const stride = axis === 0 ? 1 : axis === 1 ? nx : nx * ny;
-  const len = axis === 0 ? nx : axis === 1 ? ny : nz;
-  const n1 = axis === 0 ? ny : nx;
-  const n2 = axis === 2 ? ny : nz;
-  for (let b2 = 0; b2 < n2; b2++)
-    for (let b1 = 0; b1 < n1; b1++) {
+  // along the axis: from lo to hi; across it: the box's other two ranges
+  const lo = B[axis * 2];
+  const len = B[axis * 2 + 1] - lo + 1;
+  const [c1, c2] = axis === 0 ? [1, 2] : axis === 1 ? [0, 2] : [0, 1];
+  for (let b2 = B[c2 * 2]; b2 <= B[c2 * 2 + 1]; b2++)
+    for (let b1 = B[c1 * 2]; b1 <= B[c1 * 2 + 1]; b1++) {
       let base;
-      if (axis === 0) base = nx * (b1 + ny * b2);
-      else if (axis === 1) base = b1 + nx * ny * b2;
-      else base = b1 + nx * b2;
+      if (axis === 0) base = lo + nx * (b1 + ny * b2);
+      else if (axis === 1) base = b1 + nx * (lo + ny * b2);
+      else base = b1 + nx * (b2 + ny * lo);
       let sum = 0;
       for (let t = 0; t <= r && t < len; t++) sum += src[base + t * stride];
       for (let t = 0; t < len; t++) {

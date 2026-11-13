@@ -51,7 +51,7 @@ export function updateActivity(sim, D) {
   // the first step, and every 50th, run fully awake: exposed faces, the faces that touch
   // the air and the like are kept up to date for everything
   const all =
-    sim.noSleep || (sim.stats.steps ?? 0) % 50 === 0 || D.rainRate > 0 || sim.spray || (w.vacuum && w.decompressing) || w.sprinklers.some((s) => s.active);
+    sim.noSleep || (sim.thermoSteps ?? sim.stats.steps ?? 0) % 50 === 1 || D.rainRate > 0 || sim.spray || (w.vacuum && w.decompressing) || w.sprinklers.some((s) => s.active);
   if (all) {
     act.fill(1);
     w.airAwake.fill(1);

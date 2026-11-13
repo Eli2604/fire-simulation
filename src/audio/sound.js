@@ -297,7 +297,7 @@ export class SoundScape {
           this.noiseTo(out, t, 0.9, 'lowpass', 900, 0.7, Math.min(1.4, 0.5 + e.broke * 0.05));
           for (let n = 0; n < Math.min(14, e.broke); n++) this.noiseTo(out, t + 0.05 + Math.random() * 0.9, 0.05, 'bandpass', 1200 + Math.random() * 3000, 3, 0.3);
         }
-      } else if (e.type === 'dragonDown') {
+      } else if (e.type === 'dragonDown' || e.type === 'dragonCrash') {
         this.stomp(e.pos, 2);
         this.burst(t, 1.2, 'lowpass', 250, 0.7, 1.0);
       } else if (['phoenixCry', 'phoenixCalls', 'phoenixFreed', 'phoenixReborn', 'phoenixEscape', 'phoenixFree', 'phoenixHurt'].includes(e.type)) {
