@@ -140,6 +140,7 @@ export class World {
     this.barrels = []; // { c: [x, z], r, y0, y1 }: round pillars of stacked bones
     this.portals = []; // { p, r, to, label }: ladders / hatches into another zone
     this.vehicles = []; // { type, seat, owner, obj }: things you can board (the jet)
+    this.lookouts = []; // [x, y, z]: raised places with a view, up stairs (models/deck.js): ai/squad.js
     this.inertSystems = []; // { p, trigger, fired }: automatic inert-gas flooding
     this.enemies = []; // AI characters (see ai/enemies.js)
     this.dragons = []; // dragons (see ai/dragon.js): flying, crawling, fire-breathing predators

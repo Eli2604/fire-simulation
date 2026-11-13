@@ -230,6 +230,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
+  for (const lp of built.lookouts ?? []) world.lookouts.push(toWorld(...lp));
   for (const s of built.inertSystems ?? []) world.inertSystems.push({ ...s, p: toWorld(...s.p), fired: false });
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });

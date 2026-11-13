@@ -454,6 +454,15 @@ export class SquadAI {
     const y0 = p0[1] ?? 0, y1 = p1[1] ?? 0;
     if (this.host.lookouts && this.host.path3d && Math.abs(y1 - y0) > 1.5) {
       const via = this.host.path3d(p0, p1);
+      // a full 3D path from where he stands (the simulation's guard paths over floors and stairs,
+      // a point every 0.4 m, round walls and rails): only its turns (he follows the floor between
+      // them), ending on p1 when it got there (else as near as it got)
+      if (via?.length > 1 && dist2(via[0], p0) < 0.3 && Math.abs((via[0][1] ?? y0) - y0) < 0.3) {
+        const c = corners(via), e = c[c.length - 1];
+        if (dist2(e, p1) < 1.2 && Math.abs((e[1] ?? y1) - y1) < 0.6) c[c.length - 1] = p1.slice();
+        return c;
+      }
+      // a way by the stairs (foot ... head, then p1): to its start (or from its end) on the grid
       if (via?.length > 1) return y1 > y0 ? [...this.route(p0, via[0]), ...via.slice(1)] : [...via.slice(0, -1), ...this.route(via[via.length - 2], p1)];
     }
     const { nx, nz } = this;
@@ -1309,6 +1318,21 @@ export class SquadAI {
 
 function dist2(a, b) {
   return Math.hypot(a[0] - b[0], a[2] - b[2]);
+}
+/** A path without the points in a straight line (on the ground plan) between its turns. */
+function corners(pts) {
+  if (pts.length < 3) return pts.slice();
+  const out = [pts[0]];
+  const dir = (a, b) => {
+    const l = dist2(a, b) || 1;
+    return [(b[0] - a[0]) / l, (b[2] - a[2]) / l];
+  };
+  for (let i = 1; i < pts.length - 1; i++) {
+    const u = dir(out[out.length - 1], pts[i]), v = dir(pts[i], pts[i + 1]);
+    if (u[0] * v[0] + u[1] * v[1] < 0.999) out.push(pts[i]);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 function centroid(list) {
   const c = [0, 0, 0];

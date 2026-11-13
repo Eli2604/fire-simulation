@@ -1093,6 +1093,15 @@ down; the first team leads and sends the others to a flank, tells them to hold o
 and calls a pursuit when the threat moves away. Scenario **Squad on a range**; the tool *Squad:
 set the threat* moves the threat.
 
+The range has a **lookout**: model `deck` (`models/deck.js`), a concrete deck 3 m up on pillars
+(width, depth and height are parameters), a straight staircase up one side (a step per voxel
+layer, so the 3D paths of `ai/enemies.js` and the walk-through climb it) and glass rails round it,
+open at the head of the stairs. It gives the world its lookouts (`world.lookouts`: the deck's
+corners and the middles of its open sides, at deck height), and the simulation's squads get them
+as `host.lookouts` (only in worlds that have any): before contact a rifleman climbs up to look
+round, on contact a gunner takes it as overwatch when it sees the threat, and the climb goes by
+the stairs (`host.path3d`, the guards' path finder over floors and stairs).
+
 **Soldier rig test** (`rig.html`): the soldier on a range of its own, with every clip, the hit
 areas (shown and adjustable), the gear, an FPS readout and the squad AI on a range you edit.
 Its *Dragon* tab shows the simulation's dragon instead (the same AI and renderer, in a small

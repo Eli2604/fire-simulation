@@ -1563,6 +1563,12 @@ export class Simulation {
       now: () => w.time,
       // a way to another floor (stairs): the guard AI's 3D paths over floors and stairs (ai/enemies.js)
       path3d: (a, b) => this.ai.path(a, b, 6000),
+      // raised places with a view up stairs (a deck: models/deck.js), only where the world has
+      // any: a rifleman climbs one to look round, the gunner takes one as overwatch; without
+      // them (every other scene) the host has no lookouts and routes stay on the team's floor
+      get lookouts() {
+        return w.lookouts?.length ? () => w.lookouts : undefined;
+      },
       // under a roof (a building: worth clearing floor by floor), not out on a hillside
       indoors: (p) => {
         for (let y = p[1] + 2.2; y < p[1] + 8; y += w.h) if (this.ai.solidAt(p[0], y, p[2])) return true;
