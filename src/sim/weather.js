@@ -163,14 +163,15 @@ export class WeatherDrift {
     if (mode !== 'gentle' && mode !== 'changeable') return out;
     const big = mode === 'changeable';
     // gusts: the wind's strength by ±25 % (±45 %), never below calm
-    out.windSpeed = Math.max(0, base.windSpeed * (1 + (big ? 0.45 : 0.25) * this.gust));
+    const g = Math.max(-2, Math.min(2, this.gust));
+    out.windSpeed = Math.max(0, base.windSpeed * (1 + (big ? 0.35 : 0.2) * g));
     out.windDir = (((base.windDir + (big ? 35 : 12) * this.veer) % 360) + 360) % 360;
     out.ambient = base.ambient + (big ? 2.5 : 0.8) * this.temp;
     if (big && this.shower > 0) {
       out.rain = base.rain + this.showerRain;
       out.humidity = Math.max(base.humidity, 0.9);
       out.sunshine = Math.min(base.sunshine ?? 1, 0.25);
-      out.windSpeed *= 1.3; // the squall ahead of it
+      out.windSpeed *= 1.15; // the squall ahead of it
     }
     return out;
   }

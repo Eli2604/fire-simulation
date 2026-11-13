@@ -880,7 +880,7 @@ for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 
   if (qs.get(k) !== null && Number.isFinite(v)) settingsNow()[key] = v;
 }
 syncWeather();
-wUpdate();
+buildWeatherFolder();
 // ...&blast=x,y,z,energy: an explosion there after a second (for testing: energy in J, a grenade ~6e5)
 if (qs.get('blast') && !(Number(qs.get('advance')) > 0)) {
   const [bx, by, bz, be] = qs.get('blast').split(',').map(Number);
