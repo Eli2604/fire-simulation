@@ -54,8 +54,10 @@ export default {
   params: {
     length: { value: 5, min: 2, max: 10, step: 0.5, label: 'Line length (m)' },
     height: { value: 1.9, min: 1.4, max: 2.4, step: 0.05, label: 'Line height (m)' },
-    wet: { value: 0.8, min: 0, max: 1.5, step: 0.05, label: 'Wet from the machine (water per dry weight)' },
-    sparkAfter: { value: 300, min: 0, max: 3600, step: 10, label: 'A spark lands at the foot of the sheet after (s; 0: none)' },
+    // (water per dry weight: ~0.8 fresh from the spin cycle, ~0.2 after a few hours on the line;
+    // cotton burns below ~0.3, a spark catches below ~0.24)
+    wet: { value: 0.25, min: 0, max: 1.5, step: 0.05, label: 'Water in the wash (per dry weight; 0.8: fresh from the machine)' },
+    sparkAfter: { value: 120, min: 0, max: 3600, step: 10, label: 'A spark lands at the foot of the sheet after (s; 0: none)' },
     seed: { value: 3, min: 1, max: 999, step: 1, label: 'Random seed' },
   },
   build(p, { h }) {
@@ -99,7 +101,8 @@ export default {
       prims.push({ shape: 'box', min: [g.x0, top - h, -h], max: [g.x0 + g.w, top + 0.005, h], material: g.mat, density: thin, moisture: p.wet, color: hexRgb(g.color), hidden: true, anchored: true, mode: 'replace' });
     }
     // a spark (from a barbecue, a cigarette) at the hem of the first garment, after a while: it
-    // catches only if the cloth has dried enough by then
+    // catches only if the cloth has dried enough by then (sparks keep landing for 20 s:
+    // sim/simulation.js tries again every step till one catches)
     const first = placed[0];
     const heaters = p.sparkAfter > 0 && first
       ? [{ pos: [first.x0 + first.w * 0.3, H - 0.01 - first.drop + 0.02, 0], power: 800, radius: 0.02, height: 0.06, start: p.sparkAfter, until: p.sparkAfter + 20, label: 'a spark', igniteRadius: 0.06, igniteDry: true }]

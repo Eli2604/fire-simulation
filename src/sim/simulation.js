@@ -514,9 +514,12 @@ export class Simulation {
         ht.started = true;
         w.events.push({ type: ht.event ?? 'ignition', pos: ht.pos.slice(), time: w.time, name: ht.label ?? 'source' });
         // an electrical fault sets what it touches alight
-        if (ht.igniteRadius) this.ignite(ht.pos, ht.igniteRadius, null, !!ht.igniteDry);
+        if (ht.igniteRadius) ht.caught = this.ignite(ht.pos, ht.igniteRadius, null, !!ht.igniteDry) > 0;
         // a burst that goes off as an explosion (fuel vapour): a blast where it is
         if (ht.blast) explode(this, ht.blast.p, ht.blast.energy, { name: ht.label ?? 'explosion' });
+      } else if (ht.started && ht.igniteRadius && ht.igniteDry && !ht.caught) {
+        // sparks keep landing while it lasts: they catch once the fuel there has dried enough
+        ht.caught = this.ignite(ht.pos, ht.igniteRadius, null, true) > 0;
       }
       const [px, py, pz] = ht.pos;
       const r = Math.max(ht.radius, ah * 0.5);

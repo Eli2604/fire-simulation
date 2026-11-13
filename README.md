@@ -539,11 +539,12 @@ solid shape as voxel cells, models/data/). Without a connection the scenes still
 with plain surfaces and the objects shown as their voxels.
 
 **Laundry on the line** (a scene; models/clothesline.js, render/laundry.js): the wash hangs
-in the garden on a warm, breezy afternoon, wet from the machine: a sheet folded over the
-line, towels, polyester shirts, jeans, a pillowcase, socks. Cotton holds a lot of water and
-dries in the sun and the wind (a dead fuel's moisture, about half an hour; it will not burn
-while it is wet); after a quarter of an hour a spark from the barbecue lands at the foot of
-the sheet and catches only if it has dried. Then the fire runs along the line; the shirts
+in the garden on a warm, breezy afternoon, nearly dry after a few hours: a sheet folded over
+the line, towels, polyester shirts, jeans, a pillowcase, socks. Cotton holds a lot of water and
+dries in the sun and the wind (a dead fuel's moisture, about half an hour from the machine; it
+will not burn while it is wet: the model's Water setting); half a minute in a spark from the
+barbecue lands at the foot of the sheet and catches once it is dry enough (sparks keep
+landing for 20 s). Then the fire runs along the line; the shirts
 shrink, melt and drip before they burn; garments burnt through at the top fall; the lawn
 scorches under them. The cloth is drawn as cloth (folds, weave, stripes, seams, pegs),
 swaying in the breeze, and tied to its voxels: it chars, glows and burns through to holes.
