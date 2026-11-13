@@ -608,7 +608,8 @@ in a room is ~60 °C after a quarter of an hour, and a few grams have gone into 
 frost with a breeze it cools faster, holds at 0 °C while it freezes (334 kJ/kg) and then the
 ice cools on. Its steam is that vapour condensing as it mixes into the colder air over the
 cup (the same mixing line as a breath): a thin mist in a warm room once it has cooled a
-little, thick wisps in a frost. The heat it gives off warms the air; a fire nearby warms it.
+little, thick wisps in a frost. As it cools it gives off less and the steam thins out; close by, a small label
+shows how hot it is (it cools ~3 K a minute at first in the frost: speed up time to see it go). The heat it gives off warms the air; a fire nearby warms it.
 Where the table under it burns away it falls (and breaks if it falls far); a blast breaks it.
 The scene round it: a small island (the island model with its pond made into a lake: `pondX`,
 `pondZ`, `pondRadius`, `pondRadiusZ`, `pondDepth`), the lake frozen over (10 cm: it bears

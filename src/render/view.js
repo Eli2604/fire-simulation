@@ -306,7 +306,7 @@ export class View {
       return { T: w.airT[a], RH: rh, wind: [w.vx[a], w.vy?.[a] ?? 0, w.vz[a]] };
     };
     B.update(dt, this.time, scale, mouths, air);
-    this.tea.update(dt, scale, air, B.light);
+    this.tea.update(dt, scale, air, B.light, this.cameraLocal());
   }
 
   /** The camera's position in the world's own coordinates ([x, y, z]). */

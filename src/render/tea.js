@@ -7,7 +7,9 @@ import { TEA } from '../sim/tea.js';
  * evaporates, a skin of ice on it when it freezes), and its steam: the vapour that leaves
  * the hot surface, saturated, condenses as it mixes into the colder air over it (as a
  * breath does, render/breath.js) — a thin mist indoors, thick wisps in a frost. It rises in
- * the warm plume over the cup, curls, drifts with the wind and evaporates again.
+ * the warm plume over the cup, curls, drifts with the wind and evaporates again; as the tea
+ * cools it gives off less (the vapour pressure halves every ~12 K) and the steam thins out.
+ * Close by (within ~2.5 m) a small label shows how hot the tea is.
  */
 export class TeaRenderer {
   constructor(scene, max = 900) {
@@ -77,18 +79,51 @@ export class TeaRenderer {
     // the tea's surface
     const teaMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.tea ?? '#7a3d12'), roughness: 0.05, metalness: 0.1 });
     const surf = new THREE.Mesh(new THREE.CircleGeometry(r * 0.97, 24).rotateX(-Math.PI / 2), teaMat);
-    g.add(cup, handle, saucer, surf);
+    // how hot it is: a small label over it, close up
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: null, transparent: true, depthWrite: false, depthTest: false }));
+    label.scale.set(0.3, 0.094, 1);
+    label.position.y = H + 0.16;
+    label.renderOrder = 4;
+    label.visible = false;
+    g.add(cup, handle, saucer, surf, label);
     g.rotation.y = 0.7 + k * 2.1; // (the handle, each one its own way)
     for (const m of [cup, handle, saucer]) {
       m.castShadow = true;
       m.receiveShadow = true;
     }
     this.group.add(g);
-    return { c, g, surf, teaMat, tea: new THREE.Color(c.tea ?? '#7a3d12'), m0: Math.max(1e-6, c.m + (c.ice ?? 0)), next: 0 };
+    return { c, g, surf, teaMat, label, shown: null, tea: new THREE.Color(c.tea ?? '#7a3d12'), m0: Math.max(1e-6, c.m + (c.ice ?? 0)), vap0: 0, next: 0 };
   }
 
-  /** `air(p)`: the air there { T, RH, wind } or null; `scale`: the point size scale. */
-  update(dt, scale, air, light = 1) {
+  /** The label's text: the tea's temperature, or that it is frozen. */
+  setLabel(it, text) {
+    if (it.shown === text) return;
+    it.shown = text;
+    if (typeof document === 'undefined') return;
+    const cv = (it.cv ??= document.createElement('canvas'));
+    cv.width = 256;
+    cv.height = 80;
+    const g = cv.getContext('2d');
+    if (!g) return;
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.fillStyle = 'rgba(20,22,26,0.62)';
+    g.beginPath();
+    g.roundRect?.(4, 8, 248, 64, 18);
+    g.fill();
+    g.fillStyle = '#f4efe6';
+    g.font = 'bold 40px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, 128, 42);
+    if (!it.label.material.map) {
+      it.label.material.map = new THREE.CanvasTexture(cv);
+      it.label.material.map.colorSpace = THREE.SRGBColorSpace;
+      it.label.material.needsUpdate = true;
+    } else it.label.material.map.needsUpdate = true;
+  }
+
+  /** `air(p)`: the air there { T, RH, wind } or null; `scale`: the point size scale; `cam`: [x, y, z]. */
+  update(dt, scale, air, light = 1, cam = null) {
     this.material.uniforms.uScale.value = scale;
     this.light = light;
     const { r, H } = TEA;
@@ -106,12 +141,18 @@ export class TeaRenderer {
       const iced = (c.ice ?? 0) / Math.max(1e-6, c.m + (c.ice ?? 0));
       it.teaMat.color.copy(it.tea).lerp(iceCol, Math.min(1, iced * 1.4) * 0.55);
       it.teaMat.roughness = 0.05 + 0.5 * iced;
+      // close by: how hot it is
+      const near = cam && Math.hypot(cam[0] - c.p[0], cam[1] - c.p[1], cam[2] - c.p[2]) < 2.5;
+      it.label.visible = !!near && fill > 0.02;
+      if (near) this.setLabel(it, iced > 0.98 ? `ice ${Math.round(c.T)} °C` : iced > 0.02 ? 'freezing 0 °C' : `tea ${Math.round(c.T)} °C`);
       // its steam
       if (!(c.vapour > 0) || !air) continue;
       const top = [c.p[0], c.p[1] + level + 0.01, c.p[2]];
       const A = air([top[0], top[1] + 0.05, top[2]]);
       if (!A) continue;
-      const v = mistOnMixing(A.T, A.RH, c.T);
+      // how much condenses, and how much there is to condense (as hot as it started: 1)
+      it.vap0 = Math.max(it.vap0, c.vapour);
+      const v = mistOnMixing(A.T, A.RH, c.T) * Math.pow(Math.min(1, c.vapour / it.vap0), 0.7);
       if (v < 0.01) continue;
       // wisps a second: as much as it gives off (~1e-5 kg/s hot) — and as much as condenses
       it.next -= dt * Math.min(60, c.vapour * 2.2e6) * Math.min(1, 0.3 + v);
@@ -159,8 +200,8 @@ export class TeaRenderer {
     this.vel[i * 3 + 2] = wind[2] * 0.5 + (Math.random() - 0.5) * 0.03;
     this.age[i] = 0;
     this.life[i] = (0.7 + 2.0 * v) * (0.7 + Math.random() * 0.6);
-    this.s0[i] = 0.02 + Math.random() * 0.015;
-    this.a0[i] = 0.1 + 0.35 * v;
+    this.s0[i] = 0.04 + Math.random() * 0.03;
+    this.a0[i] = 0.12 + 0.4 * v;
     this.ph[i] = Math.random() * 10;
     this.alpha[i] = 0;
   }

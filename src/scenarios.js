@@ -70,10 +70,10 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
     { type: 'candle', params: { height: 0.09, radius: 0.03 }, x: 13.3, z: 12.92, y: 2.7, ignite: true },
     // firewood stacked against the veranda, pines and a bare oak round the lake
     { type: 'woodPile', params: { arrangement: 'stack', logs: 10, logLength: 0.9, logRadius: 0.08, stones: false, kindling: false }, x: 9.6, z: 13.1, y: 'auto' },
-    { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.5, seed: 4 }, x: 5.2, z: 8.2, y: 'auto' },
-    { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.3, seed: 8 }, x: 17.6, z: 6.6, y: 'auto' },
-    { type: 'tree', params: { species: 'pine', height: 4.2, crownRadius: 1.1, seed: 9 }, x: 16.4, z: 13.8, y: 'auto' },
-    { type: 'tree', params: { species: 'oak', height: 4.5, crownRadius: 2, seed: 6 }, x: 6.4, z: 13, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 4.6, crownRadius: 1.4, seed: 4 }, x: 5.2, z: 8.2, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 4.2, crownRadius: 1.2, seed: 8 }, x: 17.6, z: 6.6, y: 'auto' },
+    { type: 'tree', params: { species: 'pine', height: 3.8, crownRadius: 1.1, seed: 9 }, x: 16.4, z: 13.8, y: 'auto' },
+    { type: 'tree', params: { species: 'oak', height: 4, crownRadius: 1.9, seed: 6 }, x: 6.4, z: 13, y: 'auto' },
   ];
 }
 
@@ -81,7 +81,7 @@ export const SCENARIOS = {
   winterTea: {
     name: 'Tea by the lake in winter',
     description: 'A frosty afternoon on a little island with a lake in it: the lake is frozen over (10 cm: it bears you), snow lies and a little more is falling. On a veranda on the shore, out of the snow, a couch with a plaid over its arm, and next to it a side table with a book, a candle and a cup of tea, just poured at 88 °C. It steams in the cold air (the vapour off the hot tea condenses as it mixes with it), cools (most of its heat goes in evaporation while it is hot: ~2–3 K a minute at first), and left out long enough in the frost it freezes over. Walk out onto the ice, or set the couch alight. The same island is in the carrier scene (a boat from the islet).',
-    world: { size: [22, 5, 19], h: 0.1, ground: 'none' },
+    world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
     weather: w(LAKESIDE_WINTER),
     timeScale: 1,
     view: { camera: [2.5, 1.5, -8.5] },
@@ -353,7 +353,7 @@ export const SCENARIOS = {
       lake: {
         name: 'Lake island (winter)',
         origin: [240, 1.8, 150], // (its sea level with the others')
-        world: { size: [22, 5, 19], h: 0.1, ground: 'none' },
+        world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
         view: { camera: [2.5, 1.5, -8.5], walk: true },
         proxy: { shape: 'hill', color: '#dfe4e8', height: 1.5, fill: 0.85, sea: 2.9 },
         weather: LAKESIDE_WINTER,
