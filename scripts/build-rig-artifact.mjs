@@ -5,6 +5,9 @@
  *
  *   node scripts/build-rig-artifact.mjs [out.html] [page]   page: rig (default), camp or main
  *
+ * rig and camp are their stages (src/rig/stage.js, src/camp/stage.js) mounted alone; the editor
+ * (main) may import them with import(): inlineDynamicImports keeps it all in the one file.
+ *
  * Built side by side (index.html from main, rig.html, camp.html, and models/skull.bin) the
  * pages link to each other: their scene lists switch between them.
  */

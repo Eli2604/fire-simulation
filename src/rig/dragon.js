@@ -6,7 +6,7 @@
  * that follow the pose, shown or hidden and adjusted (radius, length, damage), and damage on
  * click: the zone under the cursor is hit (it flashes), bleeds, drips and stains.
  *
- * While the tab is open the soldiers' range is hidden and paused (main.js skips its tick).
+ * While the tab is open the soldiers are hidden and paused (rig/stage.js skips their tick).
  */
 import * as THREE from 'three';
 import { createDragonStage, DRAGON_ACTS } from './dragonStage.js';
@@ -20,8 +20,8 @@ const MAXP = 48; // points of a zone (with its end caps)
 const CAP = 3; // rings in each end cap
 
 export class DragonRig {
-  constructor({ scene, camera, controls, renderer, toast = () => {}, $ = (id) => document.getElementById(id), qs = new URLSearchParams() }) {
-    Object.assign(this, { scene, camera, controls, renderer, toast, $ });
+  constructor({ scene, camera, controls, renderer, toast = () => {}, $ = (id) => document.getElementById(id), qs = new URLSearchParams(), root = document }) {
+    Object.assign(this, { scene, camera, controls, renderer, toast, $, root });
     this.active = false;
     this.speed = 1;
     this.showZones = false;
@@ -164,7 +164,7 @@ export class DragonRig {
     this.group.visible = v;
     const build = this.$('build');
     if (v) {
-      // the soldiers' range out of the way (and paused: main.js skips its tick)
+      // the soldiers out of the way (and paused: stage.js skips their tick)
       this.hidden = new Set();
       this.hideRange();
       this.cam = { p: this.camera.position.clone(), t: this.controls.target.clone() };
@@ -232,7 +232,7 @@ export class DragonRig {
       const what = d.health <= 0 ? (d.mode === 'falling' ? 'falling' : 'dead') : d.mode === 'falling' ? 'wing useless: falling' : d.forcedSpot ? 'wing hurt: coming down' : DRAGON_ACTS[this.stage.act];
       const wing = wd >= WING.hurt ? ` · wing ${Math.round(wd * 100)}% (can't fly)` : wd > 0.05 ? ` · wing ${Math.round(wd * 100)}%` : '';
       s.textContent = `${what} · ${Math.ceil(d.health)} HP${d.bleed > 0.05 ? ` · bleeding ${d.bleed.toFixed(1)}/s` : ''}${wing}`;
-      document.querySelectorAll('#dAnims button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.stage.act && d.health > 0));
+      this.$('dAnims').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.stage.act && d.health > 0));
     }
   }
 
@@ -333,10 +333,10 @@ export class DragonRig {
     [zR, zL, zM].forEach((s) => (s.oninput = apply));
     this.zoneUI();
     // the tab opens and closes the dragon's stage
-    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => this.setActive(b.dataset.tab === 'dragon')));
-    // ?dragon=1 opens it; &dact=fly plays an act; &dzones=1 shows the zones; &dhits=neck,head wounds; &dsteps=n runs ahead
-    if (qs.get('dragon')) {
-      document.querySelector('.tabs button[data-tab="dragon"]')?.click();
+    this.root.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => this.setActive(b.dataset.tab === 'dragon')));
+    // ?dragon=1 (or ?tab=dragon) opens it; &dact=fly plays an act; &dzones=1 shows the zones; &dhits=neck,head wounds; &dsteps=n runs ahead
+    if (qs.get('dragon') || qs.get('tab') === 'dragon') {
+      this.root.querySelector('.tabs button[data-tab="dragon"]')?.click();
       if (qs.get('dact')) this.stage.play(qs.get('dact'));
       if (qs.get('dzones') === '1') $('tgDZones').click();
       if (qs.get('dfollow') === '1') $('tgDFollow').click();

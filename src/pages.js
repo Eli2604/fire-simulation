@@ -7,6 +7,7 @@
  *
  *   goPage('camp.html')            the camp
  *   goPage(null, 'catacombs')      the simulation with that scenario
+ *   goPage(null)                   the simulation
  */
 export function goPage(page, scenario) {
   const key = page ? page.replace(/\.html.*$/, '') : 'sim';
@@ -17,5 +18,5 @@ export function goPage(page, scenario) {
     if (!w) location.href = url;
     return;
   }
-  location.href = page ?? `./?scenario=${encodeURIComponent(scenario)}`;
+  location.href = page ?? (scenario ? `./?scenario=${encodeURIComponent(scenario)}` : './');
 }
