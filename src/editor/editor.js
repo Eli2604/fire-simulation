@@ -23,6 +23,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MODELS, defaultParams } from '../models/index.js';
 import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
+import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf } from '../sim/weather.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -360,14 +361,7 @@ export class Editor {
       gui.add(ws, 'h', 0.004, 0.5, 0.001).name('Voxel size (m)').onFinishChange(change);
       if (!ws.ground) ws.ground = 'soil';
       gui.add(ws, 'ground', MATERIAL_NAMES).name('Ground').onFinishChange(change);
-      const W = C.weather();
-      const fw = gui.addFolder('Weather').close();
-      fw.add(W, 'ambient', -20, 45, 0.5).name('Air (°C)').onFinishChange(change);
-      fw.add(W, 'windSpeed', 0, 35, 0.1).name('Wind (m/s)').onFinishChange(change);
-      fw.add(W, 'windDir', 0, 360, 5).name('Wind towards (°)').onFinishChange(change);
-      fw.add(W, 'rain', 0, 50, 0.5).name('Rain (mm/h)').onFinishChange(change);
-      fw.add(W, 'fog', 0, 1, 0.01).name('Fog').onFinishChange(change);
-      fw.add(W, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onFinishChange(change);
+      this.weatherFolder(gui, change);
       gui.add({ fire: () => (S.noFire = !S.noFire, change()) }, 'fire').name(S.noFire ? 'Fire at start: none (click: the scenario’s)' : 'Fire at start: the scenario’s (click: none)');
       return;
     }
@@ -396,6 +390,49 @@ export class Editor {
       c.name(spec.label ?? key).onFinishChange(change);
     }
     if (CHARACTERS[ob.type]) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(CHARACTERS[ob.type] === 'dragon' ? '🦴 Rig the dragon (acts, wings, hit zones)' : '🦴 Rig the soldier (animations, gear, hit zones)');
+  }
+
+  /**
+   * The weather of where you are (the scene, or the zone): where it is (outdoors, indoors,
+   * underground, a sealed cabin), whether it changes by itself, and only what applies there.
+   * The same settings as Play's weather.
+   */
+  weatherFolder(gui, change) {
+    const C = this.ctx;
+    const place = C.place();
+    const zoned = place !== C.scene;
+    const fw = gui.addFolder(zoned ? `Weather: ${place.name ?? 'this zone'}` : 'Weather');
+    const holder = { exposure: exposureOf(place) };
+    fw.add(holder, 'exposure', Object.fromEntries(Object.entries(EXPOSURES).map(([k, v]) => [v, k])))
+      .name('Where')
+      .onFinishChange((v) => {
+        place.exposure = v;
+        // (its own air when it leaves the weather, the scene's weather when it comes out)
+        if (v === 'outdoor') {
+          if (zoned) delete place.weather;
+        } else if (zoned) place.weather = Object.assign(defaultWeather(), INSIDE_AIR[v]);
+        change();
+        this.buildProps();
+      });
+    const W = C.weatherHere();
+    if (holder.exposure !== 'outdoor') {
+      fw.add(W, 'ambient', -20, 45, 0.5).name('Air (°C)').onFinishChange(change);
+      fw.add(W, 'humidity', 0, 1, 0.01).name('Humidity').onFinishChange(change);
+      return;
+    }
+    W.vary ??= 'fixed';
+    fw.add(W, 'vary', Object.fromEntries(Object.entries(VARY).map(([k, v]) => [v, k]))).name('Changes by itself').onFinishChange(change);
+    fw.add(W, 'ambient', -20, 45, 0.5).name('Air (°C)').onFinishChange(change);
+    fw.add(W, 'humidity', 0, 1, 0.01).name('Humidity').onFinishChange(change);
+    fw.add(W, 'windSpeed', 0, 35, 0.1).name('Wind (m/s)').onFinishChange(change);
+    fw.add(W, 'windDir', 0, 360, 5).name('Wind towards (°)').onFinishChange(change);
+    fw.add(W, 'rain', 0, 50, 0.5).name('Rain / snow (mm/h)').onFinishChange(change);
+    fw.add(W, 'lightning', 0, 20, 0.5).name('Lightning (a minute)').onFinishChange(change);
+    fw.add(W, 'fog', 0, 1, 0.01).name('Fog').onFinishChange(change);
+    fw.add(W, 'sunshine', 0, 1, 0.05).name('Sunshine').onFinishChange(change);
+    fw.add(W, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onFinishChange(change);
+    fw.add(W, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(change);
+    fw.add(W, 'iceCover', 0, 0.6, 0.01).name('Ice on water (m)').onFinishChange(change);
   }
 
   showPalette() {

@@ -1,6 +1,6 @@
 import { buildScene } from '../models/voxelizer.js';
 import { Simulation } from './simulation.js';
-import { defaultWeather } from './weather.js';
+import { defaultWeather, exposureOf, INSIDE_AIR, liveWeather } from './weather.js';
 import { toggleDoor } from './doors.js';
 import { initVacuum } from './vacuum.js';
 import { DetailPatches } from './patches.js';
@@ -26,11 +26,16 @@ export function createSimulation(scene) {
   // the voxel size: the scene's own (each zone has its own), times a factor chosen for the
   // hardware (coarser: faster; finer: more detail, ~16x the work for half the size)
   if (scene.voxelScale && scene.voxelScale !== 1) scene = { ...scene, world: { ...scene.world, h: scene.world.h * scene.voxelScale } };
-  const zoneW = scene.zones?.[scene.zone ?? scene.startZone]?.weather; // a zone can have its own (space: no wind, no rain)
-  const weather = { ...defaultWeather(), ...(scene.weather ?? {}), ...(zoneW ?? {}) };
+  const zone = scene.zones?.[scene.zone ?? scene.startZone];
+  // where it is: outdoors the weather (the scene's, or the zone's own); indoors, underground, in a
+  // sealed cabin only its own air (no wind, rain, sun, snow: sim/weather.js)
+  const exposure = exposureOf(zone ?? scene);
+  const own = zone ? zone.weather : null;
+  const settings = { ...defaultWeather(), ...(exposure === 'outdoor' || !zone ? scene.weather ?? {} : INSIDE_AIR[exposure]), ...(own ?? {}) };
+  const weather = liveWeather({}, settings, exposure);
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
   world.dark = !!scene.view?.dark; // underground: a light where there should be none is noticed
-  world.indoor = !!(scene.indoor ?? scene.zones?.[scene.zone ?? scene.startZone]?.indoor); // no sky over it: no snow
+  world.indoor = !!(scene.indoor ?? zone?.indoor) || exposure !== 'outdoor'; // no sky over it: no snow
   if (weather.snowCover > 0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors)
   const sim = new Simulation(world, weather);
   // where the firefighter walk-through starts: chosen by the user, the scene's own, or the edge

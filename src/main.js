@@ -8,7 +8,7 @@ import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
-import { defaultWeather, SEASONS } from './sim/weather.js';
+import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
@@ -50,7 +50,8 @@ const state = {
 
 let scene = null; // editable scene description
 let sim = null;
-let weather = defaultWeather();
+let weather = defaultWeather(); // the scene's (outdoor) weather settings; a zone may have its own
+const drift = new WeatherDrift(7); // the weather changing by itself (when it is set to)
 let inspected = -1;
 let speed = 0;
 const tank = { remaining: AGENTS.water.capacity }; // the extinguisher in your hand
@@ -78,14 +79,35 @@ function zoneSim(name) {
   if (!zd) return null;
   if (!zoneSims[name]) {
     for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
-    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: zoneWeather(zd), walkStart: zd.walkStart });
+    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: settingsOf(zd), exposure: exposureOf(zd), indoor: zd.indoor, view: zd.view, walkStart: zd.walkStart });
   }
   return zoneSims[name];
 }
 
-/** A zone's own weather (space has none), or the scene's. */
-function zoneWeather(zd) {
-  return zd?.weather ? { ...weather, ...zd.weather } : weather;
+/** Where you are: the current zone, or the scene. */
+function placeNow() {
+  return scene.zones ? scene.zones[scene.zone] : scene;
+}
+
+/**
+ * The weather settings of a zone (or of the scene): what Play and Edit world set. Outdoors the
+ * scene's, unless the zone has its own (the lake island in winter); indoors, underground, in a
+ * sealed cabin the place's own air (sim/weather.js).
+ */
+function settingsOf(zd) {
+  if (!zd || zd === scene) return weather;
+  const exp = exposureOf(zd);
+  if (exp === 'outdoor' && !zd.weather) return weather;
+  if (!zd.weather || !('vary' in zd.weather)) zd.weather = Object.assign(defaultWeather(), exp === 'outdoor' ? weather : INSIDE_AIR[exp], zd.weather ?? {});
+  return zd.weather;
+}
+const settingsNow = () => settingsOf(scene.zones ? scene.zones[scene.zone] : null);
+
+/** The simulation's weather from the settings of where you are (in place: the sim keeps it). */
+function syncWeather(applyView = true) {
+  if (!sim) return;
+  liveWeather(sim.weather, settingsNow(), exposureOf(placeNow()), drift);
+  if (applyView) view.applyWeather(sim.weather);
 }
 
 /** Make zone `name` the one that is simulated and shown (the others freeze). */
@@ -96,7 +118,7 @@ function activateZone(name) {
   useZone(name);
   const zd = scene.zones[name];
   sim = next;
-  sim.weather = zoneWeather(zd);
+  syncWeather(false);
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
   view.sunDir = zd.view?.sun;
@@ -107,6 +129,7 @@ function activateZone(name) {
   view.applyWeather(sim.weather);
   view.voxels.mode = state.mode;
   $('title').textContent = `${scene.name} – ${zd.name}`;
+  buildWeatherFolder();
   buildObjectsFolder();
   updateProxies(true);
   return sim;
@@ -174,7 +197,7 @@ function load(desc, fresh = true) {
   scene.weather = weather;
   for (const o of scene.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
   sim = createSimulation(scene);
-  sim.weather = scene.zones ? zoneWeather(scene.zones[scene.zone]) : weather;
+  syncWeather(false);
   if (walk?.active) walk.exit();
   view.dark = !!scene.view?.dark;
   view.space = !!scene.view?.space;
@@ -184,7 +207,7 @@ function load(desc, fresh = true) {
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
   updateProxies(true);
   view.markers.visible = state.markers;
-  view.applyWeather(weather);
+  view.applyWeather(sim.weather);
   if (fresh) {
     // a new scenario brings its own view settings; a restart after an edit keeps the user's
     state.mode = scene.view?.mode ?? 'realistic';
@@ -198,6 +221,7 @@ function load(desc, fresh = true) {
   $('title').textContent = (scene.name ?? 'Custom scene') + (scene.zones ? ` – ${scene.zones[scene.zone].name}` : '');
   $('desc').textContent = scene.description ?? '';
   gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  buildWeatherFolder();
   buildObjectsFolder();
   updateLegend();
 }
@@ -235,28 +259,20 @@ fSim.add(state, 'running').name('Running');
 fSim.add(state, 'timeScale', 0.1, 200, 0.1).name('Time scale (×)');
 fSim.add({ step: () => sim.advance(1, 2000) }, 'step').name('Advance 1 s');
 
+// The weather of where you are (the scene, or the zone you are in): what Edit world sets too. Only
+// what applies there: outdoors all of it (and whether it changes by itself), indoors, underground,
+// in a sealed cabin only the air.
 const fW = gui.addFolder('Weather');
-const wc = [
-  fW.add(weather, 'ambient', -20, 45, 0.5).name('Air temperature (°C)'),
-  fW.add(weather, 'humidity', 0, 1, 0.01).name('Relative humidity'),
-  fW.add(weather, 'windSpeed', 0, 35, 0.1).name('Wind speed (m/s)'),
-  fW.add(weather, 'windDir', 0, 360, 5).name('Wind towards (°)'),
-  fW.add(weather, 'rain', 0, 50, 0.5).name('Rain / snow (mm/h of water)'),
-  fW.add(weather, 'lightning', 0, 20, 0.5).name('Lightning (strikes a minute)'),
-  fW.add(weather, 'fog', 0, 1, 0.01).name('Fog'),
-];
-wc.forEach((c) => c.onChange(() => view.applyWeather(weather)));
+let wc = [];
+const wNow = { here: '', now: '' };
+let wNowCtl = null;
+const wUpdate = () => wc.forEach((c) => c.updateDisplay());
 // weather presets: a gale with driving rain and a high sea, or a calm
 const setWeather = (o) => {
-  Object.assign(weather, o);
-  if (sim.weather !== weather) Object.assign(sim.weather, o);
-  wc.forEach((c) => c.updateDisplay());
-  view.applyWeather(weather);
+  Object.assign(settingsNow(), o);
+  syncWeather();
+  wUpdate();
 };
-fW.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
-// lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
-fW.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
-fW.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
 // the seasons: the weather of a typical day, the leaves and the grass, snow lying in winter
 // (below freezing what falls is snow: sim/snow.js)
 // (a season is the scene's: it is built again in it, its ground and walls at that day's
@@ -264,37 +280,28 @@ fW.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0
 function setSeason(s) {
   const p = SEASONS[s];
   if (!p) return;
-  Object.assign(weather, p, { season: s });
+  Object.assign(settingsNow(), p, { season: s });
   restart();
-  wc.forEach((c) => c.updateDisplay());
+  wUpdate();
 }
 /** Snow lying now (m): a fresh layer over the scene (outdoors), or none. */
 function setSnow(v) {
-  weather.snowCover = v;
-  if (sim.weather !== weather) sim.weather.snowCover = v;
+  settingsNow().snowCover = v;
+  syncWeather(false);
   const w = sim.world;
   if (v > 0) initSnow(w, v);
   else if (w.snow) {
     w.snow.depth.fill(0);
     w.snow.version++;
   }
-  wc.forEach((c) => c.updateDisplay());
+  wUpdate();
 }
-wc.push(
-  fW.add(weather, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onChange(setSeason),
-  fW.add(weather, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(setSnow),
-  fW.add(weather, 'sunshine', 0, 1, 0.05).name('Sunshine (0 overcast, 1 clear)').onChange(() => view.applyWeather?.(weather)),
-);
-fW.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidity: 0.92, fog: 0.12, sunshine: 0.2 }) }, 'snowfall').name('Snowfall (−4 °C, snowing: it builds up)');
-// the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
-fW.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');
-fW.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
 // ice on the ponds and the canal (sim/ice.js): it forms below freezing (slowly, as it does: the
 // speed-up to watch it), bears you from ~5 cm (only just: it creaks), 10 cm safely, a dragon 30 cm
 /** Ice lying now (m): on all the fresh water open to the sky. */
 function setIce(v) {
-  weather.iceCover = v;
-  if (sim.weather !== weather) sim.weather.iceCover = v;
+  settingsNow().iceCover = v;
+  syncWeather(false);
   import('./sim/ice.js').then(({ initIce }) => {
     const w = sim.world;
     w.noIce = false;
@@ -305,14 +312,71 @@ function setIce(v) {
       if (w.snow) w.snow.seenGeom = -1;
     }
   });
-  wc.forEach((c) => c.updateDisplay());
+  wUpdate();
 }
-wc.push(
-  fW.add(weather, 'iceCover', 0, 0.6, 0.01).name('Ice on the water (m)').onFinishChange(setIce),
-  fW.add(weather, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)').onChange(() => (sim.weather.iceSpeed = weather.iceSpeed)),
-);
-fW.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
-fW.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
+/** What the drifting weather is doing now (a line in the folder). */
+function weatherNowText() {
+  const W = sim?.weather;
+  if (!W) return '';
+  return `${W.windSpeed.toFixed(1)} m/s → ${Math.round(W.windDir)}°, ${W.ambient.toFixed(1)} °C${W.rain > 0.05 ? `, rain ${W.rain.toFixed(1)} mm/h` : ''}`;
+}
+
+/** The folder for where you are now (a scene loaded, a zone entered). */
+function buildWeatherFolder() {
+  for (const c of [...fW.controllers]) c.destroy();
+  for (const c of [...fW.folders]) c.destroy();
+  wc = [];
+  wNowCtl = null;
+  const W = settingsNow();
+  const exp = exposureOf(placeNow());
+  wNow.here = EXPOSURES[exp];
+  fW.add(wNow, 'here').name('Here').disable();
+  const live = (c) => (wc.push(c), c.onChange(() => syncWeather()));
+  if (exp !== 'outdoor') {
+    fW.title(`Weather (none here: ${exp === 'underground' ? 'underground' : exp === 'sealed' ? 'a sealed cabin' : 'indoors'})`);
+    live(fW.add(W, 'ambient', -20, 45, 0.5).name('Air temperature (°C)'));
+    live(fW.add(W, 'humidity', 0, 1, 0.01).name('Relative humidity'));
+    return;
+  }
+  fW.title('Weather');
+  W.vary ??= 'fixed';
+  wc.push(
+    fW
+      .add(W, 'vary', Object.fromEntries(Object.entries(VARY).map(([k, v]) => [v, k])))
+      .name('Changes by itself')
+      .onChange((v) => {
+        syncWeather();
+        if (wNowCtl) wNowCtl.show(v !== 'fixed');
+      }),
+  );
+  wNow.now = weatherNowText();
+  wNowCtl = fW.add(wNow, 'now').name('Now').disable().show(W.vary !== 'fixed');
+  live(fW.add(W, 'ambient', -20, 45, 0.5).name('Air temperature (°C)'));
+  live(fW.add(W, 'humidity', 0, 1, 0.01).name('Relative humidity'));
+  live(fW.add(W, 'windSpeed', 0, 35, 0.1).name('Wind speed (m/s)'));
+  live(fW.add(W, 'windDir', 0, 360, 5).name('Wind towards (°)'));
+  live(fW.add(W, 'rain', 0, 50, 0.5).name('Rain / snow (mm/h of water)'));
+  live(fW.add(W, 'lightning', 0, 20, 0.5).name('Lightning (strikes a minute)'));
+  live(fW.add(W, 'fog', 0, 1, 0.01).name('Fog'));
+  live(fW.add(W, 'sunshine', 0, 1, 0.05).name('Sunshine (0 overcast, 1 clear)'));
+  wc.push(
+    fW.add(W, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onChange(setSeason),
+    fW.add(W, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(setSnow),
+    fW.add(W, 'iceCover', 0, 0.6, 0.01).name('Ice on the water (m)').onFinishChange(setIce),
+  );
+  live(fW.add(W, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)'));
+  const fP = fW.addFolder('Presets').close();
+  fP.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
+  // lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
+  fP.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
+  fP.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
+  fP.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidity: 0.92, fog: 0.12, sunshine: 0.2 }) }, 'snowfall').name('Snowfall (−4 °C, snowing: it builds up)');
+  fP.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');
+  // the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
+  fP.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
+  fP.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
+  fP.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
+}
 
 const fV = gui.addFolder('View');
 fV.add(state, 'mode', { Realistic: 'realistic', 'Thermal camera': 'thermal' })
@@ -693,6 +757,7 @@ canvas.addEventListener('pointerup', (e) => {
 
 // ---------------------------------------------------------------------------
 let last = performance.now();
+let weatherClock = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -706,7 +771,22 @@ function frame(now) {
   if (torching && torchPoint) sim.holdTorch(torchPoint, state.torchPower, Math.max(sim.world.h, state.toolRadius * 0.5));
   if (state.running && sim) {
     // the walk-through runs in real time
-    const done = sim.advance(dt * (walk.active ? 1 : state.timeScale), 22);
+    const simDt = dt * (walk.active ? 1 : state.timeScale);
+    // the weather changing by itself (outdoors, when set to): gusts, the wind veering, showers
+    const W = settingsNow();
+    if (W.vary && W.vary !== 'fixed' && exposureOf(placeNow()) === 'outdoor') {
+      drift.step(simDt, W.vary);
+      syncWeather(false);
+      weatherClock += dt;
+      if (weatherClock > 1) {
+        // (the sky, the fog, the sea and the grass follow once a second)
+        weatherClock = 0;
+        view.applyWeather(sim.weather);
+        wNow.now = weatherNowText();
+        wNowCtl?.updateDisplay();
+      }
+    }
+    const done = sim.advance(simDt, 22);
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
     // the candles near the camera in fine detail (sim/patches.js), within a few ms a frame
     if (sim.patches) sim.patches.enabled = state.detail;
@@ -729,6 +809,8 @@ const editor = new Editor({
     return sim;
   },
   weather: () => weather,
+  weatherHere: () => settingsNow(), // the settings of where you are (the zone's own, or the scene's)
+  place: () => placeNow(),
   load,
   restart,
   state,
@@ -791,12 +873,14 @@ if (SCENARIOS[qs.get('scenario')] && !SCENARIOS[qs.get('scenario')].page) state.
 // ...&snow=0.4: that much snow lying
 if (qs.get('snow') !== null && Number.isFinite(Number(qs.get('snow')))) setSnow(Number(qs.get('snow')));
 // ...&storm=1: a gale with rain; ...&wind=12&rain=8: the weather to start with (wind m/s, rain mm/h)
-if (qs.get('storm')) for (const [k, v] of Object.entries({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 })) weather[k] = sim.weather[k] = v;
+if (qs.get('storm')) Object.assign(settingsNow(), { windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 });
+if (qs.get('vary') in VARY) settingsNow().vary = qs.get('vary');
 for (const [k, key] of [['wind', 'windSpeed'], ['winddir', 'windDir'], ['rain', 'rain'], ['fog', 'fog'], ['lightning', 'lightning']]) {
   const v = Number(qs.get(k));
-  if (qs.get(k) !== null && Number.isFinite(v)) weather[key] = sim.weather[key] = v;
+  if (qs.get(k) !== null && Number.isFinite(v)) settingsNow()[key] = v;
 }
-view.applyWeather(weather);
+syncWeather();
+wUpdate();
 // ...&blast=x,y,z,energy: an explosion there after a second (for testing: energy in J, a grenade ~6e5)
 if (qs.get('blast') && !(Number(qs.get('advance')) > 0)) {
   const [bx, by, bz, be] = qs.get('blast').split(',').map(Number);

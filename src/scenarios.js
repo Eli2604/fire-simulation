@@ -231,6 +231,7 @@ export const SCENARIOS = {
     description: 'An office corridor with a suspended ceiling. After 20 s the gas pipe hidden in the ceiling void bursts and ignites. Smoke leaks through the tiles and fills the corridor from the top down; tiles drop, the grid sags, paint blisters and peels. Try the firefighter walk-through.',
     world: { size: [17, 4.2, 7.6], h: 0.1 },
     weather: w({ ambient: 18, humidity: 0.5 }),
+    exposure: 'indoor', // (no weather in an office corridor)
     timeScale: 1,
     view: { camera: [1.2, 3.8, -1.5], walk: true },
     objects: [{ type: 'hallway', params: {}, x: 9.5, z: 2 }],
@@ -240,6 +241,7 @@ export const SCENARIOS = {
     description: 'The same office corridor and gas pipe burst, now with sprinklers. Each glass bulb heats with the gas around it and bursts at 68 °C; the heads spray, cool the smoke, wet everything and the water collects on the floor. Pick up the wall extinguisher or the hose reel (E) and close office doors to keep the fire out.',
     world: { size: [17, 4.2, 7.6], h: 0.1 },
     weather: w({ ambient: 18, humidity: 0.5 }),
+    exposure: 'indoor', // (no weather in an office corridor)
     timeScale: 1,
     view: { camera: [1.2, 3.8, -1.5], walk: true },
     objects: [{ type: 'hallway', params: { sprinklers: true }, x: 9.5, z: 2 }],
