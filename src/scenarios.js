@@ -90,7 +90,7 @@ export const SCENARIOS = {
 
   laundry: {
     name: 'Laundry on the line',
-    description: 'A warm, breezy afternoon: the wash hangs on the line in the garden, wet from the machine (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks). It dries in the sun and the wind (cotton holds a lot of water; it will not burn while it is wet). The barbecue on the lawn is going. After a quarter of an hour a spark from it lands at the foot of the sheet: if the sheet has dried by then it catches, and the fire runs along the line; the shirts shrink, melt and drip before they burn, garments burnt through at the top fall.',
+    description: 'A warm, breezy afternoon: the wash has hung on the line in the garden since lunch and is nearly dry (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks; cotton fresh from the machine holds almost its own weight in water and will not burn while it is wet). The barbecue on the lawn is going. Half a minute in, a spark from it lands at the foot of the sheet: it catches, and the fire runs along the line; the cotton chars and burns through to holes, the shirts shrink, melt and drip before they burn, garments burnt through at the top fall.',
     world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
     weather: w({ ambient: 27, humidity: 0.35, windSpeed: 3, windDir: 20 }),
     timeScale: 15,
@@ -98,8 +98,8 @@ export const SCENARIOS = {
     objects: [
       // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
       { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
-      // (a spark from the barbecue lands at the foot of the sheet after 15 minutes, simulated time)
-      { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.8, sparkAfter: 900 }, x: 3.5, z: 2.6 },
+      // (nearly dry after a few hours on the line; a spark from the barbecue lands at the foot of the sheet after half a minute)
+      { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.2, sparkAfter: 30 }, x: 3.5, z: 2.6 },
       // the barbecue on the lawn, burning (its sparks)
       { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
       // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
