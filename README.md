@@ -35,11 +35,17 @@ at the top switches between:
   it there. Del removes, Ctrl+D duplicates, Ctrl+Z / Ctrl+Y undo and redo. With nothing selected
   the right shows the world: name, size, voxel size, ground, weather, the fire at start. Every
   change rebuilds the scene (the voxels are made from the description).
-- **🦴 Rig** (R from a selected character): the characters on a stage of their own
-  (`rig/stage.js`): the soldier (every clip, loadouts, weapons, gear, hit zones) and the dragon
-  (acts, wings, hit zones). Its zone tables are the ones the world's hit tests use, so what you
-  adjust there applies when you play. A squad, an enemy or the dragon selected in Edit world
-  opens with *Rig the soldier / the dragon*.
+- **🦴 Rig** (R from a selected character or vehicle): a stage of its own (`rig/stage.js`) with an
+  **Object** drop-down: the *soldier* (every clip, loadouts, weapons, gear, hit zones), a *squad*
+  (the fire team of `models/squad.js` in formation, playing clips together; pick a member, add a
+  flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), a *car* (idle, drive,
+  steer, doors open, burning), a *jet* (idle, taxi, gear up / down, flaps, afterburner, banking)
+  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's and dragon's zone tables are the
+  ones the world's hit tests use, so what you adjust there applies when you play. The vehicles'
+  hit parts (car: engine, fuel tank, tyres, cabin; jet: cockpit, fuel tanks, engines, tail, wings;
+  boat: hull, engine, fuel tank, cabin) are `models/vehicleZones.js`, shown, resized and hit on
+  click in the rig; the simulation does not use that table yet. A squad, an enemy, the dragon, a
+  car or the jet selected in Edit world opens with *Rig the …*.
 
 **Scene ▾**: save the scene in this browser, open what you saved, export / import JSON, a new
 empty scene, and every scenario. The drone camp is a world of another scale (a swarm over
