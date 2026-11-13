@@ -1066,17 +1066,31 @@ export const LOD = {
   full: { person: 0.0045, carrier: 0.0045, legs: 0.005, face: 0.0021, hands: 0.0026, pack: 0.0045, helmet: 0.0021, gun: 0.0026, mag: 0.0022 },
   game: { person: 0.006, carrier: 0.006, legs: 0.0065, face: 0.003, hands: 0.0035, pack: 0.006, helmet: 0.003, gun: 0.0035, mag: 0.003 },
   far: { person: 0.009, carrier: 0.009, legs: 0.009, face: 0.0045, hands: 0.005, pack: 0.009, helmet: 0.0045, gun: 0.005, mag: 0.0045 },
+  // what a figure wears beyond a few metres (and what every figure's shadow is cast with):
+  // about a fifteenth of the triangles of 'game'
+  low: { person: 0.021, carrier: 0.021, legs: 0.022, face: 0.0095, hands: 0.011, pack: 0.021, helmet: 0.0095, gun: 0.011, mag: 0.01 },
 };
+/** Beyond this (m from the camera) a figure shows its 'low' meshes (setDetail). */
+export const NEAR_DETAIL = 6;
 const cache = {};
 /** Overridable: how to create a sculpt worker (the single-file build inlines it). */
 export const workerFactory = { make: () => new Worker(new URL('./sculpt.worker.js', import.meta.url), { type: 'module' }) };
 
 /**
  * Sculpts and assembles the operator's geometry once per level of detail.
- * onProgress(part, 0..1). Resolves to the assets OperatorFigure is built from.
+ * onProgress(part, 0..1). Resolves to the assets OperatorFigure is built from. Unless distant is
+ * false, the 'low' set is sculpted after it and hung on the result as A.lo (figures far from the
+ * camera, and every figure's shadow, use it from then on: OperatorFigure.setDetail).
  */
-export function loadOperatorAssets({ lod = 'game', onProgress, sync = false } = {}) {
+export function loadOperatorAssets({ lod = 'game', onProgress, sync = false, distant = !sync } = {}) {
   if (cache[lod]) return cache[lod];
+  if (distant && lod !== 'low' && lod !== 'far') {
+    const p = loadOperatorAssets({ lod, onProgress, sync, distant: false });
+    return (cache[lod] = p.then((A) => {
+      A.loReady = loadOperatorAssets({ lod: 'low', sync, distant: false }).then((lo) => (A.lo = lo));
+      return A;
+    }));
+  }
   const H = LOD[lod];
   cache[lod] = new Promise((resolve) => {
     const results = {};
@@ -1589,49 +1603,58 @@ export class OperatorFigure {
     const person = new THREE.Group();
     person.name = 'person';
     g.add(person);
-    for (const geo of A.person) {
+    this.lod = []; // [mesh, key in A, index or -1]: what setDetail swaps
+    this.detail = true;
+    A.person.forEach((geo, i) => {
       const m = new THREE.SkinnedMesh(geo, mat);
+      this.lod.push([m, 'person', i]);
       m.frustumCulled = false;
       m.castShadow = m.receiveShadow = true;
       person.add(m);
       m.bind(skel);
-    }
+    });
+    // each frame, just before the body is drawn: full meshes near the camera, the low ones further off
+    // (takes effect from the next frame; the shadow pass does not call it)
+    this.autoDetail = true;
+    person.children[0].onBeforeRender = (r, s, cam) => this.autoDetail && this.detailFor(cam);
     this.sling = new THREE.SkinnedMesh(A.sling, mat);
     this.sling.frustumCulled = false;
     this.sling.castShadow = true;
     person.add(this.sling);
     this.sling.bind(skel);
-    const mk = (geo) => {
+    const mk = (geo, key) => {
       const m = new THREE.Mesh(geo, mat);
+      this.lod.push([m, key, -1]);
       m.castShadow = m.receiveShadow = true;
       return m;
     };
-    const rifle = mk(A.rifle);
+    const rifle = mk(A.rifle, 'rifle');
     rifle.name = 'rifle';
     bones.weapon.add(rifle);
-    const mag = mk(A.mag);
+    const mag = mk(A.mag, 'mag');
     mag.name = 'mag';
     bones.mag.add(mag);
     const helmet = new THREE.Group();
     helmet.name = 'helmet';
-    helmet.add(mk(A.helmet));
+    helmet.add(mk(A.helmet, 'helmet'));
     A.cords.forEach((c) => helmet.add(new THREE.Mesh(c, A.black)));
     bones.head.add(helmet);
     const pack = new THREE.Group();
     pack.name = 'pack';
-    pack.add(mk(A.pack));
+    pack.add(mk(A.pack, 'pack'));
     const ant = new THREE.Mesh(A.antenna, A.black);
     ant.castShadow = true;
     pack.add(ant);
     bones.chest.add(pack);
     // the secondary carbine, across the back
-    const sec = mk(A.secondary);
+    const sec = mk(A.secondary, 'secondary');
     sec.name = 'secondary';
     sec.position.copy(A.slungPos);
     sec.quaternion.copy(A.slungQ);
     bones.chest.add(sec);
     // the plate carrier with its pouches: a skinned mesh of its own over the shirt (setArmour)
     const carrier = new THREE.SkinnedMesh(A.carrier, mat);
+    this.lod.push([carrier, 'carrier', -1]);
     carrier.name = 'carrier';
     carrier.frustumCulled = false;
     carrier.castShadow = carrier.receiveShadow = true;
@@ -2047,6 +2070,29 @@ export class OperatorFigure {
    */
   setAim(p) {
     this.aimAt = p ? (Array.isArray(p) ? new THREE.Vector3(p[0], p[1], p[2]) : p.clone()) : null;
+  }
+  /**
+   * Full meshes (true) or the 'low' ones (false, once A.lo is sculpted): the same bones, material
+   * and attributes, so it is only a swap of geometry. Returns whether it changed.
+   */
+  setDetail(hi) {
+    const lo = this.A.lo;
+    if (!lo || hi === this.detail) return false;
+    this.detail = hi;
+    const src = hi ? this.A : lo;
+    for (const [m, k, i] of this.lod) m.geometry = i < 0 ? src[k] : src[k][i];
+    return true;
+  }
+  /**
+   * setDetail by the camera's distance (camera: an Object3D; measured in the figure's own metres,
+   * whatever its scale in the scene; a little hysteresis, so it does not flicker).
+   */
+  detailFor(camera, near = NEAR_DETAIL) {
+    if (!this.A.lo) return false;
+    const e = this.group.matrixWorld.elements, c = camera.matrixWorld.elements;
+    const k = Math.hypot(e[0], e[1], e[2]) || 1; // the figure's world scale
+    const d = Math.hypot(e[12] + e[4] * 1.2 - c[12], e[13] + e[5] * 1.2 - c[13], e[14] + e[6] * 1.2 - c[14]) / k;
+    return this.setDetail(this.detail ? d < near * 1.15 : d < near);
   }
   update(dt) {
     this.clock += dt;

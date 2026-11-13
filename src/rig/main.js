@@ -78,7 +78,7 @@ scene.add(new THREE.HemisphereLight('#cfe3ff', '#9a8260', 0.55));
 const sun = new THREE.DirectionalLight('#fff0d4', 2.2);
 sun.position.set(-8, 12, 10);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(2048, 2048); // 1.7 cm a texel over the range: 4096 cost a quarter of the frame
 Object.assign(sun.shadow.camera, { left: -17, right: 17, top: 17, bottom: -17, near: 1, far: 50 });
 sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.035;
@@ -640,6 +640,8 @@ function host(unit) {
     // the floor under him (the deck, the stairs or the ground); for the grid: the team's level
     floor: (x, z, m) => floorAt(x, z, m ? m.p[1] : teamLevel(unit)),
     path3d,
+    // up on the deck, inside the glass: its corners and the middle of its open sides
+    lookouts: () => [[DECK.x1 - 0.6, DECK.h, DECK.z0 + 0.6], [(DECK.x0 + DECK.x1) / 2, DECK.h, DECK.z0 + 0.6], [DECK.x0 + 0.6, DECK.h, DECK.z0 + 0.6], [DECK.x1 - 0.6, DECK.h, (DECK.z0 + DECK.z1) / 2], [DECK.x0 + 0.6, DECK.h, DECK.z1 - 0.6]],
     indoors: (p) => onDeck(p[0], p[2]) || onStairs(p[0], p[2]),
     hostiles: () => HOSTILES.map((h) => h.d),
     noises: () => NOISES,

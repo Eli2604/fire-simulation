@@ -963,6 +963,9 @@ Big scenes are split twice over:
   way. Only awake blocks go through the solid passes and the air model; every 50th step runs
   fully awake. Rain, an extinguisher in use, sprinklers or a decompression keep everything
   awake.
+- **Soldiers far off are coarser** (OperatorFigure.setDetail): a soldier is ~570k triangles
+  sculpted; beyond 6 m from the camera it swaps to the 'low' sculpt (its shadow too),
+  ~54k, sculpted in under a second after the first. The rig page's shadow map is 2048².
 - **The heat at 20 Hz** (Simulation.step): the heat, the air, fire and smoke and the weather
   step at most 20 times a second; at 60 frames a second they take every third frame (with
   the time since they last stepped), while the soldiers, projectiles, debris and water move
@@ -1154,6 +1157,9 @@ way); he closes in and stabs. A man **badly hit** is called in by the nearest of
 The rig page's range has a **two-floor structure**: an open ground floor under a deck 3 m up, a
 staircase with glass rails (they stop you, not your sight); the tools place noises, hostiles and
 investigations up on the deck too, and the squad works its way up the stairs to them.
+The deck is a **lookout** (`host.lookouts`): before contact a rifleman climbs it to look round,
+and on contact the gunner takes it as his overwatch when it sees the threat (from 3 m up he sees
+over the walls); he stays up there while the team is within reach, and comes down by the stairs.
 
 **Hosted pages**: built with `PAGE_URLS` (`scripts/build-rig-artifact.mjs`), each page knows where
 the others are hosted and its scene list opens them (`src/pages.js`).

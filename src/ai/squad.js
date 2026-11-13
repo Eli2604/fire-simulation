@@ -41,7 +41,8 @@
  *    host.visibility / host.dark); lights on in the dark unless that would give them away;
  *    backup from the other teams when two men are down or the enemy outnumbers them.
  *  - Positions: cover at a corner (covered on two sides) is better; the gunner prefers higher
- *    ground a little behind the team (he sees further) and calls out good cover from there.
+ *    ground a little behind the team (he sees further) and calls out good cover from there; a
+ *    lookout up a staircase (host.lookouts) beats a mound. Routes between levels take the stairs.
  *  - Orders: the first squad leads. On contact its commander sends every other team to a flank
  *    of the threat ("Bravo, take the west flank"); a team that gets well ahead of the lead is
  *    told to hold off until the lead catches up, then to continue; when the threat moves away
@@ -64,6 +65,11 @@
  *   ownMove(m)         true while m is not this AI's to move: a guard on his patrol, or
  *                      running from fire (optional; ai/enemies.js)
  *   hostiles(), lineOfSight(a, b), visibility(), dark(), noises()  what they can sense
+ *   path3d(a, b)       a way between levels (by the stairs), [points], last = b (optional)
+ *   lookouts()         raised places with a view (a deck, a roof): [[x, y, z], ...] (optional).
+ *                      Before contact one rifleman climbs to the best of them and watches from
+ *                      there; on contact the gunner takes one that sees the threat as his
+ *                      overwatch, while the team stays within reach of it
  * For the renderer each member gets: anim (clip name), aimAt, path / pathI, cover, track (where he went, [x, z]),
  * signal { text, until }, moving, speed.
  */
@@ -442,6 +448,14 @@ export class SquadAI {
 
   /** A* from p0 to p1: world points, hugging walls. */
   route(p0, p1) {
+    if (!this.blocked) this.rebuildNav(); // (before any contact it may not be built yet)
+    // to another level (the deck, down from it): the grid is one level, so by the stairs (hosts
+    // with lookouts; elsewhere ai/tactics.js clearTo takes the team between floors)
+    const y0 = p0[1] ?? 0, y1 = p1[1] ?? 0;
+    if (this.host.lookouts && this.host.path3d && Math.abs(y1 - y0) > 1.5) {
+      const via = this.host.path3d(p0, p1);
+      if (via?.length > 1) return y1 > y0 ? [...this.route(p0, via[0]), ...via.slice(1)] : [...via.slice(0, -1), ...this.route(via[via.length - 2], p1)];
+    }
     const { nx, nz } = this;
     const s = this.nearestFree(p0[0], p0[2]), g = this.nearestFree(p1[0], p1[2]);
     if (s < 0 || g < 0) return [p1.slice()];
@@ -647,6 +661,55 @@ export class SquadAI {
   }
 
   /** Each bound: send the moving team to cover nearer the threat. */
+  /**
+   * The host's lookouts (raised places reached by stairs), as cover candidates for the gunner:
+   * the ones that see T (from the eye up there). k < 0: not a grid cell.
+   */
+  lookoutsFor(T) {
+    const L = this.host.lookouts?.() ?? [];
+    return L.filter((p) => !T || (this.host.lineOfSight?.(p, T) ?? true)).map((p, i) => ({ k: -1 - i, p: p.slice(), q: 1 }));
+  }
+  /**
+   * Before contact: one rifleman (R1, else R2) climbs to the lookout that sees the most of the
+   * ground round the team and watches from up there (he sees over the walls).
+   */
+  postLookout() {
+    if (this.lookoutPosted || this.inv) return;
+    const L = this.host.lookouts?.() ?? [];
+    const al = this.members().filter((m) => !m.dead);
+    if (!L.length || !al.length) return (this.lookoutPosted = true);
+    const m = al.find((x) => x.squad === 'R1' && !this.busy(x) && !x.group) ?? al.find((x) => x.squad === 'R2' && !this.busy(x) && !x.group);
+    if (!m) return;
+    const c = centroid(al), [x0, z0, x1, z1] = this.host.bounds;
+    // how much he sees from there: a ring of points out over the ground
+    const view = (p) => {
+      let n = 0;
+      for (let a = 0; a < 16; a++)
+        for (const r of [6, 11, 16]) {
+          const q = [p[0] + Math.cos((a * Math.PI) / 8) * r, 0, p[2] + Math.sin((a * Math.PI) / 8) * r];
+          if (q[0] < x0 || q[0] > x1 || q[2] < z0 || q[2] > z1) continue;
+          if (this.host.lineOfSight?.(p, q) ?? true) n++;
+        }
+      return n;
+    };
+    let best = null, bs = -Infinity;
+    for (const p of L) {
+      const d = dist2(p, c);
+      if (d > 25) continue;
+      const sc = view(p) - d * 0.3;
+      if (sc > bs) (bs = sc), (best = p);
+    }
+    this.lookoutPosted = true;
+    if (!best) return;
+    m.lookout = true;
+    m.cover = best.slice();
+    this.say(m, `${this.unit}, ${NAME[m.squad]}, going up top for a look`, 'none');
+    this.follow(m, this.route(m.p, best), 'run', (q) => {
+      q.arrived = true;
+      this.say(q, `${this.unit}, ${NAME[q.squad]}, up top, watching the area`, 'intel');
+    });
+  }
+
   assignBound() {
     const al = this.members().filter((m) => !m.dead);
     const movers = al.filter((m) => teamOf(m) === this.moving && !m.goingFor), over = al.filter((m) => teamOf(m) !== this.moving);
@@ -665,26 +728,34 @@ export class SquadAI {
     const mgHigh = mg && this.high?.length && mg.p[1] > Math.min(...al.map((m) => m.p[1])) + 0.5;
     for (const u of movers) {
       const du = dist2(u.p, T);
-      if (u.squad === 'MG' && this.high?.length) {
-        // higher ground a little behind the team, within reach
-        const cy = centroid(al)[1];
+      // up on a lookout that sees the threat, the team within reach: he stays there, watching
+      if (u.lookout && u.p[1] > 1.5 && (this.host.lineOfSight?.(u.p, T) ?? true) && dist2(u.p, oc) < 24) {
+        u.arrived = true;
+        continue;
+      }
+      const looks = u.squad === 'MG' ? this.lookoutsFor(T) : [];
+      if (u.squad === 'MG' && (this.high?.length || looks.length)) {
+        // higher ground a little behind the team, within reach: a lookout up the stairs (one
+        // that sees the threat) or a rise in the ground
+        const cy = Math.min(...al.map((m) => m.p[1]));
         let hb = null, hs = -1e9;
-        for (const c of this.high) {
-          if (taken.has(c.k)) continue;
+        for (const c of [...(this.high ?? []), ...looks]) {
+          if (c.k >= 0 && taken.has(c.k)) continue;
           const tr = dist2(c.p, u.p), dc = dist2(c.p, T);
-          if (tr > 14 || dc < dist2(oc, T) - 3) continue;
-          const sc = 3 * (c.p[1] - cy) - Math.abs(tr - 6) * 0.2 - Math.max(0, dist2(oc, T) - dc) * 0.5;
+          if (tr > (c.k < 0 ? 22 : 14) || dc < dist2(oc, T) - 3) continue;
+          const sc = 3 * (c.p[1] - cy) - Math.abs(tr - 6) * (c.k < 0 ? 0.05 : 0.2) - Math.max(0, dist2(oc, T) - dc) * 0.5 - (c.k < 0 && dist2(oc, c.p) > 24 ? 50 : 0);
           if (sc > hs) (hs = sc), (hb = c);
         }
         if (hb && hs > 0) {
-          taken.add(hb.k);
-          u.coverCell = hb.k;
+          if (hb.k >= 0) taken.add(hb.k);
+          u.coverCell = hb.k >= 0 ? hb.k : -1;
           u.cover = hb.p.slice();
           u.highGround = true;
+          u.lookout = hb.k < 0;
           this.follow(u, this.route(u.p, hb.p), 'run', (m) => {
             m.arrived = true;
             m.fireT = 0.6;
-            this.say(m, `${this.unit}, gunner, on high ground, I have eyes on the area and your backs`, 'intel');
+            this.say(m, m.lookout ? `${this.unit}, gunner, up top, I have eyes on the whole area and your backs` : `${this.unit}, gunner, on high ground, I have eyes on the area and your backs`, 'intel');
           });
           continue;
         }
@@ -703,6 +774,8 @@ export class SquadAI {
           best = c;
         }
       }
+      u.lookout = false;
+      u.highGround = false;
       let dest;
       if (best) {
         taken.add(best.k);
@@ -926,6 +999,7 @@ export class SquadAI {
     stepClearing(this);
     if (this.breach && !this.breach.g?.route) breachStep(this, this.breach.g, dt);
     if (!this.threat) {
+      if (this.on && this.time > 1.5) this.postLookout();
       for (const m of ms) {
         if (m.dead || this.host.ownMove?.(m)) continue;
         m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
