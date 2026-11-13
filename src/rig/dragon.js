@@ -6,7 +6,8 @@
  * that follow the pose, shown or hidden and adjusted (radius, length, damage), and damage on
  * click: the zone under the cursor is hit (it flashes), bleeds, drips and stains.
  *
- * While the tab is open the soldiers are hidden and paused (rig/stage.js skips their tick).
+ * While it is on the stage (the Object drop-down: Dragon) the soldiers are hidden and paused
+ * (rig/stage.js skips their tick). It is built the first time the dragon is picked.
  */
 import * as THREE from 'three';
 import { createDragonStage, DRAGON_ACTS } from './dragonStage.js';
@@ -332,11 +333,9 @@ export class DragonRig {
     zSel.onchange = this.zoneUI;
     [zR, zL, zM].forEach((s) => (s.oninput = apply));
     this.zoneUI();
-    // the tab opens and closes the dragon's stage
-    this.root.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => this.setActive(b.dataset.tab === 'dragon')));
-    // ?dragon=1 (or ?tab=dragon) opens it; &dact=fly plays an act; &dzones=1 shows the zones; &dhits=neck,head wounds; &dsteps=n runs ahead
+    // (rig/stage.js turns it on and off: setActive, from its Object drop-down)
+    // ?dragon=1 (or ?tab=dragon) opens it (rig/stage.js); &dact=fly plays an act; &dzones=1 shows the zones; &dhits=neck,head wounds; &dsteps=n runs ahead
     if (qs.get('dragon') || qs.get('tab') === 'dragon') {
-      this.root.querySelector('.tabs button[data-tab="dragon"]')?.click();
       if (qs.get('dact')) this.stage.play(qs.get('dact'));
       if (qs.get('dzones') === '1') $('tgDZones').click();
       if (qs.get('dfollow') === '1') $('tgDFollow').click();

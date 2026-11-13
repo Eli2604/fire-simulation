@@ -6,9 +6,11 @@
  *               picked in the view or the list, moved and turned with a gizmo, their parameters
  *               on the right, new ones from a palette, removed, duplicated; undo / redo; the
  *               world's size, voxels, ground and weather. Every change rebuilds the scene.
- *   Rig         the characters: the soldier (clips, loadouts, gear, hit zones) and the dragon
- *               (acts, wing damage, hit zones) on a stage of their own (rig/stage.js). Their hit
- *               zone tables are the ones the world's hit tests use: edits apply when you play.
+ *   Rig         the characters and vehicles on a stage of their own (rig/stage.js), picked in its
+ *               Object drop-down: the soldier (clips, loadouts, gear, hit zones), a squad (the
+ *               fire team in formation), the dragon (acts, wing damage, hit zones), a car, a jet,
+ *               a boat (acts, hit parts). The soldier's and dragon's hit zone tables are the ones
+ *               the world's hit tests use: edits apply when you play.
  *
  * Scenes: the built-in scenarios, scenes saved in this browser (localStorage), a new empty one,
  * JSON import / export. The drone camp, a world of another scale (a swarm over kilometres of
@@ -24,6 +26,7 @@ import { MODELS, defaultParams } from '../models/index.js';
 import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
 import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf } from '../sim/weather.js';
+import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -134,7 +137,7 @@ export class Editor {
     this.sceneBtn = el('button', { class: 'scene', title: 'Open a scene, save this one, start a new one', onclick: () => this.toggleMenu() }, 'Scene ▾');
     bar.append(
       el('span', { class: 'brand' }, 'World editor'),
-      el('div', { class: 'modes' }, btn('play', '▶ Play', 'Run the world: tools, walk-in, squads, fire (P)'), btn('edit', '✎ Edit world', 'Place, move, turn and set up objects (E)'), btn('rig', '🦴 Rig', 'The characters: soldier and dragon, their animations and hit zones (R)')),
+      el('div', { class: 'modes' }, btn('play', '▶ Play', 'Run the world: tools, walk-in, squads, fire (P)'), btn('edit', '✎ Edit world', 'Place, move, turn and set up objects (E)'), btn('rig', '🦴 Rig', 'Characters and vehicles (soldier, squad, dragon, car, jet, boat): their animations and hit zones (R)')),
       this.sceneBtn,
     );
     this.menu = el('div', { id: 'sceneMenu', hidden: true });
@@ -190,7 +193,9 @@ export class Editor {
       const st = await this.stage(m);
       if (this.mode !== m) return;
       st.show();
-      if (m === 'rig') st.select?.(what ?? this.rigTarget() ?? { kind: 'soldier' });
+      // (nothing to show: the rig keeps what it had, its own default the first time)
+      const target = m === 'rig' ? what ?? this.rigTarget() : null;
+      if (target) st.select?.(target);
     }
     const u = new URL(location.href);
     if (m === 'play') u.searchParams.delete('mode');
@@ -219,12 +224,9 @@ export class Editor {
     return this.stages[m];
   }
 
-  /** What the rig should show: the character selected in the world, if one is. */
+  /** What the rig should show: the character or vehicle selected in the world, if one is (rig/objects.js). */
   rigTarget() {
-    const o = this.ctx.scene.objects[this.sel];
-    if (!o || !CHARACTERS[o.type]) return null;
-    if (CHARACTERS[o.type] === 'dragon') return { kind: 'dragon' };
-    return { kind: 'soldier', loadout: o.params?.flameTrooper ? 'torch' : 'rifle' };
+    return rigTargetFor(this.ctx.scene.objects[this.sel]);
   }
 
   toggleMenu(show = this.menu.hidden) {
@@ -389,7 +391,7 @@ export class Editor {
       else c = fp.add(ob.params, key, spec.min, spec.max, spec.step);
       c.name(spec.label ?? key).onFinishChange(change);
     }
-    if (CHARACTERS[ob.type]) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(CHARACTERS[ob.type] === 'dragon' ? '🦴 Rig the dragon (acts, wings, hit zones)' : '🦴 Rig the soldier (animations, gear, hit zones)');
+    if (RIG_TYPES[ob.type]) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
   }
 
   /**

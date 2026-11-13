@@ -4,21 +4,26 @@
  * armour, reload speed and look, the hit areas (shown, resized, with damage multipliers: the
  * operator/rig.js ZONES table itself, so edits apply in the simulation too), damage on click, the
  * detachable gear (rifle, helmet, pack as rigid bodies) and re-equipping, hand grenades and
- * flash-bangs with a local blast, an FPS readout, and the Dragon tab (rig/dragon.js: the
- * simulation's dragon, its acts, wing damage and hit zones: ai/dragon.js DRAGON_ZONES itself).
+ * flash-bangs with a local blast, an FPS readout. An Object drop-down picks what is on the stage
+ * (rig/objects.js RIG_OBJECTS): the soldier; a squad (a fire team in formation, models/squad.js's
+ * roles, playing clips together, a member picked to work on); the dragon (rig/dragon.js: the
+ * simulation's dragon, its acts, wing damage and hit zones: ai/dragon.js DRAGON_ZONES itself); a
+ * car, a jet or a boat (rig/vehicles.js: their acts and hit parts, models/vehicleZones.js).
  *
  * The soldiers' range (walls, crates, the deck, squads and their AI, hostiles) lives in the voxel
  * world now: this stage only shows the characters.
  *
  *   const rig = mountRig(el, { onExit: () => editor.setMode('play') });
  *   rig.show();                                      // renders (its own canvas) until hide()
- *   rig.select({ kind: 'soldier', loadout: 'torch' }); // or { kind: 'dragon' }
+ *   rig.select({ kind: 'soldier', loadout: 'torch' }); // or { kind: 'dragon' }, { kind: 'squad' },
+ *                                                    // { kind: 'car' | 'jet' | 'boat', params? }
  *   rig.hide(); rig.dispose();
  *
  * Everything it puts in the page sits inside `el` (class "rigst"; its elements are found by
  * data-id inside it, its CSS is scoped to .rigst), so it does not clash with the page around it.
  * URL options (opts.params, default location.search): ?anim= ?anim2= ?play=&at= ?det= ?load=
  * ?weapon= ?armour=0 ?reload= ?look= ?zones=1 ?t= ?cam= ?nopanel=1 ?lod= ?sync=1 ?tab=anim|hit|gear|dragon,
+ * ?obj=soldier|squad|dragon|car|jet|boat (&vact= &vzones=1 &vhits=engine,fuel for a vehicle),
  * and the dragon's (?dragon=1 ?dact= ?dzones=1 ?dhits= ?dsteps= ?dspeed= ?dfollow=1: rig/dragon.js).
  */
 import * as THREE from 'three';
@@ -26,6 +31,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, placeZone, LABELS, MOVING, ONCE } from '../operator/rig.js';
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
+import { VehicleRig } from './vehicles.js';
+import { RIG_OBJECTS, VEHICLES, rigKind } from './objects.js';
+import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
 /* Layout: full-bleed field; tabbed control panel docked left; FPS readout top-right; build progress centered */
@@ -49,7 +57,9 @@ const CSS = `
 .rigst .selrow span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .rigst .hp{height:5px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden}
 .rigst .hp i{display:block;height:100%;width:100%;background:var(--ok);transition:width .2s}
-.rigst .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.rigst .obj{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}
+.rigst .obj select{font-family:var(--display);font-size:16px;letter-spacing:.04em;padding:7px 8px}
+.rigst .tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;border-bottom:1px solid var(--line);padding-bottom:8px}
 .rigst .tabs button{padding:6px 4px;font-size:13px}
 .rigst .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
 .rigst .grid button{padding:6px 4px;font-size:13px}
@@ -97,16 +107,20 @@ const HTML = `
 <aside class="panel" data-id="panel" aria-label="Character controls">
   <button type="button" class="back" data-id="back" hidden>← Back to the world</button>
   <div class="lab" data-id="stats">Skinned sculpt · 21 bones</div>
-  <h1>Character Rig</h1>
-  <div class="sel">
+  <h1>Rig</h1>
+  <label class="obj"><span class="lab">Object</span><select data-id="objSel" aria-label="Object to rig"></select></label>
+  <div class="sel" data-id="selBox">
     <div class="selrow"><b data-id="selName">Soldier 1</b><span data-id="selState">idle · 100 HP</span></div>
     <div class="hp"><i data-id="selHp"></i></div>
   </div>
-  <div class="tabs" role="tablist">
+  <div class="sel" data-id="squadBox" hidden>
+    <label class="sl"><span>Member</span><select data-id="memberSel" style="grid-column:2/4"></select></label>
+    <div class="row"><button data-id="tgFlameTr" type="button" aria-pressed="false">Flame trooper (R2)</button><button data-id="tgUav" type="button" aria-pressed="false">Drone operator</button></div>
+  </div>
+  <div class="tabs" role="tablist" data-id="tabs">
     <button type="button" role="tab" data-tab="anim" class="on">Animate</button>
     <button type="button" role="tab" data-tab="hit">Hit areas</button>
     <button type="button" role="tab" data-tab="gear">Gear</button>
-    <button type="button" role="tab" data-tab="dragon">Dragon</button>
   </div>
 
   <section data-pane="anim">
@@ -115,7 +129,7 @@ const HTML = `
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
       <button data-id="tgFire" type="button" aria-pressed="false">Damage on click</button>
     </div>
-    <p class="hint">Click a soldier to select him. Grenade and flash-bang throws land 9 m in front of him; Radio keys the chest radio. Moving clips (walk, run, aim-walk, crawl, swim) send him round a small loop. Once-only clips (reload, jump, signals, hit) return to the previous state. Squads, cover and hostiles are in the world now.</p>
+    <p class="hint">Click a soldier to select him. Grenade and flash-bang throws land 9 m in front of him; Radio keys the chest radio. Moving clips (walk, run, aim-walk, crawl, swim) send him round a small loop. Once-only clips (reload, jump, signals, hit) return to the previous state. Object › Squad puts a fire team in formation (Apply to all on: they play together; pick a member to work on him alone). Cover and hostiles are in the world.</p>
     <details><summary class="lab">Code API</summary>
 <pre>const rig = mountRig(el, { onExit });
 rig.show();
@@ -168,6 +182,26 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <label class="sl"><span>Damage ×</span><input type="range" data-id="dzM" min="0.1" max="5" step="0.1"><output data-id="dzMo"></output></label>
     <div class="row"><button data-id="dRevive" type="button">Revive</button><button data-id="dClean" type="button">Wash the blood away</button></div>
     <p class="hint" data-id="dLastHit">The simulation's own dragon (ai/dragon.js moves and poses it; render/dragon.js draws it). Its hit zones follow the pose; the same zones decide where arrows, bullets and rockets land in the simulation. A wound bleeds: health drains, blood drips where it goes (a trail of drops, in flight too), sprays onto the ground behind the hit and stains its scales. Click it to see a zone; with Damage on click, to hit it there.</p>
+  </section>
+
+  <section data-pane="vehicle" hidden>
+    <div class="sel">
+      <div class="selrow"><b data-id="vName">Car</b><span data-id="vState">idle · 100%</span></div>
+      <div class="hp"><i data-id="vHp"></i></div>
+    </div>
+    <div class="grid" data-id="vActs"></div>
+    <label class="sl"><span>Speed</span><input type="range" data-id="vSpeed" min="0" max="2" step="0.05" value="1"><output data-id="vSpeedO"></output></label>
+    <div class="lab">Hit parts</div>
+    <div class="row"><button data-id="tgVZones" type="button" aria-pressed="false">Show hit areas</button><button data-id="tgVFire" type="button" aria-pressed="false">Damage on click</button><button data-id="vRepair" type="button">Repair</button></div>
+    <label class="sl"><span>Weapon</span><select data-id="vWeapon" style="grid-column:2/4"><option value="bullet">Bullet (25)</option><option value="shell">Cannon shell (120)</option><option value="rocket">Rocket (350)</option></select></label>
+    <label class="sl"><span>Part</span><select data-id="vZoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Size ×</span><input type="range" data-id="vzS" min="0.5" max="2" step="0.05"><output data-id="vzSo"></output></label>
+    <label class="sl"><span>Length ×</span><input type="range" data-id="vzL" min="0.5" max="2" step="0.05"><output data-id="vzLo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" data-id="vzM" min="0.1" max="5" step="0.1"><output data-id="vzMo"></output></label>
+    <p class="hint" data-id="vZoneInfo"></p>
+    <pre data-id="vParts"></pre>
+    <p class="hint" data-id="vLastHit"></p>
+    <p class="hint">The hit parts are models/vehicleZones.js (VEHICLE_ZONES): edits change that table. The simulation does not use it yet (a car burns from its voxels; the jet's flight model keeps its own five parts), it is there for it to take up.</p>
   </section>
 </aside>
 `;
@@ -553,6 +587,8 @@ export function mountRig(root, opts = {}) {
   scene.add(ring);
   function select(e) {
     selected = e;
+    const i = soldiers.indexOf(e);
+    if (i >= 0) $('memberSel').value = String(i);
     onChange();
   }
   function onChange() {
@@ -570,7 +606,7 @@ export function mountRig(root, opts = {}) {
     $$('section[data-pane]').forEach((s) => (s.hidden = s.dataset.pane !== t));
   }
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.tab)));
-  /** The tab as if clicked (the Dragon tab starts and stops the dragon's stage: rig/dragon.js). */
+  /** The tab as if clicked. */
   const clickTab = (t) => root.querySelector(`.tabs button[data-tab="${t}"]`)?.click();
   const animBox = $('anims');
   Object.keys(LABELS).forEach((k) => {
@@ -599,7 +635,7 @@ export function mountRig(root, opts = {}) {
     };
     return b;
   };
-  tg('tgAll', (v) => (allMode = v));
+  const tgAll = tg('tgAll', (v) => (allMode = v));
   const f1 = tg('tgFire', (v) => {
     fireMode = v;
     $('tgFire2').setAttribute('aria-pressed', String(v));
@@ -690,18 +726,102 @@ export function mountRig(root, opts = {}) {
     }
   });
 
-  /* ================= the dragon (its own tab: rig/dragon.js) ================= */
-  const dragonRig = new DragonRig({ scene, camera, controls, renderer, toast, $, qs, root });
+  /* ================= the dragon (rig/dragon.js, built the first time it is picked) and the vehicles ================= */
+  let dragonRig = null;
+  const vehicleRig = new VehicleRig({ scene, camera, controls, renderer, toast, $, qs });
+  /** The soldiers are on the stage (not the dragon or a vehicle). */
+  const people = () => !dragonRig?.active && !vehicleRig.active;
+
+  /* ================= the squad: a fire team in formation (models/squad.js's roles) ================= */
+  const ROLE = { CMD: 'commander', MG: 'gunner', R1: 'rifleman', R2: 'rifleman', UAV: 'drone operator' };
+  const squadOpts = { unit: 'Alpha', flameTrooper: false, droneOperator: false };
+  /** The members as the scene's squad has them (turned to face the camera; the leader in front). */
+  function formation() {
+    const p = Object.fromEntries(Object.entries(squadModel.params).map(([k, s]) => [k, s.value]));
+    Object.assign(p, squadOpts, { level: 0 });
+    return squadModel.build(p).enemies.map((m) => ({ role: m.squad, loadout: m.loadout ?? 'rifle', position: [-m.p[0], 0, -m.p[2]] }));
+  }
+  /** Soldier: one man at the middle. Squad: the team in formation, playing together. */
+  function arrange(kind) {
+    if (!A) return;
+    const team = kind === 'squad' ? formation() : [{ role: null, loadout: soldiers[0]?.loadout ?? 'rifle', position: [0, 0, 0] }];
+    while (soldiers.length > team.length) soldiers.pop().dispose();
+    team.forEach((m, i) => {
+      const name = m.role ? `${squadOpts.unit} ${m.role} · ${ROLE[m.role]}` : 'Soldier 1';
+      let e = soldiers[i];
+      if (!e) e = spawn({ position: m.position, facing: 0.3, loadout: m.loadout });
+      else if (e.home.some((v, j) => v !== m.position[j]) || (kind === 'squad' && e.loadout !== m.loadout)) {
+        e.home = m.position.slice();
+        e.d.yaw = 0.3;
+        e.reset(kind === 'squad' ? m.loadout : e.loadout);
+      }
+      e.name = name;
+    });
+    const ms = $('memberSel');
+    ms.replaceChildren(...soldiers.map((e, i) => Object.assign(document.createElement('option'), { value: String(i), textContent: e.name })));
+    // the team plays together; one man alone
+    if (allMode !== (kind === 'squad')) tgAll.click();
+    select(soldiers.includes(selected) ? selected : soldiers[0]);
+  }
+  $('memberSel').onchange = () => select(soldiers[+$('memberSel').value]);
+  tg('tgFlameTr', (v) => ((squadOpts.flameTrooper = v), arrange('squad')));
+  tg('tgUav', (v) => ((squadOpts.droneOperator = v), arrange('squad')));
+
+  /* ================= the Object drop-down ================= */
+  let kind = 'soldier';
+  const objSel = $('objSel');
+  for (const o of RIG_OBJECTS) objSel.appendChild(Object.assign(document.createElement('option'), { value: o.kind, textContent: o.label }));
+  objSel.onchange = () => setKind(objSel.value);
+  const STATS = {
+    dragon: 'The simulation’s dragon · ai/dragon.js',
+    car: 'models/car.js, drawn · 4 wheels, 2 doors',
+    jet: 'render/jetMesh.js · gear, flaps, afterburner',
+    boat: 'Motorboat on a sea · outboard, cabin',
+  };
+  /** What is on the stage: swaps the object and the panels (the last vehicle is freed). */
+  function setKind(k, what = {}) {
+    kind = rigKind({ kind: k });
+    objSel.value = kind;
+    const man = kind === 'soldier' || kind === 'squad';
+    // off first (each puts the camera back), then on
+    if (kind !== 'dragon') dragonRig?.setActive(false);
+    if (!VEHICLES.includes(kind)) vehicleRig.setKind(null);
+    if (kind === 'dragon') {
+      dragonRig ??= new DragonRig({ scene, camera, controls, renderer, toast, $, qs, root });
+      dragonRig.setActive(true);
+    }
+    if (VEHICLES.includes(kind)) vehicleRig.setKind(kind, what.params ?? null);
+    $('tabs').hidden = !man;
+    $('selBox').hidden = !man;
+    $('squadBox').hidden = kind !== 'squad';
+    $('stats').textContent = man ? soldierStats() : STATS[kind];
+    if (man) {
+      const t = root.querySelector('.tabs button.on')?.dataset.tab;
+      openTab(['anim', 'hit', 'gear'].includes(t) ? t : 'anim');
+      if (kind === 'squad') {
+        if (what.unit) squadOpts.unit = what.unit;
+        for (const [o, id] of [['flameTrooper', 'tgFlameTr'], ['droneOperator', 'tgUav']])
+          if (what[o] != null && !!what[o] !== squadOpts[o]) {
+            squadOpts[o] = !!what[o];
+            $(id).setAttribute('aria-pressed', String(squadOpts[o]));
+          }
+      }
+      arrange(kind);
+    } else openTab(kind === 'dragon' ? 'dragon' : 'vehicle');
+  }
+  const soldierStats = () => (A ? `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips` : 'Skinned sculpt · 21 bones');
 
   /* ================= select (from the editor) ================= */
   let pending = null;
   /**
    * What to show: { kind: 'soldier', loadout?: 'rifle' | 'torch', name? } (the Animate tab, the
-   * first soldier with that loadout, whole again) or { kind: 'dragon' } (the Dragon tab).
+   * soldier with that loadout, whole again), { kind: 'squad', unit?, flameTrooper?, droneOperator? }
+   * (the fire team), { kind: 'dragon' }, or { kind: 'car' | 'jet' | 'boat', params? } (the
+   * scene object's parameters: its paint, size, rockets).
    */
   function selectWhat(what = {}) {
-    if (what.kind === 'dragon') return clickTab('dragon');
-    clickTab('anim');
+    setKind(rigKind(what), what);
+    if (kind !== 'soldier') return;
     if (!A) return void (pending = what);
     const e = soldiers[0];
     if (!e) return;
@@ -731,8 +851,7 @@ export function mountRig(root, opts = {}) {
     if (disposed) return;
     A = assets;
     spawn({ position: [0, 0, 0], facing: 0.3 });
-    spawn({ position: [-1.6, 0, 0.6], facing: 0.3 });
-    select(soldiers[0]);
+    arrange(kind === 'squad' ? 'squad' : 'soldier');
     if (qs.get('anim')) for (const e of soldiers) e.play(qs.get('anim'));
     if (qs.get('det')) for (const p of qs.get('det').split(',')) soldiers[0]?.detach(p);
     if (qs.get('load')) for (const e of soldiers) e.setLoadout(qs.get('load'));
@@ -746,13 +865,20 @@ export function mountRig(root, opts = {}) {
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });
     if (qs.get('zones') === '1') $('tgZones').click();
     $('build').hidden = true;
-    $('stats').textContent = `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips`;
+    if (kind === 'soldier' || kind === 'squad') $('stats').textContent = soldierStats();
     if (pending) selectWhat(pending);
     pending = null;
     ready = true;
   });
-  // ?tab=anim|hit|gear|dragon (the dragon's own options: rig/dragon.js)
+  // ?tab=anim|hit|gear|dragon (the dragon's own options: rig/dragon.js), ?obj=car|jet|boat|squad|… (&vact= &vzones=1 &vhits=)
   if (['anim', 'hit', 'gear'].includes(qs.get('tab'))) clickTab(qs.get('tab'));
+  if (qs.get('dragon') || qs.get('tab') === 'dragon') setKind('dragon');
+  else if (qs.get('obj')) setKind(qs.get('obj'));
+  if (vehicleRig.active) {
+    if (qs.get('vact')) vehicleRig.play(qs.get('vact'));
+    if (qs.get('vzones') === '1') $('tgVZones').click();
+    for (const k of (qs.get('vhits') ?? '').split(',').filter(Boolean)) vehicleRig.hit(k, 350);
+  }
 
   /* ================= loop + FPS ================= */
   function resize() {
@@ -793,13 +919,14 @@ export function mountRig(root, opts = {}) {
       frozen = true;
     }
     if (frozen) dt = 0;
-    if (A && !dragonRig.active) tick(dt);
+    if (A && people()) tick(dt);
     if (selected) {
       ring.position.set(selected.d.p[0], 0.02, selected.d.p[2]);
-      ring.visible = !selected.d.dead && !dragonRig.active;
+      ring.visible = !selected.d.dead && people();
     }
     if (soldiers.length && Math.random() < 0.08) onChange();
-    dragonRig.update(dt);
+    dragonRig?.update(dt);
+    vehicleRig.update(dt);
     controls.update();
     renderer.render(scene, camera);
     frames++;
@@ -859,6 +986,7 @@ export function mountRig(root, opts = {}) {
     disposed = true;
     clearTimeout(toast.h);
     for (const e of soldiers) e.dispose();
+    vehicleRig.dispose();
     soldiers.length = 0;
     controls.dispose();
     renderer.dispose();
@@ -878,6 +1006,15 @@ export function mountRig(root, opts = {}) {
       return shown;
     },
     soldiers,
-    dragon: dragonRig,
+    /** The dragon's rig (rig/dragon.js), once the dragon has been picked. */
+    get dragon() {
+      return dragonRig;
+    },
+    /** The car / jet / boat (rig/vehicles.js). */
+    vehicles: vehicleRig,
+    /** What is on the stage: 'soldier' | 'squad' | 'dragon' | 'car' | 'jet' | 'boat'. */
+    get kind() {
+      return kind;
+    },
   };
 }
