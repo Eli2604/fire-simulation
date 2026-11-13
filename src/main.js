@@ -1,11 +1,11 @@
 import GUI from 'lil-gui';
-import { MOUSE } from 'three';
+import { MOUSE, Raycaster, Vector2, Vector3 } from 'three';
 import { AGENTS } from './sim/simulation.js';
 import { Walkthrough } from './walk/walk.js';
 import { defaultStartPower, walkMarker } from './sim/createSimulation.js';
 import { toggleDoor, nearestDoor, doorOfVoxel } from './sim/doors.js';
 import { View } from './render/view.js';
-import { SCENARIOS, cloneScene } from './scenarios.js';
+import { SCENARIOS, cloneScene, resolveScenario } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift } from './sim/weather.js';
@@ -13,11 +13,14 @@ import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
+import { PlacesOverlay, placeNear } from './render/places.js';
 import { Editor } from './editor/editor.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
 view.proxies = new ProxyRenderer(view.scene);
+view.places = new PlacesOverlay(view.scene); // a world of places: each a labelled box, zoomed out
+view.places.camera = view.camera; // (its names kept apart on the screen)
 
 const state = {
   scenario: 'carrier',
@@ -110,9 +113,13 @@ function syncWeather(applyView = true) {
   if (applyView) view.applyWeather(sim.weather);
 }
 
-/** Make zone `name` the one that is simulated and shown (the others freeze). */
-function activateZone(name) {
+/**
+ * Make zone `name` the one that is simulated and shown (the others freeze). keepView: the
+ * camera stays where it is in the world (a place of a world the camera has come close to).
+ */
+function activateZone(name, keepView = false) {
   if (!scene.zones?.[name] || name === scene.zone) return sim;
+  const from = scene.zones[scene.zone]?.origin;
   const next = zoneSim(name);
   zoneSims[scene.zone] = sim; // frozen while you are away
   useZone(name);
@@ -122,9 +129,26 @@ function activateZone(name) {
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
   view.sunDir = zd.view?.sun;
+  view.groundAround = zd.view?.around ?? null;
   view.archSpec = scene.archipelago ?? null;
   view.zoneOrigin = zd.origin ?? null;
+  const cam = view.camera.position.clone();
+  const target = view.controls.target.clone();
   view.setWorld(sim.world, zd.view?.camera, true, sim.markers);
+  if (keepView && from && zd.origin) {
+    // the same spot in the world, in the new zone's frame; looking the same way, at the place
+    const d = new Vector3(...from.map((v, k) => v - zd.origin[k]));
+    view.camera.position.copy(cam.add(d));
+    const dir = target.add(d).sub(view.camera.position).normalize();
+    const c = new Vector3(...zd.world.size.map((v) => v / 2)).sub(view.camera.position);
+    view.controls.target.copy(view.camera.position).addScaledVector(dir, Math.max(1, c.dot(dir)));
+    view.controls.update();
+  }
+  fitPlaces();
+  if (zd.timeScale) {
+    state.timeScale = zd.timeScale;
+    gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  }
   view.markers.visible = state.markers;
   view.applyWeather(sim.weather);
   view.voxels.mode = state.mode;
@@ -172,6 +196,75 @@ function updateProxies(now = false) {
   view.proxies.update(list);
 }
 
+/**
+ * A world of places (scene.places): zoomed out each place is a labelled box, close up its
+ * scenery (render/places.js); in Play the camera coming close to a place makes it the one that
+ * runs. Called every frame.
+ */
+let nearTimer = 0;
+function updatePlaces(dt) {
+  const here = scene.places && scene.zones?.[scene.zone]?.origin;
+  if (!here) {
+    view.places.update([], [0, 0, 0]);
+    return;
+  }
+  view.places.editing = editor.mode === 'edit';
+  const list = Object.entries(scene.zones)
+    .filter(([, z]) => z.origin)
+    .map(([name, z]) => ({ name, label: z.label ?? z.name, offset: z.origin.map((v, k) => v - here[k]), size: z.world.size, active: name === scene.zone, color: z.proxy?.color }));
+  const cam = view.cameraLocal();
+  const far = view.places.update(list, cam);
+  for (const [name, f] of far) if (name !== scene.zone) view.proxies.setVisible(name, !f);
+  // (in Play, not walking: the walk-through goes by its boats and ladders)
+  nearTimer -= dt;
+  if (editor.mode !== 'play' || walk.active || nearTimer > 0) return;
+  nearTimer = 0.4;
+  const near = placeNear(list.map((q) => ({ name: q.name, active: q.active, min: q.offset, max: q.offset.map((v, k) => v + q.size[k]) })), cam);
+  if (near) activateZone(near, true);
+}
+
+/** Go to a place of the world: it runs, the camera on it (a click on its box or in the outliner). */
+function goToPlace(name) {
+  if (!scene.zones?.[name]) return;
+  editor.select(-1);
+  if (name !== scene.zone) activateZone(name);
+  const zd = scene.zones[name];
+  const [sx, sy, sz] = zd.world.size;
+  view.placeCamera(new Vector3(sx / 2, sy * 0.22, sz / 2), zd.view?.camera);
+  view.controls.update();
+  fitPlaces();
+  editor.refresh();
+}
+
+/** The place whose box (or name) is under the pointer, if it is nearer than the scenery there. */
+const placeRay = new Raycaster();
+function placeAt(e) {
+  if (!scene.places) return null;
+  const rect = canvas.getBoundingClientRect();
+  placeRay.setFromCamera(new Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), view.camera);
+  const hit = view.places.pick(placeRay);
+  if (!hit) return null;
+  const v = view.pick(e.clientX, e.clientY);
+  if (v && hit.distance > 0) {
+    const p = view.root.localToWorld(new Vector3(...v.point));
+    if (p.distanceTo(view.camera.position) < hit.distance) return null;
+  }
+  return hit.name;
+}
+
+/** Room to zoom out over the whole world of places. */
+function fitPlaces() {
+  if (!scene.places || !scene.zones) return;
+  let r = 0;
+  const here = scene.zones[scene.zone].origin ?? [0, 0, 0];
+  for (const z of Object.values(scene.zones))
+    if (z.origin) for (const c of [0, 1]) r = Math.max(r, Math.hypot(...z.origin.map((v, k) => v + c * z.world.size[k] - here[k])));
+  view.controls.maxDistance = Math.max(view.controls.maxDistance, r * 3);
+  view.farBase = Math.max(view.farBase ?? 0, r * 12);
+  view.camera.far = Math.max(view.camera.far, view.farBase);
+  view.camera.updateProjectionMatrix();
+}
+
 /** Through a hatch / up a ladder / by boat into another zone. */
 function switchZone(pt) {
   if (!scene.zones?.[pt.to]) return;
@@ -202,16 +295,19 @@ function load(desc, fresh = true) {
   view.dark = !!scene.view?.dark;
   view.space = !!scene.view?.space;
   view.sunDir = scene.view?.sun;
+  view.groundAround = scene.view?.around ?? null;
   view.archSpec = scene.archipelago ?? null;
   view.zoneOrigin = scene.zones?.[scene.zone]?.origin ?? (scene.archipelago ? [0, 0, 0] : null);
   view.setWorld(sim.world, scene.view?.camera, !fresh, sim.markers);
+  fitPlaces();
   updateProxies(true);
   view.markers.visible = state.markers;
   view.applyWeather(sim.weather);
   if (fresh) {
     // a new scenario brings its own view settings; a restart after an edit keeps the user's
     state.mode = scene.view?.mode ?? 'realistic';
-    if (scene.timeScale) state.timeScale = scene.timeScale;
+    const ts = (scene.zones ? scene.zones[scene.zone].timeScale : null) ?? scene.timeScale;
+    if (ts) state.timeScale = ts;
     state.toolRadius = Math.max(sim.world.h * 1.5, Math.min(1, Math.hypot(...sim.world.size) * 0.03));
     state.torchPower = Math.round(5000 * Math.min(4, Math.max(0.2, (sim.world.h / 0.05) ** 2)));
   }
@@ -685,6 +781,11 @@ canvas.addEventListener('pointerup', (e) => {
   const moved = Math.hypot(e.clientX - down[0], e.clientY - down[1]);
   down = null;
   if (moved > 5) return;
+  // a place of the world (its box or its name): go there (Edit world: editor.js asks pickPlace)
+  if (editor.mode === 'play') {
+    const pl = placeAt(e);
+    if (pl) return goToPlace(pl);
+  }
   const hit = view.pick(e.clientX, e.clientY);
   if (!hit || hit.voxel < 0) return;
   const w = sim.world;
@@ -793,6 +894,7 @@ function frame(now) {
     sim.patches?.update(view.cameraLocal(), 8);
   } else speed *= 0.9;
   if (scene.zones) updateProxies();
+  updatePlaces(dt);
   view.render(dt, sim);
   updateHud(dt);
   requestAnimationFrame(frame);
@@ -821,6 +923,12 @@ const editor = new Editor({
   },
   io,
   activateZone,
+  goToPlace,
+  pickPlace: (e) => {
+    const pl = placeAt(e);
+    if (pl) goToPlace(pl);
+    return !!pl;
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -855,10 +963,13 @@ if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
 // no graphics card (rendering in software): fewer close-up objects at once
 if (view.softwareGpu) PATCH.maxActive = 4;
-if (SCENARIOS[qs.get('scenario')] && !SCENARIOS[qs.get('scenario')].page) state.scenario = qs.get('scenario');
+// (old keys that are now a place of a world: ?scenario=laundry opens the tea house garden there)
+const asked = resolveScenario(qs.get('scenario'));
+if (asked && !SCENARIOS[asked.scenario].page) state.scenario = asked.scenario;
 {
   const sc = cloneScene(SCENARIOS[state.scenario]);
-  if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
+  const zone = qs.get('zone') ?? (asked?.scenario === state.scenario ? asked.zone : null);
+  if (sc.zones && sc.zones[zone]) sc.startZone = zone;
   // ...&season=winter: a winter's day (snow lying, snow falling)
   if (SEASONS[qs.get('season')]) sc.weather = { ...(sc.weather ?? {}), ...SEASONS[qs.get('season')], season: qs.get('season') };
   // ...&thaw=1: the snow lying, a sunny day above freezing (it melts, the roofs drip)
@@ -960,4 +1071,4 @@ editor.setMode('play');
 requestAnimationFrame(frame);
 
 // handy for debugging from the console
-window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS, editor };
+window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS, editor, walk, places: { update: updatePlaces, go: goToPlace } };

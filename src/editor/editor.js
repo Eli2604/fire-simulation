@@ -309,14 +309,23 @@ export class Editor {
     o.replaceChildren();
     o.append(el('h3', {}, S.name ?? 'Scene'));
     if (S.zones) {
-      const sel = el('select', { title: 'The part of the scene you edit (go there)' });
-      for (const [k, z] of Object.entries(S.zones)) sel.append(el('option', { value: k, selected: k === S.zone }, z.name));
-      sel.onchange = () => {
-        this.select(-1);
-        C.activateZone(sel.value);
-        this.refresh();
-      };
-      o.append(sel);
+      // the places (zones) of the world: the one you edit is lit; a click goes there (its
+      // objects below, the camera on it). Places in the open show their size and voxels.
+      o.append(el('h4', { class: 'muted' }, 'Places'));
+      const places = el('div', { class: 'list places' });
+      for (const [k, z] of Object.entries(S.zones)) {
+        const info = z.origin ? `${z.world.size[0]}×${z.world.size[2]} m · ${Math.round(z.world.h * 100)} cm` : z.indoor ? 'inside' : '';
+        places.append(
+          el(
+            'button',
+            { class: k === S.zone ? 'on' : '', title: `${z.name}${z.origin ? ` (at ${z.origin.join(', ')})` : ''}: go there`, onclick: () => (C.goToPlace ? C.goToPlace(k) : (this.select(-1), C.activateZone(k), this.refresh())) },
+            z.label ?? z.name,
+            info ? el('span', { class: 'tag' }, info) : null,
+          ),
+        );
+      }
+      o.append(places);
+      o.append(el('h4', { class: 'muted' }, 'Objects here'));
     }
     const list = el('div', { class: 'list' });
     S.objects.forEach((ob, i) => {
@@ -466,6 +475,8 @@ export class Editor {
   /* ---------------- selection and the gizmo ---------------- */
   clickView(e) {
     const C = this.ctx;
+    // a world of places: a click on another place's box or name goes there
+    if (!this.placing && C.pickPlace?.(e)) return;
     const hit = C.view.pick(e.clientX, e.clientY);
     if (this.placing) {
       if (!hit) return;

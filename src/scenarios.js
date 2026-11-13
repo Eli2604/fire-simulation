@@ -14,8 +14,42 @@ import { defaultWeather } from './sim/weather.js';
  * below): { zones: { name: { name, world, view, objects } }, startZone }. Only
  * the zone you are in is built and simulated; the others are built the first
  * time you go there (a hatch or ladder, E) and are frozen while you are away.
+ *
+ * A world of places (places: true): zones side by side by their `origin`, each with a
+ * `label`. Zoomed out each place shows as a labelled box (render/places.js), close up its
+ * scenery; the camera coming close to one (or a click on its box) makes it the simulated one.
+ * A zone may bring its own timeScale.
  */
 const w = (o = {}) => ({ ...defaultWeather(), ...o });
+
+/**
+ * Old scenario keys that are now a place in a world: ?scenario=laundry opens the tea house
+ * garden at its washing line.
+ */
+export const SCENARIO_ALIASES = {
+  laundry: { scenario: 'teaGarden', zone: 'laundry' },
+  winterTea: { scenario: 'teaGarden', zone: 'tea' },
+};
+
+/** A scenario key (old or new) as { scenario, zone } (zone: null for the scenario's start). */
+export function resolveScenario(key) {
+  if (SCENARIO_ALIASES[key]) return { ...SCENARIO_ALIASES[key] };
+  return SCENARIOS[key] ? { scenario: key, zone: null } : null;
+}
+
+/** One zone of a zoned scene as a scene of its own (tests, headless runs). */
+export function zoneScene(scene, zone) {
+  const zd = scene.zones[zone];
+  return { name: `${scene.name} – ${zd.name}`, world: zd.world, weather: { ...(scene.weather ?? {}), ...(zd.weather ?? {}) }, timeScale: zd.timeScale ?? scene.timeScale, view: zd.view ?? scene.view, indoor: zd.indoor, objects: zd.objects };
+}
+
+/** The places of a world (zones with an origin) as boxes: { name, label, min, max } in world metres. */
+export function placeBoxes(scene) {
+  if (!scene.zones) return [];
+  return Object.entries(scene.zones)
+    .filter(([, z]) => z.origin)
+    .map(([name, z]) => ({ name, label: z.label ?? z.name, min: z.origin.slice(), max: z.origin.map((v, k) => v + z.world.size[k]) }));
+}
 
 /**
  * The catacombs: one list for the Catacombs scenario (direct, for testing) and for the
@@ -78,34 +112,49 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
 }
 
 export const SCENARIOS = {
-  winterTea: {
-    name: 'Tea by the lake in winter',
-    description: 'A frosty afternoon on a little island with a lake in it: the lake is frozen over (10 cm: it bears you), snow lies and a little more is falling. On a veranda on the shore, out of the snow, a couch with a plaid over its arm, and next to it a side table with a book, a candle and a cup of tea, just poured at 88 °C. It steams in the cold air (the vapour off the hot tea condenses as it mixes with it), cools (most of its heat goes in evaporation while it is hot: ~2–3 K a minute at first), and left out long enough in the frost it freezes over. Walk out onto the ice, or set the couch alight. The same island is in the carrier scene (a boat from the islet).',
-    world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
-    weather: w(LAKESIDE_WINTER),
+  // a world of places (zones side by side): the garden by the tea house on its island, the
+  // washing line and the barbecue on the lawn across the water (the old Laundry on the line
+  // and Tea by the lake scenes). Zoomed out, each is a labelled box; close up, its scenery.
+  teaGarden: {
+    name: 'Garden by the tea house',
+    description: 'A mild, sunny afternoon in early autumn (19 °C, a light breeze, the lake open). Two places in one world: zoomed out each shows as a labelled box, close up its scenery; bring the camera close to one, or click its box or its name, and it is the one that runs (the other waits where it was). Tea on the veranda: a little island with a lake in it, and on a veranda on its shore a couch with a plaid over its arm, a side table with a book, a candle and a cup of tea, just poured at 88 °C; it steams and cools (most of its heat goes in evaporation while it is hot). Washing line & barbecue: on the lawn across the water from the island the wash has hung on the line since lunch and is nearly dry (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks). The barbecue is going. Half a minute in, a spark from it lands at the foot of the sheet: it catches, and the fire runs along the line; the cotton chars and burns through to holes, the shirts shrink, melt and drip before they burn, garments burnt through at the top fall. (The garden runs at 15× time, the veranda at 1×.)',
+    weather: w({ ambient: 19, humidity: 0.45, windSpeed: 2.5, windDir: 20, rain: 0, fog: 0, sunshine: 0.8, season: 'autumn', snowCover: 0, iceCover: 0 }),
     timeScale: 1,
-    view: { camera: [2.5, 1.5, -8.5] },
-    objects: lakesideObjects(),
-  },
-
-  laundry: {
-    name: 'Laundry on the line',
-    description: 'A warm, breezy afternoon: the wash has hung on the line in the garden since lunch and is nearly dry (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks; cotton fresh from the machine holds almost its own weight in water and will not burn while it is wet). The barbecue on the lawn is going. Half a minute in, a spark from it lands at the foot of the sheet: it catches, and the fire runs along the line; the cotton chars and burns through to holes, the shirts shrink, melt and drip before they burn, garments burnt through at the top fall.',
-    world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
-    weather: w({ ambient: 27, humidity: 0.35, windSpeed: 3, windDir: 20 }),
-    timeScale: 15,
-    view: { camera: [1.2, 2.4, 6.4] },
-    objects: [
-      // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
-      { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
-      // (nearly dry after a few hours on the line; a spark from the barbecue lands at the foot of the sheet after half a minute)
-      { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.2, sparkAfter: 30 }, x: 3.5, z: 2.6 },
-      // the barbecue on the lawn, burning (its sparks)
-      { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
-      // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
-      { type: 'scannedProp', params: { asset: 'bench' }, x: 5.5, z: 4.2, rotation: 15 },
-      { type: 'scannedProp', params: { asset: 'jerrycan' }, x: 1.1, z: 3.7, rotation: 30 },
-    ],
+    places: true,
+    startZone: 'tea',
+    zones: {
+      tea: {
+        name: 'Veranda on the lake island',
+        label: 'Tea on the veranda',
+        origin: [0, 0, 0],
+        world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
+        view: { camera: [2.5, 1.5, -8.5], walk: true },
+        proxy: { shape: 'hill', sea: 1.0, color: '#6f8f4a', height: 1.4, fill: 0.9, cell: 0.2 },
+        timeScale: 1,
+        objects: lakesideObjects(),
+      },
+      // the lawn on the shore east of the island, a little above the water (5 cm voxels: the cloth)
+      laundry: {
+        name: 'Garden: washing line and barbecue',
+        label: 'Washing line & barbecue',
+        origin: [23, 1.2, 9], // (its lawn a quarter of a metre above the island's water)
+        world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
+        view: { camera: [1.2, 2.4, 6.4], walk: true, around: { y: -0.2, color: '#2c5d78' } }, // (the water round it, at the island's sea level)
+        proxy: { sea: 0, color: '#5f8f3a', height: 0.1, fill: 1, cell: 0.1 },
+        timeScale: 15,
+        objects: [
+          // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
+          { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
+          // (nearly dry after a few hours on the line; a spark from the barbecue lands at the foot of the sheet after half a minute)
+          { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.2, sparkAfter: 30 }, x: 3.5, z: 2.6 },
+          // the barbecue on the lawn, burning (its sparks)
+          { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
+          // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
+          { type: 'scannedProp', params: { asset: 'bench' }, x: 5.5, z: 4.2, rotation: 15 },
+          { type: 'scannedProp', params: { asset: 'jerrycan' }, x: 1.1, z: 3.7, rotation: 30 },
+        ],
+      },
+    },
   },
   metalBars: {
     name: 'Metal bars on burners',
@@ -351,7 +400,7 @@ export const SCENARIOS = {
         ],
       },
       // a small island with a frozen lake in it, in a cold snap of its own: tea on a veranda by
-      // the ice (the Tea by the lake scenario)
+      // the ice (the tea house garden scene has the same island on a mild autumn day)
       lake: {
         name: 'Lake island (winter)',
         origin: [240, 1.8, 150], // (its sea level with the others')

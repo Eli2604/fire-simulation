@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildCarrierHull } from './hull.js';
+import { F_HIDDEN } from '../sim/world.js';
 
 /**
  * Cheap stand-ins for the zones you are not in (seen from the jet): the other
@@ -16,7 +17,10 @@ export class ProxyRenderer {
     this.mat = new THREE.MeshStandardMaterial({ roughness: 0.9, vertexColors: false });
   }
 
-  /** zones: [{ name, offset: [x,y,z] relative to the active zone, world?, hint?, size, sea }] */
+  /**
+   * zones: [{ name, offset: [x,y,z] relative to the active zone, world?, hint?, size, sea }];
+   * hint.cell: the columns' size (m; ~0.8 by default, finer for the places of a world)
+   */
   update(zones) {
     const keep = new Set();
     for (const z of zones) {
@@ -25,7 +29,7 @@ export class ProxyRenderer {
       const version = z.world ? z.world.geomVersion : -1;
       if (!it || it.version !== version) {
         if (it) this.drop(it);
-        it = { obj: z.world ? this.fromWorld(z.world, z.sea) : this.placeholder(z), version };
+        it = { obj: z.world ? this.fromWorld(z.world, z.sea, z.hint?.cell) : this.placeholder(z), version };
         this.items.set(z.name, it);
         this.group.add(it.obj);
       }
@@ -38,6 +42,12 @@ export class ProxyRenderer {
       }
   }
 
+  /** Show or hide a zone's stand-in (a place far off is drawn as its box: render/places.js). */
+  setVisible(name, v) {
+    const it = this.items.get(name);
+    if (it) it.obj.visible = v;
+  }
+
   drop(it) {
     this.group.remove(it.obj);
     it.obj.traverse?.((o) => {
@@ -46,8 +56,8 @@ export class ProxyRenderer {
     });
   }
 
-  fromWorld(w, seaLevel) {
-    const s = Math.max(1, Math.round(0.8 / w.h)); // ~0.8 m columns
+  fromWorld(w, seaLevel, cell = 0.8) {
+    const s = Math.max(1, Math.round(cell / w.h)); // ~0.8 m columns
     const { nx, nz, ny, h } = w;
     const base = seaLevel ?? 0;
     const cols = [];
@@ -61,7 +71,9 @@ export class ProxyRenderer {
         let ti = -1;
         for (let dz = 0; dz < s && z + dz < nz; dz++)
           for (let dx = 0; dx < s && x + dx < nx; dx++) {
-            const t = w.colTop[x + dx + nx * (z + dz)];
+            let t = w.colTop[x + dx + nx * (z + dz)];
+            // (under what is drawn as a mesh, not as voxels: the wash on a line, a torch)
+            while (t > 0 && (w.flags[w.idx(x + dx, t, z + dz)] & F_HIDDEN || !w.mat[w.idx(x + dx, t, z + dz)])) t--;
             if (t > top) {
               top = t;
               ti = w.idx(x + dx, t, z + dz);
