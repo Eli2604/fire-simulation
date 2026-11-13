@@ -2,14 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Drone Operations Camp</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" data-stage-fonts href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500&family=JetBrains+Mono:wght@400&display=swap">
-<style>html,body{height:100%;margin:0;overflow:hidden;background:#9fbfdc}</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drone camp</title>
+<!-- the camp is a mode of the editor now (index.html, src/editor/editor.js): this page only sends you there -->
+<script>location.replace('./?mode=camp' + location.search.replace(/^\?/, '&') + location.hash);</script>
 </head>
-<body>
-<!-- the editor's camp stage (src/camp/stage.js), mounted on its own -->
-<script type="module" src="./src/camp/main.js"></script>
+<body style="background:#111;color:#ccc;font:14px system-ui;padding:40px">
+<p>The Drone camp is part of the <a href="./?mode=camp" style="color:#ff9a4a">world editor</a> now.</p>
 </body>
 </html>

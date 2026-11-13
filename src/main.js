@@ -8,13 +8,12 @@ import { View } from './render/view.js';
 import { SCENARIOS, cloneScene } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
-import { MATERIAL_NAMES } from './sim/materials.js';
 import { defaultWeather, SEASONS } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
-import { goPage } from './pages.js';
+import { Editor } from './editor/editor.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -215,9 +214,11 @@ function scheduleRestart() {
 
 // ---------------------------------------------------------------------------
 // GUI
-const gui = new GUI({ title: 'Fire simulation' });
+const gui = new GUI({ title: 'Play' });
 const scenarioNames = Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [v.name, k]));
-gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (SCENARIOS[k].page ? goPage(SCENARIOS[k].page) : load(cloneScene(SCENARIOS[k]))));
+// (the rig and the drone camp are modes of the editor: stages of their own)
+const pageMode = (k) => ({ 'rig.html': 'rig', 'camp.html': 'camp' })[SCENARIOS[k]?.page];
+gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (pageMode(k) ? editor.setMode(pageMode(k)) : editor.open(cloneScene(SCENARIOS[k]), k)));
 gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
 gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
@@ -370,7 +371,7 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Place new object (click)': 'place', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Squad: set the threat (click)': 'squadThreat', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Squad: set the threat (click)': 'squadThreat', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
   .name('Tool')
   .onChange(() => {
     toolChanged();
@@ -400,74 +401,18 @@ const fSquad = gui.addFolder('Squads (fire teams)').close();
 fSquad.add(squadState, 'ai').name('Squad AI').onChange((v) => { for (const s of sim?.squads ?? []) s.on = v; });
 fSquad.add(squadState, 'paths').name('Show routes, trails, tags').onChange((v) => { if (view.enemies.viz) view.enemies.viz.show = v; });
 fSquad.add(squadState, 'radio').name('Radio voices').onChange((v) => import('./audio/radio.js').then((r) => r.setRadioSound(v)));
-fSquad.add({ rig: () => goPage('rig.html') }, 'rig').name('Open the soldier rig test page');
+fSquad.add({ rig: () => editor.setMode('rig') }, 'rig').name('🦴 Rig the soldier (animations, gear, hit zones)');
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')
   .onChange(() => (tank.remaining = AGENTS[state.agent].capacity));
 fT.add({ refill: () => (tank.remaining = AGENTS[state.agent].capacity) }, 'refill').name('↻ Refill extinguisher');
 
-const fS = gui.addFolder('Scene objects');
-let fObjects = null;
+// the scene's objects, the world and its weather are edited in Edit world (editor/editor.js)
 const addState = { type: 'tree' };
-const modelNames = Object.fromEntries(Object.entries(MODELS).map(([k, m]) => [m.label, k]));
-
+gui.add({ edit: () => editor.setMode('edit') }, 'edit').name('✎ Edit the world (objects, size, ground)');
 function buildObjectsFolder() {
-  if (fObjects) fObjects.destroy();
-  fObjects = fS.addFolder('Objects');
-  const ws = scene.world;
-  // a scene of several zones (the carrier: flight deck, below deck, the island, the catacombs,
-  // the spaceship): pick one to go there and see (and edit) its objects
-  if (scene.zones) {
-    const zs = { zone: scene.zone };
-    const names = Object.fromEntries(Object.entries(scene.zones).map(([k, z]) => [`${z.name} (${z.objects.length} objects)`, k]));
-    fObjects
-      .add(zs, 'zone', names)
-      .name('Zone (go there)')
-      .onChange((name) =>
-        setTimeout(() => {
-          if (walk?.active) walk.exit();
-          activateZone(name);
-        }, 0),
-      );
-  }
-  const fWorld = fObjects.addFolder('World').close();
-  fWorld.add(ws.size, '0', 0.2, 120, 0.1).name('Size X (m)').onFinishChange(scheduleRestart);
-  fWorld.add(ws.size, '1', 0.2, 40, 0.1).name('Size Y (m)').onFinishChange(scheduleRestart);
-  fWorld.add(ws.size, '2', 0.2, 120, 0.1).name('Size Z (m)').onFinishChange(scheduleRestart);
-  fWorld.add(ws, 'h', 0.004, 0.5, 0.001).name('Voxel size (m)').onFinishChange(scheduleRestart);
-  if (!ws.ground) ws.ground = 'soil';
-  fWorld.add(ws, 'ground', MATERIAL_NAMES).name('Ground material').onFinishChange(scheduleRestart);
-  const est = { voxels: '' };
-  const updEst = () => {
-    const n = (ws.size[0] / ws.h) * (ws.size[1] / ws.h) * (ws.size[2] / ws.h);
-    est.voxels = `${(n / 1e6).toFixed(2)} M grid cells`;
-  };
-  updEst();
-  fWorld.add(est, 'voxels').name('Grid').disable();
-
-  scene.objects.forEach((o, idx) => {
-    const M = MODELS[o.type];
-    const f = fObjects.addFolder(`${idx + 1}. ${M.label}`).close();
-    f.add(o, 'x', 0, ws.size[0], 0.01).name('Position X (m)').onFinishChange(scheduleRestart);
-    f.add(o, 'z', 0, ws.size[2], 0.01).name('Position Z (m)').onFinishChange(scheduleRestart);
-    if (o.rotation === undefined) o.rotation = 0;
-    f.add(o, 'rotation', 0, 360, 5).name('Rotation (°)').onFinishChange(scheduleRestart);
-    if (o.ignite === undefined) o.ignite = false;
-    f.add(o, 'ignite').name('Burning at start').onFinishChange(scheduleRestart);
-    for (const [key, spec] of Object.entries(M.params)) {
-      let c;
-      if (spec.options) c = f.add(o.params, key, spec.options);
-      else if (spec.color) c = f.addColor(o.params, key);
-      else if (typeof spec.value === 'boolean') c = f.add(o.params, key);
-      else c = f.add(o.params, key, spec.min, spec.max, spec.step);
-      c.name(spec.label ?? key).onFinishChange(scheduleRestart);
-    }
-    f.add({ remove: () => { scene.objects.splice(idx, 1); restart(); } }, 'remove').name('✕ Remove');
-  });
-  const fAdd = fObjects.addFolder('Add object');
-  fAdd.add(addState, 'type', modelNames).name('Type');
-  fAdd.add({ add: () => setTool('place') }, 'add').name('+ Add: click the scene to place it');
+  editor?.refresh();
 }
 
 const io = {
@@ -486,8 +431,8 @@ const io = {
     input.onchange = async () => {
       try {
         const desc = JSON.parse(await input.files[0].text());
-        if (!desc.world || !Array.isArray(desc.objects)) throw new Error('Not a scene file');
-        load(desc);
+        if (!desc.world || !Array.isArray(desc.objects ?? Object.values(desc.zones ?? {})[0]?.objects)) throw new Error('Not a scene file');
+        editor.open(desc);
       } catch (e) {
         alert(`Could not load scene: ${e.message}`);
       }
@@ -495,9 +440,6 @@ const io = {
     input.click();
   },
 };
-fS.add(io, 'exportJson').name('⭳ Export scene (JSON)');
-fS.add(io, 'importJson').name('⭱ Import scene (JSON)');
-fS.close();
 fT.close();
 
 // ---------------------------------------------------------------------------
@@ -754,6 +696,11 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (view.paused) {
+    // the rig or the camp is shown: the world waits
+    requestAnimationFrame(frame);
+    return;
+  }
   if (walk.active) walk.update(dt);
   view.markers.visible = state.markers && !walk.active; // no labels and patrol outlines in the walk-through
   if (torching && torchPoint) sim.holdTorch(torchPoint, state.torchPower, Math.max(sim.world.h, state.toolRadius * 0.5));
@@ -770,6 +717,29 @@ function frame(now) {
   updateHud(dt);
   requestAnimationFrame(frame);
 }
+
+// ---------------------------------------------------------------------------
+// The editor: Play / Edit world / Rig (editor/editor.js)
+const editor = new Editor({
+  view,
+  get scene() {
+    return scene;
+  },
+  get sim() {
+    return sim;
+  },
+  weather: () => weather,
+  load,
+  restart,
+  state,
+  setTool,
+  playGui: gui,
+  get walk() {
+    return walk;
+  },
+  io,
+  activateZone,
+});
 
 // ---------------------------------------------------------------------------
 // Firefighter walk-through
@@ -803,8 +773,7 @@ if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
 // no graphics card (rendering in software): fewer close-up objects at once
 if (view.softwareGpu) PATCH.maxActive = 4;
-if (SCENARIOS[qs.get('scenario')]?.page) location.replace(SCENARIOS[qs.get('scenario')].page);
-else if (SCENARIOS[qs.get('scenario')]) state.scenario = qs.get('scenario');
+if (SCENARIOS[qs.get('scenario')] && !SCENARIOS[qs.get('scenario')].page) state.scenario = qs.get('scenario');
 {
   const sc = cloneScene(SCENARIOS[state.scenario]);
   if (sc.zones && sc.zones[qs.get('zone')]) sc.startZone = qs.get('zone');
@@ -898,7 +867,13 @@ window.addEventListener('keydown', (e) => {
   document.getElementById('hud').classList.toggle('shown');
 });
 updateToolHint();
+editor.setMode('play');
+// ...&mode=edit / rig / camp (and the old pages' scenarios: the rig, the drone camp)
+{
+  const m = qs.get('mode') ?? pageMode(qs.get('scenario'));
+  if (['edit', 'rig', 'camp'].includes(m)) editor.setMode(m);
+}
 requestAnimationFrame(frame);
 
 // handy for debugging from the console
-window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS };
+window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS, editor };

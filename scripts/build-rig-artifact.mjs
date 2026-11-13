@@ -1,15 +1,13 @@
 /**
- * Builds the soldier rig test page (rig.html) as one self-contained HTML file: the page's code,
- * three.js and the sculpt worker (inlined, started from a blob) in a single document, to share
- * or host anywhere. Uses Rollup's API directly (no esbuild needed).
+ * Builds the editor (index.html: the world with Play / Edit world / Rig, and the drone camp) as
+ * one self-contained HTML file: its code, three.js and the sculpt worker (inlined, started from a
+ * blob), the rig and camp stages (imported with import(): inlineDynamicImports keeps them in the
+ * file), the stylesheet and the binary models, to share or host anywhere. Uses Rollup's API
+ * directly (no esbuild needed).
  *
- *   node scripts/build-rig-artifact.mjs [out.html] [page]   page: rig (default), camp or main
+ *   node scripts/build-rig-artifact.mjs [out.html]
  *
- * rig and camp are their stages (src/rig/stage.js, src/camp/stage.js) mounted alone; the editor
- * (main) may import them with import(): inlineDynamicImports keeps it all in the one file.
- *
- * Built side by side (index.html from main, rig.html, camp.html, and models/skull.bin) the
- * pages link to each other: their scene lists switch between them.
+ * (rig.html and camp.html only send you on to the editor: its Rig mode, the camp.)
  */
 import { rollup } from 'rollup';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -17,7 +15,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const page = process.argv[3] ?? 'rig';
+const page = 'main';
 const out = resolve(process.argv[2] ?? resolve(root, `dist/${page === 'main' ? 'index' : page}.html`));
 const three = {
   name: 'resolve-three',
@@ -49,11 +47,8 @@ const inlineWorker = {
   },
 };
 const entry = page === 'main' ? 'src/main.js' : `src/${page}/main.js`;
-// SIM_PAGE=sim.html: where the scene lists find the simulation when it is not the folder's index
-const simPage = process.env.SIM_PAGE;
 const code = (await bundle(entry, [inlineWorker]))
   .replace(/<\/script/gi, '<\\/script')
-  .replace(/'\.\/\?scenario='/g, simPage ? `'${simPage}?scenario='` : "'./?scenario='")
   // binary models fetched next to their module (render/models/*.bin): inlined as data URLs
   .replace(/new URL\('\.\/models\/([^']+)', import\.meta\.url\)/g, (_, f) => `'data:application/octet-stream;base64,${readFileSync(resolve(root, 'src/render/models', f)).toString('base64')}'`);
 const html = readFileSync(resolve(root, page === 'main' ? 'index.html' : `${page}.html`), 'utf8');
@@ -64,9 +59,6 @@ const head = html
 const tag = html.match(/<script type="module" src="[^"]+"><\/script>/)[0];
 const bodyOpen = html.match(/<body[^>]*>/);
 const body = html.slice(bodyOpen.index + bodyOpen[0].length, html.indexOf(tag));
-// PAGE_URLS='{"sim":"https://...","rig":...,"camp":...}': where each page is hosted (src/pages.js opens them)
-const pagesScript = process.env.PAGE_URLS ? `<script>globalThis.__PAGES = ${JSON.stringify(JSON.parse(process.env.PAGE_URLS))};</script>
-` : '';
 const bodyAttrs = bodyOpen[0].slice(5, -1);
 const doc = `<!doctype html>
 <html lang="en">
@@ -77,7 +69,7 @@ ${head}
 </head>
 <body${bodyAttrs}>
 ${body}
-${pagesScript}<script type="module">
+<script type="module">
 ${code}
 </script>
 </body>

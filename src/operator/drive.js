@@ -5,7 +5,7 @@ import { ONCE, MOVING, RELOAD_TIME } from './rig.js';
  * ai/soldier.js) says a member is doing: his clip (one-shots restarted when the AI starts
  * one again, loops cross-faded), walking speed, aim, the weapon in his hands (switching
  * with the put-away and draw animations), reload speed by expertise, armour.
- * Used by the simulation's renderer (render/enemies.js) and the rig page (rig/main.js).
+ * Used by the simulation's renderer (render/enemies.js) and the character rig (rig/stage.js).
  * st keeps what was shown last ({ animT, weapon, armour }).
  */
 const SWITCHES = new Set(['drawKnife', 'drawRifle', 'sheathKnife', 'drawSecondary', 'holsterRifle', 'holsterSecondary']);

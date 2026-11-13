@@ -20,6 +20,34 @@ npm test           # physics + scene tests (node:test)
 npm run headless -- campfire 600   # run a scenario without rendering, print what happens
 ```
 
+## The editor: Play, Edit world, Rig
+
+One page (`index.html`, `src/editor/editor.js`) over one world, the voxel simulation. The bar
+at the top switches between:
+
+- **▶ Play** (P): the world runs, with everything under *Using it* below: the tools, the
+  walk-through, squads, fire, the weather.
+- **✎ Edit world** (E): the world stops at its start. On the left the scene's objects (and its
+  zones, in a scene of several); click one there or in the view to select it, drag the arrows to
+  move it (up too, onto a deck or a roof), the ring to turn it (W / T switch, or the buttons),
+  its parameters on the right; **+ Add** opens a palette of every model (walls, crates, the deck
+  with its stairs, houses, characters, fuel, furniture, nature, whole places), then a click puts
+  it there. Del removes, Ctrl+D duplicates, Ctrl+Z / Ctrl+Y undo and redo. With nothing selected
+  the right shows the world: name, size, voxel size, ground, weather, the fire at start. Every
+  change rebuilds the scene (the voxels are made from the description).
+- **🦴 Rig** (R from a selected character): the characters on a stage of their own
+  (`rig/stage.js`): the soldier (every clip, loadouts, weapons, gear, hit zones) and the dragon
+  (acts, wings, hit zones). Its zone tables are the ones the world's hit tests use, so what you
+  adjust there applies when you play. A squad, an enemy or the dragon selected in Edit world
+  opens with *Rig the soldier / the dragon*.
+
+**Scene ▾**: save the scene in this browser, open what you saved, export / import JSON, a new
+empty scene, and every scenario. The drone camp is a world of another scale (a swarm over
+kilometres of hills, `camp/stage.js`): it opens as a stage of its own, with a way back. The
+old pages `rig.html` and `camp.html` only send you on to the editor (`?mode=rig`,
+`?mode=camp`; `?mode=edit` opens Edit world). `node scripts/build-rig-artifact.mjs out.html`
+builds the whole editor as one file.
+
 ## Using it
 
 - **Scenario**: metal bars on burners, a wind-driven grass fire, a car fire
@@ -1058,8 +1086,9 @@ src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, pa
 src/ai/         enemies: senses, path finding around fire, luring with fire
 src/walk/       first-person walk-through (firefighter), flying the jet
 src/audio/      procedural sound
-src/rig/        the character stage (stage.js: soldiers and the dragon; rig.html mounts it alone)
-src/camp/       the drone operations camp stage (stage.js; camp.html mounts it alone)
+src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library
+src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
+src/camp/       the drone operations camp stage (stage.js; opened from the editor)
 src/main.js     app, controls panel, HUD, tools, zones
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers
@@ -1179,8 +1208,8 @@ A **lookout** (`host.lookouts`: a raised place, such as a deck): before contact 
 it to look round, and on contact the gunner takes it as his overwatch when it sees the threat; he
 stays up there while the team is within reach, and comes down by the stairs.
 
-**Hosted pages**: built with `PAGE_URLS` (`scripts/build-rig-artifact.mjs`), each page knows where
-the others are hosted and its scene list opens them (`src/pages.js`).
+**Hosted**: `scripts/build-rig-artifact.mjs` builds the editor as one file (the rig and the camp
+inside it), to host anywhere.
 
 ## Drone operations camp
 
