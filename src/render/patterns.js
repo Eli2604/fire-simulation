@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
-import { polyHavenTexture } from './assets.js';
+import { textureUrl } from './assets.js';
 
 /**
  * Surface relief for materials that are more than a colour (dressed limestone
@@ -117,7 +117,7 @@ export function photoAtlas() {
         left--;
       };
       img.onerror = () => left--;
-      img.src = polyHavenTexture(p.file, kind);
+      textureUrl(p.file, kind).then((u) => (img.src = u));
     }
   });
   return photos;
