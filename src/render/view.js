@@ -240,7 +240,10 @@ export class View {
     this.archipelago ??= new ArchipelagoRenderer(this.root);
     this.ocean.setBathy(this.archipelago.set(world.sea && !world.vacuum ? this.archSpec : null, this.zoneOrigin, world));
     this.ground.scale.set(diag * 12, diag * 12, 1);
-    this.ground.position.set(sx / 2, world.h * 0.9, sz / 2);
+    // (a zone's view may say what lies round it: open water at its level, by a place of a world)
+    this.ground.position.set(sx / 2, this.groundAround?.y ?? world.h * 0.9, sz / 2);
+    this.ground.material.color.set(this.groundAround?.color ?? 0x5b5236);
+    this.ground.material.roughness = this.groundAround?.color ? 0.35 : 1;
 
     this.camera.near = Math.max(0.002, world.h * 0.3);
     // far enough for the island group and the sea beyond it

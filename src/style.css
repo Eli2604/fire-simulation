@@ -434,6 +434,19 @@ body[data-mode] #hud {
   flex: 1;
   min-height: 60px;
 }
+#outliner h4 {
+  margin: 4px 4px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+#outliner .list.places {
+  flex: none;
+  min-height: 0;
+  max-height: 30vh;
+  margin-bottom: 6px;
+}
 #outliner .list button {
   display: flex;
   gap: 6px;

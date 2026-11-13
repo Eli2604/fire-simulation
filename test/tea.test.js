@@ -40,10 +40,8 @@ test('its steam shows more in the cold than in a warm room, and not at all once 
   assert.equal(mistOnMixing(22, 0.5, 21), 0);
 });
 
-test('Tea by the lake: the cup stands on the table, under the roof, by a frozen lake', () => {
-  const sc = cloneScene(SCENARIOS.winterTea);
-  for (const o of sc.objects) o.params = { ...defaultParams(o.type), ...o.params };
-  const sim = createSimulation(sc);
+/** The cup on the veranda's table, under its roof; after 3 s still hot and steaming. */
+function teaOnTheVeranda(sim) {
   const w = sim.world;
   assert.equal(w.cups.length, 1);
   const c = w.cups[0];
@@ -59,7 +57,26 @@ test('Tea by the lake: the cup stands on the table, under the roof, by a frozen 
   for (let k = 0; k < 6; k++) sim.step(0.5);
   assert.ok(c.T < 88 && c.T > 80, `T ${c.T}`);
   assert.ok(c.vapour > 0);
-  // the lake is frozen over, thick enough to walk on
+}
+
+test('Tea on the veranda (tea house garden): the cup stands on the table, under the roof, by the open lake', () => {
+  const sc = cloneScene(SCENARIOS.teaGarden);
+  for (const o of sc.zones.tea.objects) o.params = { ...defaultParams(o.type), ...o.params };
+  const sim = createSimulation({ ...sc, zone: 'tea' });
+  teaOnTheVeranda(sim);
+  // a mild autumn day: no ice on the lake
+  const w = sim.world;
+  const lake = w.ice?.at(w, 11.5, 7.0);
+  assert.ok(!(lake?.thick > 0), JSON.stringify(lake));
+});
+
+test('the same island in the carrier scene, in a cold snap: the lake is frozen over', () => {
+  const sc = cloneScene(SCENARIOS.carrier);
+  for (const o of sc.zones.lake.objects) o.params = { ...defaultParams(o.type), ...o.params };
+  const sim = createSimulation({ ...sc, zone: 'lake' });
+  teaOnTheVeranda(sim);
+  // thick enough to walk on
+  const w = sim.world;
   const lake = w.ice.at(w, 11.5, 7.0);
   assert.ok(lake && !lake.sea && lake.thick > 0.08, JSON.stringify(lake));
 });

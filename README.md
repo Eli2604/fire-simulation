@@ -63,7 +63,10 @@ builds the whole editor as one file.
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
-  spaceship in orbit above them, a house fire in the rain.
+  spaceship in orbit above them, a house fire in the rain, and the garden by a tea house (a
+  world of two places: the washing line and the barbecue, tea on the veranda by the lake).
+  (Old links to the Laundry on the line and Tea by the lake scenes, `?scenario=laundry` and
+  `?scenario=winterTea`, open that world at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -485,6 +488,26 @@ For you: the suction pulls you towards the hole, and below a third of cabin pres
 hurt. Your breathing apparatus gives you air but not pressure, so get behind a closed door.
 The HUD shows the cabin pressure, and the sound is a roar of escaping air.
 
+### A world of places: boxes from afar, the scenery close up
+
+The **garden by the tea house** (`teaGarden`) is one world of two places, each a zone of its
+own voxel size laid out side by side by its `origin`, with a `label`:
+
+| Place | Origin | Size | Voxels | Time |
+|---|---|---|---|---|
+| Tea on the veranda (the lake island) | 0, 0, 0 | 22 × 7 × 19 m | 10 cm | 1× |
+| Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 23, 1.2, 9 | 7 × 3 × 5 m | 5 cm | 15× |
+
+One weather for the world: a mild early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the
+lake open), so the wash can dry and catch and the tea still steams. Zoomed out, each place is
+drawn as a box at its true location and size with its name over it (render/places.js); close
+up, its scenery: the place you are in as its voxels, the other as its stand-in (its last state,
+render/proxies.js). In Play, bring the camera close to a place (pan to it), or click its box
+or its name, and it becomes the place that runs, built the first time; the other waits where
+it was. A zone's `timeScale` applies while you are there. Edit world lists the places at the
+top of the outliner (a click goes there) and shows their outlines and names all the time. Any
+zoned scene with `places: true` works this way.
+
 ### Zones: big scenes without simulating everything at once
 
 The carrier scenario is split into five **zones**:
@@ -544,13 +567,16 @@ models are loaded from Poly Haven (and the Khronos samples) when a scene needs t
 solid shape as voxel cells, models/data/). Without a connection the scenes still work,
 with plain surfaces and the objects shown as their voxels.
 
-**Laundry on the line** (a scene; models/clothesline.js, render/laundry.js): the wash hangs
-in the garden on a warm, breezy afternoon, nearly dry after a few hours: a sheet folded over
+**Laundry on the line** (the *Washing line & barbecue* place of the tea house garden;
+models/clothesline.js, render/laundry.js): the wash hangs on the lawn across the water from the
+tea house's island on a mild, sunny autumn afternoon (19 °C, 45 % humidity, a light breeze),
+nearly dry after a few hours: a sheet folded over
 the line, towels, polyester shirts, jeans, a pillowcase, socks. Cotton holds a lot of water and
 dries in the sun and the wind (a dead fuel's moisture, about half an hour from the machine; it
 will not burn while it is wet: the model's Water setting); half a minute in a spark from the
 barbecue lands at the foot of the sheet and catches once it is dry enough (sparks keep
-landing for 20 s). Then the fire runs along the line; the shirts
+landing for 20 s; it catches ~30 s in, and nine tenths of the wash are gone ~95 s in, at the
+place's 15× time). Then the fire runs along the line; the shirts
 shrink, melt and drip before they burn; garments burnt through at the top fall; the lawn
 scorches under them. The cloth is drawn as cloth (folds, weave, stripes, seams, pegs),
 swaying in the breeze, and tied to its voxels: it chars, glows and burns through to holes.
@@ -640,8 +666,8 @@ walk than when you stand), 10 cm is safe, thinner breaks at once and you are in 
 bears them well (~8 cm); a dragon needs ~30 cm, on thinner ice it breaks through. A grenade
 blasts a hole in it. Open water skins over again in the cold.
 
-**A cup of tea** (scenario "Tea by the lake in winter", and the lake island in the carrier
-scene: a boat from the islet; models/teaCup.js, sim/tea.js, render/tea.js): a porcelain cup on
+**A cup of tea** (the *Tea on the veranda* place of the tea house garden, on a mild autumn day,
+and the lake island in the carrier scene, in a frost: a boat from the islet; models/teaCup.js, sim/tea.js, render/tea.js): a porcelain cup on
 its saucer, far smaller than the voxels, so it is drawn and its heat is kept on its own: the tea
 and the cup as one lump (~1.3 kJ/K for 250 ml). It loses heat by convection from its side and
 its open top (natural, or forced by the wind, whichever is more), by radiation, and by
@@ -654,9 +680,9 @@ cup (the same mixing line as a breath): a thin mist in a warm room once it has c
 little, thick wisps in a frost. As it cools it gives off less and the steam thins out; close by, a small label
 shows how hot it is (it cools ~3 K a minute at first in the frost: speed up time to see it go). The heat it gives off warms the air; a fire nearby warms it.
 Where the table under it burns away it falls (and breaks if it falls far); a blast breaks it.
-The scene round it: a small island (the island model with its pond made into a lake: `pondX`,
-`pondZ`, `pondRadius`, `pondRadiusZ`, `pondDepth`), the lake frozen over (10 cm: it bears
-you), a veranda on the shore (models/veranda.js), a couch with a plaid (models/couch.js), a side
+The place round it: a small island (the island model with its pond made into a lake: `pondX`,
+`pondZ`, `pondRadius`, `pondRadiusZ`, `pondDepth`), the lake open (in the carrier's cold
+snap frozen over, 10 cm: it bears you), a veranda on the shore (models/veranda.js), a couch with a plaid (models/couch.js), a side
 table with a book and a candle (models/sideTable.js); in the carrier scene it has a cold snap
 of its own (the zone's weather).
 
@@ -1081,7 +1107,9 @@ Models connect zones with `portals` (`{ p, r, to: "below", label, arrive? }`). P
 there switches to that zone, and you arrive at the portal there that leads back (its
 `arrive` point). Zones in the open sea have an `origin` [x, y, z], so the jet and its
 rockets can travel between them, and a `proxy` hint for how they look from afar before they
-are built.
+are built (`cell`: the stand-in's column size). With `"places": true` the zones are places of
+one world: each with a `label` (its box's name in the overview) and optionally its own
+`timeScale`; the camera coming close to one makes it the simulated one.
 
 ## Project layout
 
