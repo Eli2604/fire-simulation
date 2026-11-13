@@ -1058,6 +1058,8 @@ src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, pa
 src/ai/         enemies: senses, path finding around fire, luring with fire
 src/walk/       first-person walk-through (firefighter), flying the jet
 src/audio/      procedural sound
+src/rig/        the character stage (stage.js: soldiers and the dragon; rig.html mounts it alone)
+src/camp/       the drone operations camp stage (stage.js; camp.html mounts it alone)
 src/main.js     app, controls panel, HUD, tools, zones
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers
@@ -1093,15 +1095,25 @@ down; the first team leads and sends the others to a flank, tells them to hold o
 and calls a pursuit when the threat moves away. Scenario **Squad on a range**; the tool *Squad:
 set the threat* moves the threat.
 
-**Soldier rig test** (`rig.html`): the soldier on a range of its own, with every clip, the hit
-areas (shown and adjustable), the gear, an FPS readout and the squad AI on a range you edit.
+**Character rig** (`src/rig/stage.js`, the editor's *Rig* mode; `rig.html` mounts it on a page of
+its own): the soldiers on an empty field, with every clip, the loadouts (rifle, flame gun), the
+weapon in hand, armour, reload speed and look, the hit areas (shown, resized, damage multipliers:
+`operator/rig.js` `ZONES` itself, so edits apply in the world too), damage on click, the gear
+(dropped or knocked off as rigid bodies, re-equipped), grenades and flash-bangs, and an FPS
+readout. The range it used to have (walls, crates, the deck, squads and their AI, hostiles,
+noises, fog and night) is gone: squads are tried out in the voxel world now. The editor mounts it
+with `mountRig(el, { onExit })` → `{ show, hide, select, dispose }`; `select({ kind: 'soldier',
+loadout: 'torch' })` or `select({ kind: 'dragon' })` picks what it shows; its markup and CSS stay
+inside `el` (class `rigst`, elements by `data-id`). URL options: `?anim=`, `?zones=1`, `?t=`,
+`?tab=anim|hit|gear|dragon`, `?cam=`, `?nopanel=1` and the dragon's below.
 Its *Dragon* tab shows the simulation's dragon instead (the same AI and renderer, in a small
 field of its own with a wall to climb): every act as a button (rest, walk, run, sniff, roar,
 breathe fire, bite, rear and stamp, climb, take off, fly, glide, bank, land, hurt, die, shot
 down), a speed control, its hit zones shown and adjustable (radius, length, damage; the
 simulation uses the same table), and damage on click with an arrow, a bullet or a rocket: the
-zone under the cursor flashes and bleeds. `?dragon=1&dact=fly&dzones=1` opens it.
-`node scripts/build-rig-artifact.mjs [out.html]` builds it as one self-contained HTML file.
+zone under the cursor flashes and bleeds (`ai/dragon.js` `DRAGON_ZONES` itself).
+`?dragon=1&dact=fly&dzones=1` (or `?tab=dragon`) opens it.
+`node scripts/build-rig-artifact.mjs [out.html]` builds `rig.html` as one self-contained HTML file.
 
 ### Squads: senses, the commander's calls, cover
 
@@ -1110,8 +1122,7 @@ allow (thermal goggles see further), hear noises and send two men to investigate
 silence), mark what they see as the threat and follow it, and go back to the last known position
 when they lose it. The commander orders thermals, lights on or off (not when that would give them
 away), radio silence and backup; cover at the ends of walls and edges of crates is preferred and
-the gunner takes higher ground a little behind. On the rig page: the Noise, Hostile and
-Investigate tools, Fog, Night and Radio silence.
+the gunner takes higher ground a little behind.
 
 **Guards are fire teams.** The simulation's guards are the same agents: each guard team gets a
 call sign and roles (its leader the commander). While nothing is going on the guard AI keeps
@@ -1154,19 +1165,18 @@ way); he closes in and stabs. A man **badly hit** is called in by the nearest of
   high, leaning in; knees bent, eyes on the steps); down a steep hill outdoors they slide, seated,
   feet first. The guards too.
 
-The rig page's range has a **two-floor structure**: an open ground floor under a deck 3 m up, a
-staircase with glass rails (they stop you, not your sight); the tools place noises, hostiles and
-investigations up on the deck too, and the squad works its way up the stairs to them.
-The deck is a **lookout** (`host.lookouts`): before contact a rifleman climbs it to look round,
-and on contact the gunner takes it as his overwatch when it sees the threat (from 3 m up he sees
-over the walls); he stays up there while the team is within reach, and comes down by the stairs.
+A **lookout** (`host.lookouts`: a raised place, such as a deck): before contact a rifleman climbs
+it to look round, and on contact the gunner takes it as his overwatch when it sees the threat; he
+stays up there while the team is within reach, and comes down by the stairs.
 
 **Hosted pages**: built with `PAGE_URLS` (`scripts/build-rig-artifact.mjs`), each page knows where
 the others are hosted and its scene list opens them (`src/pages.js`).
 
 ## Drone operations camp
 
-`camp.html` (scenario **Military camp: drone operations desk**): a camp with a swarm of drones
+A stage of the editor (`src/camp/stage.js`: `mountCamp(el, { onExit })` → `{ show, hide, dispose }`,
+markup and CSS inside `el`, class `campst`); `camp.html` (scenario **Military camp: drone
+operations desk**) mounts it on its own. A camp with a swarm of drones
 flown by the group logic of the [drones](https://github.com/Eli2604/drones) repo, included as a
 git submodule in `vendor/drones` (clone with `git clone --recurse-submodules`, or run
 `git submodule update --init`). The operator walks to his desk in the command tent: a monitor per
