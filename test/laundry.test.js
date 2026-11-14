@@ -8,10 +8,10 @@ import { F_BURNING, F_HIDDEN } from '../src/sim/world.js';
 import { StatueDrawing } from '../src/render/statue.js';
 import { buildLaundry } from '../src/render/laundry.js';
 
-// the washing line in the tea house garden (a place of the teaGarden world): the wash on the line catches from the barbecue's spark, burns with flame,
+// the washing line in the garden by the lake house (a place of the carrier's world): the wash on the line catches from the barbecue's spark, burns with flame,
 // chars and burns away; the drawn cloth (render/statue.js over render/laundry.js) loses it
 test('laundry on the line catches, burns and is gone within two minutes; the drawn cloth gets holes', { timeout: 20 * 60 * 1000 }, () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.teaGarden), zone: 'laundry' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'garden' });
   const w = sim.world;
   const cloth = new Set([MAT.cotton, MAT.polyester]);
   const ids = [];

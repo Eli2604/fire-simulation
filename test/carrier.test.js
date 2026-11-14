@@ -78,11 +78,11 @@ test('server room: the inert-gas system puts out a rack fire when the door is sh
 });
 
 test('catacombs: torches light the passages and the scene is dark', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.catacombs));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
   const w = sim.world;
   const torches = w.heaters.filter((h) => h.light);
   assert.ok(torches.length >= 10, `${torches.length} torches`);
-  assert.ok(SCENARIOS.catacombs.view.dark);
+  assert.ok(SCENARIOS.carrier.zones.catacombs.view.dark);
   assert.ok(w.doors.some((d) => d.locked));
   const names = new Set();
   for (let k = 0; k < w.solidCount; k++) names.add(MATERIALS[w.mat[w.solids[k]]].name);

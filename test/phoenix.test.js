@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createSimulation } from '../src/sim/createSimulation.js';
-import { SCENARIOS, cloneScene } from '../src/scenarios.js';
+import { SCENARIOS, cloneScene, zoneScene } from '../src/scenarios.js';
 import { toggleDoor } from '../src/sim/doors.js';
 import { shoot } from '../src/sim/wounds.js';
 import { PhoenixRenderer } from '../src/render/phoenix.js';
 
 const catacombs = (guards = true) => {
-  const sc = cloneScene(SCENARIOS.catacombs);
+  const sc = zoneScene(cloneScene(SCENARIOS.carrier), 'catacombs'); // (the catacombs under the church, on their own)
   sc.noFire = true;
   if (!guards) sc.objects = sc.objects.filter((o) => o.type !== 'enemy');
   return createSimulation(sc);

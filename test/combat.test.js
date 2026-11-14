@@ -159,7 +159,7 @@ test('a heavy falling branch hurts whoever it lands on', () => {
 });
 
 test('a locked glass door: break the pane, then it can be opened from the inside', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.catacombs));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
   const w = sim.world;
   const k = w.doors.findIndex((d) => d.locked);
   assert.ok(k >= 0, 'a locked door');

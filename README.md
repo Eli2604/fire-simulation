@@ -63,10 +63,11 @@ builds the whole editor as one file.
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
-  spaceship in orbit above them, a house fire in the rain, and the garden by a tea house (a
-  world of two places: the washing line and the barbecue, tea on the veranda by the lake).
-  (Old links to the Laundry on the line and Tea by the lake scenes, `?scenario=laundry` and
-  `?scenario=winterTea`, open that world at the place.)
+  spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
+  with the washing line and the barbecue, a meadow with a wind-driven grass fire), all places of
+  the carrier's world, and a house fire in the rain.
+  (Old links to scenes that are now places of that world, `?scenario=laundry`, `teaGarden`,
+  `winterTea` (the lake frozen), `grassFire` and `catacombs`, open it at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -490,23 +491,34 @@ The HUD shows the cabin pressure, and the sound is a roar of escaping air.
 
 ### A world of places: boxes from afar, the scenery close up
 
-The **garden by the tea house** (`teaGarden`) is one world of two places, each a zone of its
-own voxel size laid out side by side by its `origin`, with a `label`:
+The **carrier's world** (`carrier`, `places: true`) is a world of places, each a zone of its
+own voxel size laid out by its `origin`, with a `label`. The lake house and its neighbours
+(the old Garden by the tea house, Laundry on the line, Tea by the lake and Wind-driven grass
+fire scenes):
 
 | Place | Origin | Size | Voxels | Time |
 |---|---|---|---|---|
-| Tea on the veranda (the lake island) | 0, 0, 0 | 22 × 7 × 19 m | 10 cm | 1× |
-| Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 23, 1.2, 9 | 7 × 3 × 5 m | 5 cm | 15× |
+| Lake house: tea on the veranda (the lake island) | 240, 1.8, 150 | 22 × 19 × 7 m | 10 cm | 1× |
+| Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 263, 3, 159 | 7 × 5 × 3 m | 5 cm | 15× |
+| Meadow: grass fire (on the shore south of the lake island) | 258, 2.85, 170.5 | 24 × 14 × 9 m | 20 cm | 3× |
 
-One weather for the world: a mild early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the
-lake open), so the wash can dry and catch and the tea still steams. Zoomed out, each place is
+The lake house and its garden share one weather (the garden's `weatherOf: 'lake'`): a mild
+early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the lake open), so the wash can dry and
+catch and the tea still steams; Weather › Presets › Cold snap (or `?scenario=winterTea`) freezes
+the lake over. The meadow keeps the old grass fire's hot, dry, windy spell (28 °C, 25 %, 4 m/s).
+Places inside or under another have no `origin` (the jet, the boats and the stand-ins do not go
+by them) but a schematic `box` for the overview: below deck and the lower decks in the hull, the
+catacombs under the church. Zoomed out, each place is
 drawn as a box at its true location and size with its name over it (render/places.js); close
 up, its scenery: the place you are in as its voxels, the other as its stand-in (its last state,
-render/proxies.js). In Play, bring the camera close to a place (pan to it), or click its box
-or its name, and it becomes the place that runs, built the first time; the other waits where
-it was. A zone's `timeScale` applies while you are there. Edit world lists the places at the
-top of the outliner (a click goes there) and shows their outlines and names all the time. Any
-zoned scene with `places: true` works this way.
+render/proxies.js). Click a box or its name and it becomes the place that runs, built the first
+time; the others wait where they were. In Play (not walking or flying) bringing the camera close
+to a neighbour (a place of the same `group` as the one you are in: the lake house, its garden,
+its meadow) does the same; the ship, the islands and orbit are left to their hatches, boats and
+the jet. Walking or flying, the world is its scenery (no boxes). A zone's `timeScale` applies
+while you are there. Edit world lists the places at the top of the outliner (where each is:
+outdoors, indoors, underground or sealed; its size; its voxels; a click goes there) and shows
+their outlines and names all the time. Any zoned scene with `places: true` works this way.
 
 ### Zones: big scenes without simulating everything at once
 

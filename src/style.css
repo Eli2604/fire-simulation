@@ -454,6 +454,19 @@ body[data-mode] #hud {
   text-align: left;
   padding: 3px 6px;
 }
+/* a place of a world: its name, and under it where it is, its size and its voxels */
+#outliner .list.places button {
+  flex-direction: column;
+  gap: 2px;
+}
+#outliner .list.places .facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+#outliner .list.places .facts .tag {
+  margin-left: 0;
+}
 #outliner .list button.on {
   background: rgba(255, 154, 74, 0.25);
 }

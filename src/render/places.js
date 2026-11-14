@@ -5,7 +5,8 @@ import * as THREE from 'three';
  * side by `origin`): zoomed out, each place is a box at its true location and size with its
  * name over it (`label`); close up, its scenery (the place you are in: its voxels; the others:
  * their stand-ins, render/proxies.js). Edit world shows the boxes all the time. A click on a
- * box or a name (pick) says which place to go to.
+ * box or a name (pick) says which place to go to. A place inside or under another (below deck,
+ * the catacombs: `schematic`, at a spot of its own for the overview) is outlined in blue.
  */
 
 /** From how far off (m) a place of this size [x, y, z] is shown as its box. */
@@ -84,7 +85,7 @@ export class PlacesOverlay {
   }
 
   /**
-   * places: [{ name, label, offset: [x, y, z] in the view's frame, size, active, color }];
+   * places: [{ name, label, offset: [x, y, z] in the view's frame, size, active, color, schematic }];
    * cam: the camera's position in that frame. Returns name -> true for the places far enough
    * off to be drawn as their box (their stand-ins hidden).
    */
@@ -104,7 +105,7 @@ export class PlacesOverlay {
       far.set(q.name, isFar);
       it.fill.visible = isFar && !q.active;
       it.edges.visible = isFar || this.editing;
-      it.edges.material.color.set(q.active ? 0xffc64d : 0xffffff);
+      it.edges.material.color.set(q.active ? 0xffc64d : q.schematic ? 0x8cc8ff : 0xffffff);
       it.edges.material.opacity = q.active ? 1 : 0.85;
       if (it.label) {
         it.label.visible = isFar || this.editing;
@@ -112,6 +113,8 @@ export class PlacesOverlay {
         it.label.center.y = 0;
       }
       it.active = q.active;
+      it.min = min;
+      it.max = max;
     }
     for (const [name, it] of this.items)
       if (!keep.has(name)) {
@@ -209,6 +212,12 @@ export class PlacesOverlay {
     const hl = raycaster.intersectObjects(labels, false);
     if (hl.length) return { name: hl[0].object.userData.place, distance: 0 };
     const hb = raycaster.intersectObjects(boxes, false);
-    return hb.length ? { name: hb[0].object.userData.place, distance: hb[0].distance } : null;
+    if (!hb.length) return null;
+    // (a place inside another's box, below deck in the hull: the inner one where the ray meets both)
+    const box = (h) => this.items.get(h.object.userData.place);
+    const inside = (a, b) => a.min.every((v, k) => v >= b.min[k] - 1e-6 && a.max[k] <= b.max[k] + 1e-6);
+    let best = hb[0];
+    for (const h of hb) if (h !== best && inside(box(h), box(best))) best = h;
+    return { name: best.object.userData.place, distance: best.distance };
   }
 }

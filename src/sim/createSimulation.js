@@ -30,7 +30,7 @@ export function createSimulation(scene) {
   // where it is: outdoors the weather (the scene's, or the zone's own); indoors, underground, in a
   // sealed cabin only its own air (no wind, rain, sun, snow: sim/weather.js)
   const exposure = exposureOf(zone ?? scene);
-  const own = zone ? zone.weather : null;
+  const own = zone ? zone.weather ?? scene.zones[zone.weatherOf]?.weather : null; // (its own, or the one it shares)
   const settings = { ...defaultWeather(), ...(exposure === 'outdoor' || !zone ? scene.weather ?? {} : INSIDE_AIR[exposure]), ...(own ?? {}) };
   const weather = liveWeather({}, settings, exposure);
   const { world, ignitions, spawn } = buildScene({ ...scene, weather });
