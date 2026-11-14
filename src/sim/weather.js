@@ -18,6 +18,7 @@ export function defaultWeather() {
     snowCover: 0, // m of snow lying when the scene starts
     iceCover: 0, // m of ice on the fresh water when the scene starts (sim/ice.js)
     iceSpeed: 1, // × how fast ice forms and melts (1: as it does; more to watch it happen)
+    snowSpeed: 1, // × how fast snow builds up and melts (1: as it does; more to watch it happen)
     vary: 'fixed', // fixed | gentle | changeable: how it changes by itself (WeatherDrift)
   };
 }

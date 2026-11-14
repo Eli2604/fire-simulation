@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { carrierHullEnds } from './hull.js';
 
 /**
  * The open sea around a ship or an island.
@@ -104,9 +105,9 @@ export class Ocean {
     // a drawn ship round the simulated slice (render/hull.js): its waterline, for the foam
     const ship = (world.props ?? []).find((q) => q.type === 'carrierHull');
     if (ship) {
-      const xs = -ship.hx - Math.max(4, 4.3 * 2 * ship.hz * 0.18);
-      const xe = xs + 4.3 * 2 * ship.hz - 3.5;
-      this.uniforms.uHull.value.set(ship.p[0] + xs, ship.p[2] - ship.hz, ship.p[0] + xe, ship.p[2] + ship.hz);
+      // (where render/hull.js ends it: foam all round it and in its lee, none out on the open sea)
+      const { xStern, xStem } = carrierHullEnds(ship);
+      this.uniforms.uHull.value.set(ship.p[0] + xStern, ship.p[2] - ship.hz, ship.p[0] + xStem, ship.p[2] + ship.hz);
     } else this.uniforms.uHull.value.set(x0, z0, x1, z1);
     this.uniforms.uLevel.value = s.level;
     this.uniforms.uDepthBox.value.set(0, 0, sx, sz);
@@ -450,7 +451,7 @@ vec3 shallow = vec3(0.26, 0.62, 0.56);
 vec3 mid = vec3(0.04, 0.33, 0.42);
 vec3 deep = vec3(0.012, 0.075, 0.15);
 vec3 wcol = mix(shallow, mid, 1.0 - exp(-dep / 1.4));
-wcol = mix(wcol, deep, 1.0 - exp(-dep / 7.0));
+wcol = mix(wcol, deep, 1.0 - exp(-dep / (uHasBathy > 0.5 ? 12.0 : 7.0)));
 // under a grey sky the sea goes grey-green
 wcol = mix(wcol, vec3(0.16, 0.22, 0.23) * (0.6 + 0.4 * (1.0 - exp(-dep / 3.0))), uGrey * 0.55);
 // light scattered in the crests (thin water lit through)
@@ -477,7 +478,9 @@ float cover = max(max(surf, edge), max(max(hull * 0.9, caps), drift * 0.8));
 float foam = clamp(cover * mix(lace, 1.0, cover * cover * 0.6) * smoothstep(0.3, 0.6, fn + 0.2), 0.0, 1.0) * 0.9;
 diffuseColor.rgb = mix(wcol, vec3(0.92, 0.95, 0.96), foam);
 // clear where it is shallow (you see the bottom), opaque deep down and at grazing angles
-float alpha = mix(0.32, 1.0, pow(smoothstep(0.0, 5.0, dep), 0.6)); // opaque where it is deep
+// (over the island group's sea floor, drawn everywhere, the water is clear: you see the
+// bottom down to ~25-30 m, a sandy bank under an anchored ship; without it, opaque below 5 m)
+float alpha = uHasBathy > 0.5 ? mix(0.3, 1.0, pow(smoothstep(0.0, 35.0, dep), 0.75)) : mix(0.32, 1.0, pow(smoothstep(0.0, 5.0, dep), 0.6));
 diffuseColor.a = clamp(max(alpha + oFres * 0.5, foam), 0.0, 1.0);
 vOFoam = foam;
 vONw = oN;

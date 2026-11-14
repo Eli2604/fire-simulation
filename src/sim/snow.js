@@ -282,7 +282,9 @@ export function stepSnow(sim, dt, D) {
   }
   S.acc += dt;
   if (S.acc < 0.5) return;
-  const T = S.acc;
+  // (weather `snowSpeed`: it falls, settles and melts that many times faster, to watch it)
+  const T0 = S.acc;
+  const T = T0 * Math.max(1, sim.weather?.snowSpeed ?? 1);
   S.acc = 0;
   if (w.geomVersion !== S.seenGeom) {
     if (w.listDirty) w.rebuildLists();
@@ -354,7 +356,7 @@ export function stepSnow(sim, dt, D) {
         if (k >= 0) {
           const kg = melt * A * 4;
           if (S.top[k] >= 0) sim.addWater(S.top[k], kg);
-          S.drip[j] = kg / T;
+          S.drip[j] = kg / T0;
           dripping = true;
         } else if (i >= 0) sim.addWater(i, melt * A);
         changed = true;

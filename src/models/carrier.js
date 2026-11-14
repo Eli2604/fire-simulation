@@ -99,7 +99,7 @@ export const carrierDeck = {
             { type: 'catapult', p: [-hx * 0.15, D, 3.2], len: hx * 1.1 },
             { type: 'wires', p: [-hx + 2.5, D, 0], n: 3, step: 2.6, w: B * 0.75 },
           ]),
-      { type: 'net', p: [-hx, D, -hz], len: L, heading: Math.PI },
+      { type: 'net', p: [-hx + L, D, -hz], len: L, heading: Math.PI }, // (from the bow aft: turned, it runs back along the port edge)
       { type: 'net', p: [-hx, D, hz], len: L },
       { type: 'number', p: [hx - 5, D, 0], text: '68', w: 5, h: 3.5, turn: -Math.PI / 2 },
       { type: 'carrierHull', p: [0, 0, 0], hx, hz, D, draft: p.draft, number: '68' },

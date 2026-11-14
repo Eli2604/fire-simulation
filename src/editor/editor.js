@@ -444,6 +444,23 @@ export class Editor {
     fw.add(W, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onFinishChange(change);
     fw.add(W, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(change);
     fw.add(W, 'iceCover', 0, 0.6, 0.01).name('Ice on water (m)').onFinishChange(change);
+    // (how fast ice and snow come and go: 1 unless the scene sets it, not written into it until changed)
+    const speed = {
+      get iceSpeed() {
+        return W.iceSpeed ?? 1;
+      },
+      set iceSpeed(v) {
+        W.iceSpeed = v;
+      },
+      get snowSpeed() {
+        return W.snowSpeed ?? 1;
+      },
+      set snowSpeed(v) {
+        W.snowSpeed = v;
+      },
+    };
+    fw.add(speed, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)').onFinishChange(change);
+    fw.add(speed, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)').onFinishChange(change);
   }
 
   showPalette() {

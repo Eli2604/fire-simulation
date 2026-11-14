@@ -85,7 +85,8 @@ export class ArchipelagoRenderer {
     // the zone's own box: the voxels are the ground there (a ship: open water)
     // (for an island: its voxel terrain, as the scenario gives it in spec.zones)
     const own = (spec.zones ?? []).find((q) => q.box[0] - origin[0] >= -0.5 && q.box[2] - origin[0] <= sx + 0.5 && q.box[1] - origin[2] >= -0.5 && q.box[3] - origin[2] <= sz + 0.5);
-    const [x0, z0, x1, z1] = world.sea.box[2] - world.sea.box[0] > 0.01 ? world.sea.box : own ? [own.box[0] - origin[0], own.box[1] - origin[2], own.box[2] - origin[0], own.box[3] - origin[2]] : [0, 0, sx, sz];
+    // (a ship: the sea floor runs on under its hull, none of it is cut out)
+    const [x0, z0, x1, z1] = world.sea.box[2] - world.sea.box[0] > 0.01 ? [0, 0, 0, 0] : own ? [own.box[0] - origin[0], own.box[1] - origin[2], own.box[2] - origin[0], own.box[3] - origin[2]] : [0, 0, sx, sz];
     const U = {
       ...SNOW_COVER,
       uSea: { value: sea },

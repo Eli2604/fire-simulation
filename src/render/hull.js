@@ -18,7 +18,65 @@ import * as THREE from 'three';
  *
  * All drawn only: the slice is what is simulated (and walked on). Local frame of the
  * prop: x along the ship (bow +x), z across (starboard +z), y up from the keel.
+ *
+ * Snow: the slice's snow is simulated (sim/snow.js); on the rest of the deck and on the tops
+ * of the sponsons and elevators it lies as it does on the slice (HULL_SNOW: the share of the
+ * slice it covers and its mean depth, set by the view as it changes): it comes and goes with it.
  */
+/** Snow on the drawn deck: { uHullSnow: share of the slice's deck covered (0..1), uHullSnowDepth: its mean depth (m) }. */
+export const HULL_SNOW = { uHullSnow: { value: 0 }, uHullSnowDepth: { value: 0 } };
+
+/** Snow lying on a material's upward faces (in its mesh's own frame), as on the slice. */
+function snowOn(mat, key) {
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, HULL_SNOW);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSnP;\nvarying vec3 vSnN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSnP = (modelMatrix * vec4(position, 1.0)).xyz;\nvSnN = normal;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+varying vec3 vSnP;
+varying vec3 vSnN;
+uniform float uHullSnow, uHullSnowDepth;
+float snH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float snNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(snH(i), snH(i + vec2(1, 0)), f.x), mix(snH(i + vec2(0, 1)), snH(i + vec2(1, 1)), f.x), f.y);
+}`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+// snow: in patches while the slice is partly covered, a white sheet once it all is; a dusting
+// lets the deck's markings show through
+float snUp = smoothstep(0.6, 0.9, normalize(vSnN).y);
+float snN = snNoise(vSnP.xz * 0.45) * 0.6 + snNoise(vSnP.xz * 2.3) * 0.4;
+float snAmt = snUp * smoothstep(snN - 0.12, snN + 0.12, uHullSnow * 1.2) * mix(0.55, 1.0, smoothstep(0.005, 0.04, uHullSnowDepth));
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.92, 0.95), snAmt * step(0.0005, uHullSnowDepth));`,
+      )
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.8, snAmt);');
+  };
+  mat.customProgramCacheKey = () => 'carrier-snow-' + key;
+  return mat;
+}
+
+/**
+ * Where the drawn ship ends, along its length (its own frame): the transom, the bow (the deck's
+ * forward edge) and the stem at the waterline. The sea (render/ocean.js) takes its foam and its
+ * lee from the same.
+ */
+export function carrierHullEnds(pr) {
+  const { hx, hz } = pr;
+  const B = 2 * hz;
+  const len = 4.3 * B;
+  const xStern = -hx - Math.max(4, Math.min(len * 0.18, (len - 2 * hx) * 0.3));
+  const xBow = Math.max(xStern + len, hx + B * 0.8);
+  return { xStern, xBow, xStem: xBow - 3.5 };
+}
+
 export function buildCarrierHull(pr) {
   const g = new THREE.Group();
   const hx = pr.hx;
@@ -27,11 +85,7 @@ export function buildCarrierHull(pr) {
   const T = pr.draft;
   // the ship's ends: about 4.3 × the beam long, the slice a little aft of amidships
   // (a slice that is most of the deck: the stern just aft of it, the bow narrowing beyond it)
-  const B = 2 * hz;
-  const len = 4.3 * B;
-  const xStern = -hx - Math.max(4, Math.min(len * 0.18, (len - 2 * hx) * 0.3));
-  const xBow = Math.max(xStern + len, hx + B * 0.8);
-  const xStem = xBow - 3.5; // the stem at the waterline (it rakes forward above)
+  const { xStern, xBow, xStem } = carrierHullEnds(pr); // (the stem at the waterline: it rakes forward above)
 
   // ---- the hull
   // half width at (x, y): the slice is the full beam; it narrows to the stem at the
@@ -97,11 +151,19 @@ export function buildCarrierHull(pr) {
       const b = a + row;
       idx.push(a, b, a + 1, b, b + 1, a + 1);
     }
-  // the transom: a flat plate across the stern
+  // the transom: a flat plate across the stern, closing the hull from its bottom up to the
+  // deck (its own vertices: a flat face, painted in bands like the sides, not shaded with them)
   const t0 = pos.length / 3;
-  pos.push(xStern, (D - 0.6 + yBot(xStern)) / 2, 0);
-  col.push(...grey);
-  for (let j = 0; j < 2 * NY; j++) idx.push(t0, j + 1, j);
+  for (let j = 0; j <= NY; j++) {
+    const k = j * 3; // the port side's vertex at this height (the starboard one mirrors it)
+    pos.push(pos[k], pos[k + 1], pos[k + 2], pos[k], pos[k + 1], -pos[k + 2]);
+    col.push(...colour(pos[k + 1]), ...colour(pos[k + 1]));
+  }
+  for (let j = 0; j < NY; j++) {
+    const p0 = t0 + 2 * j;
+    const p1 = p0 + 2;
+    idx.push(p0, p1, p0 + 1, p1, p1 + 1, p0 + 1); // (facing aft)
+  }
   const hullGeo = new THREE.BufferGeometry();
   hullGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   hullGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
@@ -151,13 +213,13 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.22, 0.13, 0.08), streak * 0.35 *
   const uv = deckGeo.getAttribute('uv');
   const dp = deckGeo.getAttribute('position');
   for (let k = 0; k < uv.count; k++) uv.setXY(k, (dp.getX(k) - xStern) / (xBow - xStern), 1 - (dp.getZ(k) + hz * 1.6) / (hz * 3.2));
-  const deckMat = new THREE.MeshStandardMaterial({ map: deckTex, color: deckTex ? 0xffffff : 0x55585b, roughness: 0.9, metalness: 0.1 });
+  const deckMat = snowOn(new THREE.MeshStandardMaterial({ map: deckTex, color: deckTex ? 0xffffff : 0x55585b, roughness: 0.9, metalness: 0.1 }), 'deck');
   const deckMesh = new THREE.Mesh(deckGeo, deckMat);
   g.add(deckMesh);
 
   // the underside of the overhangs, and the angled deck's support: a dark shadowed box
   const M = {
-    grey: new THREE.MeshStandardMaterial({ color: 0x5c6166, roughness: 0.6, metalness: 0.35 }),
+    grey: snowOn(new THREE.MeshStandardMaterial({ color: 0x5c6166, roughness: 0.6, metalness: 0.35 }), 'grey'),
     dark: new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.9, metalness: 0.1 }),
     net: new THREE.MeshStandardMaterial({ color: 0x2a2c2e, roughness: 0.9, transparent: true, opacity: 0.6, side: THREE.DoubleSide }),
     white: new THREE.MeshStandardMaterial({ color: 0xe8e8e4, roughness: 0.7 }),

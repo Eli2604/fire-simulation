@@ -97,6 +97,29 @@ test('snow lies where it is open to the sky, falls, settles and is pressed down 
   assert.ok(S.depth[j] < d0 * 0.75 && S.rho[j] > 350);
 });
 
+test('weather snowSpeed: snow builds up (and melts) that many times faster', () => {
+  const mass = (sim) => {
+    const S = sim.world.snow;
+    const j = S.cell(3, 3);
+    return S.depth[j] * S.rho[j];
+  };
+  // (a dusting lying, so the field is there)
+  const a = snowyLawn(0.002);
+  const b = snowyLawn(0.002);
+  const m0 = mass(a);
+  assert.equal(a.weather.snowSpeed, 1, 'by default as it does');
+  b.weather.snowSpeed = 30;
+  // a minute of 10 mm/h: ~0.17 kg/m² as it is, 30 × that faster
+  const D = { snowRate: 10 / 3600 };
+  for (let t = 0; t < 60; t += 0.5) {
+    stepSnow(a, 0.5, D);
+    stepSnow(b, 0.5, D);
+  }
+  assert.ok(Math.abs(mass(a) - m0 - 10 / 60) < 0.01, `${mass(a) - m0} kg/m² in a minute`);
+  assert.ok(Math.abs((mass(b) - m0) / (mass(a) - m0) - 30) < 0.5, `${(mass(b) - m0) / (mass(a) - m0)} × as much`);
+  assert.ok(b.world.snow.depthAt(3, 3) > 0.04, 'several cm in a minute: you see it build up');
+});
+
 test('a fire melts the snow round it; grass under snow does not catch', () => {
   const sim = snowyLawn(0.15);
   const w = sim.world;
