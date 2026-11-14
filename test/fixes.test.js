@@ -216,7 +216,7 @@ test('walk-through: water is no floor; deep water with air above it floats you, 
 test('catacombs: bone walls as in Paris – bone ends in rows, bands and a crown of skulls, crosses and hearts, tablets', async () => {
   const THREE = await import('three');
   const { OssuaryRenderer } = await import('../src/render/ossuary.js');
-  const sim = createSimulation(cloneScene(SCENARIOS.catacombs));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
   const r = new OssuaryRenderer(new THREE.Scene());
   r.setWorld(sim.world);
   r.update(5, null);
@@ -272,7 +272,7 @@ test('catacombs: a lamp lighting up a dark spot draws the guard who sees it; a s
 });
 
 test('catacombs: a blast brings the guards running, and they search the place', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.catacombs));
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
   const w = sim.world;
   run(sim, 1);
   const at = [2, 1, 22];

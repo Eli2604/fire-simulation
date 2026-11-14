@@ -5,7 +5,7 @@ import { Walkthrough } from './walk/walk.js';
 import { defaultStartPower, walkMarker } from './sim/createSimulation.js';
 import { toggleDoor, nearestDoor, doorOfVoxel } from './sim/doors.js';
 import { View } from './render/view.js';
-import { SCENARIOS, cloneScene, resolveScenario } from './scenarios.js';
+import { SCENARIOS, cloneScene, resolveScenario, openScenario, placeOrigin, LAKESIDE_WINTER } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift } from './sim/weather.js';
@@ -99,6 +99,7 @@ function placeNow() {
  */
 function settingsOf(zd) {
   if (!zd || zd === scene) return weather;
+  if (!zd.weather && scene.zones?.[zd.weatherOf]) return settingsOf(scene.zones[zd.weatherOf]); // (a place sharing another's: the lake house's garden)
   const exp = exposureOf(zd);
   if (exp === 'outdoor' && !zd.weather) return weather;
   if (!zd.weather || !('vary' in zd.weather)) zd.weather = Object.assign(defaultWeather(), exp === 'outdoor' ? weather : INSIDE_AIR[exp], zd.weather ?? {});
@@ -203,23 +204,36 @@ function updateProxies(now = false) {
  */
 let nearTimer = 0;
 function updatePlaces(dt) {
-  const here = scene.places && scene.zones?.[scene.zone]?.origin;
-  if (!here) {
-    view.places.update([], [0, 0, 0]);
+  // (where you are in the world: the place's origin, or its schematic box: below deck, the catacombs)
+  const here = scene.places && placeOrigin(scene.zones?.[scene.zone]);
+  const editing = editor.mode === 'edit';
+  // walking, sailing or flying in Play the world is its scenery (the stand-ins), no boxes
+  if (!here || (walk.active && !editing)) {
+    if (view.places.items.size) {
+      view.places.update([], [0, 0, 0]);
+      for (const name of Object.keys(scene.zones ?? {})) view.proxies.setVisible(name, true);
+    }
     return;
   }
-  view.places.editing = editor.mode === 'edit';
+  view.places.editing = editing;
   const list = Object.entries(scene.zones)
-    .filter(([, z]) => z.origin)
-    .map(([name, z]) => ({ name, label: z.label ?? z.name, offset: z.origin.map((v, k) => v - here[k]), size: z.world.size, active: name === scene.zone, color: z.proxy?.color }));
+    .filter(([, z]) => placeOrigin(z))
+    .map(([name, z]) => ({ name, label: z.label ?? z.name, offset: placeOrigin(z).map((v, k) => v - here[k]), size: z.world.size, active: name === scene.zone, color: z.proxy?.color, group: z.group, schematic: !z.origin }));
   const cam = view.cameraLocal();
   const far = view.places.update(list, cam);
   for (const [name, f] of far) if (name !== scene.zone) view.proxies.setVisible(name, !f);
-  // (in Play, not walking: the walk-through goes by its boats and ladders)
+  // the camera come close to a neighbour (a place of the same group as the one you are in: the
+  // lake house, its garden, its meadow) makes it the one that runs; in Play, not walking or
+  // flying (those go by their own boats, hatches, ladders and approaches), never by itself into
+  // or out of a ship, an island or orbit
   nearTimer -= dt;
-  if (editor.mode !== 'play' || walk.active || nearTimer > 0) return;
+  const group = scene.zones[scene.zone].group;
+  if (!group || editor.mode !== 'play' || walk.active || nearTimer > 0) return;
   nearTimer = 0.4;
-  const near = placeNear(list.map((q) => ({ name: q.name, active: q.active, min: q.offset, max: q.offset.map((v, k) => v + q.size[k]) })), cam);
+  const near = placeNear(
+    list.filter((q) => q.active || (q.group === group && !q.schematic)).map((q) => ({ name: q.name, active: q.active, min: q.offset, max: q.offset.map((v, k) => v + q.size[k]) })),
+    cam,
+  );
   if (near) activateZone(near, true);
 }
 
@@ -256,11 +270,15 @@ function placeAt(e) {
 function fitPlaces() {
   if (!scene.places || !scene.zones) return;
   let r = 0;
-  const here = scene.zones[scene.zone].origin ?? [0, 0, 0];
-  for (const z of Object.values(scene.zones))
-    if (z.origin) for (const c of [0, 1]) r = Math.max(r, Math.hypot(...z.origin.map((v, k) => v + c * z.world.size[k] - here[k])));
+  const here = placeOrigin(scene.zones[scene.zone]) ?? [0, 0, 0];
+  for (const z of Object.values(scene.zones)) {
+    const o = placeOrigin(z);
+    if (o) for (const c of [0, 1]) r = Math.max(r, Math.hypot(...o.map((v, k) => v + c * z.world.size[k] - here[k])));
+  }
   view.controls.maxDistance = Math.max(view.controls.maxDistance, r * 3);
-  view.farBase = Math.max(view.farBase ?? 0, r * 12);
+  // (far enough to see them all from there; not more than needed: a far plane kilometres off
+  // costs depth precision close by)
+  view.farBase = Math.max(view.farBase ?? 0, Math.min(r * 12, r * 3 + r + 500));
   view.camera.far = Math.max(view.camera.far, view.farBase);
   view.camera.updateProjectionMatrix();
 }
@@ -471,6 +489,8 @@ function buildWeatherFolder() {
   // the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
   fP.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
   fP.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
+  // a cold snap (the lake house's winter, the old Tea by the lake in winter): the lake frozen over, snow lying
+  fP.add({ lakeWinter: () => (Object.assign(settingsNow(), LAKESIDE_WINTER), restart(), wUpdate()) }, 'lakeWinter').name('Cold snap (−4 °C, snow lying, the lake frozen over: it bears you)');
   fP.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
 }
 
@@ -963,22 +983,29 @@ if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
 // no graphics card (rendering in software): fewer close-up objects at once
 if (view.softwareGpu) PATCH.maxActive = 4;
-// (old keys that are now a place of a world: ?scenario=laundry opens the tea house garden there)
+// (old keys that are now a place of a world: ?scenario=laundry opens the carrier's world at the
+// lake house's garden, ?scenario=catacombs under the church, ?scenario=winterTea the lake frozen)
 const asked = resolveScenario(qs.get('scenario'));
 if (asked && !SCENARIOS[asked.scenario].page) state.scenario = asked.scenario;
 {
-  const sc = cloneScene(SCENARIOS[state.scenario]);
-  const zone = qs.get('zone') ?? (asked?.scenario === state.scenario ? asked.zone : null);
+  const sc = asked?.scenario === state.scenario ? openScenario(qs.get('scenario')) : cloneScene(SCENARIOS[state.scenario]);
+  const zone = qs.get('zone');
   if (sc.zones && sc.zones[zone]) sc.startZone = zone;
+  // (the weather of the place it starts in: its own, the one it shares, or the scene's)
+  const startWeather = (o = {}) => {
+    const zd = sc.zones?.[sc.startZone];
+    const src = zd?.weather ? zd : sc.zones?.[zd?.weatherOf]?.weather ? sc.zones[zd.weatherOf] : sc;
+    return (src.weather = { ...(src.weather ?? {}), ...o });
+  };
   // ...&season=winter: a winter's day (snow lying, snow falling)
-  if (SEASONS[qs.get('season')]) sc.weather = { ...(sc.weather ?? {}), ...SEASONS[qs.get('season')], season: qs.get('season') };
+  if (SEASONS[qs.get('season')]) startWeather({ ...SEASONS[qs.get('season')], season: qs.get('season') });
   // ...&thaw=1: the snow lying, a sunny day above freezing (it melts, the roofs drip)
-  if (qs.get('thaw')) sc.weather = { ...(sc.weather ?? {}), ambient: 5, rain: 0, sunshine: 1, humidity: 0.7, fog: 0 };
+  if (qs.get('thaw')) startWeather({ ambient: 5, rain: 0, sunshine: 1, humidity: 0.7, fog: 0 });
   // ...&dew=1: a still, misty morning, the air at its dew point (dew on the grass; frost if it is freezing)
-  if (qs.get('frost')) sc.weather = { ...(sc.weather ?? {}), ambient: -12, rain: 0, windSpeed: 3, sunshine: 0.6, iceCover: 0.15, season: 'winter', snowCover: 0.05 };
-  if (qs.get('freeze')) sc.weather = { ...(sc.weather ?? {}), ambient: -15, rain: 0, windSpeed: 4, sunshine: 0.3, iceCover: 0, iceSpeed: 600, season: 'winter' };
-  if (Number.isFinite(Number(qs.get('ice'))) && qs.get('ice')) sc.weather = { ...(sc.weather ?? {}), iceCover: Number(qs.get('ice')), ambient: Math.min(sc.weather?.ambient ?? 0, -2) };
-  if (qs.get('dew')) sc.weather = { ...(sc.weather ?? {}), humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0 };
+  if (qs.get('frost')) startWeather({ ambient: -12, rain: 0, windSpeed: 3, sunshine: 0.6, iceCover: 0.15, season: 'winter', snowCover: 0.05 });
+  if (qs.get('freeze')) startWeather({ ambient: -15, rain: 0, windSpeed: 4, sunshine: 0.3, iceCover: 0, iceSpeed: 600, season: 'winter' });
+  if (Number.isFinite(Number(qs.get('ice'))) && qs.get('ice')) startWeather({ iceCover: Number(qs.get('ice')), ambient: Math.min(startWeather().ambient ?? 0, -2) });
+  if (qs.get('dew')) startWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0 });
   load(sc);
 }
 // ...&snow=0.4: that much snow lying

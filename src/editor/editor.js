@@ -86,6 +86,30 @@ function sceneJson(scene, weather) {
   return s;
 }
 
+/** Metres, without trailing zeros (4.2, 36, 0.05). */
+const metres = (v) => String(Math.round(v * 100) / 100);
+const WHERE = { outdoor: 'Outdoors', indoor: 'Indoors', underground: 'Underground', sealed: 'Sealed' };
+
+/**
+ * What the places list says of a place of a world: where it is (exposureOf: outdoors, indoors,
+ * underground, a sealed cabin), its size (width × depth × height, m), its voxels (cm), and a
+ * tooltip with all of it and where it sits in the world.
+ */
+export function placeFacts(z) {
+  const exp = exposureOf(z);
+  const [sx, sy, sz] = z.world.size;
+  const h = z.world.h;
+  const cm = Math.round(h * 1000) / 10;
+  const cells = z.world.size.map((v) => Math.round(v / h));
+  const at = z.origin ? `At ${z.origin.map(metres).join(', ')} m in the world` : z.box ? `Shown at ${z.box.map(metres).join(', ')} m (schematic: it lies inside or under another place)` : 'Not placed in the world';
+  return {
+    where: WHERE[exp],
+    size: `${metres(sx)} × ${metres(sz)} × ${metres(sy)} m`,
+    voxels: `${cm} cm voxels`,
+    title: [z.name, EXPOSURES[exp], `${metres(sx)} m wide × ${metres(sz)} m deep × ${metres(sy)} m high`, `Voxels of ${cm} cm (${cells.join(' × ')} cells)`, at, 'Click: go there'].join('\n'),
+  };
+}
+
 export class Editor {
   constructor(ctx) {
     this.ctx = ctx;
@@ -310,17 +334,18 @@ export class Editor {
     o.append(el('h3', {}, S.name ?? 'Scene'));
     if (S.zones) {
       // the places (zones) of the world: the one you edit is lit; a click goes there (its
-      // objects below, the camera on it). Places in the open show their size and voxels.
+      // objects below, the camera on it). Each says where it is (outdoors, indoors, underground,
+      // sealed), its size and its voxels (placeFacts).
       o.append(el('h4', { class: 'muted' }, 'Places'));
       const places = el('div', { class: 'list places' });
       for (const [k, z] of Object.entries(S.zones)) {
-        const info = z.origin ? `${z.world.size[0]}×${z.world.size[2]} m · ${Math.round(z.world.h * 100)} cm` : z.indoor ? 'inside' : '';
+        const f = placeFacts(z);
         places.append(
           el(
             'button',
-            { class: k === S.zone ? 'on' : '', title: `${z.name}${z.origin ? ` (at ${z.origin.join(', ')})` : ''}: go there`, onclick: () => (C.goToPlace ? C.goToPlace(k) : (this.select(-1), C.activateZone(k), this.refresh())) },
-            z.label ?? z.name,
-            info ? el('span', { class: 'tag' }, info) : null,
+            { class: k === S.zone ? 'on' : '', title: f.title, onclick: () => (C.goToPlace ? C.goToPlace(k) : (this.select(-1), C.activateZone(k), this.refresh())) },
+            el('span', { class: 'pname' }, z.label ?? z.name),
+            el('span', { class: 'facts' }, el('span', { class: 'tag' }, f.where), el('span', { class: 'tag' }, f.size), el('span', { class: 'tag' }, f.voxels)),
           ),
         );
       }

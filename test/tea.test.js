@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { stepCup, cupLosses } from '../src/sim/tea.js';
 import { mistOnMixing } from '../src/render/breath.js';
 import { createSimulation } from '../src/sim/createSimulation.js';
-import { SCENARIOS, cloneScene } from '../src/scenarios.js';
+import { SCENARIOS, cloneScene, openScenario } from '../src/scenarios.js';
 import { defaultParams } from '../src/models/index.js';
 import { MATERIALS } from '../src/sim/materials.js';
 
@@ -59,10 +59,10 @@ function teaOnTheVeranda(sim) {
   assert.ok(c.vapour > 0);
 }
 
-test('Tea on the veranda (tea house garden): the cup stands on the table, under the roof, by the open lake', () => {
-  const sc = cloneScene(SCENARIOS.teaGarden);
-  for (const o of sc.zones.tea.objects) o.params = { ...defaultParams(o.type), ...o.params };
-  const sim = createSimulation({ ...sc, zone: 'tea' });
+test('Tea on the veranda (the lake house, in the carrier world): the cup stands on the table, under the roof, by the open lake', () => {
+  const sc = cloneScene(SCENARIOS.carrier);
+  for (const o of sc.zones.lake.objects) o.params = { ...defaultParams(o.type), ...o.params };
+  const sim = createSimulation({ ...sc, zone: 'lake' });
   teaOnTheVeranda(sim);
   // a mild autumn day: no ice on the lake
   const w = sim.world;
@@ -70,8 +70,9 @@ test('Tea on the veranda (tea house garden): the cup stands on the table, under 
   assert.ok(!(lake?.thick > 0), JSON.stringify(lake));
 });
 
-test('the same island in the carrier scene, in a cold snap: the lake is frozen over', () => {
-  const sc = cloneScene(SCENARIOS.carrier);
+test('the same island in a cold snap (?scenario=winterTea, or Presets › Cold snap): the lake is frozen over', () => {
+  const sc = openScenario('winterTea');
+  assert.equal(sc.startZone, 'lake');
   for (const o of sc.zones.lake.objects) o.params = { ...defaultParams(o.type), ...o.params };
   const sim = createSimulation({ ...sc, zone: 'lake' });
   teaOnTheVeranda(sim);

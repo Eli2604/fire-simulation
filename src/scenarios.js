@@ -17,43 +17,85 @@ import { defaultWeather } from './sim/weather.js';
  *
  * A world of places (places: true): zones side by side by their `origin`, each with a
  * `label`. Zoomed out each place shows as a labelled box (render/places.js), close up its
- * scenery; the camera coming close to one (or a click on its box) makes it the simulated one.
- * A zone may bring its own timeScale.
+ * scenery; a click on its box makes it the simulated one, and so does the camera coming close
+ * (in Play, not walking or flying) to a neighbour: a place of the same `group` as the one you are
+ * in. A place inside or under another (below deck, the catacombs) has no origin but a schematic
+ * `box` [x, y, z] (only for the overview). A zone may bring its own timeScale and weather (or
+ * share another's: weatherOf), and say where it is (exposure: sim/weather.js).
  */
 const w = (o = {}) => ({ ...defaultWeather(), ...o });
 
 /**
- * Old scenario keys that are now a place in a world: ?scenario=laundry opens the tea house
- * garden at its washing line.
+ * Old scenario keys that are now a place in a world: ?scenario=laundry opens the carrier's world
+ * at the garden by the lake house (its washing line), ?scenario=catacombs under the church.
+ * weather: what the place starts in instead of its own (winterTea: the lake frozen over).
  */
 export const SCENARIO_ALIASES = {
-  laundry: { scenario: 'teaGarden', zone: 'laundry' },
-  winterTea: { scenario: 'teaGarden', zone: 'tea' },
+  teaGarden: { scenario: 'carrier', zone: 'lake' },
+  laundry: { scenario: 'carrier', zone: 'garden' },
+  winterTea: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_WINTER' },
+  grassFire: { scenario: 'carrier', zone: 'meadow' },
+  catacombs: { scenario: 'carrier', zone: 'catacombs' },
 };
 
-/** A scenario key (old or new) as { scenario, zone } (zone: null for the scenario's start). */
+/** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
 export function resolveScenario(key) {
   if (SCENARIO_ALIASES[key]) return { ...SCENARIO_ALIASES[key] };
   return SCENARIOS[key] ? { scenario: key, zone: null } : null;
 }
 
+/**
+ * The scene a scenario key opens (a copy, to edit): an old key that is now a place of a world
+ * opens that world starting in that place (in the weather the old scene had). null: unknown.
+ */
+export function openScenario(key) {
+  const r = resolveScenario(key);
+  if (!r) return null;
+  const sc = cloneScene(SCENARIOS[r.scenario]);
+  if (r.zone && sc.zones?.[r.zone]) {
+    sc.startZone = r.zone;
+    if (r.weather) {
+      const zd = sc.zones[r.zone];
+      const src = sc.zones[zd.weatherOf] ?? zd; // (the place whose weather it shares)
+      src.weather = { ...(src.weather ?? {}), ...WEATHERS[r.weather] };
+    }
+  }
+  return sc;
+}
+
 /** One zone of a zoned scene as a scene of its own (tests, headless runs). */
 export function zoneScene(scene, zone) {
   const zd = scene.zones[zone];
-  return { name: `${scene.name} – ${zd.name}`, world: zd.world, weather: { ...(scene.weather ?? {}), ...(zd.weather ?? {}) }, timeScale: zd.timeScale ?? scene.timeScale, view: zd.view ?? scene.view, indoor: zd.indoor, objects: zd.objects };
-}
-
-/** The places of a world (zones with an origin) as boxes: { name, label, min, max } in world metres. */
-export function placeBoxes(scene) {
-  if (!scene.zones) return [];
-  return Object.entries(scene.zones)
-    .filter(([, z]) => z.origin)
-    .map(([name, z]) => ({ name, label: z.label ?? z.name, min: z.origin.slice(), max: z.origin.map((v, k) => v + z.world.size[k]) }));
+  const own = zd.weather ?? scene.zones[zd.weatherOf]?.weather;
+  return { name: `${scene.name} – ${zd.name}`, world: zd.world, weather: { ...(scene.weather ?? {}), ...(own ?? {}) }, timeScale: zd.timeScale ?? scene.timeScale, view: zd.view ?? scene.view, indoor: zd.indoor, exposure: zd.exposure, objects: zd.objects };
 }
 
 /**
- * The catacombs: one list for the Catacombs scenario (direct, for testing) and for the
- * carrier's catacombs zone under the church on the island (loaded only when you go down).
+ * Where a place of a world sits in the world frame: its `origin` (it is there: the jet, the
+ * boats and the stand-ins go by it), else its `box` (a schematic spot for the overview only:
+ * below deck inside the hull, the catacombs under the church). null: nowhere.
+ */
+export function placeOrigin(zd) {
+  return zd?.origin ?? zd?.box ?? null;
+}
+
+/**
+ * The places of a world (zones with an origin, or a schematic box) as boxes:
+ * { name, label, min, max, schematic } in world metres.
+ */
+export function placeBoxes(scene) {
+  if (!scene.zones) return [];
+  return Object.entries(scene.zones)
+    .filter(([, z]) => placeOrigin(z))
+    .map(([name, z]) => {
+      const o = placeOrigin(z);
+      return { name, label: z.label ?? z.name, min: o.slice(), max: o.map((v, k) => v + z.world.size[k]), schematic: !z.origin };
+    });
+}
+
+/**
+ * The catacombs: the carrier's catacombs zone under the church on the island (loaded only when
+ * you go down; the old Catacombs scenario, ?scenario=catacombs, opens it).
  * exitTo: the zone their entrance stairs lead up to.
  */
 function catacombObjects(exitTo = '') {
@@ -86,12 +128,17 @@ function catacombObjects(exitTo = '') {
 }
 
 /**
- * Tea by the lake in winter: a small island with a frozen lake in it, a veranda on its shore
- * looking out over the ice, a couch under it with a plaid, a side table with a book, a candle
- * and a hot cup of tea, steaming in the frost. One list for its own scenario and for the lake
- * island in the carrier's island group (boats: where they go; '' none).
+ * Tea by the lake: a small island with a lake in it, a veranda on its shore looking out over
+ * the water, a couch under it with a plaid, a side table with a book, a candle and a hot cup of
+ * tea. The lake house's own weather: a mild, sunny early-autumn afternoon (the wash on the line
+ * in its garden nearly dry, the lake open); LAKESIDE_WINTER its cold snap (the lake frozen over,
+ * the tea steaming in the frost: Weather › Presets, or ?scenario=winterTea).
+ * (boats: where they go; '' none)
  */
+export const LAKESIDE_AUTUMN = { ambient: 19, humidity: 0.45, windSpeed: 2.5, windDir: 20, rain: 0, fog: 0, sunshine: 0.8, season: 'autumn', snowCover: 0, iceCover: 0 };
 export const LAKESIDE_WINTER = { ambient: -4, humidity: 0.85, windSpeed: 1.5, windDir: 60, rain: 0.5, fog: 0.05, sunshine: 0.35, season: 'winter', snowCover: 0.12, iceCover: 0.1 };
+/** Named weathers an old scenario key can start a place in. */
+export const WEATHERS = { LAKESIDE_AUTUMN, LAKESIDE_WINTER };
 function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryLabel = 'Boat' } = {}) {
   return [
     { type: 'island', params: { width: 20, depth: 17, seaLevel: 1.0, hill: 1.2, plateau: 0.9, plateauEast: 0.7, canal: false, pond: true, pondX: 0.05, pondZ: -0.3, pondRadius: 4.2, pondRadiusZ: 2.4, pondDepth: 0.8, pierLength: 4, catacombs: '', hut: false, boatTo, boatLabel, ferryTo, ferryLabel, seed: 21 }, x: 11, z: 9.5 },
@@ -112,50 +159,6 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
 }
 
 export const SCENARIOS = {
-  // a world of places (zones side by side): the garden by the tea house on its island, the
-  // washing line and the barbecue on the lawn across the water (the old Laundry on the line
-  // and Tea by the lake scenes). Zoomed out, each is a labelled box; close up, its scenery.
-  teaGarden: {
-    name: 'Garden by the tea house',
-    description: 'A mild, sunny afternoon in early autumn (19 °C, a light breeze, the lake open). Two places in one world: zoomed out each shows as a labelled box, close up its scenery; bring the camera close to one, or click its box or its name, and it is the one that runs (the other waits where it was). Tea on the veranda: a little island with a lake in it, and on a veranda on its shore a couch with a plaid over its arm, a side table with a book, a candle and a cup of tea, just poured at 88 °C; it steams and cools (most of its heat goes in evaporation while it is hot). Washing line & barbecue: on the lawn across the water from the island the wash has hung on the line since lunch and is nearly dry (a sheet folded over the line, towels, polyester shirts, jeans, a pillowcase, socks). The barbecue is going. Half a minute in, a spark from it lands at the foot of the sheet: it catches, and the fire runs along the line; the cotton chars and burns through to holes, the shirts shrink, melt and drip before they burn, garments burnt through at the top fall. (The garden runs at 15× time, the veranda at 1×.)',
-    weather: w({ ambient: 19, humidity: 0.45, windSpeed: 2.5, windDir: 20, rain: 0, fog: 0, sunshine: 0.8, season: 'autumn', snowCover: 0, iceCover: 0 }),
-    timeScale: 1,
-    places: true,
-    startZone: 'tea',
-    zones: {
-      tea: {
-        name: 'Veranda on the lake island',
-        label: 'Tea on the veranda',
-        origin: [0, 0, 0],
-        world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
-        view: { camera: [2.5, 1.5, -8.5], walk: true },
-        proxy: { shape: 'hill', sea: 1.0, color: '#6f8f4a', height: 1.4, fill: 0.9, cell: 0.2 },
-        timeScale: 1,
-        objects: lakesideObjects(),
-      },
-      // the lawn on the shore east of the island, a little above the water (5 cm voxels: the cloth)
-      laundry: {
-        name: 'Garden: washing line and barbecue',
-        label: 'Washing line & barbecue',
-        origin: [23, 1.2, 9], // (its lawn a quarter of a metre above the island's water)
-        world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
-        view: { camera: [1.2, 2.4, 6.4], walk: true, around: { y: -0.2, color: '#2c5d78' } }, // (the water round it, at the island's sea level)
-        proxy: { sea: 0, color: '#5f8f3a', height: 0.1, fill: 1, cell: 0.1 },
-        timeScale: 15,
-        objects: [
-          // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
-          { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
-          // (nearly dry after a few hours on the line; a spark from the barbecue lands at the foot of the sheet after half a minute)
-          { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.2, sparkAfter: 30 }, x: 3.5, z: 2.6 },
-          // the barbecue on the lawn, burning (its sparks)
-          { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
-          // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
-          { type: 'scannedProp', params: { asset: 'bench' }, x: 5.5, z: 4.2, rotation: 15 },
-          { type: 'scannedProp', params: { asset: 'jerrycan' }, x: 1.1, z: 3.7, rotation: 30 },
-        ],
-      },
-    },
-  },
   metalBars: {
     name: 'Metal bars on burners',
     description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
@@ -167,21 +170,6 @@ export const SCENARIOS = {
       { type: 'metalBar', params: { material: 'steel', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.15 },
       { type: 'metalBar', params: { material: 'aluminium', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.35 },
       { type: 'metalBar', params: { material: 'copper', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.55 },
-    ],
-  },
-  grassFire: {
-    name: 'Wind-driven grass fire',
-    description: 'Dry grass lit on the upwind edge. Wind pushes the flames forward towards trees and a fence.',
-    world: { size: [24, 9, 14], h: 0.2 },
-    weather: w({ windSpeed: 4, windDir: 0, humidity: 0.25, ambient: 28 }),
-    timeScale: 3,
-    view: { camera: [-10, 9, 16] },
-    objects: [
-      { type: 'grass', params: { width: 23, depth: 13, height: 0.4, density: 0.85, moisture: 0.07 }, x: 12, z: 7 },
-      { type: 'grass', params: { width: 2, depth: 2, height: 0.05, density: 1, moisture: 0.07 }, x: 1.5, z: 7, ignite: true },
-      { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.6, foliageMoisture: 0.8 }, x: 15, z: 5 },
-      { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 3 }, x: 17, z: 9.5 },
-      { type: 'fence', params: { length: 8 }, x: 20, z: 7, rotation: 90 },
     ],
   },
   threeTrees: {
@@ -295,21 +283,16 @@ export const SCENARIOS = {
     view: { camera: [1.2, 3.8, -1.5], walk: true },
     objects: [{ type: 'hallway', params: { sprinklers: true }, x: 9.5, z: 2 }],
   },
-  catacombs: {
-    name: 'Catacombs',
-    description: 'Vaulted limestone passages with carved inscriptions and walls of stacked skulls and bones, lit by torches on the walls; burial niches, and chambers with coffins behind wooden doors. Guards make their rounds, opening and closing the doors. People hide down here: they hear breaking glass and doors, avoid fire, and set old cloth and coffins alight to lure you in. Bring the bow (6) and fire arrows.',
-    world: { size: [36, 4.2, 34], h: 0.2, ground: 'quarrySand' },
-    weather: w({ ambient: 12, humidity: 0.8 }),
-    timeScale: 1,
-    view: { dark: true, camera: [12, 16, -5] },
-    objects: catacombObjects(),
-  },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to a small island in a cold snap of its own: a frozen lake, and a cup of tea steaming on a veranda by it. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
+    // a world of places: zoomed out each place is a labelled box (also the ones inside or under
+    // another, at their schematic `box`); a click on one goes there. Only places of one `group`
+    // (the lake house's) take over as the camera comes close: the others by hatch, boat or jet
+    places: true,
     // the island group round the ship and the island (drawn: models/archipelago.js): a large
     // high island, a long one, volcanic cones, islets, a sand cay, a sunken reef ring, each
     // with its fringing reef and lagoon; the simulated island on a shelf of its own
@@ -367,6 +350,7 @@ export const SCENARIOS = {
       below: {
         name: 'Below deck',
         indoor: true,
+        box: [-70, 5.6, 7.5], // (for the overview: in the hull under the flight deck, which is at 9.4 m)
         world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
         view: { camera: [16, 14, -8], walk: true },
         objects: [
@@ -380,6 +364,7 @@ export const SCENARIOS = {
       lower: {
         name: 'Lower decks (below the waterline)',
         indoor: true,
+        box: [-63, -1.6, 11.4], // (for the overview: under that, down to the keel)
         world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
         view: { camera: [-3, 10, 14], walk: true },
         objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],
@@ -399,16 +384,68 @@ export const SCENARIOS = {
           { type: 'woodPile', params: { logs: 8, logLength: 0.8, logRadius: 0.08 }, x: 4.6, z: 5.4, y: 'auto', ignite: true },
         ],
       },
-      // a small island with a frozen lake in it, in a cold snap of its own: tea on a veranda by
-      // the ice (the tea house garden scene has the same island on a mild autumn day)
+      // the lake house: a small island with a lake in it, tea on a veranda by the water (the old
+      // Tea by the lake), and beside it on the shore its garden (washing line and barbecue: the
+      // old Laundry on the line) and a meadow (the old Wind-driven grass fire). Places of one
+      // group (neighbours: in Play the camera coming close to one makes it the one that runs),
+      // in the lake house's own weather: a mild early-autumn afternoon (winter: Weather › Presets › Cold snap)
       lake: {
-        name: 'Lake island (winter)',
+        name: 'Lake island: tea on the veranda',
+        label: 'Lake house: tea on the veranda',
+        group: 'lake',
         origin: [240, 1.8, 150], // (its sea level with the others')
         world: { size: [22, 7, 19], h: 0.1, ground: 'none' },
         view: { camera: [2.5, 1.5, -8.5], walk: true },
-        proxy: { shape: 'hill', color: '#dfe4e8', height: 1.5, fill: 0.85, sea: 2.9 },
-        weather: LAKESIDE_WINTER,
+        proxy: { shape: 'hill', color: '#6f8f4a', height: 1.5, fill: 0.85, sea: 2.9 },
+        timeScale: 1,
+        weather: LAKESIDE_AUTUMN,
         objects: lakesideObjects({ boatTo: 'island', boatLabel: 'Boat: to the island', ferryTo: 'islet', ferryLabel: 'Boat: back to the islet' }),
+      },
+      // the lawn on the shore east of the lake island, a little above the water (5 cm voxels: the
+      // cloth). The wash has hung on the line since lunch; the barbecue is going; half a minute in
+      // a spark from it lands at the foot of the sheet and the fire runs along the line
+      garden: {
+        name: 'Garden: washing line and barbecue',
+        label: 'Washing line & barbecue',
+        group: 'lake',
+        origin: [263, 3.0, 159], // (its lawn a quarter of a metre above the water)
+        world: { size: [7, 3, 5], h: 0.05, ground: 'soil' },
+        view: { camera: [1.2, 2.4, 6.4], walk: true, around: { y: -0.2, color: '#2c5d78' } }, // (the water round it, at the lake island's sea level)
+        proxy: { sea: 0, color: '#5f8f3a', height: 0.1, fill: 1, cell: 0.1 },
+        timeScale: 15,
+        weatherOf: 'lake', // (the lake house's weather: set it on either)
+        objects: [
+          // a green, watered lawn (live grass is too wet to carry a fire; it scorches under what falls)
+          { type: 'grass', params: { width: 6.8, depth: 4.8, height: 0.05, density: 0.45, moisture: 2.0, clearRadius: 0 }, x: 3.5, z: 2.5 },
+          // (nearly dry after a few hours on the line; a spark from the barbecue lands at the foot of the sheet after half a minute)
+          { type: 'clothesline', params: { length: 5, height: 1.9, wet: 0.2, sparkAfter: 30 }, x: 3.5, z: 2.6 },
+          // the barbecue on the lawn, burning (its sparks)
+          { type: 'woodPile', params: { arrangement: 'teepee', logs: 5, logLength: 0.35, logRadius: 0.035, moisture: 0.08, stones: true }, x: 2.0, z: 1.4, ignite: true },
+          // a garden bench, a jerrycan by the barbecue (models/scannedProp.js)
+          { type: 'scannedProp', params: { asset: 'bench' }, x: 5.5, z: 4.2, rotation: 15 },
+          { type: 'scannedProp', params: { asset: 'jerrycan' }, x: 1.1, z: 3.7, rotation: 30 },
+        ],
+      },
+      // the meadow on the shore south of the lake island: dry grass lit on its upwind edge, the wind pushing the flames
+      // on towards trees and a fence (the old Wind-driven grass fire, its field and its weather:
+      // a hot, dry, windy spell of its own)
+      meadow: {
+        name: 'Meadow by the lake house: a wind-driven grass fire',
+        label: 'Meadow: grass fire',
+        group: 'lake',
+        origin: [258, 2.85, 170.5], // (south of the lake island, its ground level with the garden's lawn)
+        world: { size: [24, 9, 14], h: 0.2 },
+        view: { camera: [-10, 9, 16], around: { y: -0.05, color: '#2c5d78' } },
+        proxy: { sea: 0, color: '#b8a55a', height: 0.6, fill: 1, cell: 0.2 },
+        timeScale: 3,
+        weather: { ...LAKESIDE_AUTUMN, ambient: 28, humidity: 0.25, windSpeed: 4, windDir: 0, sunshine: 1 },
+        objects: [
+          { type: 'grass', params: { width: 23, depth: 13, height: 0.4, density: 0.85, moisture: 0.07 }, x: 12, z: 7 },
+          { type: 'grass', params: { width: 2, depth: 2, height: 0.05, density: 1, moisture: 0.07 }, x: 1.5, z: 7, ignite: true },
+          { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.6, foliageMoisture: 0.8 }, x: 15, z: 5 },
+          { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 3 }, x: 17, z: 9.5 },
+          { type: 'fence', params: { length: 8 }, x: 20, z: 7, rotation: 90 },
+        ],
       },
       island: {
         name: 'Island',
@@ -459,11 +496,16 @@ export const SCENARIOS = {
           { type: 'enemy', params: { count: 2, spread: 1, level: 0.9, patrol: 'route', patrolWidth: 18, patrolDepth: 1 }, x: 17.5, z: 6.5 },
         ],
       },
+      // (the old Catacombs scenario: the same passages, guards, torches, doors and chapel, its
+      // cool damp air; the stairs up into the church on the island)
       catacombs: {
         name: 'Catacombs under the church',
+        exposure: 'underground',
+        box: [111.1, -4.5, -4.8], // (for the overview: under the church on the island, x 24.1 z 42.2 there)
         world: { size: [36, 4.2, 34], h: 0.2, ground: 'quarrySand' },
+        weather: { ambient: 12, humidity: 0.8 },
+        timeScale: 1,
         view: { dark: true, camera: [12, 16, -5], walk: true },
-        // the whole Catacombs scenario (the same objects), its stairs up into the church
         objects: catacombObjects('island'),
       },
     },
