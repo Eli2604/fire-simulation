@@ -29,10 +29,12 @@ export class ProxyRenderer {
       const version = z.world ? z.world.geomVersion : -1;
       if (!it || it.version !== version) {
         if (it) this.drop(it);
-        it = { obj: z.world ? this.fromWorld(z.world, z.sea, z.hint?.cell) : this.placeholder(z), version };
+        it = { obj: z.world ? this.fromWorld(z.world, z.sea, z.hint?.cell) : this.placeholder(z), version, allowed: it?.allowed ?? true, covered: false };
         this.items.set(z.name, it);
         this.group.add(it.obj);
+        it.obj.visible = it.allowed;
       }
+      it.zone = z; // (its place: render/scenery.js draws its real scenery close up)
       it.obj.position.set(...z.offset);
     }
     for (const [name, it] of this.items)
@@ -45,7 +47,17 @@ export class ProxyRenderer {
   /** Show or hide a zone's stand-in (a place far off is drawn as its box: render/places.js). */
   setVisible(name, v) {
     const it = this.items.get(name);
-    if (it) it.obj.visible = v;
+    if (!it) return;
+    it.allowed = v;
+    it.obj.visible = v && !it.covered;
+  }
+
+  /** Whether a zone's stand-in is drawn by its real scenery instead (render/scenery.js). */
+  setCovered(name, c) {
+    const it = this.items.get(name);
+    if (!it) return;
+    it.covered = c;
+    it.obj.visible = it.allowed && !c;
   }
 
   drop(it) {

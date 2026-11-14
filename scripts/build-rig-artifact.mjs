@@ -1,8 +1,8 @@
 /**
  * Builds the editor (index.html: the world with Play / Edit world / Rig, and the drone camp) as
- * one self-contained HTML file: its code, three.js and the sculpt worker (inlined, started from a
- * blob), the rig and camp stages (imported with import(): inlineDynamicImports keeps them in the
- * file), the stylesheet and the binary models, to share or host anywhere. Uses Rollup's API
+ * one self-contained HTML file: its code, three.js and its workers (the sculpt, the places built
+ * ahead: inlined, started from a blob), the rig and camp stages (imported with import():
+ * inlineDynamicImports keeps them in the file), the stylesheet and the binary models, to share or host anywhere. Uses Rollup's API
  * directly (no esbuild needed).
  *
  *   node scripts/build-rig-artifact.mjs [out.html]
@@ -35,14 +35,21 @@ async function bundle(input, plugins = []) {
   return output[0].code;
 }
 
-const worker = await bundle('src/operator/sculpt.worker.js');
+// the module workers (the operator sculpt, the places of a world built ahead), each inlined: started from a blob
+const workers = [
+  ['src/operator/rig.js', './sculpt.worker.js', 'src/operator/sculpt.worker.js'],
+  ['src/sim/prebuild.js', './prebuild.worker.js', 'src/sim/prebuild.worker.js'],
+];
+const workerCode = {};
+for (const [, , src] of workers) workerCode[src] = await bundle(src);
 const inlineWorker = {
-  name: 'inline-sculpt-worker',
+  name: 'inline-workers',
   transform(code, id) {
-    if (!id.replace(/\\/g, '/').endsWith('src/operator/rig.js')) return null;
-    const from = "new Worker(new URL('./sculpt.worker.js', import.meta.url), { type: 'module' })";
-    if (!code.includes(from)) throw new Error('worker construction not found in rig.js');
-    const blob = `new Worker(URL.createObjectURL(new Blob([${JSON.stringify(worker)}], { type: 'text/javascript' })), { type: 'module' })`;
+    const w = workers.find(([mod]) => id.replace(/\\/g, '/').endsWith(mod));
+    if (!w) return null;
+    const from = `new Worker(new URL('${w[1]}', import.meta.url), { type: 'module' })`;
+    if (!code.includes(from)) throw new Error(`worker construction not found in ${w[0]}`);
+    const blob = `new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerCode[w[2]])}], { type: 'text/javascript' })), { type: 'module' })`;
     return code.replace(from, blob);
   },
 };

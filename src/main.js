@@ -15,6 +15,8 @@ import { lod } from './render/lod.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
+import { PlaceScenery } from './render/scenery.js';
+import { Prebuild } from './sim/prebuild.js';
 import { Editor } from './editor/editor.js';
 import { FORMATIONS } from './ai/flight.js';
 import { playSnatch, playFight, AIR_EVENT_TEXT } from './ai/dragonAir.js';
@@ -24,6 +26,9 @@ const view = new View($('view'));
 view.proxies = new ProxyRenderer(view.scene);
 view.places = new PlacesOverlay(view.scene); // a world of places: each a labelled box, zoomed out
 view.places.camera = view.camera; // (its names kept apart on the screen)
+view.scenery = new PlaceScenery(view.root); // the places you are not in, as they look, with level of detail
+const prebuild = new Prebuild(); // their worlds built ahead, in a worker (never simulated)
+prebuild.onReady = () => updateProxies(true);
 
 const state = {
   scenario: 'carrier',
@@ -84,10 +89,18 @@ function zoneSim(name) {
   const zd = scene.zones[name];
   if (!zd) return null;
   if (!zoneSims[name]) {
-    for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
-    zoneSims[name] = createSimulation({ name: zd.name, world: zd.world, objects: zd.objects, weather: settingsOf(zd), exposure: exposureOf(zd), indoor: zd.indoor, view: zd.view, walkStart: zd.walkStart });
+    const desc = zoneDesc(name);
+    // (the world built ahead for its scenery, if it was: sim/prebuild.js)
+    zoneSims[name] = createSimulation(desc, prebuild.take(name, desc));
   }
   return zoneSims[name];
+}
+
+/** What zone `name` is built from (createSimulation's scene). */
+function zoneDesc(name) {
+  const zd = scene.zones[name];
+  for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
+  return { name: zd.name, world: zd.world, objects: zd.objects, weather: settingsOf(zd), exposure: exposureOf(zd), indoor: zd.indoor, view: zd.view, walkStart: zd.walkStart };
 }
 
 /** Where you are: the current zone, or the scene. */
@@ -177,22 +190,31 @@ const zonesApi = {
 };
 
 /** Distant stand-ins for the other open-air zones (what you see from the jet). */
-let proxyTimer = 0;
+let proxyNext = 0;
 function updateProxies(now = false) {
-  proxyTimer -= 1;
-  if (!now && proxyTimer > 0) return;
-  proxyTimer = 60;
+  // (about once a second, however slow the frames)
+  if (!now && performance.now() < proxyNext) return;
+  proxyNext = performance.now() + 1000;
   const here = scene.zones?.[scene.zone]?.origin;
   if (!here) return view.proxies.update([]);
   const list = [];
   for (const [name, z] of Object.entries(scene.zones)) {
     if (!z.origin || name === scene.zone) continue;
     const s = zoneSims[name];
+    const offset = z.origin.map((v, k) => v - here[k]);
+    // (a place in the open not built yet, big enough on the screen: built ahead, the biggest first)
+    const ahead = s ? null : prebuild.world(name);
+    if (!s && !ahead && lod.cam && !z.indoor && exposureOf(z) === 'outdoor') {
+      const [sx, sy, sz] = z.world.size;
+      const px = lod.size(offset[0] + sx / 2, offset[1] + sy / 2, offset[2] + sz / 2, 0.5 * Math.hypot(sx, sz));
+      if (px > 24) prebuild.want(name, zoneDesc(name), px);
+      else prebuild.drop(name);
+    }
     list.push({
       name,
-      offset: z.origin.map((v, k) => v - here[k]),
-      world: s?.world,
-      sea: s?.world.sea?.level ?? z.proxy?.sea ?? 0,
+      offset,
+      world: s?.world ?? ahead ?? undefined,
+      sea: (s?.world ?? ahead)?.sea?.level ?? z.proxy?.sea ?? 0,
       hint: z.proxy,
       size: z.world.size,
     });
@@ -221,7 +243,7 @@ function updatePlaces(dt) {
   view.places.editing = editing;
   const list = Object.entries(scene.zones)
     .filter(([, z]) => placeOrigin(z))
-    .map(([name, z]) => ({ name, label: z.label ?? z.name, offset: placeOrigin(z).map((v, k) => v - here[k]), size: z.world.size, active: name === scene.zone, color: z.proxy?.color, group: z.group, schematic: !z.origin }));
+    .map(([name, z]) => ({ name, label: z.label ?? z.name, offset: placeOrigin(z).map((v, k) => v - here[k]), size: z.world.size, active: name === scene.zone, color: z.proxy?.color, group: z.group, schematic: !z.origin, real: !!view.scenery.items.get(name)?.shows }));
   const cam = view.cameraLocal();
   const far = view.places.update(list, cam);
   for (const [name, f] of far) if (name !== scene.zone) view.proxies.setVisible(name, !f);
@@ -301,6 +323,7 @@ function switchZone(pt) {
 function load(desc, fresh = true) {
   scene = desc;
   scene.voxelScale = state.voxelScale;
+  prebuild.reset();
   if (scene.zones) {
     // a restart rebuilds the zone you are in; the others are built again when you go there
     zoneSims = {};
@@ -943,6 +966,7 @@ function frame(now) {
     sim.patches?.update(view.cameraLocal(), 8);
   } else speed *= 0.9;
   if (scene.zones) updateProxies();
+  prebuild.pump();
   updatePlaces(dt);
   view.render(dt, sim);
   updateHud(dt);
@@ -1129,4 +1153,4 @@ editor.setMode('play');
 requestAnimationFrame(frame);
 
 // handy for debugging from the console
-window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS, editor, walk, places: { update: updatePlaces, go: goToPlace } };
+window.fire = { get sim() { return sim; }, view, state, load, SCENARIOS, editor, walk, places: { update: updatePlaces, go: goToPlace, prebuild } };
