@@ -3,12 +3,15 @@
  * avoid allocations in per-voxel loops.
  */
 
-// Incandescence ramp (°C -> linear RGB emission). Starts at the Draper point.
+// Incandescence ramp (°C -> linear RGB emission of a grey body, emissivity ~0.9; render/heatColor.js
+// scales it per material). Faint from about 500 °C (the Draper point is ~525 °C), dull red
+// round 600, cherry 700-800, orange 900-1000, yellow 1200, white from ~1500.
 const BB = [
-  [480, 0, 0, 0],
-  [550, 0.25, 0.01, 0],
-  [700, 0.9, 0.08, 0.0],
-  [850, 1.6, 0.35, 0.03],
+  [500, 0, 0, 0],
+  [550, 0.13, 0.004, 0],
+  [600, 0.34, 0.012, 0],
+  [700, 0.78, 0.05, 0.0],
+  [850, 1.5, 0.3, 0.03],
   [1000, 2.4, 0.9, 0.2],
   [1200, 3.2, 1.9, 0.8],
   [1500, 4.0, 3.2, 2.2],

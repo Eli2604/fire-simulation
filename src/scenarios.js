@@ -161,11 +161,11 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
 export const SCENARIOS = {
   metalBars: {
     name: 'Metal bars on burners',
-    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
+    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt. Steel takes temper colours (straw, brown, purple, blue, grey) that spread out from the burner and glows dull red over it; copper tarnishes and darkens. Switch the view to thermal to see the temperatures.',
     world: { size: [1.4, 0.6, 0.7], h: 0.02 },
     weather: w({ ambient: 20 }),
     timeScale: 20,
-    view: { mode: 'thermal', camera: [0.2, 0.8, 1.1] },
+    view: { camera: [0.2, 0.8, 1.1] },
     objects: [
       { type: 'metalBar', params: { material: 'steel', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.15 },
       { type: 'metalBar', params: { material: 'aluminium', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.35 },
