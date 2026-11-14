@@ -273,7 +273,7 @@ export class PhoenixRenderer {
       const hand = new THREE.Group();
       hand.position.x = 0.19;
       forearm.add(hand);
-      const wing = { root, arm, forearm, hand, feathers: [] };
+      const wing = { root, arm, forearm, hand, feathers: [], side: s };
       // folded, each segment's frame turns (arm back, forearm forward, hand back): its
       // feathers turn the other way to lie along the body, pointing to the tail
       const add = (seg, foldYaw, L, W, x, spreadYaw, y = 0, tip = false) => {
@@ -382,16 +382,21 @@ export class PhoenixRenderer {
     if (f.state === 'reborn') grow = Math.min(1, 0.15 + (f.t / 2.2) * 0.85);
     g.position.set(f.pos[0], f.pos[1], f.pos[2]);
     g.rotation.set(-f.pitch, f.yaw, -f.bank, 'YXZ');
-    g.scale.setScalar(grow);
+    g.scale.setScalar(grow * (f.size ?? 1));
     const hurt = f.hurtFlash > 0 ? 1 + f.hurtFlash * 4 : 1;
-    this.uniforms.uHeat.value = hurt * (f.state === 'reborn' ? 1.6 : 1);
+    // (the rig's tunables, 1 and 0 in the world: size, wing span, flame intensity; a flame burst, f.flare 0..1)
+    const flare = f.flare ?? 0;
+    const heat = (f.heat ?? 1) * (1 + 1.2 * flare);
+    this.uniforms.uHeat.value = hurt * (f.state === 'reborn' ? 1.6 : 1) * heat;
     // the wings: spread and beating, or folded along the back
     const s = f.wing ?? 0;
     const ph = f.flap ?? 0;
     const beat = (f.flapRate ?? 0) > 0 ? 1 : 0;
     const up = Math.sin(ph);
     const flex = Math.max(0, Math.cos(ph)); // the upstroke: the wrist bends, the wing shortens
+    const span = f.span ?? 1;
     for (const w of b.wings) {
+      w.root.scale.set(w.side * span, span, span);
       w.arm.rotation.set(0, lerp(FOLD.arm, 0.12 + 0.25 * flex * beat, s), lerp(-0.3, 0.12 + 0.8 * up * beat, s), 'YXZ');
       w.forearm.rotation.set(0, lerp(FOLD.forearm, 0.35 * flex * beat, s), lerp(0, 0.15 * Math.sin(ph - 0.6) * beat, s), 'YXZ');
       w.hand.rotation.set(0, lerp(FOLD.hand, -0.05 + 0.45 * flex * beat, s), lerp(0, 0.3 * Math.sin(ph - 1.0) * beat, s), 'YXZ');
@@ -416,7 +421,7 @@ export class PhoenixRenderer {
       b.head.rotation.x = lerp(b.head.rotation.x, 0, Math.min(1, dt * 2));
     }
     b.lower.rotation.x = Math.PI / 2 - 0.1 + ((f.callT ?? 0) > 0 ? 0.5 : 0); // the beak opens to call
-    this.uniforms.uFlutter.value = 0.6 + 0.6 * s;
+    this.uniforms.uFlutter.value = (0.6 + 0.6 * s) * (1 + flare);
     // its light: flickering, brighter as it flies; low and red from the ash
     const flick = 0.85 + 0.15 * Math.sin(time * 17) * Math.sin(time * 9.3 + 1);
     const L = b.light;
@@ -430,7 +435,7 @@ export class PhoenixRenderer {
       this.shed(f.ash, burst, true);
     } else {
       L.position.set(f.pos[0], f.pos[1] + 0.15, f.pos[2]);
-      L.intensity = (4.5 + 2.5 * s) * flick * (f.state === 'reborn' ? 2 : 1) * hurt;
+      L.intensity = (4.5 + 2.5 * s) * flick * (f.state === 'reborn' ? 2 : 1) * hurt * heat * (1 + 2 * flare);
       L.color.setHex(0xff9440);
       if (f.state === 'reborn') {
         b.ash.position.set(f.ash[0], f.ash[1], f.ash[2]);
@@ -438,10 +443,10 @@ export class PhoenixRenderer {
       }
       if (b.glow) {
         b.glow.position.set(f.pos[0], f.pos[1] + 0.05, f.pos[2]);
-        b.glow.scale.setScalar((1.4 + 1.1 * s) * grow * flick);
+        b.glow.scale.setScalar((1.4 + 1.1 * s) * grow * flick * (f.size ?? 1) * (1 + 0.8 * flare));
       }
       // flames from the tips of the wings and the tail, more in flight
-      const rate = (f.state === 'caged' && s < 0.3 ? 14 : 45) * dt;
+      const rate = (f.state === 'caged' && s < 0.3 ? 14 : 45) * dt * (f.heat ?? 1) * (1 + 4 * flare);
       for (const t of b.tips) {
         if (Math.random() > rate / b.tips.length * 6) continue;
         t.obj.getWorldPosition(this._v);
@@ -450,6 +455,8 @@ export class PhoenixRenderer {
         if (this.flames) this.flames.spawn(this._v.x, this._v.y, this._v.z, v[0] * 0.3 + (Math.random() - 0.5) * 0.3, 0.5 + Math.random() * 0.5, v[2] * 0.3 + (Math.random() - 0.5) * 0.3, 0.25 + Math.random() * 0.25, 0.09 + Math.random() * 0.08, 0, 0.8);
         if (this.flames && Math.random() < 0.08) this.flames.spawn(this._v.x, this._v.y, this._v.z, (Math.random() - 0.5) * 1.2, 0.8 + Math.random(), (Math.random() - 0.5) * 1.2, 0.8 + Math.random() * 0.8, 0.02, 1, 1);
       }
+      // a flame burst: fire thrown off all round it
+      if (flare > 0.3) this.shed([f.pos[0], f.pos[1] - 0.2, f.pos[2]], flare * 0.6, false);
     }
   }
 

@@ -38,14 +38,16 @@ at the top switches between:
 - **🦴 Rig** (R from a selected character or vehicle): a stage of its own (`rig/stage.js`) with an
   **Object** drop-down: the *soldier* (every clip, loadouts, weapons, gear, hit zones), a *squad*
   (the fire team of `models/squad.js` in formation, playing clips together; pick a member, add a
-  flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), a *car* (idle, drive,
+  flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), the *phoenix* (acts,
+  flame wings, hit zones, rebirth), a *car* (idle, drive,
   steer, doors open, burning), a *jet* (idle, taxi, gear up / down, flaps, afterburner, banking)
-  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's and dragon's zone tables are the
+  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's, dragon's and phoenix's zone tables are the
   ones the world's hit tests use, so what you adjust there applies when you play. The vehicles'
   hit parts (car: engine, fuel tank, tyres, cabin; jet: cockpit, fuel tanks, engines, tail, wings;
   boat: hull, engine, fuel tank, cabin) are `models/vehicleZones.js`, shown, resized and hit on
   click in the rig; the simulation does not use that table yet. A squad, an enemy, the dragon, a
-  car or the jet selected in Edit world opens with *Rig the …*.
+  car or the jet selected in Edit world opens with *Rig the …*; the catacombs (with their phoenix)
+  with *Rig the phoenix*.
 
 **Scene ▾**: save the scene in this browser, open what you saved, export / import JSON, a new
 empty scene, and every scenario. The drone camp is a world of another scale (a swarm over
@@ -403,6 +405,20 @@ bird of prey's (arm, forearm, hand; they beat with the wrist flexing on the upst
 fold along the back when it sits). It has a train of flame streamers for a tail, a crest of
 fire, a golden hooked beak and white-hot eyes, and it sheds flames and sparks as it flies.
 Its cry is a raptor's scream, made live like the other sounds.
+
+**Its hit zones** (`ai/phoenix.js` `PHOENIX_ZONES`): body, head (×1.5), the wings (×0.6, only
+when spread) and the tail (×0.4), capsules that follow its pose; a guard's round does 22 times
+the zone's multiplier.
+
+**On the rig** (Object › *Phoenix*, `rig/phoenix.js` and `rig/phoenixStage.js`): the same AI
+and renderer on a stone perch in a field of its own, at dusk so its light shows. Its acts as
+buttons: perch (it watches you, the camera), spread wings, call, take off, fly, hover, glide
+(wings spread and still), bank, dive (a stoop with the wings half folded, its fire flaring as it
+pulls out), flame burst, land on the perch, settle on the ground, burst into flame (dies, lies in
+its ash and is born again) and rise from the ashes; a speed control; wing span, flames, size and
+flight speed; its hit zones shown and adjusted (radius, damage), and damage on click.
+`?mode=rig&phoenix=1&pact=dive&pzones=1` opens it (also `&pspan= &pheat= &psize= &pfly=
+&phits=head &psteps=n &pfollow=1 &pdark=0`).
 
 ### Flying the jet (carrier scenario)
 

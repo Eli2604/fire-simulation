@@ -41,6 +41,96 @@ const dist2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const approach = (v, target, rate, dt) => v + (target - v) * Math.min(1, rate * dt);
 
+/** Its numbers (for the rig stage, rig/phoenixStage.js). */
+export const PHOENIX = { FLY_HEIGHT, PERCH_HEIGHT, SPEED, KEEP, ASH_TIME, REBIRTH_TIME, MAX_HEALTH };
+
+/**
+ * Its hit zones: capsules (a segment with a radius, m) on its body, posed with it (see
+ * phoenixZones). `mult` scales a hit's damage there; the rig's Phoenix tab shows and edits this
+ * table, and the simulation's bullets use it (sim/wounds.js through PhoenixAI.hitAt). The wings
+ * count only spread (folded, they lie along the body).
+ */
+export const PHOENIX_ZONES = {
+  body: { label: 'Body', color: '#ffb347', r: 0.24, mult: 1 },
+  head: { label: 'Head', color: '#ff5a36', r: 0.12, mult: 1.5 },
+  wingL: { label: 'Left wing', color: '#ffe066', r: 0.13, mult: 0.6 },
+  wingR: { label: 'Right wing', color: '#ffe066', r: 0.13, mult: 0.6 },
+  tail: { label: 'Tail', color: '#e2603a', r: 0.1, mult: 0.4 },
+};
+
+/** A point in the bird's own frame (x to its left, y up, z ahead; metres) in the world, turned as render/phoenix.js turns it. */
+export function phoenixToWorld(f, v) {
+  const s = phoenixScale(f);
+  let [x, y, z] = [v[0] * s, v[1] * s, v[2] * s];
+  // the renderer's Euler (-pitch, yaw, -bank, 'YXZ'): the roll, then the pitch, then the yaw
+  const b = -(f.bank ?? 0);
+  [x, y] = [x * Math.cos(b) - y * Math.sin(b), x * Math.sin(b) + y * Math.cos(b)];
+  const p = -(f.pitch ?? 0);
+  [y, z] = [y * Math.cos(p) - z * Math.sin(p), y * Math.sin(p) + z * Math.cos(p)];
+  const yw = f.yaw ?? 0;
+  [x, z] = [x * Math.cos(yw) + z * Math.sin(yw), -x * Math.sin(yw) + z * Math.cos(yw)];
+  return [f.pos[0] + x, f.pos[1] + y, f.pos[2] + z];
+}
+
+/** Its size: `size` (the rig's slider) and, born again, growing out of the flames. */
+function phoenixScale(f) {
+  const grow = f.state === 'reborn' ? Math.min(1, 0.15 + (f.t / REBIRTH_TIME) * 0.85) : 1;
+  return (f.size ?? 1) * grow;
+}
+
+/** Its zones as posed now: [{ k, z, a, b, r }] (the segment a..b in the world, radius r). */
+export function phoenixZones(f) {
+  if (!f?.pos || ['ashes', 'free'].includes(f.state)) return [];
+  const s = phoenixScale(f);
+  const out = [];
+  const put = (k, a, b) => out.push({ k, z: PHOENIX_ZONES[k], a: phoenixToWorld(f, a), b: phoenixToWorld(f, b), r: PHOENIX_ZONES[k].r * s });
+  put('body', [0, -0.01, -0.1], [0, 0.03, 0.12]);
+  put('head', [0, 0.13, 0.25], [0, 0.15, 0.3]);
+  put('tail', [0, 0, -0.25], [0, -0.06, -0.85]);
+  const wing = f.wing ?? 0;
+  if (wing > 0.3) {
+    // as render/phoenix.js beats them: the arm raised and lowered with the stroke
+    const beat = (f.flapRate ?? 0) > 0 ? 1 : 0;
+    const ang = -0.3 + (0.42 + 0.8 * Math.sin(f.flap ?? 0) * beat) * wing;
+    const len = 0.62 * wing * (f.span ?? 1);
+    for (const [k, side] of [['wingL', 1], ['wingR', -1]]) {
+      const a = [side * 0.12, 0.056, 0.05];
+      put(k, a, [a[0] + side * len * Math.cos(ang), a[1] + len * Math.sin(ang), a[2] - 0.08]);
+    }
+  }
+  return out;
+}
+
+/** Distance from p to the segment a..b. */
+function segDist(p, a, b) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const L2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2;
+  const t = L2 > 1e-12 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / L2)) : 0;
+  return Math.hypot(p[0] - a[0] - ab[0] * t, p[1] - a[1] - ab[1] * t, p[2] - a[2] - ab[2] * t);
+}
+
+const ZONE_ORDER = ['head', 'body', 'wingL', 'wingR', 'tail'];
+/** The zone of f that p is in (the head before the body, the body before the wings and the tail), or null. */
+export function phoenixZoneAt(f, p) {
+  const zs = phoenixZones(f).sort((x, y) => ZONE_ORDER.indexOf(x.k) - ZONE_ORDER.indexOf(y.k));
+  return zs.find((Z) => segDist(p, Z.a, Z.b) < Z.r) ?? null;
+}
+
+/** The first zone of f along a ray (from, unit dir, up to maxT m): { k, zone, p, t } or null. */
+export function phoenixRayHit(f, from, dir, maxT = 200) {
+  if (!f?.pos) return null;
+  // only near the bird: from 2 m before its closest approach to 2 m past it, in 1 cm steps
+  const r = [f.pos[0] - from[0], f.pos[1] - from[1], f.pos[2] - from[2]];
+  const tc = r[0] * dir[0] + r[1] * dir[1] + r[2] * dir[2];
+  if (Math.hypot(r[0] - dir[0] * tc, r[1] - dir[1] * tc, r[2] - dir[2] * tc) > 2 * (f.size ?? 1) * Math.max(1, f.span ?? 1)) return null;
+  for (let t = Math.max(0, tc - 2); t < Math.min(maxT, tc + 2); t += 0.01) {
+    const p = [from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t];
+    const Z = phoenixZoneAt(f, p);
+    if (Z) return { k: Z.k, zone: Z.z, p, t };
+  }
+  return null;
+}
+
 export function initPhoenix(f, w) {
   if (f.init) return;
   f.init = true;
@@ -115,9 +205,16 @@ export class PhoenixAI {
 
   /** A bullet at p: is it in a phoenix's body? */
   at(p) {
+    return this.hitAt(p)?.f ?? null;
+  }
+
+  /** A bullet at p: the phoenix it is in and the zone (PHOENIX_ZONES), { f, k, zone }, or null. */
+  hitAt(p) {
     for (const f of this.world.phoenixes ?? []) {
       if (f.health <= 0 || !['caged', 'follow', 'wait', 'escape'].includes(f.state)) continue;
-      if (dist(p, f.pos) < 0.28 || dist(p, [f.pos[0] + Math.sin(f.yaw) * 0.3, f.pos[1] + 0.12, f.pos[2] + Math.cos(f.yaw) * 0.3]) < 0.12) return f;
+      if (dist(p, f.pos) > 2 * (f.size ?? 1) * Math.max(1, f.span ?? 1)) continue;
+      const Z = phoenixZoneAt(f, p);
+      if (Z) return { f, k: Z.k, zone: Z.z };
     }
     return null;
   }
