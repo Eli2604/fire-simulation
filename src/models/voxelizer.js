@@ -245,7 +245,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const p = toWorld(...en.p);
     // the patrol area in world coordinates (its corners, so a rotated object rotates it)
     const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
-    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.recoil != null ? { recoil: en.recoil } : {}), ...(en.fireMode ? { fireMode: en.fireMode } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}) });
+    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.recoil != null ? { recoil: en.recoil } : {}), ...(en.fireMode ? { fireMode: en.fireMode } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}), ...(!en.squad && en.soldier ? { unit: en.unit, skill: en.skill, armour: en.armour, soldier: true, lureCooldown: Infinity } : {}) });
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const fl of built.flights ?? []) world.flights.push({ ...fl, p: toWorld(...fl.p), target: toWorld(...fl.target), home: toWorld(...fl.home), owner: ownerIndex });
@@ -264,7 +264,10 @@ export function placeObject(world, obj, ownerIndex = -1) {
     world.volcanoes.push({ ...V, shape: sh, crater: toWorld(...V.crater), rim: oy + V.rim, state: 'dormant' });
   }
   for (const c of built.cups ?? []) world.cups.push({ ...c, p: toWorld(...c.p), owner: ownerIndex });
-  for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
+  for (const pr of built.props ?? []) world.props.push({ owner: ownerIndex, ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
+  // electric power (sim/power.js): generators (a wind turbine, a solar park) and loads (a camp) on a grid
+  for (const g of built.generators ?? []) (world.generators ??= []).push({ ...g, owner: ownerIndex, p: toWorld(...g.p), check: g.check && toWorld(...g.check), ...(g.n ? { n: dirToWorld(g.n) } : {}), ...(g.panelChecks ? { panelChecks: g.panelChecks.map((q) => toWorld(...q)) } : {}), heading: rot });
+  for (const ld of built.loads ?? []) (world.loads ??= []).push({ ...ld, owner: ownerIndex, p: toWorld(...ld.p) });
   // what stirs the water and the air (sim/stirrers.js), and the loose things it can carry
   for (const st of built.stirrers ?? []) world.stirrers.push({ ...st, owner: ownerIndex, p: toWorld(...st.p), ...(st.dir ? { dir: Array.isArray(st.dir) ? dirToWorld(st.dir) : st.dir } : {}), ...(st.kind === 'hose' ? { p0: toWorld(...st.p) } : {}) });
   for (const lo of built.loose ?? []) {

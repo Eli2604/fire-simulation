@@ -43,6 +43,7 @@ const GROUPS = [
   ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
   ['Nature', ['tree', 'grass', 'volcano']],
   ['Water & air', ['waterVortex', 'windHose', 'windJet']],
+  ['Camp & power', ['droneCamp', 'solarPark', 'windTurbine', 'campPatrol', 'campIsland']],
   ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
   // objects of objects (models/composite.js): a group to move things as one; a place inside an object or a world
   ['Groups & rooms', ['group', 'place']],
@@ -386,6 +387,8 @@ export class Editor {
             el('span', { class: 'facts' }, el('span', { class: 'tag' }, f.where), el('span', { class: 'tag' }, f.size), el('span', { class: 'tag' }, f.voxels)),
           ),
         );
+        // a place you can be put down in (the camp island's landing ground): walking, from its deploy point
+        if (z.deploy && C.deploy) places.append(el('button', { class: 'deploy', title: 'Into Play, walking, from where you are put down there', onclick: () => C.deploy(k) }, el('span', { class: 'pname' }, `🪂 ${z.deploy.label ?? 'Deploy here'}`)));
       }
       o.append(places);
       o.append(el('h4', { class: 'muted' }, 'Objects here'));

@@ -1,6 +1,7 @@
 import { defaultWeather } from './sim/weather.js';
 import { carrierObject } from './models/carrier.js';
 import { liftPlaces } from './models/composite.js';
+import { campIslandZone, CAMP_ISLAND_SEA } from './campIsland.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -38,6 +39,7 @@ export const SCENARIO_ALIASES = {
   winterTea: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_WINTER' },
   grassFire: { scenario: 'carrier', zone: 'meadow' },
   catacombs: { scenario: 'carrier', zone: 'catacombs' },
+  campIsland: { scenario: 'carrier', zone: 'camp' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -305,6 +307,7 @@ export const SCENARIOS = {
         { box: [107, -28, 171, 30], floor: -1.7 }, // the island's voxel terrain (its zone is 2 m larger all round)
         { box: [310.5, -404.5, 319.5, -396.5], floor: -1.6 }, // the islet's
         { box: [241, 151, 261, 168], floor: -1.6 }, // the lake island's
+        CAMP_ISLAND_SEA, // the camp island's (src/campIsland.js)
       ],
       // the carrier lies at anchor over a sandy bank, ~12 m down under and round the ship (its
       // keel ~4 m down: the bottom is seen through the clear water beside it)
@@ -483,6 +486,9 @@ export const SCENARIOS = {
         view: { dark: true, camera: [12, 16, -5], walk: true },
         objects: catacombObjects('island'),
       },
+      // the camp island: a drone camp on a solar park and a wind turbine, a squad on its round about it,
+      // a ridge, and behind it the landing ground where you are put down (src/campIsland.js)
+      camp: campIslandZone(),
     },
   },
   squadRange: {
