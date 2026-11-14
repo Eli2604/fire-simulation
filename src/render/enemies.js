@@ -499,6 +499,7 @@ export class EnemyRenderer {
       name = e.dead ? 'die' : 'swim'; // (struggling; limp once dead)
     } else if (e.dead) name = 'die';
     else if (sq) name = e.anim ?? 'crouchAim';
+    else if (e.trav?.roll) name = e.trav.kind; // a combat roll (ai/evade.js), the guard AI's or the dragon's snatch's
     else if (e.crawling) name = 'crawl';
     else if (e.state === 'lure') name = 'crouch';
     else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
@@ -510,6 +511,11 @@ export class EnemyRenderer {
     if (sq && !e.held) {
       // the squad AI's member: clip, weapon switches, reload speed, armour (operator/drive.js)
       driveFromAI(f, e, (f.aiState ??= {}));
+    } else if (!sq && e.trav?.roll && !e.dead && !e.held) {
+      if (f.rollT !== e.animT) {
+        f.rollT = e.animT;
+        f.play(name, { restart: true, fade: 0.12, speed: f.A.clips[name].duration / e.trav.dur });
+      }
     } else if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(sq && ONCE[name] && e.animT !== f.animT) && !e.dead) {
       // let a draw, a throw or a radio call finish
     } else if (sq && ONCE[name] && e.animT !== f.animT) {

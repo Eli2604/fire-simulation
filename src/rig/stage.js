@@ -33,8 +33,11 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS } from './objects.js';
+import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
+import { ROLLS, rollPoint } from '../ai/evade.js';
+import { recoilSpec } from '../ai/recoil.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -129,6 +132,10 @@ const HTML = `
     <div class="grid" data-id="anims"></div>
     <div class="lab">Parkour (over its own wall or ledge)</div>
     <div class="grid" data-id="pkActs"></div>
+    <div class="lab">Evade (combat rolls: out of a line of fire, a grenade, a dive)</div>
+    <div class="grid" data-id="evActs"></div>
+    <div class="lab">Casualty (a man down, dragged out, first aid, cover fire)</div>
+    <div class="grid" data-id="casActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -168,6 +175,10 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
     <label class="sl"><span>Reload ×</span><input type="range" data-id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output data-id="reloadO">×1.00</output></label>
     <label class="sl"><span>Look</span><input type="range" data-id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output data-id="lookO">0°</output></label>
+    <div class="lab">Weapon recoil (ai/recoil.js: from the cartridge and the weapon's mass)</div>
+    <label class="sl"><span>Recoil ×</span><input type="range" data-id="recoilS" min="0" max="3" step="0.05" value="1"><output data-id="recoilO">×1.00</output></label>
+    <label class="sl"><span>Fire mode</span><select data-id="fireMode" style="grid-column:2/4"><option value="single">Single</option><option value="burst" selected>Burst (3)</option><option value="auto">Auto</option></select></label>
+    <p class="hint" data-id="recoilInfo"></p>
     <p class="hint">Switching puts the weapon in his hands away (the rifle onto his back, the carbine over the shoulder, the knife into its sheath on the right thigh), then draws the other. Without armour he fights in his shirt. Look bends the head and upper body, the rifle with them, over any clip.</p>
     <p class="hint">The person, rifle (with magazine), helmet and backpack are separate, closed objects on their own bones (without the helmet you see his hair). Drop the rifle and he draws the compact carbine from his back. The flame trooper fires only standing. Detached, each becomes a rigid body with gravity, bounce and friction that collides with the ground.</p>
   </section>
@@ -338,12 +349,13 @@ export function mountRig(root, opts = {}) {
   let A = null;
   let dropOnDeath = true;
   const soldiers = [];
-  const GEAR = { armour: true, reload: 1, look: 0 };
+  const GEAR = { armour: true, reload: 1, look: 0, recoil: 1, fireMode: 'burst' };
   /** The settings on a (new) figure. */
   function applyGear(f) {
     f.setArmour(GEAR.armour);
     f.setClipSpeed('reload', GEAR.reload);
     f.setLook(GEAR.look);
+    f.setRecoil(recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode }));
   }
   /** The parkour props: a brick wall to vault, a concrete ledge to climb or drop off, low cover. */
   const PROP_MAT = {
@@ -364,6 +376,27 @@ export function mountRig(root, opts = {}) {
     else if (kind === 'cover') box(2.2, g.h, 0.3, g.pre + 0.35, PROP_MAT.wall);
     grp.position.set(from[0], kind === 'drop' ? 0 : from[1], from[2]);
     grp.rotation.y = yaw;
+    return grp;
+  }
+  /** What a roll is shown getting out of (EVADE_ACTS from): a grenade at his feet, tracer through where he stood. */
+  function makeThreat(what, from, yaw, kind) {
+    const grp = new THREE.Group();
+    const f = [Math.sin(yaw), Math.cos(yaw)], l = [Math.cos(yaw), -Math.sin(yaw)];
+    if (what === 'grenade') {
+      // behind him, where he dives away from
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshStandardMaterial({ color: '#3d4a32', roughness: 0.7 }));
+      m.position.set(from[0] - f[0] * 0.7, 0.06, from[2] - f[1] * 0.7);
+      grp.add(m);
+    } else if (what === 'fire') {
+      // a burst along a line through where he stood (from ahead), the side he rolls to clear of it
+      const s = kind === 'rollRight' ? 1 : -1;
+      for (const k of [-1, 0, 1]) {
+        const off = 0.12 * k + 0.05 * s;
+        const a = new THREE.Vector3(from[0] + f[0] * 25 + l[0] * off, 1.1 + 0.08 * k, from[2] + f[1] * 25 + l[1] * off);
+        const b = new THREE.Vector3(from[0] - f[0] * 8 + l[0] * off, 1.0 + 0.08 * k, from[2] - f[1] * 8 + l[1] * off);
+        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.85 })));
+      }
+    } else return null;
     return grp;
   }
   /** Where his grenades (and his drone) go: 9 m in front of him. */
@@ -397,6 +430,8 @@ export function mountRig(root, opts = {}) {
       this.patrol = null;
       this.endParkour();
       if (PARKOUR_ACTS[name]) return this.parkour(name);
+      if (EVADE_ACTS[name]) return this.evade(name);
+      if (CASUALTY_ACTS[name]?.partner) return this.casualty(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -428,8 +463,56 @@ export function mountRig(root, opts = {}) {
       this.pkStep(0);
       return this;
     }
+    /**
+     * A roll (rig/objects.js EVADE_ACTS): from his home along the roll's root path (ai/evade.js),
+     * with what he gets out of shown (a grenade by his feet, a burst of tracer past him); again
+     * after a pause.
+     */
+    evade(kind) {
+      const yaw = this.d.yaw;
+      const from = this.home.slice();
+      this.pk = { kind, t: 0, dur: ROLLS[kind].dur, from, yaw, wait: 0, roll: true };
+      this.pkProp = makeThreat(EVADE_ACTS[kind].from, from, yaw, kind);
+      if (this.pkProp) scene.add(this.pkProp);
+      this.fig.play(kind, { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
+    /**
+     * A casualty act with its second man (rig/objects.js CASUALTY_ACTS partner): dragging him back
+     * 5 m by the collar, his body in the rescuer's hands (DRAG_OFF ahead, both facing the same way),
+     * then again; or kneeling by him for the first aid.
+     */
+    casualty(kind) {
+      const act = CASUALTY_ACTS[kind];
+      const yaw = this.d.yaw;
+      const c = new Soldier({ name: 'casualty', position: this.home.slice(), facing: yaw });
+      c.fig.play(act.partner, { fade: 0 });
+      this.pk = { kind, t: 0, dur: kind === 'dragCasualty' ? 6.5 : 1e9, from: this.home.slice(), yaw, wait: 0, cas: c };
+      this.fig.play(kind, { fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
     pkStep(dt) {
       const P = this.pk;
+      if (P.cas) {
+        // the rescuer walks backwards (away from where he faces) 0.8 m/s; the casualty follows his hands
+        P.t += dt;
+        if (P.t > P.dur) P.t = 0;
+        const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
+        const back = P.kind === 'dragCasualty' ? 0.8 * P.t : 0;
+        this.d.p = [P.from[0] - f[0] * back, 0, P.from[2] - f[1] * back];
+        this.d.yaw = P.yaw;
+        const off = P.kind === 'dragCasualty' ? DRAG_OFF : 0.75;
+        // (first aid: he lies across in front of the kneeling man)
+        P.cas.d.yaw = P.kind === 'dragCasualty' ? P.yaw : P.yaw + Math.PI / 2;
+        P.cas.d.p = [this.d.p[0] + f[0] * off, 0, this.d.p[2] + f[1] * off];
+        const g = P.cas.fig.group;
+        g.position.set(...P.cas.d.p);
+        g.rotation.y = P.cas.d.yaw;
+        P.cas.fig.update(dt);
+        return;
+      }
       if (P.wait > 0) {
         // the pause at the end, then again from the start
         if ((P.wait -= dt) <= 0) {
@@ -439,13 +522,17 @@ export function mountRig(root, opts = {}) {
       }
       P.t += dt;
       const u = Math.min(1, P.t / P.dur);
-      const [f, up] = rootAt(P.kind, u, P.geo);
-      this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      if (P.roll) this.d.p = rollPoint(P.kind, u, P.from, P.yaw);
+      else {
+        const [f, up] = rootAt(P.kind, u, P.geo);
+        this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      }
       this.d.yaw = P.yaw;
       if (u >= 1) P.wait = 0.9;
     }
     endParkour() {
       if (!this.pk) return;
+      if (this.pk.cas) this.pk.cas.dispose();
       this.d.yaw = this.pk.yaw;
       this.d.p = this.home.slice();
       this.pk = null;
@@ -714,7 +801,8 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    (PARKOUR_ACTS[k] ? $('pkActs') : animBox).appendChild(b);
+    if (k === 'dragged') return; // (the casualty's own half of the drag: shown with Drag casualty)
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -734,7 +822,7 @@ export function mountRig(root, opts = {}) {
     pkHeight = +pkSlider.value;
     $('pkHo').textContent = pkHeight.toFixed(2) + ' m';
     if (!pkLast) return;
-    for (const e of allMode ? soldiers : [selected]) if (e?.pk) e.play(pkLast);
+    for (const e of allMode ? soldiers : [selected]) if (e?.pk && !e.pk.roll) e.play(pkLast);
   };
   const tg = (id, fn) => {
     const b = $(id);
@@ -781,6 +869,21 @@ export function mountRig(root, opts = {}) {
     GEAR.look = v;
     $('lookO').textContent = Math.round((v * 180) / Math.PI) + '°';
     for (const e of gearTargets()) e.fig.setLook(v);
+  };
+  // recoil: the override factor and the fire mode; the firing clips (Shoot, Crouch fire, Prone fire) rebaked
+  const recoilChanged = () => {
+    const R = recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode });
+    $('recoilO').textContent = '×' + GEAR.recoil.toFixed(2);
+    $('recoilInfo').textContent = `Rifle, 5.56 mm: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull at ${R.rpm} rounds/min (the climb piles up in a burst or on auto).`;
+    for (const e of soldiers) e.fig.setRecoil(R);
+  };
+  $('recoilS').oninput = () => {
+    GEAR.recoil = +$('recoilS').value;
+    recoilChanged();
+  };
+  $('fireMode').onchange = () => {
+    GEAR.fireMode = $('fireMode').value;
+    recoilChanged();
   };
   function setRange(id, v) {
     $(id).value = v;
@@ -973,10 +1076,20 @@ export function mountRig(root, opts = {}) {
     if (qs.get('armour') === '0') $('tgArmour').click();
     if (qs.get('reload')) setRange('reloadS', qs.get('reload'));
     if (qs.get('look')) setRange('lookS', qs.get('look'));
+    // ?recoil=<factor> ?fire=single|burst|auto
+    if (qs.get('recoil')) setRange('recoilS', qs.get('recoil'));
+    if (qs.get('fire')) {
+      $('fireMode').value = qs.get('fire');
+      $('fireMode').onchange();
+    }
     if (qs.get('weapon')) for (const e of soldiers) e.fig.switchWeapon(qs.get('weapon'));
     // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });
     if (qs.get('zones') === '1') $('tgZones').click();
+    // ?ev=rollLeft|rollRight|rollForward|diveProne (a roll, over and over)
+    if (qs.get('ev') && EVADE_ACTS[qs.get('ev')]) for (const e of soldiers) e.play(qs.get('ev'));
+    // ?cas=woundedDown|dragCasualty|firstAid|coverFire
+    if (qs.get('cas') && CASUALTY_ACTS[qs.get('cas')]) for (const e of soldiers) e.play(qs.get('cas'));
     if (qs.get('pk') && PARKOUR_ACTS[qs.get('pk')]) {
       if (qs.get('pkh')) pkHeight = +qs.get('pkh');
       pkShow(qs.get('pk'));

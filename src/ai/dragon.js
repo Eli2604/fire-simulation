@@ -3,6 +3,7 @@ import { crush } from '../sim/crush.js';
 import { iceBears } from '../sim/ice.js';
 import { splatter } from '../sim/wounds.js';
 import { stepSnatch, stepFight, stepThrown, startSnatch, startFight, rival, holdCarried, BLOWS } from './dragonAir.js';
+import { sense as senseEvade, stepEvade, evadeRollHit } from './dragonEvade.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
@@ -948,6 +949,9 @@ export class DragonAI {
         stepFight(this, d, w, dt);
         break;
     }
+    // something coming at it (an arrow, a rocket, a jet's run): a roll, a wing-over, a dive, a hop (ai/dragonEvade.js)
+    if (d.state !== 'snatch' || d.snatch?.phase !== 'dive') senseEvade(d, w);
+    stepEvade(d, w, dt);
     this.breath(d, w, dt);
     this.animate(d, dt);
     this.updateTrail(d);
@@ -2005,6 +2009,13 @@ export class DragonAI {
       if (!d.spine || d.health <= 0) continue;
       const hz = dragonHitZone(d, p, this.world);
       if (!hz) continue;
+      // evading: it may slip it (once for each projectile: then it flies on past)
+      if (g?.dodged?.includes(d)) continue;
+      if (!evadeRollHit(d)) {
+        if (g) (g.dodged ??= []).push(d);
+        this.world.events.push({ type: 'dragonDodged', pos: p.slice(), time: this.world.time, name: 'the dragon' });
+        continue;
+      }
       const v = g?.v;
       this.strike(d, hz, type, p, v ? (Array.isArray(v) ? v : [v.x, v.y, v.z]) : sub(p, hz.q));
       return true;
@@ -2021,7 +2032,7 @@ export class DragonAI {
     for (const d of this.world.dragons ?? []) {
       if (!d.spine || d.health <= 0) continue;
       const h = dragonRayHit(d, from, dir, max, this.world);
-      if (h && (!best || h.s < best.s)) best = { ...h, dragon: d };
+      if (h && (!best || h.s < best.s) && evadeRollHit(d)) best = { ...h, dragon: d };
     }
     if (best) this.strike(best.dragon, best, type, best.p, dir);
     return best;

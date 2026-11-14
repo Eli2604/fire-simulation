@@ -1,4 +1,5 @@
-import { ONCE, MOVING, RELOAD_TIME, PARKOUR } from './rig.js';
+import { ONCE, MOVING, RELOAD_TIME, PARKOUR, ROLL } from './rig.js';
+import { recoilOf, skillOf } from '../ai/soldier.js';
 
 /**
  * Show on a figure (operator/rig.js OperatorFigure) what the squad AI (ai/squad.js,
@@ -22,6 +23,8 @@ export function driveFromAI(f, d, st) {
     st.armour = arm;
     f.setArmour?.(arm);
   }
+  // his weapon's recoil (ai/recoil.js): the firing clips baked for it, his control of it
+  if (f.setRecoil && d.weapon !== 'knife' && d.weapon !== 'torch') f.setRecoil(recoilOf(d), skillOf(d).control);
   // the weapon: a switch the AI started, or catching up with what he has
   const want = d.switching?.to ?? d.weapon;
   if (want && FIG_WEAPON[want] && st.weapon !== want && f.switchWeapon) {
@@ -40,8 +43,8 @@ export function driveFromAI(f, d, st) {
         // switchWeapon above plays these
       } else if (name === 'deployDrone') f.deployDrone();
       else if (name === 'reload' && d.animDur) f.play('reload', { restart: true, fade: 0.15, speed: (RELOAD_TIME ?? 2.8) / d.animDur });
-      // a parkour move: its clip at the pace the AI carries him along it (a wounded man's slow vault)
-      else if (PARKOUR[name]) f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
+      // a parkour move or a roll (ai/evade.js): its clip at the pace the AI carries him along it (a wounded man's slow vault)
+      else if (PARKOUR[name] || ROLL[name]) f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
       else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name]) f.play(name);
     if (MOVING[f.state] && !ONCE[f.shown]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, (d.speed ?? 1) / MOVING[f.state])) : 0.001);

@@ -11,6 +11,7 @@ import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
+import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -142,6 +143,7 @@ export class Walkthrough {
         if (e.code === 'KeyE') this.flight.tryExit();
         if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
+        if (e.code === 'KeyF') this.flight.flaresRequested = true;
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
@@ -175,6 +177,17 @@ export class Walkthrough {
       if (e.code === 'KeyF') this.strike();
       // Space by a low wall, a ledge or a drop ahead: over it, up onto it, down off it
       if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.downed) this.parkour();
+      // a direction key tapped twice quickly: a combat roll that way (A / D sideways, W forward;
+      // W twice with Shift held: a dive to prone)
+      if (!e.repeat) {
+        const dirKey = { KeyA: 'rollLeft', ArrowLeft: 'rollLeft', KeyD: 'rollRight', ArrowRight: 'rollRight', KeyW: 'rollForward', ArrowUp: 'rollForward' }[e.code];
+        const now = performance.now();
+        if (dirKey && this.lastTap?.code === e.code && now - this.lastTap.t < 300) {
+          this.lastTap = null;
+          const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+          this.roll(dirKey === 'rollForward' && hurry ? 'diveProne' : dirKey);
+        } else if (dirKey) this.lastTap = { code: e.code, t: now };
+      }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     document.getElementById('walkGo').addEventListener('click', () => this.resume());
@@ -338,7 +351,7 @@ export class Walkthrough {
     this.view.camera.updateProjectionMatrix();
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
-    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, X eject', 6);
+    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, F flares, X eject', 6);
   }
 
   /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
@@ -970,6 +983,17 @@ export class Walkthrough {
     this.trav = { kind, t: 0, dur: durFor(kind, ab), geo: geoFor(kind, geo), from: [this.pos.x, this.pos.y, this.pos.z], dir };
     return true;
   }
+  /**
+   * A combat roll (ai/evade.js, as the soldiers roll): sideways out of a line of fire, forward,
+   * or a dive to the ground (then you lie flat: C or Ctrl to get up). Not crawling, swimming or hurt.
+   */
+  roll(kind) {
+    if (this.swimming || this.crawl || this.trav || this.downed || this.flight || this.health < 45) return false;
+    const fwd = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    const left = [-Math.cos(this.yaw), Math.sin(this.yaw)];
+    this.trav = { kind, t: 0, dur: ROLLS[kind].dur, from: [this.pos.x, this.pos.y, this.pos.z], fwd, left, roll: true };
+    return true;
+  }
   /** Height of the floor under (x, z), searching down from `from`. */
   floorAt(x, z, from) {
     const w = this.hooks.getSim().world;
@@ -1055,7 +1079,26 @@ export class Walkthrough {
     const len = Math.hypot(fx, fz);
     let moving = 0;
     let dip = 0;
-    if (this.trav) {
+    if (this.trav?.roll) {
+      // a roll under way (ai/evade.js): along its path, as far as there is room
+      const T = this.trav;
+      T.t += dt;
+      const u = Math.min(1, T.t / T.dur);
+      const [s, f] = rollAt(T.kind, u);
+      const nx = T.from[0] + T.fwd[0] * f + T.left[0] * s;
+      const nz = T.from[2] + T.fwd[1] * f + T.left[1] * s;
+      const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
+      if (!T.stopped && fl - this.pos.y <= 0.42 && !this.blocked(nx, nz, fl, EYE_CRAWL)) {
+        this.pos.x = nx;
+        this.pos.z = nz;
+      } else T.stopped = true; // (against something: the roll ends where it is)
+      dip = rollEyeDip(T.kind, u);
+      moving = 1;
+      if (u >= 1) {
+        this.trav = null;
+        if (T.kind === 'diveProne') this.crawl = true; // (down flat: the crawl's eye height, as the dip ends)
+      }
+    } else if (this.trav) {
       // a vault, a climb or a drop under way: carried along its path (ai/parkour.js)
       const T = this.trav;
       T.t += dt;

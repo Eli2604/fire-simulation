@@ -15,6 +15,9 @@ export default {
     level: { value: 0, min: 0, max: 20, step: 0.1, label: 'Floor height (m)' },
     skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Expertise (mixed: a veteran commander, regulars, a recruit)' },
     armour: { value: true, label: 'Body armour (plates) and helmets' },
+    // their weapons' recoil (ai/recoil.js: physical from the cartridge and the weapon, times this) and fire mode
+    recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
+    fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode (weapon: each its own; the MG on auto)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
@@ -29,6 +32,8 @@ export default {
         threat: [p.threatX, p.level, p.threatZ],
         skill: p.skill !== 'mixed' ? p.skill : { CMD: 'veteran', MG: 'regular', R1: 'regular', R2: 'recruit', UAV: 'regular' }[squad],
         armour: p.armour !== false,
+        recoil: p.recoil ?? 1,
+        fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
       })),
     };
   },

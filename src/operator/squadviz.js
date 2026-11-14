@@ -91,10 +91,12 @@ export class SquadViz {
       trail: new THREE.Mesh(quadGeo(1600), mat(0.4)),
       ring: new THREE.Mesh(new THREE.RingGeometry(0.3, 0.38, 32), mat(0.9)),
       tag: textSprite((m.unit ? m.unit[0] + '·' : '') + m.squad, ROLE_COLOR[m.squad] ?? '#fff', 0.42, 0.14),
+      // the commander's plan (ai/strategy.js): the flank route he has picked for a team, dashed orange
+      plan: new THREE.Mesh(quadGeo(900), new THREE.MeshBasicMaterial({ color: '#ff9a3c', transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, toneMapped: false, side: THREE.DoubleSide })),
       bubble: null, signal: null, until: 0,
     };
     it.ring.rotation.x = -Math.PI / 2;
-    for (const o of [it.path, it.trail, it.ring, it.tag]) {
+    for (const o of [it.path, it.trail, it.ring, it.tag, it.plan]) {
       o.frustumCulled = false;
       this.root.add(o);
     }
@@ -117,6 +119,13 @@ export class SquadViz {
         it.trailLast = m.track[m.track.length - 1];
         fillRibbon(it.trail.geometry, m.track.map((q) => [q[0], m.p[1], q[1]]), 0.03, false);
       }
+      // the planned flank route (the strategy's), once a new one is set
+      const pr = !m.dead && m.planRoute?.length > 1 ? m.planRoute : null;
+      if (pr && pr !== it.planShown) {
+        it.planShown = pr;
+        fillRibbon(it.plan.geometry, pr.map((q) => [q[0], q[1] + 0.08, q[2]]), 0.12, false);
+      }
+      it.plan.visible = !!pr;
       it.ring.visible = !!m.cover && !!m.path && !m.dead;
       if (m.cover) it.ring.position.set(m.cover[0], m.cover[1] + 0.04, m.cover[2]);
       it.tag.visible = !m.dead;
@@ -138,7 +147,7 @@ export class SquadViz {
     }
     for (const [m, it] of this.items)
       if (!live.has(m)) {
-        for (const o of [it.path, it.trail, it.ring, it.tag, it.bubble]) if (o) this.root.remove(o);
+        for (const o of [it.path, it.trail, it.ring, it.tag, it.bubble, it.plan]) if (o) this.root.remove(o);
         this.items.delete(m);
       }
     // threat markers

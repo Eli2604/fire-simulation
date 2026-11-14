@@ -21,6 +21,8 @@ export default {
     patrolOffsetZ: { value: 0, min: -30, max: 30, step: 0.5, label: 'Patrol area offset Z (m)' },
     key: { value: false, label: 'The first carries the key to the dungeon cell (jailer)' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Random seed' },
+    recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
+    fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode' },
   },
   build(p, { rng }) {
     const enemies = [];
@@ -32,7 +34,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined });
     }
     return { prims: [], enemies };
   },

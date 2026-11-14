@@ -11,7 +11,7 @@ test('the Object drop-down: soldier, squad, dragon, car, jet, boat; every vehicl
   assert.equal(rigKind({ kind: 'tank' }), 'soldier', 'an unknown kind: the soldier');
   assert.equal(rigKind(undefined), 'soldier');
   assert.deepEqual(Object.keys(VEHICLE_ACTS.car), ['idle', 'drive', 'steer', 'doors', 'burning']);
-  assert.deepEqual(Object.keys(VEHICLE_ACTS.jet), ['idle', 'taxi', 'gearUp', 'gearDown', 'flaps', 'afterburner', 'bank', 'eject', 'hit', 'burning', 'critical', 'crash']);
+  assert.deepEqual(Object.keys(VEHICLE_ACTS.jet), ['idle', 'taxi', 'gearUp', 'gearDown', 'flaps', 'afterburner', 'bank', 'eject', 'hit', 'burning', 'critical', 'crash', 'evadeBreak', 'evadeRoll']);
   assert.deepEqual(Object.keys(VEHICLE_ACTS.boat), ['idle', 'cruise', 'turn', 'rough']);
   for (const v of VEHICLES) assert.ok(VEHICLE_ZONES[v] && VEHICLE_DIMS[v], v);
 });
