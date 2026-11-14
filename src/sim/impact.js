@@ -56,6 +56,11 @@
 import { mechanics, MATERIALS } from './materials.js';
 import { contact, impactSound } from '../audio/physics.js';
 import { crush } from './crush.js';
+import { emitSound } from '../ai/perception.js';
+
+/** The struck sound's level for hearing (ai/perception.js: dB at 1 m, a punch ~80, a shot ~157) from its
+ *  radiated energy level (dB re 1 pJ): calibrated so a punch lands at perception's impact level. */
+export const HEARING_OFFSET_DB = -35;
 
 /** A person's mass with kit (kg). */
 export const PERSON_KG = 85;
@@ -167,7 +172,7 @@ export function impact(simOrWorld, o) {
     w.events.push(ev);
     if (r.shock && fx.shockwave) w.events.push({ type: 'shockwave', pos, time, radius: r.shock.radius, energy: r.energy, loudness_dB: r.sound.db, name });
   }
-  if (w.noises && r.energy > 30) w.noises.push({ p: pos, loud: clamp(5 + Math.sqrt(r.energy) * 0.5, 5, 140), time, kind: o.noiseKind ?? 'impact' });
+  if (r.energy > 30) emitSound(w, { pos, loudness_dB: r.sound.db + HEARING_OFFSET_DB, kind: o.noiseKind ?? (r.shock ? 'shockwave' : 'impact'), source: o.source ?? null });
   r.event = ev;
   return r;
 }
