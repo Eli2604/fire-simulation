@@ -26,8 +26,8 @@ test('the rolls: root paths go the way they should, the clips are baked round th
     assert.ok(Math.abs(s0) + Math.abs(f0) + Math.abs(u0) < 1e-12, k);
     const [s, f, u] = rollAt(k, 1);
     const d = ROLLS[k].geo.d;
-    if (k === 'rollLeft') assert.ok(Math.abs(s - d) < 1e-9 && f === 0, k);
-    else if (k === 'rollRight') assert.ok(Math.abs(s + d) < 1e-9 && f === 0, k);
+    // (sideways: the rolls and the crouched side steps that stand in for them, ai/weapons.js)
+    if (ROLLS[k].side) assert.ok(Math.abs(s - ROLLS[k].side * d) < 1e-9 && f === 0, k);
     else assert.ok(Math.abs(f - d) < 1e-9 && s === 0, k);
     assert.equal(u, 0);
     // never back (monotone), quick off the mark sideways (half the way in under half the time)

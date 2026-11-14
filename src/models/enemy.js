@@ -8,6 +8,8 @@
  * key: the first of the group is the jailer and carries the key to the dungeon cell
  * (models/catacombs.js); killed, he drops it.
  */
+/** The k-th guard's weapon (undefined: a rifle). */
+const weaponOf = (w, k) => (w === 'mixed' ? [undefined, 'shotgun', 'pistol'][k % 3] : w && w !== 'rifle' ? w : undefined);
 export default {
   label: 'Enemies',
   params: {
@@ -23,6 +25,8 @@ export default {
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Random seed' },
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
     fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode' },
+    // what they carry (ai/weapons.js: grips, carry, aim, and what each allows); mixed: every third a shotgun, the next a pistol
+    weapon: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed'], label: 'Weapon' },
   },
   build(p, { rng }) {
     const enemies = [];
@@ -34,7 +38,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k) });
     }
     return { prims: [], enemies };
   },

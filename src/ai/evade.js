@@ -11,6 +11,9 @@
  *  - rollForward: a shoulder roll forward (from a run, or after a jump), up into a crouch.
  *  - diveProne: a dive forward onto the chest, down flat (prone, aiming): from standing into cover
  *    from fire, away from a blast.
+ *  - sidestepLeft / sidestepRight: a quick crouched side step (two shuffles, the weapon kept up):
+ *    what a man does instead of a roll when his weapon rules rolling out (ai/weapons.js: the
+ *    flame gun's tanks, a machine gun: that one dives flat into cover instead, if it can).
  *
  * Root paths are [side, forward, up] (m) from where the roll starts, in the frame of the way he
  * faced when it started (side: + to his left). A man's facing (yaw) in the AIs: forward is
@@ -25,6 +28,7 @@
  *    slot a parkour move uses: an AI moving him leaves him alone while it lasts).
  */
 import { mono, clear } from './parkour.js';
+import { handKind, evadeKind } from './weapons.js';
 
 /** The rolls: their clip duration (s) and the distance the root goes (m). */
 export const ROLLS = {
@@ -32,10 +36,12 @@ export const ROLLS = {
   rollRight: { dur: 1.1, geo: { d: 1.9 }, side: -1 },
   rollForward: { dur: 1.2, geo: { d: 2.4 } },
   diveProne: { dur: 1.25, geo: { d: 2.0 } },
+  sidestepLeft: { dur: 0.8, geo: { d: 1.3 }, side: 1, step: true },
+  sidestepRight: { dur: 0.8, geo: { d: 1.3 }, side: -1, step: true },
 };
 export const ROLL = Object.fromEntries(Object.keys(ROLLS).map((k) => [k, 1]));
 /** How the rolls are shown (the rig's buttons). */
-export const ROLL_LABELS = { rollLeft: 'Roll (left)', rollRight: 'Roll (right)', rollForward: 'Roll (forward)', diveProne: 'Dive roll to prone' };
+export const ROLL_LABELS = { rollLeft: 'Roll (left)', rollRight: 'Roll (right)', rollForward: 'Roll (forward)', diveProne: 'Dive roll to prone', sidestepLeft: 'Side step (left, crouched)', sidestepRight: 'Side step (right, crouched)' };
 
 // fraction of the way at u: sideways quick off the mark (out of the line first), then the roll
 const SIDE_K = [[0, 0], [0.16, 0.18], [0.31, 0.37], [0.47, 0.6], [0.64, 0.79], [0.78, 0.92], [1, 1]];
@@ -61,6 +67,7 @@ const EYE = {
   diveProne: [[0, 0], [0.2, 0.15], [0.4, 0.75], [0.6, 0.95], [1, 0.95]],
 };
 EYE.rollRight = EYE.rollLeft;
+EYE.sidestepLeft = EYE.sidestepRight = [[0, 0], [0.25, 0.45], [0.75, 0.5], [1, 0]];
 export const rollEyeDip = (kind, u) => mono(EYE[kind], u);
 
 /** World direction (x, z) of a roll for a man facing yaw: where its root goes. */
@@ -108,7 +115,9 @@ export function escapeDir(m, t) {
 
 /**
  * The roll (and the facing to do it in) that takes m out of threat t: { kind, yaw, end } or null
- * (he cannot roll: down, crawling, badly hurt in the legs, no room). host: { solid(x, y, z),
+ * (he cannot roll: down, crawling, badly hurt in the legs, no room). With a weapon that rules a
+ * roll out (ai/weapons.js evadeKind) the kind is what stands in for it: a crouched side step, a
+ * dive into cover. host: { solid(x, y, z),
  * floor(x, z, m) } to keep the roll off walls and edges (optional).
  */
 export function pickRoll(m, t, host = {}) {
@@ -131,7 +140,11 @@ export function pickRoll(m, t, host = {}) {
     const back = Math.atan2(-e[0], -e[1]);
     tries.push(['rollLeft', back - Math.PI / 2], ['rollRight', back + Math.PI / 2]);
   }
-  for (const [kind, y0] of tries) {
+  // the weapon in his hands may rule a roll out (ai/weapons.js): a side step, or a dive into cover, stands in
+  const wk = handKind(m);
+  for (const [want0, y0] of tries) {
+    const kind = evadeKind(wk, want0);
+    if (!kind) continue;
     const y = wrap(y0);
     // (it must go the way it is meant to: the root's direction against the way out)
     const dir = rollDir(kind, y);

@@ -94,6 +94,9 @@ export const EVADE_ACTS = {
   rollRight: { label: 'Roll (right)', from: 'fire' },
   rollForward: { label: 'Roll (forward)', from: 'dragon' },
   diveProne: { label: 'Dive roll to prone', from: 'grenade' },
+  // what stands in for a roll with a weapon that rules rolling out (ai/weapons.js: the flame gun's tanks)
+  sidestepLeft: { label: 'Side step (left, crouched)', from: 'fire' },
+  sidestepRight: { label: 'Side step (right, crouched)', from: 'fire' },
 };
 
 /* ---------- casualty acts (soldier and squad): a man down and getting him out (ai/casualty.js) ---------- */

@@ -30,6 +30,11 @@
  *    the back, both hands on the edge), drops (with a landing roll) and a slide into cover. Their
  *    root moves along the move's path (whoever plays them carries the figure along rootAt), so
  *    the body stays on the obstacle whatever its height.
+ *  - Primaries (setPrimary): the rifle, a pump shotgun, a pistol, the gunner's machine gun, each
+ *    held its own way (WEAPON_STYLE, from ai/weapons.js HANDLING): grips (the shotgun's pump, worked
+ *    after every round; the pistol cupped), carry, aim (the pistol square to the target at arm's
+ *    length, the flame gun from the hip), reloads; a set of clips baked for each (weaponClips) and
+ *    swapped in as the weapon in his hands changes. allows(act): what that weapon lets him do.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -37,8 +42,9 @@ import * as THREE from 'three';
 import { SC } from './sculpt.js';
 import { makeOperatorMaterial } from './shader.js';
 import { rootKeys, mono, MOVES as PK_MOVES, PARKOUR } from '../ai/parkour.js';
-import { rollKeys, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
-import { recoilSpec, recoilAt, pullTime } from '../ai/recoil.js';
+import { rollKeys, rollAt, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
+import { recoilSpec, recoilAt, pullTime, pumpTimes } from '../ai/recoil.js';
+import { allows as handlingAllows } from '../ai/weapons.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -186,6 +192,11 @@ export function pose0() {
     // hand: kW turns the hand so the blade points along kDir with its edge towards kEdge (chest
     // space), and the right-hand target becomes the knife's grip instead of the wrist
     sling2: 0, kW: 0, kDir: [0, 0, 1], kEdge: [0, -1, 0],
+    // the weapon's handling (ai/weapons.js, WEAPON_STYLE): where on it each hand grips (rifle-local
+    // offsets from the rifle's own grips: x along the barrel, y up), and how it is aimed (aOff: the
+    // aimed weapon moved, chest space; aYaw: turned, for a stance more square to the target; aPitch:
+    // the muzzle raised, as from the hip)
+    lGo: Z3(), rGo: Z3(), aOff: Z3(), aYaw: 0, aPitch: 0,
   };
 }
 function lerpPose(a, b, t) {
@@ -249,11 +260,11 @@ export function solve(ps) {
   const q = eq(ps.wRot);
   const b = B.clone().add(V3(ps.wOff));
   if (ps.aim > 0) {
-    const dir = new THREE.Vector3(Math.sin(AIM_YAW), -0.03, Math.cos(AIM_YAW)).normalize();
+    const dir = new THREE.Vector3(Math.sin(AIM_YAW + ps.aYaw), -0.03, Math.cos(AIM_YAW + ps.aYaw)).normalize();
     const side = new THREE.Vector3().crossVectors(dir, UP).normalize();
     // recoil (ai/recoil.js): the muzzle's climb (rad), the kick back into the shoulder (recoil: 1 a rifle round's)
-    const qA = new THREE.Quaternion().setFromAxisAngle(side, ps.climb).multiply(frameQuat(dir, UP));
-    const bA = AIM_BUTT.clone().add(V3(ps.wOff)).addScaledVector(dir, -0.028 * ps.recoil);
+    const qA = new THREE.Quaternion().setFromAxisAngle(side, ps.climb + ps.aPitch).multiply(frameQuat(dir, UP));
+    const bA = AIM_BUTT.clone().add(V3(ps.wOff)).add(V3(ps.aOff)).addScaledVector(dir, -0.028 * ps.recoil);
     q.slerp(qA, ps.aim);
     b.lerp(bA, ps.aim);
   }
@@ -281,10 +292,13 @@ export function solve(ps) {
   const Mi = M.clone().invert();
   const toChest = (v) => v.clone().applyMatrix4(Mi).add(REST.chest);
   const hand = {};
+  out.reach = {};
   for (const s of ['R', 'L']) {
     const l = s.toLowerCase();
     const S = REST['upperArm' + s], E0 = REST['foreArm' + s], W0 = REST['hand' + s];
-    const Wg = toW(W0);
+    // the wrist where it is on the weapon (moved along it by the weapon's grip: lGo / rGo)
+    const go = ps[l + 'Go'];
+    const Wg = toW(go[0] || go[1] || go[2] ? W0.clone().add(rl2w(go[0], go[1], go[2])) : W0);
     const T = V3(ps[l + 'T']);
     if (s === 'L' && ps.lMag > 0) T.lerp(magGrab.clone().add(V3(ps.lMagOff)), ps.lMag);
     if (ps[l + 'W'] > 0) T.lerp(toChest(V3(ps[l + 'TW'])), ps[l + 'W']);
@@ -295,6 +309,8 @@ export function solve(ps) {
     const cp = V3(ps[l + 'Pole']);
     const pole = cp.lengthSq() > 1e-6 ? cp : POLE[s][0].clone().lerp(POLE[s][1], ps.aim);
     const E1 = ikV(S, Wt, 0.29, 0.27, pole);
+    // (how far short of its target the hand falls, the arm at full stretch: 0 when it gets there)
+    out.reach[s] = Math.max(0, Wt.distanceTo(S) - 0.56);
     const qU = new THREE.Quaternion().setFromUnitVectors(E0.clone().sub(S).normalize(), E1.clone().sub(S).normalize());
     const qF = new THREE.Quaternion().setFromUnitVectors(W0.clone().sub(E0).normalize(), Wt.clone().sub(E1).normalize().applyQuaternion(qU.clone().invert()));
     const qArm = qU.clone().multiply(qF);
@@ -471,30 +487,38 @@ export const CASUALTY = { woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid:
 const SHOOT_CACHE = new Map();
 export function shootClips(R = recoilSpec('rifle'), control = 1) {
   const dur = pullTime(R);
+  // a pump action: after the round the support hand runs the pump back and forward along the barrel
+  const pt = pumpTimes(R);
+  const pump = (p, t) => {
+    if (pt) p.lGo[0] -= PUMP_STROKE * env(t, pt[0], pt[0] + 0.42 * R.pump, pt[0] + 0.55 * R.pump, pt[1]);
+    return p;
+  };
   return {
     shoot: [dur, (t) => {
       const p = stance(pose0());
       aimUpper(p, 1);
       const { kick: r, climb } = recoilAt(R, t, control);
       p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb; p.head[0] -= 0.02 * r;
-      return p;
+      return pump(p, t);
     }],
     crouchShoot: [dur, (t) => {
       const p = crouchLegs(pose0());
       p.spine[0] = 0.12; p.head[0] = -0.1; aimUpper(p, 1);
       const { kick: r, climb } = recoilAt(R, t, control);
       p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb;
-      return p;
+      return pump(p, t);
     }],
     proneShoot: [dur, (t) => {
       const p = prone(pose0());
       const { kick: r, climb } = recoilAt(R, t, control);
       // (lying on it: the muzzle climbs off the ground ahead, the shoulder takes the kick)
       p.wOff = [0, -0.03 * r, -0.012 * r - 0.4 * climb]; p.head[0] -= 0.03 * r;
-      return p;
+      return pump(p, t);
     }],
   };
 }
+/** How far the pump runs back along the barrel (m). */
+export const PUMP_STROKE = 0.095;
 const J = (o) => Object.assign(pose0(), o);
 /** Kneeling on the right knee (e: 0 standing .. 1 down), the rifle hanging at the front, hands free. */
 function droneKneel(p, e) {
@@ -997,7 +1021,29 @@ const RL_KEYS = {
       [1.25, prone(pose0()), { hp: [0, HY - 0.82, D] }],
     ];
   },
+  // what stands in for a roll with a weapon that rules rolling out (ai/weapons.js): down into a
+  // crouch, two quick shuffles to that side, the weapon kept up on the threat
+  sidestepLeft: () => sideStep(1),
+  sidestepRight: () => sideStep(-1),
 };
+/** The crouched side step: sg 1 to his left, -1 to his right (ROLLS.sidestepLeft / Right). */
+function sideStep(sg) {
+  const kind = sg > 0 ? 'sidestepLeft' : 'sidestepRight', dur = ROLLS[kind].dur;
+  const at = (t) => rollAt(kind, t / dur)[0]; // the hips over the root all along
+  const low = (spread, drop, lean) => {
+    const p = aimUpper(crouchLegs(pose0()), 1);
+    p.spine[0] = 0.18; p.head[0] = -0.12;
+    p.hips[2] = -sg * lean;
+    // the leading leg (the left going left) out to the side, the other drawn in after it
+    const lead = sg > 0 ? 'L' : 'R', trail = sg > 0 ? 'R' : 'L';
+    p['thigh' + lead][2] += sg * spread;
+    p['thigh' + trail][2] += sg * 0.04;
+    p['foot' + lead][0] -= 0.1 * spread;
+    return [p, drop];
+  };
+  const K = [[0.0, aimUpper(stance(pose0()), 1), 0.02], [0.14, ...low(0.05, 0.4, 0.04)], [0.3, ...low(0.42, 0.44, 0.1)], [0.42, ...low(0.02, 0.45, 0.05)], [0.58, ...low(0.42, 0.44, 0.1)], [0.68, ...low(0.02, 0.42, 0.04)], [0.8, ...low(0, 0.36, 0)]];
+  return K.map(([t, p, drop]) => [t, p, { hp: [at(t), HY - drop, t === 0 ? 0 : -0.08] }]);
+}
 
 const CLIPS = {
   idle: [2.4, (t, u) => {
@@ -1364,6 +1410,152 @@ function knifeAs(name, base) {
     return p;
   };
 }
+/* ---------- weapon handling (ai/weapons.js): each weapon's grips, carry, aim and firing ---------- */
+/**
+ * How each weapon is held, on top of the rifle's clips (a profile in ai/weapons.js HANDLING says
+ * the same in words, with what it allows):
+ *  - lGo / rGo: where the hands grip it, rifle-local offsets from the rifle's grips (x along the
+ *    barrel, y up): the shotgun's pump, the machine gun's handguard top, the pistol's left hand
+ *    cupping the right on the grip;
+ *  - carry: the weapon moved (wOff, chest space) and turned (wRot) while he is not aiming (low
+ *    ready, hip carry, compressed ready);
+ *  - aim: aOff (the aimed weapon moved: the pistol out at arm's length, the flame gun at the hip),
+ *    aPitch (the muzzle raised), square (0..1: how far the bladed rifle stance turns square to
+ *    the target: the pistol's isosceles), lean (weight forward over the front foot), wide (feet);
+ *  - oneHand: clips where only the right hand holds it (the pistol on the move);
+ *  - muzzle: where the muzzle is along the barrel (m, rifle-local x: the flash).
+ * The rifle and the carbine are the clips as they are (null).
+ */
+export const WEAPON_STYLE = {
+  rifle: null,
+  carbine: null,
+  shotgun: {
+    lGo: [0.015, 0.008, 0], carry: { wOff: [0, -0.02, 0], wRot: [0.14, 0, 0] }, lean: 0.07, wide: 0.04, muzzle: 0.97,
+  },
+  mg: {
+    lGo: [-0.07, 0.075, 0.012], carry: { wOff: [0.03, -0.1, 0.04], wRot: [0.1, 0, 0.04] }, lean: 0.1, wide: 0.07, muzzle: 1.1,
+  },
+  pistol: {
+    lGo: [-0.255, -0.05, -0.012],
+    carry: { wOff: [0.1, 0.08, 0.03], wRot: [0.4, -0.9, 0] },
+    aOff: [0.15, 0.0, 0.18], square: 0.75, muzzle: 0.43,
+    oneHand: { run: 1, walk: 1, stairsUp: 1, stairsDown: 1, jump: 1, slide: 1 },
+  },
+  torch: {
+    carry: { wOff: [0.01, -0.08, 0.04], wRot: [0.2, 0, 0] }, aOff: [0.06, -0.22, 0.0], aPitch: 0.14, square: 0.3, muzzle: 1.0,
+  },
+};
+const addA = (a, b, k = 1) => a.map((v, i) => v + b[i] * k);
+/** A clip pose fn held the way weapon S says. */
+function styled(S, name, base) {
+  return (t, u) => {
+    const p = base(t, u);
+    const a = p.aim;
+    if (S.lGo) p.lGo = addA(p.lGo, S.lGo);
+    if (S.rGo) p.rGo = addA(p.rGo, S.rGo);
+    if (S.oneHand?.[name] && a < 0.5) {
+      // on the move: the pistol in the right hand only, the left arm swinging free
+      const s = Math.sin(TAU * u);
+      p.lT = lerpA(p.lT, [0.25, name === 'run' ? 1.14 + 0.1 * mx0(s) : 0.98, 0.07 + (name === 'run' ? 0.25 : 0.14) * s], p.lG);
+      p.lPole = [1, -0.2, -1];
+      p.lG = 0; p.lH = 0;
+    }
+    const c = (1 - a) * (1 - p.cw) * (1 - p.sling) * (1 - p.sling2) * Math.max(p.rG, p.lG);
+    if (S.carry && c > 0) {
+      p.wOff = addA(p.wOff, S.carry.wOff, c);
+      p.wRot = addA(p.wRot, S.carry.wRot, c);
+    }
+    if (a > 0) {
+      if (S.aOff) p.aOff = addA(p.aOff, S.aOff);
+      p.aPitch += S.aPitch ?? 0;
+      if (S.square) {
+        // square to the target: the twist of the bladed stance taken out, the aim turned with it
+        const q = S.square * a;
+        p.spine[1] += 0.35 * q; p.chest[1] += 0.45 * q; p.neck[1] -= 0.2 * q; p.head[1] -= 0.58 * q;
+        p.aYaw -= AIM_YAW * S.square;
+      }
+      if (S.lean) {
+        // (the muzzle kept on the target as the body leans over it)
+        p.spine[0] += 0.5 * S.lean * a; p.chest[0] += S.lean * a; p.head[0] -= 1.2 * S.lean * a; p.aPitch += 1.5 * S.lean;
+      }
+    }
+    if (S.wide && p.cw < 0.5 && Math.abs(p.hips[0]) < 0.5) {
+      p.thighR[2] -= S.wide; p.thighL[2] += S.wide;
+    }
+    return p;
+  };
+}
+/** Shells into the shotgun's tube one at a time: the left hand from the pouch on the belt to the loading port, four times. */
+const SHELL_POUCH = [0.17, 1.0, 0.15];
+export const SHOTGUN_RELOAD = 3.9;
+function shotgunReload(t) {
+  const p = stance(pose0());
+  const e = env(t, 0, 0.35, SHOTGUN_RELOAD - 0.4, SHOTGUN_RELOAD);
+  // turned on its side, the port up, the butt under the arm
+  p.wOff = [0.03 * e, 0.07 * e, 0.07 * e]; p.wRot = [-0.15 * e, 0.2 * e, 0.85 * e];
+  p.head = [0.32 * e, 0.22 * e, 0];
+  // the hand: pump -> pouch -> port (a shell pushed in) -> pouch ... -> pump
+  const port = [-0.21, -0.035, 0.0];
+  const k = (t - 0.4) / 0.75;
+  let g = 1, go = [0, 0, 0];
+  if (k >= 0 && k < 4) {
+    const f = k % 1;
+    g = 1 - env(f, 0.0, 0.3, 0.45, 0.8); // off to the pouch and back
+    go = k < 0.3 ? lerpA([0, 0, 0], port, sm01(k / 0.3)) : port.slice();
+    if (f > 0.8) go = addA(port, [0.05 * env(f, 0.8, 0.9, 0.92, 1), 0, 0]); // pushing the shell home
+  } else if (k >= 4) go = lerpA(port, [0, 0, 0], sm01((k - 4) / 0.4));
+  p.lG = g; p.lH = 1; p.lGo = go;
+  p.lT = SHELL_POUCH.slice(); p.lPole = [1, -0.8, 0];
+  return p;
+}
+/** The pistol's magazine change: pulled in, the empty one dropped, a new one from the belt into the grip. */
+export const PISTOL_RELOAD = 1.8;
+function pistolReload(t) {
+  const p = stance(pose0());
+  const e = env(t, 0, 0.25, PISTOL_RELOAD - 0.3, PISTOL_RELOAD);
+  p.wRot = [-0.25 * e, 0.1 * e, 0.35 * e]; p.wOff = [0.05 * e, 0.06 * e, 0.0];
+  p.head = [0.3 * e, 0.15 * e, 0];
+  const off = env(t, 0.25, 0.5, 0.85, 1.15); // the left hand away to the belt
+  const seat = env(t, 1.0, 1.15, 1.25, 1.45); // the magazine pushed up into the grip
+  p.lG = 1 - off; p.lH = 1;
+  p.lGo = addA([0, 0, 0], [-0.3, -0.12, 0], seat);
+  p.lT = [0.16, 1.03, 0.14]; p.lPole = [1, -0.8, 0];
+  return p;
+}
+const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
+/** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
+const NO_STYLE = { ...CASUALTY, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
+const STYLE_CACHE = new Map();
+/**
+ * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
+ * (its own reload). {} for the rifle and the carbine (the clips as they are).
+ */
+export function weaponClips(kind) {
+  const S = WEAPON_STYLE[kind];
+  if (!S) return {};
+  if (STYLE_CACHE.has(kind)) return STYLE_CACHE.get(kind);
+  const c = {};
+  for (const k in CLIPS) {
+    if (NO_STYLE[k] || SHOOT[k]) continue;
+    const [dur, fn] = k === 'reload' && RELOAD_AS[kind] ? RELOAD_AS[kind] : CLIPS[k];
+    c[k] = makeClip(k, dur, styled(S, k, fn));
+  }
+  STYLE_CACHE.set(kind, c);
+  return c;
+}
+/** The firing clips for a recoil R held as weapon kind: shootClips styled. */
+function weaponShootClips(R, control, kind) {
+  const C = shootClips(R, control);
+  const S = WEAPON_STYLE[kind];
+  return Object.fromEntries(Object.keys(C).map((n) => [n, makeClip(n, C[n][0], S ? styled(S, n, C[n][1]) : C[n][1])]));
+}
+const SHOOT = { shoot: 1, crouchShoot: 1, proneShoot: 1 };
+/** The pose of clip name at t (s) held as weapon kind, unbaked (to check: solve() it). */
+export function weaponPose(kind, name, t = 0) {
+  const S = WEAPON_STYLE[kind];
+  const [dur, fn] = name === 'reload' && RELOAD_AS[kind] ? RELOAD_AS[kind] : SHOOT[name] ? shootClips(recoilSpec(GUN_OF[kind] ?? 'rifle'))[name] : CLIPS[name];
+  return (S && !NO_STYLE[name] ? styled(S, name, fn) : fn)(t, t / dur);
+}
 let CLIP_CACHE = null;
 /** The clips (baked once): armed ones by name, unarmed ones as name + '_u', knife ones as name + '_k'. */
 export function operatorClips() {
@@ -1376,6 +1568,7 @@ export function operatorClips() {
     if (!KNIFE_AS[k] && !NO_UNARMED[k]) c[k + '_k'] = makeClip(k + '_k', CLIPS[k][0], knifeAs(k, CLIPS[k][1]));
   }
   CLIP_CACHE = c;
+  for (const k in c) BASE_CLIPS.add(c[k]);
   return c;
 }
 
@@ -1776,9 +1969,76 @@ function flashKit() {
   const flashHand = { p: V3(P.rw([0.285, -0.075, 0.035])).sub(REST.handR), q: new THREE.Quaternion().setFromUnitVectors(UP, K_B0.clone().normalize()) };
   return { flashbang: g, flashBelt, flashHand };
 }
-/** The knife with its sheath and the flash-bang, and where they sit (plain three.js: tests use it headless). */
+/**
+ * The other primaries, in weapon-bone space (rifle-local laid out as the rifle: x along the
+ * barrel, the pistol grip where the rifle's is, so the right hand fits each as it fits the rifle):
+ * a pump shotgun (its pump a mesh of its own, slid along the barrel by the left hand: pumpAxis),
+ * a pistol, and the machine gun's extras over the rifle (a heavy barrel, a box of belt, a bipod).
+ */
+function gunKit() {
+  const steel = new THREE.MeshStandardMaterial({ color: '#2a2c2e', roughness: 0.42, metalness: 0.85 });
+  const poly = new THREE.MeshStandardMaterial({ color: '#1b1c1a', roughness: 0.7, metalness: 0.1 });
+  const wood = new THREE.MeshStandardMaterial({ color: '#5a3a22', roughness: 0.65, metalness: 0.05 });
+  const olive = new THREE.MeshStandardMaterial({ color: '#4c5236', roughness: 0.7, metalness: 0.2 });
+  // a part laid along the barrel (cylinder) or a box, both placed in rifle-local terms
+  const tube = (g, r, x0, x1, y, z, mat, seg = 12) => {
+    const c = new THREE.CylinderGeometry(r, r, x1 - x0, seg);
+    c.rotateZ(-Math.PI / 2);
+    c.translate((x0 + x1) / 2, y, z);
+    return put(g, c, mat);
+  };
+  const box = (g, w, h, d, x, y, rz, mat, z = 0) => {
+    const b = new THREE.BoxGeometry(w, h, d);
+    b.rotateZ(rz);
+    b.translate(x, y, z);
+    return put(g, b, mat);
+  };
+  function put(g, geo, mat) {
+    const p = geo.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      p.setXYZ(i, ...rl2w(v.x, v.y, v.z).toArray());
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  }
+  // the shotgun: stock, receiver, barrel over the magazine tube, the pump on the tube
+  const shotgun = new THREE.Group();
+  shotgun.name = 'shotgun';
+  box(shotgun, 0.3, 0.05, 0.04, 0.02, -0.0, 0.1, wood); // the stock, dropping to the butt
+  box(shotgun, 0.05, 0.13, 0.045, -0.12, -0.03, 0.1, poly); // the butt pad
+  box(shotgun, 0.035, 0.11, 0.035, 0.28, -0.075, -0.35, wood); // the grip
+  box(shotgun, 0.22, 0.065, 0.048, 0.3, 0.02, 0, steel); // the receiver
+  tube(shotgun, 0.012, 0.4, 0.97, 0.035, 0, steel); // the barrel
+  tube(shotgun, 0.0115, 0.4, 0.86, 0.0, 0, steel); // the magazine tube
+  box(shotgun, 0.012, 0.012, 0.008, 0.95, 0.052, 0, steel); // the bead
+  const pump = new THREE.Group();
+  pump.name = 'pump';
+  tube(pump, 0.022, 0.49, 0.65, 0.003, 0, wood, 14);
+  shotgun.add(pump);
+  // the pistol: slide over the frame, the grip where the rifle's is
+  const pistol = new THREE.Group();
+  pistol.name = 'pistol';
+  box(pistol, 0.19, 0.032, 0.028, 0.335, 0.008, 0, steel); // the slide
+  box(pistol, 0.15, 0.022, 0.026, 0.33, -0.018, 0, poly); // the frame, the dust cover
+  box(pistol, 0.034, 0.11, 0.03, 0.28, -0.075, -0.35, poly); // the grip
+  box(pistol, 0.05, 0.006, 0.02, 0.315, -0.045, 0, poly); // the trigger guard
+  box(pistol, 0.008, 0.012, 0.008, 0.42, 0.028, 0, steel); // the front sight
+  // the machine gun's extras over the rifle: a heavy barrel, a box of belt under it, a folded bipod
+  const mg = new THREE.Group();
+  mg.name = 'mgKit';
+  tube(mg, 0.016, 0.62, 1.1, 0.045, 0, steel);
+  box(mg, 0.12, 0.1, 0.07, 0.42, -0.1, 0, olive, 0.045);
+  box(mg, 0.3, 0.01, 0.01, 0.88, 0.02, 0, steel, 0.018);
+  box(mg, 0.3, 0.01, 0.01, 0.88, 0.02, 0, steel, -0.018);
+  return { guns: { shotgun, pistol, mg }, pumpAxis: rl2w(1, 0, 0) };
+}
+/** The knife with its sheath and the flash-bang, the other primaries (shotgun, pistol, the MG's extras), and where they sit (plain three.js: tests use it headless). */
 export function weaponKit() {
-  return Object.assign(knifeKit(), flashKit());
+  return Object.assign(knifeKit(), flashKit(), gunKit());
 }
 function flashTexture() {
   const c = document.createElement('canvas');
@@ -1929,6 +2189,21 @@ export class PhysicsWorld {
 }
 
 /* ================= one animated soldier ================= */
+// the primaries: the rifle's mesh as it is ('rifle'), with extras over it ('mg'), or hidden under one of their own
+const PRIMARY_MESH = { rifle: 'rifle', mg: 'extra', shotgun: 'own', pistol: 'own' };
+// each handling kind's gun (ai/recoil.js GUNS) for its firing clips when no recoil was set
+const GUN_OF = { shotgun: 'shotgun', pistol: 'pistol', mg: 'mg' };
+const HIDDEN = new THREE.MeshBasicMaterial({ visible: false });
+const _pm = new THREE.Matrix4(), _pv = new THREE.Vector3();
+// the pump at rest (rifle-local x of the palm on it) and the palm's place across the barrel
+const PUMP_REST = P.fgp.c[0];
+const PUMP_PERP = (() => {
+  const ax = rl2w(1, 0, 0), v = V3(P.rw(P.fgp.c)).sub(REST.weapon);
+  return v.addScaledVector(ax, -v.dot(ax));
+})();
+// every clip a weapon's style may replace (weaponClips), and the clips as baked first (operatorClips)
+const STYLED = Object.keys(CLIPS).filter((k) => !NO_STYLE[k] && !SHOOT[k]);
+const BASE_CLIPS = new Set();
 const HEAD_FRAME = V3(P.H.o);
 const NO_TWIST = 2.3;
 const ROPE_L = V3(P.rw(P.fgp.c)).sub(REST.handL); // the left palm (where it holds the foregrip)
@@ -1947,6 +2222,10 @@ export class OperatorFigure {
     this.A = A;
     this.loadout = loadout;
     this.weapon = loadout === 'torch' ? 'torch' : 'primary';
+    // the primary (setPrimary): the rifle, a shotgun, a pistol, the MG; the clips held its way (restyle)
+    this.primaryKind = loadout === 'torch' ? 'torch' : 'rifle';
+    this.styleKind = 'rifle';
+    this.guns = {};
     this.armed = true;
     this.state = 'idle';
     this.shown = 'idle';
@@ -2170,6 +2449,8 @@ export class OperatorFigure {
       else if (was === 'rappelEnd' && this.weapon === 'primary' && this.parts.rifle.parent === this.bones.weapon) this.play('drawRifle', { fade: 0.1 });
       else this.play(this.resume || 'idle', { fade: 0.2 });
     });
+    if (PRIMARY_MESH[loadout]) this.setPrimary(loadout);
+    else this.restyle();
     this.play('idle', { fade: 0 });
   }
   /**
@@ -2388,33 +2669,127 @@ export class OperatorFigure {
    * shooter's control: the firing clips rebaked for it (one trigger pull each loop).
    */
   setRecoil(R, control = 1) {
-    const key = `${R.kind}|${R.scale}|${R.mode}|${R.rounds}|${control}`;
-    if (this.recoilKey === key) return this;
-    this.recoilKey = key;
     this.recoil = R;
-    // (baked once for each weapon setting, shared by every figure with it)
-    let clips = SHOOT_CACHE.get(key);
-    if (!clips) {
-      const C = shootClips(R, control);
-      clips = Object.fromEntries(Object.keys(C).map((n) => [n, makeClip(n, C[n][0], C[n][1])]));
-      SHOOT_CACHE.set(key, clips);
+    this.recoilControl = control;
+    this.rebake();
+    return this;
+  }
+  /**
+   * The handling kind of the weapon in his hands (ai/weapons.js HANDLING): his primary ('rifle',
+   * 'shotgun', 'pistol', 'mg'), 'carbine' (the secondary), 'torch' (the flame gun), 'knife', 'none'.
+   */
+  get handling() {
+    if (this.loadout === 'torch') return 'torch';
+    if (this.weapon === 'secondary') return 'carbine';
+    if (this.weapon === 'knife' || this.weapon === 'none') return this.weapon;
+    return this.primaryKind;
+  }
+  /** May he do act (a clip name: a roll, crawl, a parkour move...) with the weapon in his hands? (ai/weapons.js) */
+  allows(act) {
+    return handlingAllows(this.handling, act);
+  }
+  /**
+   * His primary weapon: 'rifle', 'shotgun', 'pistol' or 'mg' (not for a flame trooper): the
+   * weapon on the weapon bone (its own mesh: the rifle's hidden under it), the clips held its way.
+   */
+  setPrimary(kind = 'rifle') {
+    if (this.loadout === 'torch' || !PRIMARY_MESH[kind] || kind === this.primaryKind) return this;
+    this.primaryKind = kind;
+    const rifle = this.parts.rifle;
+    for (const g of Object.values(this.guns)) g.removeFromParent();
+    const own = PRIMARY_MESH[kind] === 'own';
+    rifle.material = own ? HIDDEN : this.mat;
+    this.parts.mag.visible = !own;
+    const g = this.gunMesh(kind);
+    if (g) rifle.add(g);
+    this.restyle();
+    return this;
+  }
+  /** The mesh of a primary (cloned once from the assets), or null for the rifle. */
+  gunMesh(kind) {
+    const src = this.A.guns?.[kind];
+    if (!src) return null;
+    if (!this.guns[kind]) {
+      this.guns[kind] = src.clone();
+      if (kind === 'shotgun') this.pump = this.guns[kind].getObjectByName('pump');
     }
-    for (const name of Object.keys(clips)) {
+    return this.guns[kind];
+  }
+  /** The clips held the way the weapon in his hands is (WEAPON_STYLE), when that changes. */
+  restyle() {
+    const k = this.handling;
+    if (k === 'knife' || k === 'none') return; // (the knife and empty-handed clips are their own)
+    const kind = WEAPON_STYLE[k] !== undefined ? k : 'rifle';
+    if (kind === this.styleKind && this.bakedKey) return;
+    this.styleKind = kind;
+    this.rebake();
+  }
+  /**
+   * The weapon's own clips (weaponClips) and its firing clips (its recoil: setRecoil, else the
+   * weapon's own), baked once for each setting and shared by every figure with it.
+   */
+  rebake() {
+    const kind = this.styleKind ?? 'rifle';
+    const S = WEAPON_STYLE[kind];
+    const R = this.recoil ?? (S && GUN_OF[kind] ? recoilSpec(GUN_OF[kind]) : null);
+    const control = this.recoil ? this.recoilControl ?? 1 : 1;
+    const rk = R ? `${R.kind}|${R.scale}|${R.mode}|${R.rounds}|${control}` : '-';
+    const key = `${kind}|${rk}`;
+    if (this.bakedKey === key) return;
+    const was = this.bakedKey?.split('|')[0] ?? 'rifle';
+    this.bakedKey = key;
+    const clips = {};
+    if (was !== kind) {
+      const own = weaponClips(kind);
+      for (const n of STYLED) clips[n] = own[n] ?? this.A.clips[n];
+    }
+    if (R && kind !== 'torch') {
+      let sc = SHOOT_CACHE.get(key);
+      if (!sc) SHOOT_CACHE.set(key, (sc = weaponShootClips(R, control, kind)));
+      Object.assign(clips, sc);
+    } else for (const n of Object.keys(SHOOT)) clips[n] = this.A.clips[n];
+    this.swapClips(clips);
+  }
+  /** Put these clips in place of the ones of the same names (the one playing goes on where it was). */
+  swapClips(clips) {
+    for (const name in clips) {
       const old = this.actions[name];
       const clip = clips[name];
+      if (!clip || old?.getClip() === clip) continue;
       const a = this.mixer.clipAction(clip);
-      this.actions[name] = a;
-      if (old) {
-        const playing = this.current === old;
-        old.stop();
-        this.mixer.uncacheAction(old.getClip());
-        if (playing) {
-          this.current = null;
-          this.play(name, { fade: 0 });
-        }
+      if (ONCE[name]) {
+        a.setLoop(THREE.LoopOnce);
+        a.clampWhenFinished = true;
       }
+      this.actions[name] = a;
+      if (!old) continue;
+      if (this.current === old) {
+        const t = old.time, k = old.getEffectiveTimeScale();
+        old.stop();
+        a.reset();
+        a.setEffectiveTimeScale(k);
+        a.setEffectiveWeight(1);
+        a.time = Math.min(t, clip.duration);
+        a.play();
+        this.current = a;
+      } else old.stop();
+      if (!BASE_CLIPS.has(old.getClip())) this.mixer.uncacheAction(old.getClip());
     }
-    return this;
+  }
+  /** The shotgun's pump: where the left hand has it along the barrel (it slides back in the pump stroke). */
+  updatePump() {
+    const B = this.bones, pump = this.pump;
+    if (!pump || pump.parent?.parent !== this.parts.rifle) return;
+    for (const b of [B.upperArmL, B.foreArmL, B.handL, B.weapon]) b.updateMatrix();
+    const m = _pm.copy(B.upperArmL.matrix).multiply(B.foreArmL.matrix).multiply(B.handL.matrix);
+    const palm = _pv.copy(ROPE_L).applyMatrix4(m).applyMatrix4(_pm.copy(B.weapon.matrix).invert());
+    const ax = this.A.pumpAxis;
+    const x0 = PUMP_REST + WEAPON_STYLE.shotgun.lGo[0];
+    const along = palm.dot(ax);
+    // (only while the hand is on it: near the barrel's axis below it)
+    const off = palm.clone().addScaledVector(ax, -along).sub(PUMP_PERP).length();
+    const dx = off < 0.08 ? Math.max(-PUMP_STROKE * 1.1, Math.min(0, along - x0)) : 0;
+    pump.position.copy(ax).multiplyScalar(dx);
   }
   /** How fast a clip plays from now on (e.g. a veteran's reload, 0.7..1.5). */
   setClipSpeed(name, k) {
@@ -2436,6 +2811,7 @@ export class OperatorFigure {
     this.switching = null;
     name = this.arrange(name);
     if (!name) return this;
+    this.restyle();
     const key = this.clipName(name);
     const a = this.actions[key];
     if (!a) return this;
@@ -2500,6 +2876,7 @@ export class OperatorFigure {
   update(dt) {
     this.clock += dt;
     const g = this.group;
+    this.restyle();
     // last frame's twist and look off again first: the mixer only writes a bone when its clip moves it
     for (let i = this.bent.length - 1; i >= 0; i--) this.bent[i][0].quaternion.premultiply(this.bent[i][1]);
     this.bent.length = 0;
@@ -2547,7 +2924,9 @@ export class OperatorFigure {
     const a = this.current;
     const hasRifle = this.armed && (this.weapon === 'secondary' || (this.weapon === 'primary' && !this.parts.rifle.userData.pivot));
     const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'proneShoot') && a;
-    this.flash.position.copy(rl2w(this.weapon === 'secondary' ? 0.82 : 1.03, 0.045, 0));
+    const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
+    this.flash.position.copy(rl2w(pk === 'carbine' ? 0.82 : WEAPON_STYLE[pk]?.muzzle ?? 1.03, pk === 'pistol' ? 0.012 : 0.045, 0));
+    if (this.primaryKind === 'shotgun') this.updatePump();
     if (this.loadout === 'torch') this.updateFlame(dt);
     this.updateDrone(dt);
     const on = hasRifle && ((firing && a.time % 0.12 < 0.04) || this.flashUntil > this.clock);

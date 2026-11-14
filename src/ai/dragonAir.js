@@ -2,6 +2,7 @@ import { groundAt, canFly, wingDamage, WING, dragonZones, dragonWoundPoint, init
 import { splatter } from '../sim/wounds.js';
 import { explode } from '../sim/explosions.js';
 import { startRoll, stepRoll, pathClear, ROLLS } from './evade.js';
+import { evadeKind } from './weapons.js';
 import { startEvade as dragonEvade, hitFactor } from './dragonEvade.js';
 
 /**
@@ -328,6 +329,8 @@ function dodge(S, x, d, w) {
     let kind = side > 0 ? 'rollLeft' : 'rollRight';
     const host = { solid: (a, b, c) => { const i = w.voxelAt?.(a, b, c) ?? -1; return i >= 0 && !!w.mat[i]; } };
     if (!pathClear(x, kind, yaw, host)) kind = kind === 'rollLeft' ? 'rollRight' : 'rollLeft';
+    // (his weapon may rule the roll out, ai/weapons.js: a crouched side step that way instead)
+    kind = evadeKind(x, kind) ?? (kind === 'rollLeft' ? 'sidestepLeft' : 'sidestepRight');
     // (flung out quick and far: all he has)
     const r = startRoll(x, { kind, yaw }, w.time, { ext: true, why: 'dragon', cool: 1, slow: 0.8 });
     r.geo.d = ROLLS[kind].geo.d * 1.25; // (flung out further: all he has)

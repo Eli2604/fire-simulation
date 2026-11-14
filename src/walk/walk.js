@@ -12,6 +12,7 @@ import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
 import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
+import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -903,7 +904,20 @@ export class Walkthrough {
 
   toggleCrawl() {
     if (this.crawl && this.blocked(this.pos.x, this.pos.z, this.pos.y, EYE_STAND)) return; // no room to stand
+    // down on the ground only with what allows it (ai/weapons.js)
+    if (!this.crawl && !allows(this.handling(), 'crawl')) {
+      this.say(`${whyNot(this.handling(), 'crawl')}: switch tool to crawl`, 1.5);
+      return;
+    }
     this.crawl = !this.crawl;
+  }
+
+  /**
+   * The handling of what is in your hands (ai/weapons.js HANDLING): the rifle as the soldiers carry
+   * it, the fire torch held out in one hand, else nothing that changes how you move.
+   */
+  handling() {
+    return { rifle: 'rifle', torch: 'handTorch' }[this.tool] ?? 'none';
   }
 
   setThermal(on) {
@@ -973,7 +987,7 @@ export class Walkthrough {
     const geo = probe((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], dir, { range: 1.4 });
     if (!geo) return false;
     const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-    const ab = ability({ health: this.health });
+    const ab = ability({ health: this.health, handling: this.handling() });
     const kind = moveFor(geo, ab, hurry ? 'run' : 'walk');
     if (!kind) {
       if (geo.type === 'wall' || geo.type === 'up') this.say(geo.type === 'wall' || geo.h > 2.3 ? 'Too high to climb' : ab.wounded ? 'Too hurt to climb that' : 'Cannot get over that', 1.5);
@@ -989,6 +1003,13 @@ export class Walkthrough {
    */
   roll(kind) {
     if (this.swimming || this.crawl || this.trav || this.downed || this.flight || this.health < 45) return false;
+    // what is in your hands may rule the roll out (ai/weapons.js): a crouched side step that way instead, or nothing
+    const want = kind;
+    kind = evadeKind(this.handling(), kind);
+    if (!kind) {
+      this.say(whyNot(this.handling(), want), 1.5);
+      return false;
+    }
     const fwd = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
     const left = [-Math.cos(this.yaw), Math.sin(this.yaw)];
     this.trav = { kind, t: 0, dur: ROLLS[kind].dur, from: [this.pos.x, this.pos.y, this.pos.z], fwd, left, roll: true };
@@ -1075,7 +1096,9 @@ export class Walkthrough {
       const j = sn.cell(this.pos.x, this.pos.z);
       if (j >= 0 && sn.depth[j] > 0.08) trudge = Math.max(0.45, 1 - 0.9 * sn.depth[j] * (1 - Math.min(1, (sn.rho[j] - 150) / 350)));
     }
-    const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * wade * trudge * (1 - 0.45 * this.aimK);
+    // (and what is in your hands: ai/weapons.js gaitK)
+    const gait = gaitK(this.handling(), this.crawl ? 'crawl' : hurry && this.aimK < 0.5 ? 'run' : 'walk');
+    const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * gait * wade * trudge * (1 - 0.45 * this.aimK);
     const len = Math.hypot(fx, fz);
     let moving = 0;
     let dip = 0;

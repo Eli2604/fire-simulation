@@ -85,6 +85,7 @@ import { probe, moveFor, ability, geoFor, durFor, rootAt, rootEnd, costOf, surfa
 import { pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES, recoilOf, skillOf } from './soldier.js';
 import { stepClimb } from './recoil.js';
+import { gaitK } from './weapons.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
 
@@ -783,7 +784,8 @@ export class SquadAI {
     let dy = Math.atan2(dx, dz) - (m.yaw ?? 0);
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
-    let sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
+    // (the weapon he carries sets his pace too, ai/weapons.js: a machine gun or the flame gun's tanks slow his run)
+    let sp = SPEED[mode] * (m.speedFactor ?? 1) * gaitK(m, mode) * Math.max(0, Math.cos(dy)) ** 2;
     // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop); only in
     // action (a threat, something to look into): on a routine move they walk round, as on patrol
     const alert = this.alert();
@@ -940,7 +942,7 @@ export class SquadAI {
    */
   slideIn(m, mode, dist, dy) {
     if (mode !== 'run' || !this.contacted || m.coverCell == null || m.coverCell < 0 || m.pathI !== m.path.length - 1) return false;
-    if (dist < 1.9 || dist > 3.0 || Math.abs(dy) > 0.25 || m.slidT === m.coverCell || ability(m).wounded) return false;
+    if (dist < 1.9 || dist > 3.0 || Math.abs(dy) > 0.25 || m.slidT === m.coverCell || ability(m).wounded || ability(m).no?.slideCover) return false;
     const H = this.host, c = m.path[m.path.length - 1], T = this.threat;
     if (!H.solid || !T) return false;
     const tx = T[0] - c[0], tz = T[2] - c[2], tl = Math.hypot(tx, tz) || 1;

@@ -39,6 +39,8 @@ export const WEAPONS = {
   rifle: { dmg: 1, pen: 0.3, penHelmet: 0.7, bleed: 1 }, // 5.56 mm
   mg: { dmg: 1.25, pen: 0.55, penHelmet: 0.8, bleed: 1.15 }, // the gunner's 7.62 mm
   carbine: { dmg: 0.7, pen: 0.05, penHelmet: 0.4, bleed: 0.9 }, // the compact secondary, pistol calibre
+  shotgun: { dmg: 1.5, pen: 0.02, penHelmet: 0.15, bleed: 1.3 }, // 12 gauge buckshot: hard close in, no use against plates
+  pistol: { dmg: 0.65, pen: 0.03, penHelmet: 0.35, bleed: 0.85 }, // 9 mm from a pistol
   knife: { dmg: 0.75, pen: 0, penHelmet: 0, bleed: 1.7 },
   fragment: { dmg: 0.5, pen: 0.1, penHelmet: 0.25, bleed: 1 },
   arrow: { dmg: 1, pen: 0.05, penHelmet: 0.2, bleed: 1.2 },

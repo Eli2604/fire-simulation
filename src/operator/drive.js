@@ -23,6 +23,9 @@ export function driveFromAI(f, d, st) {
     st.armour = arm;
     f.setArmour?.(arm);
   }
+  // his primary (a rifle, a shotgun, a pistol, the gunner's MG: ai/soldier.js kit): its mesh, and
+  // the clips held its way (ai/weapons.js, operator/rig.js WEAPON_STYLE)
+  if (f.setPrimary && d.primary) f.setPrimary(d.primary);
   // his weapon's recoil (ai/recoil.js): the firing clips baked for it, his control of it
   if (f.setRecoil && d.weapon !== 'knife' && d.weapon !== 'torch') f.setRecoil(recoilOf(d), skillOf(d).control);
   // the weapon: a switch the AI started, or catching up with what he has
@@ -42,7 +45,8 @@ export function driveFromAI(f, d, st) {
       if (SWITCHES.has(name)) {
         // switchWeapon above plays these
       } else if (name === 'deployDrone') f.deployDrone();
-      else if (name === 'reload' && d.animDur) f.play('reload', { restart: true, fade: 0.15, speed: (RELOAD_TIME ?? 2.8) / d.animDur });
+      // (a reload at his pace: the weapon's own reload clip, a shotgun's shells or a pistol's magazine, stretched to it)
+      else if (name === 'reload' && d.animDur) f.play('reload', { restart: true, fade: 0.15, speed: (f.actions?.reload?.getClip().duration ?? RELOAD_TIME ?? 2.8) / d.animDur });
       // a parkour move or a roll (ai/evade.js): its clip at the pace the AI carries him along it (a wounded man's slow vault)
       else if (PARKOUR[name] || ROLL[name]) f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
       else f.play(name, { restart: true, fade: 0.15 });

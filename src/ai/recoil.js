@@ -14,6 +14,8 @@
  *    SKILL, an elite 0.7 … a recruit 1.4).
  *  - Fire modes: single, burst (three rounds), auto, at the weapon's rate of fire. Rounds that
  *    come faster than the recovery pile up: the climb accumulates in a burst or a long string.
+ *  - A pump action (the shotgun): after each round the pump is worked (pump, s) before the next;
+ *    the firing clip includes the stroke.
  */
 
 const V_GAS = 1500;
@@ -23,6 +25,9 @@ export const GUNS = {
   mg: { label: '7.62 mm machine gun', bullet: 0.0095, v: 840, charge: 0.0029, mass: 11, rpm: 650, modes: ['burst', 'auto'], mode: 'auto' },
   carbine: { label: '9 mm carbine', bullet: 0.008, v: 400, charge: 0.0004, mass: 2.7, rpm: 900, modes: ['single', 'burst', 'auto'], mode: 'burst' },
   pistol: { label: '9 mm pistol', bullet: 0.008, v: 360, charge: 0.0004, mass: 0.9, rpm: 0, modes: ['single'], mode: 'single', hands: true },
+  // a pump-action 12 gauge: 32 g of buckshot (the 'bullet'), one round a pull, then the pump
+  // worked back and forward (pump, s) before the next
+  shotgun: { label: '12 gauge pump shotgun', bullet: 0.032, v: 400, charge: 0.0025, mass: 3.6, rpm: 0, modes: ['single'], mode: 'single', pump: 0.45 },
 };
 export const FIRE_MODES = { single: 'Single', burst: 'Burst (3)', auto: 'Auto' };
 /** Rounds a trigger pull fires in each mode (auto: a string as long as the weapon's own burst). */
@@ -59,15 +64,22 @@ export function recoilSpec(kind = 'rifle', o = {}) {
     rpm: g.rpm,
     mode,
     rounds,
-    gap: g.rpm > 0 ? 60 / g.rpm : 0.35,
+    gap: g.rpm > 0 ? 60 / g.rpm : 0.35 + (g.pump ?? 0),
+    pump: g.pump ?? 0,
     scale,
   };
 }
 
 /** When the rounds of one trigger pull go (s from the first). */
 export const shotTimes = (R) => Array.from({ length: R.rounds }, (_, i) => i * R.gap);
-/** How long one trigger pull lasts, the recovery after it included (the firing clip's length). */
-export const pullTime = (R) => (R.rounds - 1) * R.gap + R.recovery + 0.08;
+/** How long one trigger pull lasts, the recovery (and a pump action's stroke) after it included (the firing clip's length). */
+export const pullTime = (R) => (R.rounds - 1) * R.gap + R.recovery + (R.pump ?? 0) + 0.08;
+/** When the pump is worked in a pull (s from the first round): [start, end], or null (no pump). */
+export function pumpTimes(R) {
+  if (!R.pump) return null;
+  const t0 = (R.rounds - 1) * R.gap + R.recovery * 0.55;
+  return [t0, t0 + R.pump];
+}
 
 /**
  * Through a trigger pull: at time t (s), the kick (0 … ~1.5, 1 = one round's full kick, back into

@@ -37,7 +37,8 @@ import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE
 import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
-import { recoilSpec } from '../ai/recoil.js';
+import { recoilSpec, GUNS } from '../ai/recoil.js';
+import { HANDLING, PRIMARIES, whyNot } from '../ai/weapons.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -170,6 +171,8 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
       <button type="button" data-det="pack">Drop pack</button>
     </div>
     <div class="row"><button data-id="reequip" type="button">Re-equip</button><button data-id="swapLoad" type="button">Rifle ⇄ flame gun</button><button data-id="tgDrop" type="button" aria-pressed="true">Drop rifle on death</button></div>
+    <label class="sl"><span>Primary</span><select data-id="primarySel" style="grid-column:2/4" aria-label="Primary weapon"></select></label>
+    <p class="hint" data-id="handlingInfo"></p>
     <div class="lab">Weapon in hand</div>
     <div class="grid" data-id="weapons"><button type="button" data-w="rifle">Rifle</button><button type="button" data-w="secondary">Carbine</button><button type="button" data-w="knife">Knife</button></div>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
@@ -355,8 +358,11 @@ export function mountRig(root, opts = {}) {
     f.setArmour(GEAR.armour);
     f.setClipSpeed('reload', GEAR.reload);
     f.setLook(GEAR.look);
-    f.setRecoil(recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode }));
+    const gun = gunOf(f);
+    if (gun) f.setRecoil(recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode }));
   }
+  /** The gun (ai/recoil.js GUNS) in a figure's hands, or null (the flame gun, the knife). */
+  const gunOf = (f) => (GUNS[f.handling] ? f.handling : null);
   /** The parkour props: a brick wall to vault, a concrete ledge to climb or drop off, low cover. */
   const PROP_MAT = {
     wall: new THREE.MeshStandardMaterial({ color: '#a8735a', roughness: 0.9 }),
@@ -429,6 +435,11 @@ export function mountRig(root, opts = {}) {
       if (this.d.dead) return this;
       this.patrol = null;
       this.endParkour();
+      // the weapon in his hands may rule the act out (ai/weapons.js: no roll with the flame gun's tanks...)
+      if (!this.fig.allows(name)) {
+        toast(`${this.name}: ${whyNot(this.fig.handling, name).replace('Not with', 'not with')}`);
+        return this;
+      }
       if (PARKOUR_ACTS[name]) return this.parkour(name);
       if (EVADE_ACTS[name]) return this.evade(name);
       if (CASUALTY_ACTS[name]?.partner) return this.casualty(name);
@@ -775,7 +786,24 @@ export function mountRig(root, opts = {}) {
     const hp = $('selHp');
     hp.style.width = e.hp + '%';
     hp.style.background = e.hp > 50 ? 'var(--ok)' : e.hp > 25 ? 'var(--accent)' : 'var(--hurt)';
-    root.querySelectorAll('[data-a]').forEach((b) => b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown));
+    root.querySelectorAll('[data-a]').forEach((b) => {
+      b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown);
+      // greyed out: what the weapon in his hands does not allow (ai/weapons.js)
+      const no = !e.fig.allows(b.dataset.a);
+      b.disabled = no;
+      b.title = no ? whyNot(e.fig.handling, b.dataset.a) : '';
+    });
+    showHandling(e);
+  }
+  /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
+  function showHandling(e) {
+    const sel = $('primarySel');
+    if (sel && document.activeElement !== sel) sel.value = e.loadout === 'torch' ? 'torch' : e.fig.primaryKind;
+    const H = HANDLING[e.fig.handling];
+    if (!H || !$('handlingInfo')) return;
+    const no = Object.keys(LABELS).filter((k) => !e.fig.allows(k)).map((k) => LABELS[k]);
+    const slow = Object.entries(H.moves).filter(([, v]) => typeof v === 'number').map(([k, v]) => (k === 'drop' ? `drops up to ${v} m` : ['sprint', 'walk', 'crawl'].includes(k) ? `${k} ×${v}` : `${LABELS[k] ?? k} ×${v} slower`));
+    $('handlingInfo').textContent = `${H.label}, ${H.mass} kg. Grip: ${H.grip}. Carry: ${H.carry}; aim: ${H.aim}.` + (no.length ? ` Not with it: ${no.join(', ')}.` : ' Every move allowed.') + (slow.length ? ` ${slow.join('; ')}.` : '');
   }
   function openTab(t) {
     $$('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
@@ -847,6 +875,26 @@ export function mountRig(root, opts = {}) {
   $$('[data-det]').forEach((b) => (b.onclick = () => selected?.detach(b.dataset.det)));
   $('reequip').onclick = () => selected?.reequip();
   $('swapLoad').onclick = () => selected && (selected.setLoadout(selected.loadout === 'torch' ? 'rifle' : 'torch'), onChange());
+  // the primary: each weapon its grips, carry, aim and firing (operator/rig.js WEAPON_STYLE), and what it allows
+  for (const k of PRIMARIES) {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = HANDLING[k].label;
+    $('primarySel').appendChild(o);
+  }
+  $('primarySel').onchange = () => {
+    const k = $('primarySel').value;
+    for (const e of gearTargets()) {
+      if (k === 'torch' || e.loadout === 'torch') e.setLoadout(k);
+      else {
+        e.loadout = k;
+        e.fig.setPrimary(k);
+        applyGear(e.fig);
+      }
+    }
+    recoilChanged();
+    onChange();
+  };
   /* ---------- weapon in hand, armour, reload speed, look up / down ---------- */
   const gearTargets = () => (allMode ? soldiers : [selected]).filter((e) => e && !e.d.dead);
   $('weapons').querySelectorAll('button').forEach((b) => (b.onclick = () => {
@@ -872,10 +920,14 @@ export function mountRig(root, opts = {}) {
   };
   // recoil: the override factor and the fire mode; the firing clips (Shoot, Crouch fire, Prone fire) rebaked
   const recoilChanged = () => {
-    const R = recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode });
+    const gun = (selected && gunOf(selected.fig)) ?? 'rifle';
+    const R = recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode });
     $('recoilO').textContent = '×' + GEAR.recoil.toFixed(2);
-    $('recoilInfo').textContent = `Rifle, 5.56 mm: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull at ${R.rpm} rounds/min (the climb piles up in a burst or on auto).`;
-    for (const e of soldiers) e.fig.setRecoil(R);
+    $('recoilInfo').textContent = `${GUNS[gun].label}: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull${R.rpm ? ` at ${R.rpm} rounds/min (the climb piles up in a burst or on auto)` : ''}${R.pump ? `, then the pump worked (${R.pump} s)` : ''}.`;
+    for (const e of soldiers) {
+      const g = gunOf(e.fig);
+      if (g) e.fig.setRecoil(recoilSpec(g, { recoil: GEAR.recoil, mode: GEAR.fireMode }));
+    }
   };
   $('recoilS').oninput = () => {
     GEAR.recoil = +$('recoilS').value;

@@ -1182,7 +1182,7 @@ the stairs (`host.path3d`, the guards' path finder over floors and stairs).
 
 
 **Character rig** (`src/rig/stage.js`, the editor's *Rig* mode; `rig.html` mounts it on a page of
-its own): the soldiers on an empty field, with every clip, the loadouts (rifle, flame gun), the
+its own): the soldiers on an empty field, with every clip, the loadouts (rifle, shotgun, pistol, machine gun, flame gun), the
 weapon in hand, armour, reload speed and look, the hit areas (shown, resized, damage multipliers:
 `operator/rig.js` `ZONES` itself, so edits apply in the world too), damage on click, the gear
 (dropped or knocked off as rigid bodies, re-equipped), grenades and flash-bangs, and an FPS
@@ -1226,11 +1226,43 @@ belt), reloading with the animation; dry, he goes to the compact secondary, then
 says so on the radio. Your rifle has 30 rounds and 4 spare magazines. **Body armour** (plates,
 helmet; the model's *Body armour*) stops most rounds to the torso (a heavy round more often gets
 through, a knife never) and the helmet turns some. **Damage depends on the weapon and where it
-hits** (`sim/wounds.js` `WEAPONS`): rifle, the gunner's heavier round, the secondary's pistol
+hits** (`sim/wounds.js` `WEAPONS`): rifle, the gunner's heavier round, buckshot, a pistol, the secondary's pistol
 calibre, the knife, fragments, arrows; rifle rounds hit the dragon's zones too. **Close
 combat**: an enemy within ~2 m and the rifle goes away, the knife comes out (an animation each
 way); he closes in and stabs. A man **badly hit** is called in by the nearest of his team
 ("Medic!"); under **heavy fire from one side** someone throws a grenade that way and shouts it.
+
+### Weapons: how each is held, and what it lets a man do
+
+The weapon in a man's hands changes his animations and his moves (`ai/weapons.js` `HANDLING`, one
+profile per weapon; `operator/rig.js` `WEAPON_STYLE` holds them on the figure). Primaries: the
+**rifle**, a **pump shotgun** (12 gauge, 7 shells), a **pistol** (9 mm), the gunner's **machine
+gun** and the **flame gun** (its tanks on his back); the carbine is everyone's secondary.
+
+| Weapon | Grip | Carry / aim | Not with it (what he does instead) |
+|---|---|---|---|
+| Rifle, carbine | pistol grip; foregrip (the carbine: magazine well) | low ready / at the shoulder, bladed | everything allowed |
+| Pump shotgun | grip; the left hand on the pump, worked back and forward after every round | muzzle lower / shoulder, weight forward | everything allowed (sprint ×0.97) |
+| Pistol | one hand on the move; aimed, the left cupping the right | compressed ready at the chest / arms out, square to the target | everything allowed |
+| Machine gun | left hand over the top of the handguard | hip carry / shoulder, leaning in | no roll (a dive flat into cover, or a crouched side step), no speed vault (side vault ×1.25), no jump climb, mantle ×1.3, no landing roll, no slide; crawl ×0.7, sprint ×0.85 |
+| Flame gun | trigger grip and the wand's grip | hip carry / from the hip, the nozzle raised | no roll or dive (a crouched side step), no crawling or going prone, no climbing or mantling, side or step-over vaults ×1.4 only, drops up to 1.6 m, no slide; sprint ×0.72 |
+
+- **Clips per weapon**, baked once each and shared (as the firing clips are per recoil): every
+  armed clip held that weapon's way (grip offsets along the weapon, carry, aim, stance), its
+  own reload (the shotgun's shells one at a time from the belt, the pistol's magazine), and
+  the firing clips from its recoil (`ai/recoil.js`: the shotgun's heavy single kick, then the
+  pump stroke; the pistol's muzzle rise). The figure swaps them as the weapon in his hands
+  changes (drawing the carbine, back to the primary); the shotgun's pump slides with the hand.
+- **The AI respects them**: `ai/evade.js` picks a crouched **side step** (`sidestepLeft` /
+  `sidestepRight`) or a **dive into cover** where the weapon rules a roll out; `ai/parkour.js`
+  `ability()` leaves out the moves it rules out (the route planner goes round), slows the rest;
+  the squad's pace follows it (`gaitK`). Guards and the dragon's victims too.
+- **The player**: the rifle and the hand-held fire torch have profiles of their own (the fire
+  torch: no roll or dive while lit, a side step instead; slower climbs).
+- **Models**: the squad's *Riflemen carry* (rifle, shotgun, pistol, mixed) and the guards'
+  *Weapon* (rifle, shotgun, pistol, mixed).
+- **Rig**: the Gear tab's *Primary* select shows each weapon's poses (Animate tab), lists its
+  grip, carry, aim and what it rules out, and greys out the acts it does not allow.
 
 ### Team tactics: formations, files, splitting, rooms, floors
 

@@ -35,6 +35,9 @@ export const ARMS = {
   rifle: { size: 30, mags: 5, kind: 'rifle', burst: 3 },
   mg: { size: 100, mags: 2, kind: 'mg', burst: 9 }, // the gunner's belt
   secondary: { size: 20, mags: 2, kind: 'carbine', burst: 2 },
+  // a pump shotgun: 7 shells in the tube, loaded one at a time (reload: x the magazine change)
+  shotgun: { size: 7, mags: 4, kind: 'shotgun', burst: 1, reload: 1.4 },
+  pistol: { size: 15, mags: 3, kind: 'pistol', burst: 1, reload: 0.65 },
 };
 
 // Base times (s) of the animations (operator/rig.js), scaled by the expertise
@@ -50,8 +53,9 @@ export function kit(m) {
   m.kitted = true;
   m.skill = SKILL[m.skill] ? m.skill : 'regular';
   m.weapon = m.loadout === 'torch' ? 'torch' : 'rifle';
-  const A = ARMS[m.squad === 'MG' ? 'mg' : 'rifle'];
-  m.primary = m.squad === 'MG' ? 'mg' : 'rifle';
+  // his primary: the gunner's MG, else what his loadout says (a shotgun, a pistol), else a rifle
+  m.primary = m.squad === 'MG' ? 'mg' : m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle';
+  const A = ARMS[m.primary];
   m.mag ??= A.size;
   m.mags ??= A.mags;
   m.secMag ??= ARMS.secondary.size;
@@ -67,7 +71,8 @@ export const skillOf = (m) => SKILL[m.skill] ?? SKILL.regular;
  * carbine), m.recoil (the override factor, 1 = physical), m.fireMode (single, burst, auto).
  */
 export function recoilOf(m) {
-  const kind = weaponKind(m) === 'mg' ? 'mg' : weaponKind(m) === 'carbine' ? 'carbine' : 'rifle';
+  const wk = weaponKind(m);
+  const kind = ['mg', 'carbine', 'shotgun', 'pistol'].includes(wk) ? wk : 'rifle';
   const key = `${kind}|${m.recoil ?? 1}|${m.fireMode ?? ''}`;
   if (m.recoilSpec?.key !== key) m.recoilSpec = { ...recoilSpec(kind, { recoil: m.recoil, mode: m.fireMode }), key };
   return m.recoilSpec;
@@ -90,6 +95,10 @@ export function aimPoint(m, T, rand = Math.random) {
   if (m.wounds?.armL || m.wounds?.armR) s *= 2;
   if (m.weapon === 'secondary') s *= 1 + d / 25;
   if (m.squad === 'MG') s *= 1.3; // bursts from the bipod: a cone, not a point
+  // buckshot: a pattern that opens ~2.5 cm a metre (where its centre goes); a pistol at range
+  const wk = weaponKind(m);
+  if (wk === 'shotgun') s = Math.max(s, 0.025 * d) + 0.01 * d;
+  else if (wk === 'pistol') s *= 1 + d / 20;
   // the muzzle still climbing from the rounds before (ai/recoil.js: a burst, a long string): wider, and high
   const c = m.climb ?? 0;
   s += 0.6 * c * d;
@@ -168,7 +177,7 @@ export function manage(sq, m, dt, enemies) {
   if (m[c.mag] <= 0) {
     if (m[c.mags] > 0) {
       m[c.mags]--;
-      const dur = TIMES.reload * K.reload * (c.A === ARMS.mg ? 1.6 : 1);
+      const dur = TIMES.reload * K.reload * (c.A === ARMS.mg ? 1.6 : c.A.reload ?? 1);
       m.reloadUntil = t + dur;
       sq.setAnim(m, 'reload', dur);
       m.signal = { text: 'RELOADING', until: t + Math.min(2, dur) };
