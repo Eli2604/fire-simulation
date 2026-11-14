@@ -72,6 +72,8 @@ export function prepareScene(scene) {
   // hardware (coarser: faster; finer: more detail, ~16x the work for half the size)
   if (scene.voxelScale && scene.voxelScale !== 1) scene = { ...scene, world: { ...scene.world, h: scene.world.h * scene.voxelScale } };
   const zone = scene.zones?.[scene.zone ?? scene.startZone];
+  // (a place in another place: its portals up ('..') lead there; models/composite.js)
+  if (zone?.within && !scene.within) scene = { ...scene, within: zone.within };
   // where it is: outdoors the weather (the scene's, or the zone's own); indoors, underground, in a
   // sealed cabin only its own air (no wind, rain, sun, snow: sim/weather.js)
   const exposure = exposureOf(zone ?? scene);

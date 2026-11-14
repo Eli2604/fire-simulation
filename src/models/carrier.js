@@ -25,6 +25,7 @@ export const carrierDeck = {
     draft: { value: 4, min: 1, max: 12, step: 0.1, label: 'Waterline above the keel (m)' },
     helipads: { value: 3, min: 0, max: 6, step: 1, label: 'Helicopter spots' },
     boatTo: { value: '', label: 'Zone the boat at the stern goes to (empty: none)' },
+    hatchTo: { value: 'below', label: 'Place the hatch by the island leads down to (empty: none)' },
   },
   build(p, { h }) {
     const thin = thinOf(h);
@@ -154,7 +155,7 @@ export const carrierDeck = {
       sea: { level: p.draft, box: [-hx, -hz, hx, hz], ship: { keel: 0, deck: D, displacement: 1.0e8, waterplane: 20000, beam: 77, length: 333, kg: 15 } },
       spawn: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 },
       portals: [
-        { p: [hatch[0], D, hatch[2]], r: 1.0, to: 'below', label: 'Hatch: below deck', arrive: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 } },
+        ...(p.hatchTo ? [{ p: [hatch[0], D, hatch[2]], r: 1.0, to: p.hatchTo, label: 'Hatch: below deck', arrive: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 } }] : []),
         ...(p.boatTo ? [{ p: [-hx + 1.5, D, hz - 1.5], r: 1.4, to: p.boatTo, label: 'Boat ladder: to the island', arrive: { p: [-hx + 3.5, D, hz - 1.5], yaw: 0 } }] : []),
       ],
       ignite: { p: [-hx + 5, D + 0.5, hz - 4.3], radius: 0.4, power: 5000 },
@@ -226,6 +227,7 @@ export const carrierBelow = {
     rackFireAfter: { value: 25, min: 0, max: 600, step: 1, label: 'Server rack fire after (s)' },
     inertSystem: { value: true, label: 'Server room inert-gas system' },
     downTo: { value: '', label: 'Zone the ladder at the forward end leads down to (empty: none)' },
+    upTo: { value: 'deck', label: "Place the ladder up leads to ('..': the place this one is in)" },
     waterline: { value: 4.5, min: 0, max: 8, step: 0.1, label: 'Sea level above this deck (m, 0: above the sea)' },
   },
   build(p, { h, rng }) {
@@ -339,7 +341,7 @@ export const carrierBelow = {
       heaters: [{ pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 }],
       spawn: { p: [lx + 1.2, h, 0], yaw: 0 },
       portals: [
-        { p: [lx, h, 0], r: 0.9, to: 'deck', label: 'Ladder: flight deck' },
+        ...(p.upTo ? [{ p: [lx, h, 0], r: 0.9, to: p.upTo, label: 'Ladder: flight deck' }] : []),
         // down to the lower decks, below the waterline (shipSection)
         ...(p.downTo ? [{ p: [hx - 1.4, h, 0], r: 0.9, to: p.downTo, label: 'Ladder: down to the lower decks', arrive: { p: [hx - 2.6, h, 0], yaw: Math.PI } }] : []),
       ],
@@ -348,3 +350,86 @@ export const carrierBelow = {
     };
   },
 };
+/**
+ * The aircraft carrier as one object: its hull and flight deck (carrierDeck's build and params),
+ * and in it, as objects of their own (models/composite.js), the jets on its catapults and in its
+ * deck park, the flight of four overhead, a tow tractor, gas bottles and oil drums by the island,
+ * and below deck a place of its own (corridors, mess, berthing, a server room, guards) with under
+ * it the lower decks below the waterline, a place again. Placed anywhere, all of it comes along:
+ * moved or turned, the jets go with the deck; each stays selectable and editable on its own.
+ *
+ * `children` are in the carrier's frame: its origin is the middle of its keel (the deck at
+ * deckHeight above it), x along the ship (the bow at +x), z across.
+ */
+export const carrier = {
+  label: 'Aircraft carrier (deck, jets, below deck: an object of objects)',
+  params: carrierDeck.params,
+  build: carrierDeck.build,
+  /** What a new carrier holds (the editor's palette; the carrier scenario). */
+  children: (p = {}) => carrierChildren(p),
+};
+
+/**
+ * The carrier's objects, for a deck of the default size (210 × 48 m, deck at 11 m). keys: the
+ * names of its places (below deck, the lower decks).
+ */
+export function carrierChildren(p = {}, keys = { below: 'below', lower: 'lower' }) {
+  const D = p.deckHeight ?? 11;
+  const jet = (x, z, rotation, params) => ({ type: 'jet', params, x, z, y: D, rotation });
+  return [
+    // on the catapults: two at the bow, two in the waist (each one's run clear of the parked
+    // ones' wings; their tails overhang the deck edge, as they do on a carrier)
+    ...[[39, -6], [39, 4], [-21, -15.6], [-21, -4.8]].map(([x, z], k) => jet(x, z, 0, { color: k % 2 ? '#7a8590' : '#6f7b86' })),
+    // parked along the bow, both sides, tails to the deck edge
+    ...[44, 55, 66, 77].map((x) => jet(x, 16.5, 90, { rockets: 4 })),
+    ...[54, 65, 76, 87].map((x) => jet(x, -18.6, -90, { rockets: 4 })),
+    // and aft of the island (the "corral")
+    ...[-44, -33, -22, -11].map((x) => jet(x, 16.5, 90, { rockets: 0, fuelLiters: 800 })),
+    // a flight of four overhead (ai/flight.js): in formation round the ship, its leader calling the moves
+    { type: 'jetFlight', params: { count: 4, altitude: 160, orbitRadius: 600 }, x: 0, z: 0 },
+    // a tow tractor, oxygen and propane bottles by the island
+    { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: -1.5, z: 13.5, y: 'auto', rotation: 90 },
+    { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 1.6, z: 22.2, y: 'auto' },
+    { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 2.3, z: 22.3, y: 'auto' },
+    // two oil drums by the island (models/scannedProp.js)
+    { type: 'scannedProp', params: { asset: 'drum' }, x: 3.4, z: 22.1, y: 'auto' },
+    { type: 'scannedProp', params: { asset: 'drum' }, x: 4.1, z: 22.2, y: 'auto', rotation: 40 },
+    // below deck: a place of its own in the hull under the flight deck (its floor 4.3 m below
+    // the deck), and under it the lower decks, below the waterline
+    {
+      type: 'place',
+      key: keys.below,
+      name: 'Below deck',
+      indoor: true,
+      x: 0,
+      y: D - 4.3,
+      z: 0,
+      world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
+      view: { camera: [16, 14, -8], walk: true },
+      objects: [
+        { type: 'carrierBelow', params: { downTo: keys.lower, upTo: '..' }, x: 16, z: 8.5 },
+        { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
+        { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
+        // the lower decks, below the waterline: corridors, cabins, watertight doors; the fuel line
+        // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
+        {
+          type: 'place',
+          key: keys.lower,
+          name: 'Lower decks (below the waterline)',
+          indoor: true,
+          x: 16,
+          y: -7.2,
+          z: 8.5,
+          world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
+          view: { camera: [-3, 10, 14], walk: true },
+          objects: [{ type: 'shipSection', params: { upTo: '..' }, x: 9, z: 4.5 }],
+        },
+      ],
+    },
+  ];
+}
+
+/** A carrier object at x, z of a world (its params over the defaults', its objects in it). */
+export function carrierObject({ x, z, rotation = 0, params = {}, keys = { below: 'below', lower: 'lower' } } = {}) {
+  return { type: 'carrier', params: { hatchTo: keys.below, ...params }, x, z, rotation, children: carrierChildren(params, keys) };
+}

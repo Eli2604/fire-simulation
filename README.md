@@ -836,7 +836,10 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
 | Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
 | Catacombs | passages along x and z (default 4 × 4), spacing, width and height, flat or vaulted ceiling, share of masonry walls, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
-| Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
+| Aircraft carrier | an object of objects: the flight deck's params, and in it its 16 jets, the flight of four overhead, a tow tractor, gas bottles and drums, and the places *Below deck* (with *Lower decks* in it). See *Objects of objects* below |
+| Carrier flight deck | length, width, deck height, waterline, where the hatch leads (`hatchTo`). Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
+| Group | nothing of its own: the objects in it, moved and turned as one |
+| Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
@@ -852,6 +855,40 @@ Each shape has a material, optional fill probability (foliage, grass), moisture,
 and an **effective density**. The density lets a 15 cm voxel stand for a 1.5 mm car
 panel, a 6 mm glass pane or a 24 mm roof tile with the right mass, heat capacity and
 fuel, so results do not depend on the voxel size.
+
+### Objects of objects
+
+Any object can hold objects (`models/composite.js`): its `children`, each placed in its frame
+(x, z and a numeric y in metres from the parent's origin; its turn and tilts on top of the
+parent's), so they move and turn with it, and each stays an object of its own: its own params,
+voxels, animations (the jets fly, the rig opens them), selectable and editable. They are numbered
+depth first (a parent, then what is in it): the voxels' owner, `world.origins` and
+`world.objectTree` (each one's record in the world and its pose).
+
+A child of type `place` is a place: a world of its own (its `world`, `view`, `indoor`…) with its
+own `objects`, which may hold places again. `liftPlaces` (run on every scenario, on
+`cloneScene` and when a scene loads) makes each place a zone of the scene: `scene.zones[key]`
+is the place object itself (editing the zone edits the object), with its schematic `box` where
+it lies in the world and `within`: the place it is in (a portal `to: '..'` leads there). A
+scene of one world with a place put in it becomes a world of places (its world the zone
+`main`).
+
+The **aircraft carrier** (`carrier`, `models/carrier.js`) is one: the hull and flight deck, and
+in it the 16 jets, the flight of four, a tow tractor, gas bottles and drums, and **Below deck**
+(a place: corridors, server room, guards) with the **Lower decks** in it (a place again). The
+carrier scenario is built from it (the deck zone holds one object; below deck and the lower
+decks are its places). Put it into any world from *+ Add › Places › Aircraft carrier*: it comes
+with all of it, its places named apart from any already there (`below2`, … and its hatch and
+ladders pointing at them).
+
+In **Edit world** the outliner shows the objects as a tree (what is in an object under it,
+indented; a place in it as ⌂, a click goes there). The gizmo moves and turns the selected object
+with all that is in it; a child picked in the view or the list is moved on its own, in its
+parent's frame (its X, Z and height in the properties are in that frame). *⇥ Into the one
+above* puts the selected object into the object above it in the list, *⇤ Out* takes it out
+(both keep it where it is in the world); in *+ Add*, *Put it inside …* places the new object
+into the selected one; Duplicate and Delete take what is in an object along. A *Group* (nothing
+of its own) moves things as one; a *Place* adds a room of its own to an object or a world.
 
 ### Adding a model
 
@@ -1102,7 +1139,9 @@ the simulation itself to the GPU (WebGPU compute) for larger scenes.
 ```
 
 Objects can stand on something with `"y"` (metres above the ground, e.g. the jet on the
-flight deck). A scene can be split into **zones** instead of having one `world` and
+flight deck), and hold objects of their own (`"children"`, in their frame; a child
+`{ "type": "place", "key", "name", "world", "view", "objects", "x", "y", "z" }` is a place of its
+own: *Objects of objects*). A scene can be split into **zones** instead of having one `world` and
 `objects`:
 
 ```jsonc

@@ -2,6 +2,7 @@ import { MAT, materialId } from '../sim/materials.js';
 import { World, hash3 } from '../sim/world.js';
 import { MODELS, resolveParams } from './index.js';
 import { waterSurfaceAt } from '../sim/stirrers.js';
+import { resolveTree, rotationMatrix } from './composite.js';
 
 /**
  * Primitive shapes, defined in a model's local frame (metres, y up, origin at
@@ -159,7 +160,12 @@ function insideFn(p, h) {
 
 /**
  * Build the voxel world for a scene description:
- *  { world: { size: [x,y,z], h, ground }, weather, objects: [{ type, params, x, z, rotation }] }
+ *  { world: { size: [x,y,z], h, ground }, weather, objects: [{ type, params, x, z, rotation, children? }] }
+ * Objects in objects (children, models/composite.js) are placed in their parent's frame, each an
+ * object of its own (numbered depth first: world.origins, the voxels' owner); places in them are
+ * worlds of their own (zones), not built here. world.objectTree: the numbered objects (their
+ * records in this world and their poses). A portal to '..' leads to scene.within (the place this
+ * one is in).
  * Returns { world, ignitions: [{ p, radius, materials }], heaters }.
  */
 export function buildScene(scene) {
@@ -175,30 +181,24 @@ export function buildScene(scene) {
 
   const ignitions = [];
   let spawn = null;
-  scene.objects.forEach((obj, oi) => {
-    const res = placeObject(world, obj, oi);
-    if (obj.ignite && res.ignite) ignitions.push(res.ignite);
-    spawn ??= res.spawn;
+  const tree = resolveTree(scene.objects, {
+    h: ws.h,
+    size: ws.size,
+    placed: (oi, obj) => {
+      const res = placeObject(world, obj, oi);
+      if (obj.ignite && res.ignite) ignitions.push(res.ignite);
+      spawn ??= res.spawn;
+      return world.origins[oi][1];
+    },
   });
+  world.objectTree = tree.map(({ path, depth, parent, end, rec, pose }) => ({ path, depth, parent, end, rec, pose }));
+  if (scene.within) for (const pt of world.portals) if (pt.to === '..') pt.to = scene.within;
   world.rebuildLists();
   return { world, ignitions, spawn };
 }
 
-/**
- * The row-major 3x3 rotation of a scene object: `rotation` about the vertical, then (in the
- * model's frame) `tiltX` about x and `tiltZ` about z, all in degrees. As three.js turns an
- * Object3D with Euler(tiltX, rotation, tiltZ, 'YXZ'): R = Ry * Rx * Rz.
- */
-export function rotationMatrix(rotation = 0, tiltX = 0, tiltZ = 0) {
-  const d = Math.PI / 180;
-  const cy = Math.cos((rotation ?? 0) * d), sy = Math.sin((rotation ?? 0) * d);
-  const cx = Math.cos((tiltX ?? 0) * d), sx = Math.sin((tiltX ?? 0) * d);
-  const cz = Math.cos((tiltZ ?? 0) * d), sz = Math.sin((tiltZ ?? 0) * d);
-  // Rx * Rz
-  const a = [cz, -sz, 0, cx * sz, cx * cz, -sx, sx * sz, sx * cz, cx];
-  // Ry * (Rx * Rz)
-  return [cy * a[0] + sy * a[6], cy * a[1] + sy * a[7], cy * a[2] + sy * a[8], a[3], a[4], a[5], -sy * a[0] + cy * a[6], -sy * a[1] + cy * a[7], -sy * a[2] + cy * a[8]];
-}
+// (the rotation of a scene object: models/composite.js, which places objects in objects)
+export { rotationMatrix };
 
 /** Voxelise one scene object into the world. */
 export function placeObject(world, obj, ownerIndex = -1) {
