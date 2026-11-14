@@ -38,7 +38,8 @@ import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
 import { recoilSpec, GUNS } from '../ai/recoil.js';
-import { HANDLING, PRIMARIES, whyNot } from '../ai/weapons.js';
+import { HANDLING, PRIMARIES, whyNot, carried } from '../ai/weapons.js';
+import { SKILL, SKILL_INFO } from '../ai/soldier.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -168,15 +169,17 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
   <section data-pane="gear" hidden>
     <div class="lab">Selected soldier's separate objects</div>
     <div class="grid">
-      <button type="button" data-det="rifle">Drop rifle</button>
+      <button type="button" data-id="dropWpn" title="Whatever is in his hands (rifle, shotgun, pistol, machine gun, carbine, knife, the flame gun's wand): he is bare-handed after">Drop weapon</button>
       <button type="button" data-det="helmet">Knock helmet</button>
-      <button type="button" data-det="pack">Drop pack</button>
+      <button type="button" data-id="dropPack" title="Unbuckled, one shoulder strap, then the other, lowered to the ground in front of him (a flame trooper's tanks with it)">Pack off</button>
     </div>
-    <div class="row"><button data-id="reequip" type="button">Re-equip</button><button data-id="swapLoad" type="button">Rifle ⇄ flame gun</button><button data-id="tgDrop" type="button" aria-pressed="true">Drop rifle on death</button></div>
+    <div class="row"><button data-id="reequip" type="button" title="He goes to what he dropped, bends down and picks it up">Pick up</button><button data-id="rollPick" type="button" title="A forward roll over it, taking it up on the way">Roll pick-up</button><button data-id="tgDrop" type="button" aria-pressed="true">Drop weapon on death</button></div>
+    <label class="sl"><span>Experience</span><select data-id="skillSel" style="grid-column:2/4" aria-label="Experience"><option value="recruit">Recruit</option><option value="regular" selected>Regular</option><option value="veteran">Veteran</option><option value="elite">Elite</option></select></label>
+    <p class="hint" data-id="skillInfo"></p>
     <label class="sl"><span>Primary</span><select data-id="primarySel" style="grid-column:2/4" aria-label="Primary weapon"></select></label>
     <p class="hint" data-id="handlingInfo"></p>
     <div class="lab">Weapon in hand</div>
-    <div class="grid" data-id="weapons"><button type="button" data-w="rifle">Rifle</button><button type="button" data-w="secondary">Carbine</button><button type="button" data-w="knife">Knife</button></div>
+    <div class="grid" data-id="weapons"></div>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
     <label class="sl"><span>Reload ×</span><input type="range" data-id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output data-id="reloadO">×1.00</output></label>
     <label class="sl"><span>Look</span><input type="range" data-id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output data-id="lookO">0°</output></label>
@@ -356,12 +359,15 @@ export function mountRig(root, opts = {}) {
   const soldiers = [];
   const GEAR = { armour: true, reload: 1, look: 0, recoil: 1, fireMode: 'burst' };
   /** The settings on a (new) figure. */
-  function applyGear(f) {
+  function applyGear(f, skill = 'regular') {
+    const K = SKILL[skill] ?? SKILL.regular;
     f.setArmour(GEAR.armour);
-    f.setClipSpeed('reload', GEAR.reload);
+    f.setClipSpeed('reload', GEAR.reload / K.reload);
+    // (switching, dropping and picking up go at his pace too)
+    for (const n of ['holsterRifle', 'drawRifle', 'holsterSecondary', 'drawSecondary', 'drawKnife', 'sheathKnife', 'fistsUp', 'dropWeapon', 'pickup', 'pickupOne']) f.setClipSpeed(n, 1 / K.reload);
     f.setLook(GEAR.look);
     const gun = gunOf(f);
-    if (gun) f.setRecoil(recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode }));
+    if (gun) f.setRecoil(recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode }), K.control);
   }
   /** The gun (ai/recoil.js GUNS) in a figure's hands, or null (the flame gun, the knife). */
   const gunOf = (f) => (GUNS[f.handling] ? f.handling : null);
@@ -426,7 +432,7 @@ export function mountRig(root, opts = {}) {
       f.onRelease = (p) => throwGrenade(p.toArray(), aimVel(p.toArray(), aheadOf(this)));
       f.onFlashRelease = (p) => throwGrenade(p.toArray(), aimVel(p.toArray(), aheadOf(this)), 'flash');
       f.onFinished = (name) => name === 'pickup' && f.reequip(['rifle']);
-      applyGear(f);
+      applyGear(f, this.skill);
       scene.add(f.group);
       old?.dispose();
     }
@@ -581,6 +587,11 @@ export function mountRig(root, opts = {}) {
         this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
       }
       this.d.yaw = P.yaw;
+      if (u >= 1 && P.once) {
+        // (a pick-up roll: once, and he stays where it took him)
+        this.pk = null;
+        return;
+      }
       if (u >= 1) P.wait = 0.9;
     }
     endParkour() {
@@ -636,8 +647,42 @@ export function mountRig(root, opts = {}) {
       this.makeFigure();
       return this;
     }
-    reequip() {
-      this.fig.reequip();
+    /** Bare-handed: whatever he holds dropped (operator/rig.js dropWeapon), as a rigid body. */
+    dropWeapon() {
+      if (!this.d.dead && !this.fig.dropWeapon(physics, scene)) toast(`${this.name}: nothing in his hands`);
+      return this;
+    }
+    /** The pack unstrapped and lowered in front of him (else knocked off as a rigid body). */
+    dropPack() {
+      if (!this.d.dead && !this.fig.dropPack()) this.detach('pack');
+      return this;
+    }
+    /**
+     * Pick up what he dropped: he goes to it (the first weapon lying about, else the rest), bends
+     * down and takes it (both hands, or one: operator/rig.js pickUp); roll: a forward roll over it.
+     */
+    reequip(roll = false) {
+      const f = this.fig;
+      const names = ['rifle', 'secondary', 'torch', 'knife', 'helmet', 'pack'].filter((n) => f.parts[n]?.userData.pivot || (n === 'pack' && f.parts.pack.userData.onGround));
+      if (!names.length || this.d.dead) {
+        if (!names.length) toast(`${this.name}: nothing lying about`);
+        return this;
+      }
+      const first = names.find((n) => n !== 'pack' && n !== 'helmet') ?? names[0];
+      const at = f.partAt(first) ?? f.parts[first].getWorldPosition(new THREE.Vector3());
+      this.patrol = null;
+      if (this.pk) this.endParkour();
+      const dx = at.x - this.d.p[0], dz = at.z - this.d.p[2], dist = Math.hypot(dx, dz) || 1;
+      const yaw = Math.atan2(dx, dz), back = roll ? 1.2 : 0.55;
+      this.d.p = [at.x - (dx / dist) * back, 0, at.z - (dz / dist) * back];
+      this.d.yaw = yaw;
+      // the ones within reach of where he bends down (the rest another time)
+      const near = names.filter((n) => {
+        const q = f.partAt(n) ?? f.parts[n].getWorldPosition(new THREE.Vector3());
+        return Math.hypot(q.x - at.x, q.z - at.z) < 1.2;
+      });
+      if (roll) this.pk = { kind: 'rollPickup', t: 0, dur: ROLLS.rollPickup.dur, from: this.d.p.slice(), yaw, wait: 0, roll: true, once: true };
+      f.pickUp(near, { roll, speed: 1 / (SKILL[this.skill ?? 'regular']?.reload ?? 1) });
       return this;
     }
     dispose() {
@@ -667,7 +712,7 @@ export function mountRig(root, opts = {}) {
       f.update(dt);
       if (this.dropT != null && (this.dropT -= dt) <= 0) {
         this.dropT = null;
-        this.detach('rifle');
+        this.detach({ secondary: 'secondary', knife: 'knife', torch: 'torch' }[this.fig.weapon] ?? 'rifle'); // (whatever was in his hands)
       }
     }
   }
@@ -836,6 +881,8 @@ export function mountRig(root, opts = {}) {
       b.title = no ? whyNot(e.fig.handling, b.dataset.a) : '';
     });
     showHandling(e);
+    showWeapons(e);
+    if (document.activeElement !== $('skillSel')) $('skillSel').value = e.skill ?? 'regular';
   }
   /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
   function showHandling(e) {
@@ -916,7 +963,24 @@ export function mountRig(root, opts = {}) {
   tg('tgDrop', (v) => (dropOnDeath = v));
   $$('[data-det]').forEach((b) => (b.onclick = () => selected?.detach(b.dataset.det)));
   $('reequip').onclick = () => selected?.reequip();
-  $('swapLoad').onclick = () => selected && (selected.setLoadout(selected.loadout === 'torch' ? 'rifle' : 'torch'), onChange());
+  $('rollPick').onclick = () => selected?.reequip(true);
+  $('dropWpn').onclick = () => {
+    for (const e of gearTargets()) e.dropWeapon();
+    onChange();
+  };
+  $('dropPack').onclick = () => {
+    for (const e of gearTargets()) e.dropPack();
+  };
+  // experience (ai/soldier.js SKILL): his reload, switch and pick-up speed and his recoil control here; aim, nerve, hand-to-hand in the world
+  $('skillInfo').textContent = SKILL_INFO;
+  $('skillSel').title = SKILL_INFO;
+  $('skillSel').onchange = () => {
+    for (const e of gearTargets()) {
+      e.skill = $('skillSel').value;
+      applyGear(e.fig, e.skill);
+    }
+    onChange();
+  };
   // the primary: each weapon its grips, carry, aim and firing (operator/rig.js WEAPON_STYLE), and what it allows
   for (const k of PRIMARIES) {
     const o = document.createElement('option');
@@ -931,7 +995,7 @@ export function mountRig(root, opts = {}) {
       else {
         e.loadout = k;
         e.fig.setPrimary(k);
-        applyGear(e.fig);
+        applyGear(e.fig, e.skill);
       }
     }
     recoilChanged();
@@ -939,12 +1003,31 @@ export function mountRig(root, opts = {}) {
   };
   /* ---------- weapon in hand, armour, reload speed, look up / down ---------- */
   const gearTargets = () => (allMode ? soldiers : [selected]).filter((e) => e && !e.d.dead);
-  $('weapons').querySelectorAll('button').forEach((b) => (b.onclick = () => {
-    for (const e of gearTargets()) {
-      const s = e.fig.switchWeapon(b.dataset.w);
-      toast(s ? `${b.textContent} in ${s.toFixed(1)} s` : `${e.name}: already in hand, or gone`);
+  // weapon in hand: what he carries (ai/weapons.js carried: the primary, the carbine, the knife, bare hands), each from its place on him
+  const SWITCH_TO = { carbine: 'secondary', knife: 'knife', unarmed: 'fists' };
+  let weaponsShown = '';
+  function showWeapons(e) {
+    const list = carried({ loadout: e.loadout, primary: e.fig.primaryKind });
+    const key = list.join() + '|' + e.fig.handling;
+    if (key === weaponsShown) return;
+    weaponsShown = key;
+    const box = $('weapons');
+    box.textContent = '';
+    for (const k of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = k === 'unarmed' ? 'Bare hands' : HANDLING[k].label.replace(/ \(.*\)$/, '');
+      b.title = HANDLING[k].slot ? `Carried ${HANDLING[k].slot}` : 'Fists up: hand-to-hand';
+      b.classList.toggle('on', e.fig.handling === k);
+      b.onclick = () => {
+        for (const t of gearTargets()) {
+          const s = t.fig.switchWeapon(SWITCH_TO[k] ?? 'rifle');
+          toast(s ? `${b.textContent} in ${s.toFixed(1)} s` : `${t.name}: already in hand, or gone`);
+        }
+      };
+      box.appendChild(b);
     }
-  }));
+  }
   tg('tgArmour', (v) => {
     GEAR.armour = v;
     for (const e of soldiers) e.fig.setArmour(v);
@@ -952,7 +1035,7 @@ export function mountRig(root, opts = {}) {
   $('reloadS').oninput = () => {
     GEAR.reload = +$('reloadS').value;
     $('reloadO').textContent = '×' + GEAR.reload.toFixed(2);
-    for (const e of soldiers) e.fig.setClipSpeed('reload', GEAR.reload);
+    for (const e of soldiers) e.fig.setClipSpeed('reload', GEAR.reload / (SKILL[e.skill] ?? SKILL.regular).reload);
   };
   $('lookS').oninput = () => {
     const v = +$('lookS').value;
@@ -968,7 +1051,7 @@ export function mountRig(root, opts = {}) {
     $('recoilInfo').textContent = `${GUNS[gun].label}: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull${R.rpm ? ` at ${R.rpm} rounds/min (the climb piles up in a burst or on auto)` : ''}${R.pump ? `, then the pump worked (${R.pump} s)` : ''}.`;
     for (const e of soldiers) {
       const g = gunOf(e.fig);
-      if (g) e.fig.setRecoil(recoilSpec(g, { recoil: GEAR.recoil, mode: GEAR.fireMode }));
+      if (g) e.fig.setRecoil(recoilSpec(g, { recoil: GEAR.recoil, mode: GEAR.fireMode }), (SKILL[e.skill] ?? SKILL.regular).control);
     }
   };
   $('recoilS').oninput = () => {

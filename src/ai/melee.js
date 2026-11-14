@@ -35,6 +35,37 @@ export const MELEE = {
   block: { label: 'Block', kind: 'defend', dur: 0.6 },
   slip: { label: 'Slip', kind: 'defend', dur: 0.5 },
 };
+/**
+ * Contacts, as plain data for a force-based impact model (sim/impact.js, to come: its act-level
+ * impacts): [{ t (s into the clip), part (the body part or thing that hits), material, target
+ * ('opponent' or 'ground') }]. The strikes at their hit time; a thrown man's back on the ground in
+ * his own clip (the move with _d); the knock-down. (The damage today: meleeDamage, one place to swap.)
+ */
+export const IMPACTS = {
+  jab: [{ t: MELEE.jab.hit, part: 'fistL', material: 'flesh', target: 'opponent' }],
+  cross: [{ t: MELEE.cross.hit, part: 'fistR', material: 'flesh', target: 'opponent' }],
+  hook: [{ t: MELEE.hook.hit, part: 'fistR', material: 'flesh', target: 'opponent' }],
+  uppercut: [{ t: MELEE.uppercut.hit, part: 'fistR', material: 'flesh', target: 'opponent' }],
+  frontKick: [{ t: MELEE.frontKick.hit, part: 'footR', material: 'boot', target: 'opponent' }],
+  roundKick: [{ t: MELEE.roundKick.hit, part: 'shinR', material: 'boot', target: 'opponent' }],
+  lowKick: [{ t: MELEE.lowKick.hit, part: 'shinR', material: 'boot', target: 'opponent' }],
+  hipThrow_d: [{ t: 1.2, part: 'back', material: 'flesh', target: 'ground' }],
+  shoulderThrow_d: [{ t: 1.27, part: 'back', material: 'flesh', target: 'ground' }],
+  footSweep: [{ t: MELEE.footSweep.hit, part: 'footL', material: 'boot', target: 'opponent' }],
+  footSweep_d: [{ t: 1.0, part: 'back', material: 'flesh', target: 'ground' }],
+  knockDown: [{ t: 0.95, part: 'back', material: 'flesh', target: 'ground' }],
+  // gear (operator/rig.js): the dropped weapon, the pack put down
+  dropWeapon: [{ t: 0.62, part: 'weapon', material: 'steel', target: 'ground' }],
+  dropPack: [{ t: 3.85, part: 'pack', material: 'canvas', target: 'ground' }],
+};
+for (const [k, v] of Object.entries(IMPACTS)) if (MELEE[k]) MELEE[k].impacts = v;
+
+/** The damage a move does (health), blocked or not: the one place a force-based model replaces. */
+export function meleeDamage(kind, o = {}) {
+  const M = MELEE[kind];
+  if (!M?.dmg) return 0;
+  return M.dmg * (o.blocked ? 0.25 : 1) * (o.k ?? 1);
+}
 /** The defender's side: being hit, knocked down, getting up; the thrown man's clips (`<throw>_d`). */
 export const REACT = {
   hitHead: { label: 'Hit (head)', dur: 0.5 },
@@ -66,6 +97,11 @@ const down = (h, now) => (h.knockedUntil ?? -Infinity) > now || h.dead;
 export function pickMelee(m, foe, d, o = {}) {
   const now = o.now ?? 0, rand = o.rand ?? Math.random;
   if (down(foe, now)) return null;
+  // (poor judgement, o.judgement 0..1: now and then just whatever strike reaches)
+  if (o.judgement != null && rand() > o.judgement) {
+    const any = Object.keys(MELEE).filter((k) => MELEE[k].kind === 'strike' && inReach(k, d));
+    return any.length ? any[Math.floor(rand() * any.length)] : null;
+  }
   const dazed = (foe.meleeStunUntil ?? -Infinity) > now;
   const held = foe.clinchedBy === m || m.clinchedBy === foe;
   if (held || dazed) {
@@ -118,13 +154,13 @@ export function resolveMelee(att, def, kind, d, o = {}) {
     return out;
   }
   if (M.kind === 'throw') {
-    Object.assign(out, { hit: true, dmg: M.dmg, stun: M.stun, zone: 'torso', down: true, react: kind + '_d', land: M.land });
+    Object.assign(out, { hit: true, dmg: meleeDamage(kind), stun: M.stun, zone: 'torso', down: true, react: kind + '_d', land: M.land });
     return out;
   }
   if (guard === 'slip' && M.limb === 'hand' && M.zone === 'head') return (out.why = 'slipped'), out;
   const k = guard === 'block' ? 0.25 : 1;
   out.hit = true;
-  out.dmg = M.dmg * k;
+  out.dmg = meleeDamage(kind, { blocked: guard === 'block' });
   out.stun = M.stun * k;
   out.blocked = guard === 'block';
   out.down = !out.blocked && (M.down ?? 0) > 0 && rand() < M.down;

@@ -29,6 +29,7 @@
  */
 import { mono, clear } from './parkour.js';
 import { handKind, evadeKind } from './weapons.js';
+import { SKILL } from './soldier.js';
 
 /** The rolls: their clip duration (s) and the distance the root goes (m). */
 export const ROLLS = {
@@ -36,12 +37,14 @@ export const ROLLS = {
   rollRight: { dur: 1.1, geo: { d: 1.9 }, side: -1 },
   rollForward: { dur: 1.2, geo: { d: 2.4 } },
   diveProne: { dur: 1.25, geo: { d: 2.0 } },
+  // a forward roll over something lying there, taken up on the way (operator/rig.js pickUp)
+  rollPickup: { dur: 1.2, geo: { d: 2.4 } },
   sidestepLeft: { dur: 0.8, geo: { d: 1.3 }, side: 1, step: true },
   sidestepRight: { dur: 0.8, geo: { d: 1.3 }, side: -1, step: true },
 };
 export const ROLL = Object.fromEntries(Object.keys(ROLLS).map((k) => [k, 1]));
 /** How the rolls are shown (the rig's buttons). */
-export const ROLL_LABELS = { rollLeft: 'Roll (left)', rollRight: 'Roll (right)', rollForward: 'Roll (forward)', diveProne: 'Dive roll to prone', sidestepLeft: 'Side step (left, crouched)', sidestepRight: 'Side step (right, crouched)' };
+export const ROLL_LABELS = { rollLeft: 'Roll (left)', rollRight: 'Roll (right)', rollForward: 'Roll (forward)', diveProne: 'Dive roll to prone', rollPickup: 'Roll pick-up', sidestepLeft: 'Side step (left, crouched)', sidestepRight: 'Side step (right, crouched)' };
 
 // fraction of the way at u: sideways quick off the mark (out of the line first), then the roll
 const SIDE_K = [[0, 0], [0.16, 0.18], [0.31, 0.37], [0.47, 0.6], [0.64, 0.79], [0.78, 0.92], [1, 1]];
@@ -67,6 +70,7 @@ const EYE = {
   diveProne: [[0, 0], [0.2, 0.15], [0.4, 0.75], [0.6, 0.95], [1, 0.95]],
 };
 EYE.rollRight = EYE.rollLeft;
+EYE.rollPickup = EYE.rollForward;
 EYE.sidestepLeft = EYE.sidestepRight = [[0, 0], [0.25, 0.45], [0.75, 0.5], [1, 0]];
 export const rollEyeDip = (kind, u) => mono(EYE[kind], u);
 
@@ -270,7 +274,8 @@ export function worthRolling(m, t, rand = Math.random, now = 0) {
     // (once for each crack past him)
     if (m.fireSeen === t.time) return false;
     m.fireSeen = t.time;
-    return rand() < (m.inCover ? 0.1 : 0.45);
+    // (a recruit flinches into a roll more readily than a veteran: ai/soldier.js SKILL nerve)
+    return rand() < (m.inCover ? 0.1 : 0.45) * (SKILL[m.skill]?.nerve ?? 1);
   }
   return true;
 }

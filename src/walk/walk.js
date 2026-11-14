@@ -159,6 +159,7 @@ export class Walkthrough {
       if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
       if (e.code === 'Digit6') this.tool = 'bow';
       if (e.code === 'Digit7') this.tool = 'rifle';
+      if (e.code === 'Digit8') this.tool = 'fists'; // bare hands: hand-to-hand (G / V / B), the most agile
       // Q: to the rifle and back to what you had
       if (e.code === 'KeyQ') {
         if (this.tool === 'rifle') this.tool = this.prevTool ?? 'hose';
@@ -960,7 +961,7 @@ export class Walkthrough {
    * it, the fire torch held out in one hand, else nothing that changes how you move.
    */
   handling() {
-    return { rifle: 'rifle', torch: 'handTorch' }[this.tool] ?? 'none';
+    return { rifle: 'rifle', torch: 'handTorch', fists: 'unarmed' }[this.tool] ?? 'none';
   }
 
   setThermal(on) {
@@ -1561,7 +1562,7 @@ export class Walkthrough {
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
-    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'} · ${this.mags ?? 4} mags${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
+    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, fists: '8 BARE HANDS (G punch · V kick · B throw)', rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'} · ${this.mags ?? 4} mags${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
     // the mask off: no display in the visor, only what you know (how you are, what you hold)
     const bare = this.maskK < 0.6;
     this.el.hud.classList.toggle('bare', bare);

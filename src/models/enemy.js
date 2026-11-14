@@ -26,6 +26,8 @@ export default {
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
     fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode' },
     // what they carry (ai/weapons.js: grips, carry, aim, and what each allows); mixed: every third a shotgun, the next a pistol
+    // experience (ai/soldier.js SKILL): aim, recoil control, reaction, reload / switch speed, nerve, hand-to-hand
+    skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Experience: aim, recoil control, reaction, reload / switch / pick-up speed, nerve under fire, hand-to-hand (mixed: the leader a veteran, regulars, a recruit)' },
     weapon: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Weapon (unarmed: they fight hand-to-hand)' },
   },
   build(p, { rng }) {
@@ -38,7 +40,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k) });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined });
     }
     return { prims: [], enemies };
   },

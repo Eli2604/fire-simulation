@@ -1024,6 +1024,8 @@ const RL_KEYS = {
   },
   // what stands in for a roll with a weapon that rules rolling out (ai/weapons.js): down into a
   // crouch, two quick shuffles to that side, the weapon kept up on the threat
+  // a forward roll over something on the ground, the right hand taking it up on the way (the end: in his hands)
+  rollPickup: () => RL_KEYS.rollForward().map(([t, p, o], i, a) => [t, i === a.length - 1 ? p : Object.assign({}, p, { rG: 0, rH: 0, rT: i === 2 || i === 3 ? [-0.2, 1.05, 0.55] : [-0.25, 0.97, 0.07], rPole: [-0.4, -0.2, -1] }), o]),
   sidestepLeft: () => sideStep(1),
   sidestepRight: () => sideStep(-1),
 };
@@ -1236,6 +1238,101 @@ const MELEE_LABELS = {
 };
 /** Unarmed (weapon 'fists'): what each clip becomes (the rest: the empty-handed versions). */
 const FIST_AS = { aim: 'guard', shoot: 'guard', crouchAim: 'guard', crouchShoot: 'guard', knifeReady: 'guard', stab: 'jab', flame: 'guard', reload: 'guard', idle: 'guard', proneShoot: 'proneAim' };
+
+/* ---------- gear: where each weapon is carried, dropping it, the pack off, picking things up ---------- */
+/**
+ * Where a weapon rides when it is put away (ai/weapons.js CARRY): the long guns slung across the
+ * back (the clips' sling2), the pistol in a holster on the right hip, the flame gun's wand clipped
+ * at the right side (its hose to the tanks); the weapon bone's place there (chest space: the butt
+ * point, the barrel's direction, its top), for the put-away clip that takes it there (hipHolster).
+ */
+const HIP_SLOT = {
+  pistol: { butt: [-0.235, 1.27, 0.0], dir: [0.0, -1, 0.06], up: [0, 0.06, 1] },
+  torch: { butt: [-0.3, 1.32, -0.2], dir: [0.02, -0.82, 0.57], up: [0, 0.57, 0.82] },
+};
+/** Putting a pistol into its holster, the flame gun's wand onto its clip (u: 0 in hand .. 1 put away), as holster() does the rifle. */
+function hipHolster(kind, u) {
+  const H = HIP_SLOT[kind];
+  const p = stance(pose0());
+  p.cw = sm01(u / 0.75);
+  p.cButt = H.butt.slice(); p.cDir = H.dir.slice(); p.cUp = H.up.slice();
+  p.lG = p.lH = 1 - sm01(u / 0.3);
+  p.lT = FREE_L.slice();
+  p.rG = p.rH = 1 - sm01((u - 0.75) / 0.22);
+  p.rT = FREE_R.slice();
+  p.rPole = [-1, -0.3, -0.6];
+  p.head = [0.25 * env(u, 0.3, 0.5, 0.8, 1), 0, 0];
+  return p;
+}
+/** Dropping the weapon in his hands (lets go at DROP_T), the hands up into the guard after. */
+export const DROP_T = 0.32;
+function dropWeaponPose(t) {
+  const p = stance(pose0());
+  const r = sm01((t - DROP_T) / 0.12); // let go
+  const g = sm01((t - 0.45) / 0.35); // fists up
+  // the weapon held out a little and down, then let fall (the clip leaves it there: it is on the ground by then)
+  p.wOff = [0, -0.12 * sm01(t / DROP_T), 0.12 * sm01(t / DROP_T)]; p.wRot = [0.35 * sm01(t / DROP_T), 0, 0];
+  p.rG = p.rH = p.lG = p.lH = 1 - r;
+  const G0 = boxGuard(pose0());
+  p.rT = lerpA([-0.2, 1.0, 0.35], G0.rT, g); p.lT = lerpA([0.2, 1.0, 0.35], G0.lT, g);
+  p.lPole = lerpA([1, -0.5, -0.25], G0.lPole, g); p.rPole = lerpA([-1, -0.45, -0.35], G0.rPole, g);
+  for (const k of ['hipsPos', 'thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR', 'spine', 'head']) p[k] = lerpA(p[k], G0[k], g);
+  p.sling2 = r; // (no weapon left on the weapon bone: it goes where the empty-handed clips have it)
+  return p;
+}
+/** Picking something small up (a pistol, the knife): one knee bent, the right hand down to it, up again. */
+export const PICK_T = { pickup: 0.62, pickupOne: 0.5, rollPickup: 0.6 };
+function pickupOnePose(t) {
+  const p = pose0();
+  const e = env(t, 0, 0.35, 0.6, 1.0);
+  const c = crouchLegs(pose0());
+  for (const k of ['hipsPos', 'thighR', 'thighL', 'shinR', 'shinL', 'footR', 'footL']) p[k] = c[k].map((v) => v * e * 0.85);
+  p.spine = [0.6 * e, 0, 0]; p.chest = [0.25 * e, 0, 0]; p.head = [-0.3 * e, 0, 0];
+  fistsFree(p);
+  p.rT = lerpA([-0.25, 0.97, 0.07], [-0.12, 1.08, 0.58], e); p.lT = lerpA([0.25, 0.97, 0.07], [0.22, 1.12, 0.3], e);
+  p.rPole = [-0.4, -0.2, -1]; p.lPole = [1, -0.4, -0.3];
+  return p;
+}
+/**
+ * The pack off: the right hand to the chest and waist buckles, the right shoulder strap off (the
+ * pack sags to his left), the left one off, the pack swung round to the front in both hands,
+ * lowered to the ground in front of him, and up again.
+ */
+const PACK_OFF_T = 4.2;
+const PACK_K = (() => {
+  const k = (o, lw = 0) => {
+    const p = stance(pose0());
+    handsFree(p);
+    p.sling2 = 1;
+    p.lW = p.rW = lw;
+    return Object.assign(p, o);
+  };
+  const low = (e) => {
+    const c = crouchLegs(pose0());
+    const o = {};
+    for (const n of ['hipsPos', 'thighR', 'thighL', 'shinR', 'shinL', 'footR', 'footL']) o[n] = c[n].map((v) => v * e);
+    return o;
+  };
+  const front = [0, 0.98, 0.36], ground = [0, 0.2, 0.5];
+  return [
+    [0, k({})],
+    [0.45, k({ rT: [-0.02, 1.32, 0.22], rPole: [-1, -0.8, 0], head: [0.35, 0, 0] })], // the chest strap
+    [0.8, k({ rT: [0.0, 1.0, 0.2], rPole: [-1, -0.8, 0], head: [0.4, 0, 0] })], // the waist belt
+    [1.3, k({ rT: [-0.14, 1.45, 0.14], rPole: [-1, -0.5, 0.2], head: [0.1, -0.3, 0] })], // the right strap
+    [1.75, k({ rT: [-0.3, 1.3, -0.08], chest: [0, 0, -0.18], head: [0.05, -0.4, 0], bagP: [-0.04, 1.16, -0.27], bagR: [0, 0, 0.3] })], // off the right shoulder
+    [2.2, k({ lT: [0.14, 1.45, 0.14], lPole: [1, -0.5, 0.2], rT: FREE_R.slice(), chest: [0, 0, 0.1], head: [0.1, 0.3, 0], bagP: [-0.04, 1.16, -0.27], bagR: [0, 0, 0.3] })], // the left strap
+    [2.7, k({ head: [0.2, 0.4, 0], chest: [0, 0.3, 0], bagP: [0.3, 1.05, -0.02], bagR: [0, 1.4, 0.1], lTW: [0.38, 1.1, 0.12], rTW: [0.22, 1.05, 0.2] }, 1)], // swung round to the front
+    [3.2, k({ head: [0.35, 0, 0], bagP: front, bagR: [0, Math.PI, 0], lTW: [0.18, 1.0, 0.36], rTW: [-0.18, 1.0, 0.36] }, 1)],
+    [3.85, k({ ...low(1), spine: [0.55, 0, 0], head: [-0.2, 0, 0], bagP: ground, bagR: [0, Math.PI, 0], lTW: [0.18, 0.24, 0.5], rTW: [-0.18, 0.24, 0.5] }, 1)], // down in front of him
+    [PACK_OFF_T, k({ ...low(0.7), spine: [0.35, 0, 0], bagP: ground, bagR: [0, Math.PI, 0], lTW: [0.18, 0.5, 0.45], rTW: [-0.18, 0.5, 0.45] }, 0)],
+  ];
+})();
+const GEAR_CLIPS = {
+  dropWeapon: [0.8, (t) => dropWeaponPose(t)],
+  pickupOne: [1.0, (t) => pickupOnePose(t)],
+  dropPack: [PACK_OFF_T, (t) => keyed(PACK_K, t)],
+};
+const GEAR_LABELS = { dropWeapon: 'Drop weapon', pickupOne: 'Pick up (one hand)', dropPack: 'Pack off (unstrap, lower)', rollPickup: 'Roll pick-up' };
 
 const CLIPS = {
   idle: [2.4, (t, u) => {
@@ -1510,10 +1607,12 @@ const CLIPS = {
   ...Object.fromEntries(Object.keys(RL_KEYS).map((k) => [k, [ROLLS[k].dur, rlClip(k, RL_KEYS[k])]])),
   // hand-to-hand (ai/melee.js): the guard, strikes, kicks, defence, the clinch and throws (pairs), down and up again
   ...MELEE_CLIPS,
+  // gear: the weapon dropped, the pack taken off and put down, picking things up
+  ...GEAR_CLIPS,
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE, dropWeapon: 1, pickupOne: 1, dropPack: 1 };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
@@ -1522,12 +1621,12 @@ export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stair
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
-  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS };
+  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS };
 export { PARKOUR, ROLL };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
-const NO_UNARMED = { ...MELEE_CLIP, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
+const NO_UNARMED = { ...MELEE_CLIP, dropWeapon: 1, pickupOne: 1, dropPack: 1, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
 const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
@@ -1718,7 +1817,7 @@ function pistolReload(t) {
 }
 const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
-const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
+const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
@@ -1733,6 +1832,11 @@ export function weaponClips(kind) {
     if (NO_STYLE[k] || SHOOT[k]) continue;
     const [dur, fn] = k === 'reload' && RELOAD_AS[kind] ? RELOAD_AS[kind] : CLIPS[k];
     c[k] = makeClip(k, dur, styled(S, k, fn));
+  }
+  // put away to (and drawn from) a holster on the hip or a clip at the side, not the back
+  if (HIP_SLOT[kind]) {
+    c.holsterRifle = makeClip('holsterRifle', PUT_T, styled(S, 'holsterRifle', (t) => hipHolster(kind, t / PUT_T)));
+    c.drawRifle = makeClip('drawRifle', DRAW_T.rifle, styled(S, 'drawRifle', (t) => hipHolster(kind, 1 - t / DRAW_T.rifle)));
   }
   STYLE_CACHE.set(kind, c);
   return c;
@@ -2396,7 +2500,7 @@ const PUMP_PERP = (() => {
   return v.addScaledVector(ax, -v.dot(ax));
 })();
 // every clip a weapon's style may replace (weaponClips), and the clips as baked first (operatorClips)
-const STYLED = Object.keys(CLIPS).filter((k) => !NO_STYLE[k] && !SHOOT[k]);
+const STYLED = [...Object.keys(CLIPS).filter((k) => !NO_STYLE[k] && !SHOOT[k]), 'holsterRifle', 'drawRifle'];
 const BASE_CLIPS = new Set();
 const HEAD_FRAME = V3(P.H.o);
 const NO_TWIST = 2.3;
@@ -2538,7 +2642,9 @@ export class OperatorFigure {
       rifle.visible = mag.visible = this.sling.visible = false;
       this.parts.torch = A.torchGun.clone();
       bones.weapon.add(this.parts.torch);
-      bones.chest.add(A.torchTanks.clone());
+      this.parts.tanks = A.torchTanks.clone();
+      bones.chest.add(this.parts.tanks);
+      this.restParent.torch = bones.weapon;
       this.flames = [];
     }
     const hf = new THREE.Group();
@@ -2626,8 +2732,17 @@ export class OperatorFigure {
         this.drawing = false;
         this.armed = true;
       }
-      // a weapon put away: empty-handed (the rifle on his back) until he draws another
+      // a weapon put away: empty-handed (the rifle on his back, the pistol in its holster, the
+      // flame gun's wand on its clip) until he draws another
+      if (was === 'holsterRifle' && HIP_SLOT[this.handling]) this.stowHip(this.weapon === 'torch' ? this.parts.torch : this.parts.rifle);
       if (was === 'holsterRifle' || was === 'sheathKnife') this.weapon = 'none';
+      // the pack down on the ground in front of him (the flame gun's tanks and wand with it)
+      if (was === 'dropPack')
+        for (const o of [this.parts.pack, this.parts.tanks])
+          if (o && o.parent === this.bones.bag) {
+            this.group.parent?.attach(o);
+            o.userData.onGround = true;
+          }
       if (was === 'holsterSecondary') {
         this.stowSecondary();
         this.unstowRifle();
@@ -2765,13 +2880,18 @@ export class OperatorFigure {
     const want = to === 'rifle' || to === 'primary' ? 'primary' : to;
     const draw = { primary: 'drawRifle', secondary: 'drawSecondary', knife: 'drawKnife', fists: 'fistsUp' }[want];
     const P = this.parts, W = this.bones.weapon;
-    if (!draw || this.shown === 'die' || this.loadout === 'torch' || want === this.weapon) return 0;
+    // (a flame trooper's primary is the flame gun: its wand onto the clip at his side and back)
+    const torch = this.loadout === 'torch';
+    const have = torch && want === 'primary' ? 'torch' : want;
+    if (!draw || this.shown === 'die' || have === this.weapon) return 0;
     if (this.loadout === 'unarmed' && want !== 'fists') return 0;
-    if (want !== 'fists' && P[want === 'primary' ? 'rifle' : want].userData.pivot) return 0;
+    if (want !== 'fists' && P[have === 'primary' ? 'rifle' : have]?.userData.pivot) return 0;
+    if (torch && have === 'torch' && P.torch.parent !== W && P.torch.parent !== this.bones.hips) return 0; // (it went with the tanks)
     const put = this.weapon === 'knife' ? 'sheathKnife'
       : this.weapon === 'secondary' && P.secondary.parent === W ? 'holsterSecondary'
-      : this.weapon === 'primary' && this.armed && P.rifle.parent === W ? 'holsterRifle' : null;
-    const dur = (n) => this.A.clips[n].duration;
+      : this.weapon === 'primary' && this.armed && P.rifle.parent === W ? 'holsterRifle'
+      : this.weapon === 'torch' && P.torch?.parent === W ? 'holsterRifle' : null;
+    const dur = (n) => (this.actions[n] ?? this.actions[n + '_k'])?.getClip().duration ?? this.A.clips[n].duration;
     this.play(put ?? draw, { fade: 0.15, restart: true });
     if (put) this.switching = draw;
     return (put ? dur(put) : 0) + dur(draw);
@@ -2786,13 +2906,24 @@ export class OperatorFigure {
     switch (name) {
       case 'holsterRifle':
         if (this.weapon === 'secondary') return P.secondary.parent === W ? 'holsterSecondary' : null;
+        if (this.weapon === 'torch') return P.torch?.parent === W ? name : null;
         return !torch && this.weapon === 'primary' && this.armed && P.rifle.parent === W ? name : null;
       case 'holsterSecondary':
         return this.weapon === 'secondary' && P.secondary.parent === W ? name : null;
       case 'drawRifle':
-        if (torch || P.rifle.userData.pivot) return null;
+        if (torch) {
+          // the flame gun's wand off its clip at his side
+          if (P.torch.userData.pivot || (P.torch.parent !== W && P.torch.parent !== this.bones.hips)) return null;
+          this.stowSecondary();
+          this.unstowHip(P.torch);
+          this.weapon = 'torch';
+          this.armed = true;
+          return name;
+        }
+        if (P.rifle.userData.pivot) return null;
         this.stowSecondary();
         this.unstowRifle();
+        this.unstowHip(P.rifle);
         this.weapon = 'primary';
         this.armed = true;
         return name;
@@ -2828,6 +2959,74 @@ export class OperatorFigure {
         return name;
     }
     return name;
+  }
+  /** A weapon put away into its holster on the hip, or its clip at the side (HIP_SLOT): onto the hips, where the put-away left it. */
+  stowHip(obj) {
+    if (!obj || obj.parent !== this.bones.weapon) return;
+    this.group.updateMatrixWorld(true);
+    this.bones.hips.attach(obj);
+  }
+  /** Out of the holster (or off its clip) onto the weapon bone again. */
+  unstowHip(obj) {
+    if (!obj || obj.parent !== this.bones.hips) return;
+    this.bones.weapon.add(obj);
+    obj.position.set(0, 0, 0);
+    obj.quaternion.identity();
+  }
+  /**
+   * Drop the weapon in his hands (whatever it is: the rifle, shotgun, pistol or machine gun, the
+   * carbine, the knife, the flame gun's wand): it leaves his hands DROP_T into the clip and falls
+   * as a rigid body (physics, under scene); he is bare-handed after it (fists up). Returns
+   * whether he does.
+   */
+  dropWeapon(physics, scene) {
+    const part = { primary: 'rifle', secondary: 'secondary', knife: 'knife', torch: 'torch' }[this.weapon];
+    if (!part || this.shown === 'die' || !this.parts[part] || this.parts[part].userData.pivot) return false;
+    this.play('dropWeapon', { fade: 0.12, restart: true });
+    this.dropping = { part, physics, scene };
+    return true;
+  }
+  /**
+   * Pick dropped gear up (names: 'rifle', 'secondary', 'knife', 'torch', 'helmet', 'pack'): bent
+   * down, both hands for a long gun or the pack, one hand for a pistol, the knife or the helmet;
+   * or (o.roll) in a forward roll over it. It is his again at the grab (PICK_T). Returns the clip,
+   * or false (nothing of that lying about).
+   */
+  pickUp(names = ['rifle'], o = {}) {
+    const P = this.parts;
+    names = names.filter((n) => P[n]?.userData.pivot || (P[n]?.userData.onGround && n === 'pack'));
+    if (!names.length || this.shown === 'die') return false;
+    const small = names.every((n) => n === 'knife' || n === 'helmet' || (n === 'rifle' && this.primaryKind === 'pistol'));
+    const clip = o.roll ? 'rollPickup' : small ? 'pickupOne' : 'pickup';
+    this.play(clip, { restart: true, fade: 0.15, speed: o.speed });
+    this.picking = { names, clip };
+    return clip;
+  }
+  /**
+   * The pack off: unstrapped (the chest and waist buckles, the right shoulder strap, then the
+   * left), swung round to the front and lowered to the ground in front of him; it stays there.
+   * A flame trooper's tanks come off with it (the wand with them).
+   */
+  dropPack() {
+    const pack = this.parts.pack, bag = this.bones.bag;
+    if (this.droneFly || pack.userData.pivot || pack.parent !== this.bones.chest || this.shown === 'die') return false;
+    bag.add(pack);
+    pack.position.set(0, 0, 0);
+    pack.quaternion.identity();
+    const tanks = this.parts.tanks;
+    if (tanks && tanks.parent === this.bones.chest) {
+      bag.add(tanks);
+      tanks.position.set(0, 0, 0);
+      tanks.quaternion.identity();
+      const wand = this.parts.torch;
+      if (wand && !wand.userData.pivot) {
+        this.group.updateMatrixWorld(true);
+        tanks.attach(wand);
+        if (this.weapon === 'torch') this.weapon = 'fists';
+      }
+    }
+    this.play('dropPack', { fade: 0.2, restart: true });
+    return true;
   }
   /** The rifle (with its magazine) onto his back while the carbine is in his hands. */
   stowRifle() {
@@ -2892,7 +3091,7 @@ export class OperatorFigure {
    * 'shotgun', 'pistol', 'mg'), 'carbine' (the secondary), 'torch' (the flame gun), 'knife', 'none'.
    */
   get handling() {
-    if (this.loadout === 'torch') return 'torch';
+    if (this.weapon === 'torch') return 'torch';
     if (this.weapon === 'secondary') return 'carbine';
     if (this.weapon === 'knife' || this.weapon === 'none') return this.weapon;
     if (this.weapon === 'fists') return 'unarmed';
@@ -2900,7 +3099,8 @@ export class OperatorFigure {
   }
   /** May he do act (a clip name: a roll, crawl, a parkour move...) with the weapon in his hands? (ai/weapons.js) */
   allows(act) {
-    return handlingAllows(this.handling, act);
+    // (the flame gun's tanks on his back rule out what they rule out, whatever is in his hands)
+    return handlingAllows(this.parts.tanks?.parent === this.bones.chest ? 'torch' : this.handling, act) && handlingAllows(this.handling, act);
   }
   /**
    * His primary weapon: 'rifle', 'shotgun', 'pistol' or 'mg' (not for a flame trooper): the
@@ -3173,13 +3373,27 @@ export class OperatorFigure {
       this.flashHand.visible = false;
       this.flashBelt.visible = true;
     }
+    // the weapon dropped (dropWeapon): it leaves his hands, he is bare-handed
+    if (this.dropping && this.shown === 'dropWeapon' && a && a.time >= DROP_T) {
+      const { part, physics, scene } = this.dropping;
+      this.dropping = null;
+      this.weapon = 'fists';
+      const f = new THREE.Vector3(Math.sin(g.rotation.y), 0, Math.cos(g.rotation.y));
+      if (physics && scene) this.detach(part, physics, scene, f.multiplyScalar(0.5).add(new THREE.Vector3(0, 0.3, 0)));
+    } else if (this.dropping && this.shown !== 'dropWeapon') this.dropping = null;
+    // picking up (pickUp): his again at the grab
+    if (this.picking && this.shown === this.picking.clip && a && a.time >= PICK_T[this.picking.clip]) {
+      const names = this.picking.names;
+      this.picking = null;
+      this.reequip(names);
+    } else if (this.picking && this.shown !== this.picking.clip) this.picking = null;
     // the knife: in the hand from the moment he grips it until he lets go in the sheath
     let inHand = this.weapon === 'knife';
     if (a && this.shown === 'drawKnife') inHand = a.time >= KNIFE_T.grab;
     else if (a && this.shown === 'sheathKnife') inHand = a.time < KNIFE_T.release;
     this.holdKnife(inHand);
     // the rifle's sling goes with the rifle (not with the carbine on the weapon bone)
-    if (this.loadout !== 'torch' && this.loadout !== 'unarmed') this.sling.visible = this.parts.rifle.parent === this.bones.weapon;
+    if (this.loadout !== 'torch' && this.loadout !== 'unarmed') this.sling.visible = this.parts.rifle.parent === this.bones.weapon && PRIMARY_MESH[this.primaryKind] !== 'own';
     const roped = this.shown === 'rappel' || this.shown === 'rappelStart' || (this.shown === 'rappelEnd' && a && a.time < 1.0);
     this.rope.visible = !!roped;
     if (roped) this.updateRope();
@@ -3317,11 +3531,22 @@ export class OperatorFigure {
   }
   reequip(names = ['rifle', 'helmet', 'pack']) {
     const pack = this.parts.pack;
-    if (names.includes('pack') && (pack.userData.onGround || pack.parent === this.bones.bag)) {
-      this.bones.chest.add(pack);
-      pack.position.set(0, 0, 0);
-      pack.quaternion.identity();
-      pack.userData.onGround = false;
+    if (names.includes('pack')) {
+      for (const o of [pack, this.parts.tanks]) {
+        if (!o || !(o.userData.onGround || o.parent === this.bones.bag)) continue;
+        this.bones.chest.add(o);
+        o.position.set(0, 0, 0);
+        o.quaternion.identity();
+        o.userData.onGround = false;
+      }
+      // the flame gun's wand came off with its tanks: into his hands again
+      const wand = this.parts.torch;
+      if (wand && wand.parent === this.parts.tanks) {
+        this.bones.weapon.add(wand);
+        wand.position.set(0, 0, 0);
+        wand.quaternion.identity();
+        if (this.weapon === 'fists' || this.weapon === 'none') this.weapon = 'torch';
+      }
     }
     for (const k of names) {
       const obj = this.parts[k], pv = obj.userData.pivot;
@@ -3334,6 +3559,12 @@ export class OperatorFigure {
         obj.position.copy(this.A.knifeSheath.p);
         obj.quaternion.copy(this.A.knifeSheath.q);
       }
+      if (k === 'secondary') {
+        obj.position.copy(this.A.slungPos);
+        obj.quaternion.copy(this.A.slungQ);
+        if (this.weapon === 'secondary') this.weapon = 'fists';
+      }
+      if (k === 'torch' && (this.weapon === 'fists' || this.weapon === 'none')) this.weapon = 'torch';
       pv.parent?.remove(pv);
       obj.userData.physics.remove(obj.userData.body);
       obj.userData.pivot = obj.userData.body = obj.userData.physics = null;
@@ -3359,10 +3590,12 @@ export class OperatorFigure {
   }
   dispose() {
     for (const s of this.flames ?? []) s.parent?.remove(s);
+    if (this.parts.tanks?.userData.onGround) this.parts.tanks.parent?.remove(this.parts.tanks);
     this.drone.parent?.remove(this.drone);
     if (this.parts.pack.userData.onGround) this.parts.pack.parent?.remove(this.parts.pack);
-    for (const k of ['rifle', 'helmet', 'pack', 'knife']) {
+    for (const k of ['rifle', 'helmet', 'pack', 'knife', 'secondary', 'torch']) {
       const o = this.parts[k];
+      if (!o) continue;
       if (o.userData.pivot) {
         o.userData.pivot.parent?.remove(o.userData.pivot);
         o.userData.physics.remove(o.userData.body);

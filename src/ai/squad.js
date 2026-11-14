@@ -1489,7 +1489,7 @@ export class SquadAI {
           const d = [r[0] - m.p[0], r[2] - m.p[2]], l = Math.hypot(...d) || 1;
           this.follow(m, this.route(m.p, [r[0] - (d[0] / l) * 0.45, r[1], r[2] - (d[1] / l) * 0.45], m), 'run', (q) => {
             this.face(q, r, 1, 10);
-            this.setAnim(q, 'pickup');
+            this.setAnim(q, 'pickup', 1.3 * skillOf(q).reload); // (an old hand is quicker about it)
           });
         }
       }

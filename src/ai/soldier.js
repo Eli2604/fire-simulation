@@ -23,12 +23,16 @@ import { FIGHT_D, pickMelee, startMelee, resolveMelee, applyMelee, defendAgainst
 
 /** Expertise: scatter (x a regular's), reload and weapon-switch time (x), reaction (x). */
 // (control: how long he takes to bring the muzzle back down after a round, x a regular's: ai/recoil.js)
+// (nerve: how readily he flinches into a roll under fire, x a regular's; melee: his hand-to-hand
+// (damage x, ai/melee.js); judgement: how well he picks his move in a fight, 0..1)
 export const SKILL = {
-  recruit: { aim: 1.8, reload: 1.35, react: 1.5, control: 1.4 },
-  regular: { aim: 1.0, reload: 1.0, react: 1.0, control: 1.0 },
-  veteran: { aim: 0.7, reload: 0.82, react: 0.8, control: 0.85 },
-  elite: { aim: 0.5, reload: 0.7, react: 0.65, control: 0.7 },
+  recruit: { aim: 1.8, reload: 1.35, react: 1.5, control: 1.4, nerve: 1.5, melee: 0.75, judgement: 0.55 },
+  regular: { aim: 1.0, reload: 1.0, react: 1.0, control: 1.0, nerve: 1.0, melee: 1.0, judgement: 0.75 },
+  veteran: { aim: 0.7, reload: 0.82, react: 0.8, control: 0.85, nerve: 0.75, melee: 1.15, judgement: 0.9 },
+  elite: { aim: 0.5, reload: 0.7, react: 0.65, control: 0.7, nerve: 0.55, melee: 1.3, judgement: 1.0 },
 };
+/** What the experience level does (the editor's and the rig's tooltip). */
+export const SKILL_INFO = 'Experience (recruit, regular, veteran, elite) sets: how far his rounds scatter (aim), how fast he pulls the muzzle back down after a round (recoil control, ai/recoil.js), how quickly he reacts (and blocks or slips a blow), how fast he reloads, switches weapons and picks things up, how readily he flinches into a roll under fire (nerve), and how hard and how well he fights hand-to-hand.';
 export const SKILLS = Object.keys(SKILL);
 
 /** What each carries: magazine size and spare magazines; the weapon's name in sim/wounds.js WEAPONS. */
@@ -229,6 +233,7 @@ function handFight(sq, m, h, d, dt) {
       m.meleeAt = null;
       const dd = Math.hypot(h.p[0] - m.p[0], h.p[2] - m.p[2]);
       const res = resolveMelee(m, h, kind, dd, { now: t });
+      res.dmg *= skillOf(m).melee; // (an old hand hits harder)
       m.lastMelee = res;
       if (res.hit) {
         if (sq.host.melee) sq.host.melee(m, h, res);
@@ -257,7 +262,8 @@ function handFight(sq, m, h, d, dt) {
   m.path = null;
   m.meleeCd = (m.meleeCd ?? 0) - dt;
   if (m.meleeCd <= 0) {
-    const k = pickMelee(m, h, d, { now: t });
+    // (judgement: a poorer fighter now and then throws whatever reaches, not the right move)
+    const k = pickMelee(m, h, d, { now: t, judgement: skillOf(m).judgement });
     if (k) {
       startMelee(m, k, t);
       m.meleeCd = 0.2 * skillOf(m).react;

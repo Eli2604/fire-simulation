@@ -30,7 +30,7 @@
 
 /** The groups the per-act rules fall back on: an act not named itself takes its group's rule. */
 const GROUP = {
-  rollLeft: 'roll', rollRight: 'roll', rollForward: 'roll',
+  rollLeft: 'roll', rollRight: 'roll', rollForward: 'roll', rollPickup: 'roll',
   vaultSpeed: 'vault', vaultSide: 'vault', vaultStep: 'vault',
   proneAim: 'prone', proneShoot: 'prone', peekOver: 'prone', peekOverAim: 'prone',
   run: 'sprint',
@@ -38,31 +38,31 @@ const GROUP = {
 
 export const HANDLING = {
   rifle: {
-    label: 'Rifle (5.56 mm)', gun: 'rifle', mass: 3.4, hands: 2,
+    slot: 'slung across the back', label: 'Rifle (5.56 mm)', gun: 'rifle', mass: 3.4, hands: 2,
     grip: 'Right hand on the pistol grip, left on the foregrip under the handguard',
     carry: 'low ready', aim: 'shoulder, bladed', fire: 'single, burst, auto',
     moves: {},
   },
   carbine: {
-    label: 'Carbine (9 mm, the secondary)', gun: 'carbine', mass: 2.7, hands: 2,
+    slot: 'across the back, the other diagonal', label: 'Carbine (9 mm, the secondary)', gun: 'carbine', mass: 2.7, hands: 2,
     grip: 'Right hand on the pistol grip, left on the magazine well',
     carry: 'low ready, compact', aim: 'shoulder, bladed', fire: 'single, burst, auto',
     moves: {},
   },
   shotgun: {
-    label: 'Pump shotgun (12 gauge)', gun: 'shotgun', mass: 3.6, hands: 2,
+    slot: 'slung across the back', label: 'Pump shotgun (12 gauge)', gun: 'shotgun', mass: 3.6, hands: 2,
     grip: 'Right hand on the grip, left on the pump (worked back and forward after every round)',
     carry: 'low ready, muzzle down', aim: 'shoulder, weight forward', fire: 'single, pump between rounds',
     moves: { sprint: 0.97 },
   },
   pistol: {
-    label: 'Pistol (9 mm)', gun: 'pistol', mass: 0.9, hands: 1,
+    slot: 'in a holster on the right hip', label: 'Pistol (9 mm)', gun: 'pistol', mass: 0.9, hands: 1,
     grip: 'One hand moving; aimed, both (the left cupping the right on the grip)',
     carry: 'compressed ready (close to the chest, muzzle down)', aim: 'arms out, square to the target (isosceles)', fire: 'single',
     moves: { sprint: 1.04 },
   },
   mg: {
-    label: 'Machine gun (7.62 mm, the gunner)', gun: 'mg', mass: 11, hands: 2,
+    slot: 'slung across the back', label: 'Machine gun (7.62 mm, the gunner)', gun: 'mg', mass: 11, hands: 2,
     grip: 'Right hand on the pistol grip, left over the top of the handguard (the weight)',
     carry: 'hip carry, muzzle low', aim: 'shoulder, leaning in', fire: 'burst, auto',
     // too heavy to roll with: he dives flat into cover instead; vaults slowly (side vault), no
@@ -70,7 +70,7 @@ export const HANDLING = {
     moves: { roll: false, diveProne: true, crawl: 0.7, vaultSpeed: false, vault: 1.25, climbJump: false, mantle: 1.3, dropRoll: false, drop: 2.0, slideCover: false, sprint: 0.85 },
   },
   torch: {
-    label: 'Flame gun (tanks on the back)', gun: 'torch', mass: 30, hands: 2,
+    slot: 'the wand clipped at the right side, the tanks on the back', label: 'Flame gun (tanks on the back)', gun: 'torch', mass: 30, hands: 2,
     grip: 'Rear hand on the trigger grip, front hand on the wand\'s grip; the hose to the tanks on his back',
     carry: 'hip carry, wand low', aim: 'from the hip', fire: 'a stream, standing only',
     // 30 kg of tanks on his back: no rolling over them, no diving or crawling flat on them (a
@@ -79,22 +79,37 @@ export const HANDLING = {
   },
   // the player's fire torch: a hand-held burner, one hand; lit, it is not rolled over or dived on
   handTorch: {
-    label: 'Fire torch (hand-held)', gun: null, mass: 1.5, hands: 1,
+    slot: 'in a belt loop', label: 'Fire torch (hand-held)', gun: null, mass: 1.5, hands: 1,
     grip: 'In the right hand, out in front', carry: 'held out', aim: 'held out', fire: 'a flame ~1 m',
     moves: { roll: false, diveProne: false, climbJump: 1.15, mantle: 1.1 },
   },
-  knife: { label: 'Knife', gun: null, mass: 0.3, hands: 1, grip: 'Right hand, blade forward', carry: 'low at the side', aim: 'fighting stance', fire: 'stab', moves: { sprint: 1.03 } },
+  knife: { slot: 'in a sheath on the right thigh', label: 'Knife', gun: null, mass: 0.3, hands: 1, grip: 'Right hand, blade forward', carry: 'low at the side', aim: 'fighting stance', fire: 'stab', moves: { sprint: 1.03 } },
   // no weapon at all (or out of ammunition, the knife gone): fists and feet, boxing and judo
   // (ai/melee.js); the lightest and the most agile: every move, a little quicker
   unarmed: {
-    label: 'Unarmed (hand-to-hand)', gun: null, mass: 0, hands: 0,
+    slot: '', label: 'Unarmed (hand-to-hand)', gun: null, mass: 0, hands: 0,
     grip: 'Fists up: a boxing guard, the left hand forward, the right by the chin',
     carry: 'guard, light on the feet', aim: 'guard', fire: 'punches, kicks, throws',
     moves: { sprint: 1.06, vault: 0.9, climbJump: 0.92, mantle: 0.9, crawl: 1.1 },
   },
-  none: { label: 'Empty-handed', gun: null, mass: 0, hands: 0, grip: 'Hands free', carry: '', aim: '', fire: '', moves: { sprint: 1.03 } },
+  none: { slot: '', label: 'Empty-handed', gun: null, mass: 0, hands: 0, grip: 'Hands free', carry: '', aim: '', fire: '', moves: { sprint: 1.03 } },
 };
 export const WEAPON_KINDS = Object.keys(HANDLING);
+/**
+ * What a man carries, in the order he switches through them (each on him where its slot says):
+ * his primary (none when unarmed), the carbine on his back, the knife on his thigh (m.noKnife: gone),
+ * and his bare hands. The AI picks among them by the situation (ai/soldier.js manage: the primary,
+ * dry the carbine, close in the knife, without it the fists); the rig's Gear tab lists them.
+ */
+export function carried(m = {}) {
+  const k = handKind({ ...m, weapon: 'rifle' });
+  const out = [];
+  if (k !== 'unarmed') out.push(k);
+  if (k !== 'unarmed' && m.secondary !== false) out.push('carbine');
+  if (!m.noKnife && k !== 'unarmed') out.push('knife');
+  out.push('unarmed');
+  return out;
+}
 /** The weapons a soldier can carry as his primary (the rig stage's select; the models' options): 'unarmed', none at all. */
 export const PRIMARIES = ['rifle', 'shotgun', 'pistol', 'mg', 'torch', 'unarmed'];
 

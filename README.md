@@ -1281,6 +1281,34 @@ the clinch are paired clips, the thrower's and the thrown man's, in step), lies 
 you. The rig's Animate tab has a *Hand-to-hand* group: each strike against a sparring partner
 who takes it, the throws and the clinch with the partner in the other half of the pair.
 
+### Gear: carrying, switching, dropping, picking up; experience
+
+- **Where each weapon rides** (`ai/weapons.js` `HANDLING[k].slot`): the rifle, shotgun and machine gun
+  slung across the back, the carbine across the back on the other diagonal, the pistol in a holster
+  on the right hip, the knife in its sheath on the right thigh, the flame gun's wand clipped at the
+  right side (its tanks on his back). **Switching** puts the one in his hands away to its place (the
+  right hand's own path: over the shoulder, down to the hip) and draws the next from its place;
+  `carried(m)` lists what a man has (his primary, the carbine, the knife, bare hands), and the rig's
+  Gear tab shows them as buttons; the AI picks among them by the situation (dry: the carbine; close
+  in: the knife; no knife: the fists). In the walk-through, 8 is bare hands.
+- **Drop weapon** (`OperatorFigure.dropWeapon`): whatever is in his hands (rifle, shotgun, pistol,
+  machine gun, carbine, knife, the flame gun's wand) falls as a rigid body; he is bare-handed after
+  (fists up). On death the same.
+- **Pack off** (`dropPack`): the chest and waist buckles, the right shoulder strap, then the left,
+  the pack swung round to the front and lowered to the ground in front of him; a flame trooper's
+  tanks (and the wand) come off with it, and with them what the tanks ruled out.
+- **Pick up** (`pickUp`): he goes to what he dropped, bends down and takes it (both hands for a long
+  gun or the pack, one for a pistol, the knife, the helmet), or takes it up in a forward roll over it
+  (`rollPickup`). The AI's disarmed men already go and pick their rifle up.
+- **Experience** (`ai/soldier.js` `SKILL`, `SKILL_INFO`): recruit, regular, veteran, elite, per man
+  and per squad / guard group (the models' *Experience*; the rig's Gear tab per soldier): aim
+  (scatter), recoil control (`ai/recoil.js`), reaction (and blocking a blow), reload, switch, drop
+  and pick-up speed, nerve under fire (how readily he flinches into a roll), hand-to-hand (how hard
+  and how well he picks his move).
+- **Contacts for the impact model**: `ai/melee.js` `IMPACTS` declares, as plain data, when and with
+  what each strike, throw landing, knock-down, dropped weapon and lowered pack touches what
+  (`{ t, part, material, target }`); `meleeDamage` is the one place the damage is computed.
+
 ### Team tactics: formations, files, splitting, rooms, floors
 
 `ai/tactics.js` measures the ground on the squad's grid (how wide it is, the rooms, junctions).

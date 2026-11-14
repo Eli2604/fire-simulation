@@ -48,7 +48,7 @@ export function driveFromAI(f, d, st) {
       // (a reload at his pace: the weapon's own reload clip, a shotgun's shells or a pistol's magazine, stretched to it)
       else if (name === 'reload' && d.animDur) f.play('reload', { restart: true, fade: 0.15, speed: (f.actions?.reload?.getClip().duration ?? RELOAD_TIME ?? 2.8) / d.animDur });
       // a parkour move or a roll (ai/evade.js): its clip at the pace the AI carries him along it (a wounded man's slow vault)
-      else if (PARKOUR[name] || ROLL[name]) f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
+      else if (PARKOUR[name] || ROLL[name] || name === 'pickup' || name === 'pickupOne') f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
       else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name]) f.play(name);
     if (MOVING[f.state] && !ONCE[f.shown]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, (d.speed ?? 1) / MOVING[f.state])) : 0.001);

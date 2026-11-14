@@ -21,7 +21,7 @@ export default {
     riflemen: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Riflemen carry (mixed: rifleman one a shotgun, the commander a pistol; unarmed: hand-to-hand)' },
     droneOperator: { value: false, label: 'A drone operator (deploys a drone from his backpack)' },
     level: { value: 0, min: 0, max: 20, step: 0.1, label: 'Floor height (m)' },
-    skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Expertise (mixed: a veteran commander, regulars, a recruit)' },
+    skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Experience: aim, recoil control, reaction, reload / switch / pick-up speed, nerve under fire, hand-to-hand (mixed: a veteran commander, regulars, a recruit)' },
     armour: { value: true, label: 'Body armour (plates) and helmets' },
     // their weapons' recoil (ai/recoil.js: physical from the cartridge and the weapon, times this) and fire mode
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
