@@ -228,6 +228,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
     world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}) });
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
+  for (const fl of built.flights ?? []) world.flights.push({ ...fl, p: toWorld(...fl.p), target: toWorld(...fl.target), home: toWorld(...fl.home), owner: ownerIndex });
   for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const lp of built.lookouts ?? []) world.lookouts.push(toWorld(...lp));

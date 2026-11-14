@@ -15,6 +15,7 @@ import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
 import { Editor } from './editor/editor.js';
+import { FORMATIONS } from './ai/flight.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -562,6 +563,22 @@ fSquad.add(squadState, 'ai').name('Squad AI').onChange((v) => { for (const s of 
 fSquad.add(squadState, 'paths').name('Show routes, trails, tags').onChange((v) => { if (view.enemies.viz) view.enemies.viz.show = v; });
 fSquad.add(squadState, 'radio').name('Radio voices').onChange((v) => import('./audio/radio.js').then((r) => r.setRadioSound(v)));
 fSquad.add({ rig: () => editor.setMode('rig') }, 'rig').name('🦴 Rig the soldier (animations, gear, hit zones)');
+// flights of jets (ai/flight.js): the leader's AI, what they show, and the leader's orders for the flight picked
+const flightState = { ai: true, paths: false, radio: true, which: 1, formation: 'fingerFour' };
+const fFlight = gui.addFolder('Jet flights (formations)').close();
+const flights = () => (sim?.world?.flights ?? []).map((f) => f.ai).filter(Boolean);
+const theFlight = () => flights()[Math.min(flights().length, flightState.which) - 1] ?? null;
+const flightOrder = (kind, opts) => () => theFlight()?.order(kind, opts);
+fFlight.add(flightState, 'ai').name('Leader AI (orders by himself)').onChange((v) => { for (const a of flights()) a.on = v; });
+fFlight.add(flightState, 'paths').name('Show paths and target').onChange((v) => (view.flights.showPaths = v));
+fFlight.add(flightState, 'radio').name('Radio voices').onChange((v) => (view.flights.radio = v));
+fFlight.add(flightState, 'which', 1, 4, 1).name('Flight #');
+fFlight.add(flightState, 'formation', Object.fromEntries(Object.entries(FORMATIONS).map(([k, l]) => [l, k]))).name('Formation').onChange((v) => theFlight()?.order('formation', { formation: v }));
+for (const [k, label] of [['formUp', 'Form up'], ['flank', 'Split & flank the target'], ['engage', 'Engage the target'], ['break', 'Break (defensive)'], ['rejoin', 'Rejoin'], ['orbit', 'Orbit / hold here'], ['rtb', 'RTB (to the carrier)']])
+  fFlight.add({ [k]: flightOrder(k) }, k).name('📻 ' + label);
+fFlight.add({ hitLead: () => { const a = theFlight(); if (a) a.hit(a.lead, 'engines', 60); } }, 'hitLead').name('💥 Hit the leader (engine fire)');
+fFlight.add({ hitWing: () => { const a = theFlight(); const m = a?.ranked()[1]; if (m) a.hit(m.i, 'wingL', 400); } }, 'hitWing').name('💥 Shoot a wing off his wingman');
+fFlight.add({ rig: () => editor.setMode('rig', { kind: 'jetFlight' }) }, 'rig').name('🦴 Rig the jet flight (formations, orders, hit parts)');
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')
@@ -665,7 +682,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { radio: '(radio)', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', dragonWingHurt: 'is hit in the wing: it comes down', dragonFalls: 'cannot use its wing: it falls from the sky', dragonCrash: 'crashes to the ground', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
+const EVENT_TEXT = { radio: '(radio)', flightRadio: '(radio)', jetCrash: 'crashed and exploded', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', dragonWingHurt: 'is hit in the wing: it comes down', dragonFalls: 'cannot use its wing: it falls from the sky', dragonCrash: 'crashes to the ground', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)

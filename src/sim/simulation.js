@@ -12,6 +12,7 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
+import { stepWorldFlights } from '../ai/flight.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
@@ -236,6 +237,7 @@ export class Simulation {
     }
     if (w.dragons.length) this.dragonAI.step(dt);
     if (w.phoenixes.length) this.phoenixAI.step(dt);
+    if (w.flights?.length) stepWorldFlights(this, dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     void D;
   }

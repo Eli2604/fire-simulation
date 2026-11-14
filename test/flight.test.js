@@ -141,7 +141,7 @@ test('jet: flying into the sea is a crash; the seat fires, you come down in the 
   assert.equal(c.walk.ended.zone, 'deck');
 });
 
-test('jet: shot to pieces in the air, it explodes; the seat fires you out and the parachute brings you down slowly', () => {
+test('jet: shot to pieces in the air, out of control it falls; the seat fires you out and the parachute brings you down slowly', () => {
   const c = carrierWorld();
   const f = c.board();
   f.onGround = false;
@@ -149,7 +149,7 @@ test('jet: shot to pieces in the air, it explodes; the seat fires you out and th
   f.speed = 90;
   f.dmg.wingL = f.dmg.wingR = 1;
   fly(c, f, 0.4);
-  assert.ok(f.jetGone, 'the jet broke up');
+  assert.ok(f.outOfControl, 'out of control: it falls');
   assert.ok(f.pilot && !f.done, 'you are out, still in the air');
   fly(c, f, 4);
   assert.ok(f.pilot.chute, 'parachute open');

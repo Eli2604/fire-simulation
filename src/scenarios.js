@@ -355,6 +355,8 @@ export const SCENARIOS = {
           ...[160, 171, 182, 193].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 7.4, y: 11, rotation: -90 })),
           // and aft of the island (the "corral")
           ...[62, 73, 84, 95].map((x) => ({ type: 'jet', params: { rockets: 0, fuelLiters: 800 }, x, z: 42.5, y: 11, rotation: 90 })),
+          // a flight of four overhead (ai/flight.js): in formation round the ship, its leader calling the moves
+          { type: 'jetFlight', params: { count: 4, altitude: 160, orbitRadius: 600 }, x: 106, z: 26 },
           // a tow tractor, oxygen and propane bottles by the island
           { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 104.5, z: 39.5, y: 'auto', rotation: 90 },
           { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 107.6, z: 48.2, y: 'auto' },
