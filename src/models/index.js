@@ -36,6 +36,8 @@ import deck from './deck.js';
 import waterVortex from './waterVortex.js';
 import windHose from './windHose.js';
 import windJet from './windJet.js';
+import hedge from './hedge.js';
+import livingRoom from './livingRoom.js';
 
 /**
  * Model registry. Every model is:
@@ -46,7 +48,7 @@ import windJet from './windJet.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, hedge, livingRoom };
 
 export function resolveParams(model, given = {}) {
   const out = {};

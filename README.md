@@ -56,18 +56,19 @@ builds the whole editor as one file.
 
 ## Using it
 
-- **Scenario**: metal bars on burners, a wind-driven grass fire, a car fire
-  next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
+- **Scenario**: metal bars on burners, a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
-  with the washing line and the barbecue, a meadow with a wind-driven grass fire), all places of
+  with the washing line and the barbecue, a meadow with a wind-driven grass fire) and the street
+  beside it (a car fire next to a house, a garden on a dry day), all places of
   the carrier's world, and a house fire in the rain.
   (Old links to scenes that are now places of that world, `?scenario=laundry`, `teaGarden`,
-  `winterTea` (the lake frozen), `grassFire` and `catacombs`, open it at the place.)
+  `winterTea` (the lake frozen), `grassFire`, `catacombs`, `carHouse` and `neighbourhood`,
+  open it at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -501,11 +502,16 @@ fire scenes):
 | Lake house: tea on the veranda (the lake island) | 240, 1.8, 150 | 22 × 19 × 7 m | 10 cm | 1× |
 | Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 263, 3, 159 | 7 × 5 × 3 m | 5 cm | 15× |
 | Meadow: grass fire (on the shore south of the lake island) | 258, 2.85, 170.5 | 24 × 14 × 9 m | 20 cm | 3× |
+| Car fire by a house (the street, east of the meadow; the old Car fire next to a house) | 284, 2.9, 172 | 14 × 11 × 8 m | 15 cm | 10× |
+| Garden on a dry day (the street, east of the garden; the old scene of that name) | 272, 2.85, 150 | 22 × 18 × 9 m | 20 cm | 10× |
 
 The lake house and its garden share one weather (the garden's `weatherOf: 'lake'`): a mild
 early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the lake open), so the wash can dry and
 catch and the tea still steams; Weather › Presets › Cold snap (or `?scenario=winterTea`) freezes
 the lake over. The meadow keeps the old grass fire's hot, dry, windy spell (28 °C, 25 %, 4 m/s).
+The two street places keep their old scenes' weather too: the car fire 15 °C with 1.5 m/s of
+wind blowing from the car onto the house, the dry garden 25 °C, 30 % humidity, 2 m/s; both are
+neighbours of the lake house (group `lake`).
 Places inside or under another have no `origin` (the jet, the boats and the stand-ins do not go
 by them) but a schematic `box` for the overview: below deck and the lower decks in the hull, the
 catacombs under the church. Zoomed out, each place is
@@ -825,8 +831,10 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 |---|---|
 | Tree | species: **oak** (heavy forking limbs, leaf clusters), **weeping willow** (arching limbs, hanging whips), **pine** (whorls, needle clusters, dead lower branches); height, trunk and crown radius, foliage density, foliage and wood moisture, main branches, seed |
 | Grass patch | size, height, density, moisture (dry vs green), rectangle/ellipse, bare circle in the middle |
-| Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, fire starts in engine or interior |
-| House | size, wall height and thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, windows, furnished, door open, chimney |
+| Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, tank vent working or blocked, fire starts in engine or interior. Steel body, glass, foam seats, plastic dashboard and engine parts, rubber tyres, the fuel tank a pressure vessel of petrol |
+| House | size, storeys (1–3, wooden floors with a stairwell), storey height and wall thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, fascia and soffits (wood/uPVC/open), gutter (uPVC/metal/none), windows per side, window width, window frames (wood/uPVC/aluminium), furnished (living room downstairs, bedrooms upstairs), curtains, front door open, back door, chimney |
+| Hedge | kind (conifer: thuja or leylandii, privet, beech, dead), length, height, thickness, drought, seed. Living stems inside a clipped skin of foliage; a dried-out conifer hedge burns like a torch |
+| Living room furniture | room width and depth, sofa and carpet colour, bookshelf, bed. A foam sofa, a coffee table, a bookshelf full of books and a carpet, without walls: the house's living room, to put anywhere. Lit, the sofa burns |
 | Candle | height, radius, paraffin or beeswax, colour, wick length, holder. In a coarse scene (voxels larger than the candle) it is drawn, and burns as a small flame that gives light |
 | Underground church (crypt chapel) | nave length and width, passage to the catacombs, rows of benches. A barrel-vaulted nave cut in the limestone, pillars, benches, a dais and an altar under a cross in a round apse, torches |
 | Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power and position, supports |
@@ -884,7 +892,13 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
    convection, plus wind, plus flame contact at about 1100 °C. Radiation goes both ways:
    hot surfaces emit εσ(T⁴−T∞⁴), and flames and embers feed a blurred, inverse-square
    calibrated radiation field. Absorption can never exceed emission, and irradiance is
-   capped at flame black-body level.
+   capped at flame black-body level. The blurred field reaches about a metre; further out
+   (`src/sim/farRadiation.js`) a big fire's radiant power is gathered into ~1 m blocks and
+   every surface that can see a block takes P cosθ / (4π d²) from it: the line to it is
+   marched through the air grid (walls and unbroken window panes shade it) and only faces
+   turned towards the fire take it in. This is how a burning car sets the house next to it
+   alight: its windows crack and fall out, the curtains behind them catch, the fascia, gutter,
+   wooden frames and doors char and burn.
 2. **Two-node voxels.** Bulk materials have a few-millimetre **skin** that exchanges heat
    with the gas and radiation, coupled to the **core** that conducts to neighbours. Both
    are solved together implicitly, which is unconditionally stable. This is what makes
@@ -1063,8 +1077,8 @@ everywhere in a zone: a coarser grid far from you is not done.
 This is a real-time, approximate model, not a CFD fire code like FDS. The air flow is not
 pressure-projected, so the exchange through a doorway or a broken window is too weak: a room
 fire becomes short of oxygen sooner than a real one, and a house fire with the door open
-levels off at a few hundred kW where a real one would reach a few MW. Radiation is a blurred field without real shadowing, corrected by a
-view factor. A voxel stands for its material, so geometry finer than the voxel size is
+levels off at a few hundred kW where a real one would reach a few MW. Radiation close in is a blurred field without real shadowing, corrected by a
+view factor; further out it comes from a few point sources, shaded along one line each. A voxel stands for its material, so geometry finer than the voxel size is
 represented through effective density and surface factors. Results are qualitatively
 right and of the right order of magnitude, but should not be used for engineering.
 

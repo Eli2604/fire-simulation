@@ -36,6 +36,8 @@ export const SCENARIO_ALIASES = {
   winterTea: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_WINTER' },
   grassFire: { scenario: 'carrier', zone: 'meadow' },
   catacombs: { scenario: 'carrier', zone: 'catacombs' },
+  carHouse: { scenario: 'carrier', zone: 'carHouse' },
+  neighbourhood: { scenario: 'carrier', zone: 'dryGarden' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -158,6 +160,64 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
   ];
 }
 
+/**
+ * The street by the lake house (places of the carrier's world, in the lake house's group):
+ *  carHouse   a car parked by a wooden house: an engine fire spreads to the cabin, the tyres and
+ *             the fuel tank; the burning car radiates onto the house (sim/farRadiation.js): its
+ *             windows crack and fall out, the curtains and the room behind catch, the fascia,
+ *             the gutter and the shingles go up (the old Car fire next to a house)
+ *  dryGarden  a brick house with a furnished living room, a car in the drive, trees, a conifer
+ *             hedge, a woodpile and a fence on a hot dry day; the fire starts on the sofa (the
+ *             old Garden on a dry day)
+ * Each keeps the old scene's weather and time scale. (Their lawns level with the garden's and
+ * the meadow's, a quarter of a metre above the lake.)
+ */
+function streetPlaces() {
+  const water = { color: '#2c5d78' };
+  return {
+    carHouse: {
+      name: 'Street: car fire next to a house',
+      label: 'Car fire by a house',
+      group: 'lake',
+      origin: [284, 2.9, 172],
+      world: { size: [14, 8, 11], h: 0.15 },
+      view: { camera: [8, 7, 11], around: { y: -0.1, ...water } },
+      proxy: { sea: 0, color: '#7a8a5a', height: 3.5, fill: 0.5, cell: 0.2 },
+      timeScale: 10,
+      weather: w({ windSpeed: 1.5, windDir: 90 }),
+      objects: [
+        { type: 'house', params: { width: 7, depth: 5, wallMaterial: 'wood', roofMaterial: 'wood shingles' }, x: 7, z: 7.5 },
+        { type: 'car', params: { bodyColor: '#a8322f' }, x: 6.5, z: 2.6, ignite: true },
+        { type: 'tree', params: { height: 5, crownRadius: 1.5 }, x: 12, z: 3 },
+      ],
+    },
+    dryGarden: {
+      name: 'Street: garden on a dry day',
+      label: 'Garden on a dry day',
+      group: 'lake',
+      origin: [272, 2.85, 150],
+      world: { size: [22, 9, 18], h: 0.2 },
+      view: { camera: [-6, 12, 20], around: { y: -0.05, ...water } },
+      proxy: { sea: 0, color: '#8a9a4a', height: 3, fill: 0.6, cell: 0.2 },
+      timeScale: 10,
+      weather: w({ windSpeed: 2, windDir: 30, humidity: 0.3, ambient: 25 }),
+      objects: [
+        { type: 'grass', params: { width: 21, depth: 17, height: 0.2, density: 0.7, moisture: 0.12 }, x: 11, z: 9 },
+        { type: 'house', params: { width: 8, depth: 6, windowsPerSide: 3 }, x: 9, z: 8, ignite: true },
+        { type: 'car', params: { bodyColor: '#e0e0e0' }, x: 9, z: 2.3, rotation: 0 },
+        { type: 'woodPile', params: { arrangement: 'stack', logs: 15, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 15, z: 11.5, rotation: 90 },
+        { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.4 }, x: 17, z: 5 },
+        { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 4 }, x: 3.5, z: 4.5 },
+        { type: 'tree', params: { species: 'pine', height: 7, crownRadius: 1.4 }, x: 3, z: 14 },
+        { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.2, seed: 5 }, x: 18.5, z: 14 },
+        { type: 'fence', params: { length: 14 }, x: 11, z: 16.5 },
+        // a conifer hedge along the east side of the garden, dried out in the dry spell
+        { type: 'hedge', params: { kind: 'conifer', length: 10, height: 1.8, thickness: 0.8, dryness: 0.6 }, x: 21, z: 9, rotation: 90 },
+      ],
+    },
+  };
+}
+
 export const SCENARIOS = {
   metalBars: {
     name: 'Metal bars on burners',
@@ -185,38 +245,6 @@ export const SCENARIOS = {
       { type: 'tree', params: { species: 'oak', height: 8, crownRadius: 3 }, x: 8, z: 6 },
       { type: 'tree', params: { species: 'willow', height: 7, crownRadius: 2.6, seed: 2 }, x: 13.5, z: 6 },
       { type: 'tree', params: { species: 'pine', height: 9, crownRadius: 2.2, seed: 3 }, x: 18.5, z: 6 },
-    ],
-  },
-  carHouse: {
-    name: 'Car fire next to a house',
-    description: 'An engine fire spreads to the cabin, the tyres and the fuel tank, then radiates onto the wooden house next to it.',
-    world: { size: [14, 8, 11], h: 0.15 },
-    weather: w({ windSpeed: 1.5, windDir: 90 }),
-    timeScale: 10,
-    view: { camera: [8, 7, 11] },
-    objects: [
-      { type: 'house', params: { width: 7, depth: 5, wallMaterial: 'wood', roofMaterial: 'wood shingles' }, x: 7, z: 7.5 },
-      { type: 'car', params: { bodyColor: '#a8322f' }, x: 6.5, z: 2.6, ignite: true },
-      { type: 'tree', params: { height: 5, crownRadius: 1.5 }, x: 12, z: 3 },
-    ],
-  },
-  neighbourhood: {
-    name: 'Garden on a dry day',
-    description: 'A brick house with a furnished living room, a car, trees, a hedge of grass, a woodpile and a fence. The fire starts on the sofa.',
-    world: { size: [22, 9, 18], h: 0.2 },
-    weather: w({ windSpeed: 2, windDir: 30, humidity: 0.3, ambient: 25 }),
-    timeScale: 10,
-    view: { camera: [-6, 12, 20] },
-    objects: [
-      { type: 'grass', params: { width: 21, depth: 17, height: 0.2, density: 0.7, moisture: 0.12 }, x: 11, z: 9 },
-      { type: 'house', params: { width: 8, depth: 6, windowsPerSide: 3 }, x: 9, z: 8, ignite: true },
-      { type: 'car', params: { bodyColor: '#e0e0e0' }, x: 9, z: 2.3, rotation: 0 },
-      { type: 'woodPile', params: { arrangement: 'stack', logs: 15, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 15, z: 11.5, rotation: 90 },
-      { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.4 }, x: 17, z: 5 },
-      { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 4 }, x: 3.5, z: 4.5 },
-      { type: 'tree', params: { species: 'pine', height: 7, crownRadius: 1.4 }, x: 3, z: 14 },
-      { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.2, seed: 5 }, x: 18.5, z: 14 },
-      { type: 'fence', params: { length: 14 }, x: 11, z: 16.5 },
     ],
   },
   foggyForest: {
@@ -285,7 +313,7 @@ export const SCENARIOS = {
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -452,6 +480,11 @@ export const SCENARIOS = {
           { type: 'fence', params: { length: 8 }, x: 20, z: 7, rotation: 90 },
         ],
       },
+      // the street on the shore east of the lake house: a car parked in a drive burning next to
+      // a wooden house (the old Car fire next to a house, ?scenario=carHouse), and a garden on a
+      // dry day where the fire starts on the sofa of a brick house (the old Garden on a dry day,
+      // ?scenario=neighbourhood). Each keeps its own weather and time scale.
+      ...streetPlaces(),
       island: {
         name: 'Island',
         origin: [105, 0, -30],

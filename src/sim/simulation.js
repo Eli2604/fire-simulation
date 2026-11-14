@@ -22,6 +22,7 @@ import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
+import { farRadiation } from './farRadiation.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
 const LV = 2.26e6; // latent heat of vaporisation of water, J/kg
@@ -176,6 +177,7 @@ export class Simulation {
     stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
+    farRadiation(w); // further out: what a burning car radiates onto the house next to it
     w.airG.fill(0);
     w.airGT.fill(0);
     w.airQ.fill(0);
@@ -593,6 +595,7 @@ export class Simulation {
     const { nx, ny, nz, h, mat, temp, dE, expo, faceAir, anx, any, flags, dens } = w;
     const { airT, airG, airGT, radSrc, radField, flame, vx, vy, vz, waterIn, coat, supp, sfac } = w;
     const contactScale = this.contactScale;
+    const radFar = w.farRad?.nv ? w.radFar : null; // a fire's radiation further out (sim/farRadiation.js)
     let contactDemand = 0;
     const A = h * h;
     const K = TBL.k;
@@ -725,7 +728,7 @@ export class Simulation {
           radSrc[own] += P;
           radEmit += P;
         }
-        const absorb = eps * 0.5 * area * radField[own];
+        const absorb = eps * 0.5 * area * (radFar === null ? radField[own] : radField[own] + radFar[i]);
         radDemand += absorb;
         dEx += absorb * radScale * shield * dt;
       }

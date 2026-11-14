@@ -70,6 +70,13 @@ export default {
       { shape: 'box', min: [cx1 + 0.8, 0.45, -0.5], max: [L / 2 - t, 0.6, 0.5], material: 'plastic', density: 0.3 }, // intake, covers, hoses
       { shape: 'box', min: [cx1 + 0.15, 0.6, 0.45], max: [cx1 + 0.45, 0.85, W / 2 - t], material: 'plastic', color: [0.1, 0.1, 0.1], density: 0.5 }, // battery
     );
+    // the ways an engine fire gets into the cabin: the plastic scuttle (cowl) panel between the
+    // bonnet and the windscreen (it burns away and the flames lick up the glass), and the
+    // heater box, ducts, wiring looms and grommets through the bulkhead behind the dashboard
+    prims.push(
+      { shape: 'box', min: [cx1, belt - t, -W / 2 + 0.1], max: [cx1 + 0.3, belt, W / 2 - 0.1], material: 'plastic', color: [0.08, 0.08, 0.09], density: thin(0.004) },
+      { shape: 'box', min: [cx1 - 0.02, 0.6, -0.3], max: [cx1 + t + 0.02, 0.85, 0.3], material: 'plastic', density: 0.3 },
+    );
     // fuel tank under the rear seat
     if (p.fuelLiters > 0) {
       const vol = p.fuelLiters / 1000;
