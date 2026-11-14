@@ -1028,7 +1028,7 @@ Calibration targets used during development (`npm run headless`):
 | Candle flame | ~60–100 W | ~25 W while the wax is solid, ~70–100 W with a melt pool |
 | Campfire, 8 logs | 20–60 kW, logs catch from kindling in a few minutes | ~15–60 kW |
 | Grass fire, 2 m/s wind | ~0.1–0.3 m/s spread | ~0.08 m/s from a point ignition, accelerating |
-| Car fire | slow growth over ~10 min, spreads to nearby buildings | ~0.1 → 0.6 MW in 11 min, then the house next to it |
+| Car fire | engine fire into the cabin in 3–10 min, 2–4 MW at its height, spreads to nearby buildings | ~0.2 MW in the engine bay, in the cabin after ~4 min, 2 MW at 6 min (a fuel-tank pool fire briefly more); the wooden house 2 m off catches ~7.5 min in (gutter, fascia, wall, shingles) at 10–25 kW/m² on its wall |
 | Metal bars | copper spreads heat furthest, steel keeps a steep gradient | yes |
 | Campfire in 50 mm/h rain | dies down, core keeps glowing | −55 % in 4 min, still dropping |
 | 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst within minutes | vents at 17.5 bar after ~1.5 min; bursts at ~90 bar after ~2 min |
