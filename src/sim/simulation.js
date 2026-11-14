@@ -17,6 +17,7 @@ import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
+import { stepBreach } from './breach.js';
 import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
@@ -200,6 +201,7 @@ export class Simulation {
     stepWater(this, dt);
     stepFlood(this, dt);
     stepLeaks(this, dt);
+    stepBreach(this, dt); // a hull breach: the sea pushes loose things in, the escaping air pulls them out
     // automatic inert-gas systems (server rooms): a heat detector under the ceiling
     // releases the gas once; it only works if the room is closed
     for (const s of w.inertSystems) {

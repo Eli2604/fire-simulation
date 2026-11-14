@@ -282,6 +282,16 @@ export class SoundScape {
         // the roar of air rushing out, then (in the vacuum) silence
         this.burst(this.ctx.currentTime, 3, 'lowpass', 500, 0.5, 1.2);
         this.burst(this.ctx.currentTime, 1.5, 'bandpass', 2500, 0.7, 0.5);
+      } else if (e.type === 'doorClose' && e.slam) {
+        // a pressure door slamming shut on its own
+        this.thump(t, 1.0);
+        this.burst(t, 0.3, 'lowpass', 300, 0.7, 0.8);
+      } else if (e.type === 'plugged' || e.type === 'doorHeld') {
+        // something stuck in the hole (the whistle of the air past it); a door's valve hissing
+        this.thump(t, e.type === 'plugged' ? 0.8 : 0.2);
+        this.burst(t, e.type === 'plugged' ? 2 : 3, 'bandpass', 3200, 6, 0.25);
+      } else if (e.type === 'blownOut') {
+        this.thump(t, 0.9);
       } else if (e.type === 'roar') {
         this.roar(e.pos);
       } else if (e.type === 'gulp' || e.type === 'dragonSnap') {

@@ -137,6 +137,7 @@ export function surface(solid, x, z, y0, up = 2.6, down = 3.6) {
 }
 /** Free air from y + from to y + to (m) at (x, z)? */
 export function clear(solid, x, z, y, from = 0.1, to = 1.7) {
+  if (!Number.isFinite(y)) return false; // (no surface there: a drop with no floor, say an open hatch into space)
   for (let a = y + from; a <= y + to; a += 0.2) if (solid(x, a, z)) return false;
   return true;
 }

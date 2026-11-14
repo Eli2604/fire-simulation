@@ -38,7 +38,7 @@ test('spaceship: air inside, vacuum outside, the hull holds', () => {
 });
 
 test('spaceship: a hull breach decompresses everything connected to it; a closed door holds', () => {
-  const sim = ship();
+  const sim = ship({ autoSeal: false }); // (the doors open stay open)
   const w = sim.world;
   toggleDoor(sim, w.doors.findIndex((d) => d.name === 'crew quarters'), true);
   toggleDoor(sim, w.doors.findIndex((d) => d.name === 'cargo bay'), true);
@@ -54,7 +54,7 @@ test('spaceship: a hull breach decompresses everything connected to it; a closed
 });
 
 test('spaceship: decompression puts a fire out', () => {
-  const sim = ship({ fireAfter: 1 });
+  const sim = ship({ fireAfter: 1, autoSeal: false });
   const w = sim.world;
   for (const d of ['engine room']) toggleDoor(sim, w.doors.findIndex((q) => q.name === d), true);
   run(sim, 15);
