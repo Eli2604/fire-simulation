@@ -2,6 +2,7 @@ import { buildScene } from '../models/voxelizer.js';
 import { Simulation } from './simulation.js';
 import { F_HIDDEN, F_BURNING, F_LIQUID, F_FALLING, O2_AIR } from './world.js';
 import { MAT, MATERIALS } from './materials.js';
+import { pickLevel, applyBudget } from '../render/lod.js';
 
 /**
  * Detail patches: fine voxels where they matter, coarse ones everywhere else.
@@ -71,6 +72,7 @@ export class DetailPatches {
     this.list = sim.world.heaters.filter((ht) => ht.detail).map(make);
     this.seen = sim.world.events.length;
     this.enabled = true;
+    this.reach = 1; // factor on every patch's near and far (the detail bias, render/lod.js)
   }
 
   get count() {
@@ -90,26 +92,33 @@ export class DetailPatches {
       const R = Math.max(3, (e.radius ?? 1) * 3);
       for (const p of this.list) if (p.blowsOut && dist(p.ht.pos, e.pos) < R) p.blowOut();
     }
+    // the general level-of-detail rules (render/lod.js), measured in distance here (the patches'
+    // own near and far, with the quality bias: `reach`): level 0 = a patch, 1 = the coarse
+    // stand-in; the nearest `maxActive` win. (The size is minus the distance: bigger is nearer.)
     const want = new Set();
+    const k = this.reach > 0 ? this.reach : 1;
     if (this.enabled && cam) {
       const near = this.list
         .filter((p) => p.wanted())
-        .map((p) => ({ p, d: dist(p.ht.pos, cam) }))
-        .filter(({ p, d }) => d < (p.awake ? p.far : p.near))
-        .sort((a, b) => a.d - b.d)
-        .slice(0, PATCH.maxActive);
-      for (const { p } of near) want.add(p);
+        .map((p) => {
+          const d = dist(p.ht.pos, cam);
+          return { p, d, size: -d, level: pickLevel(-d, [[-p.near * k, -p.far * k]], p.awake ? 0 : 1) };
+        });
+      for (const { p } of applyBudget(near, PATCH.maxActive)) want.add(p);
     }
     for (const p of this.list) if (p.awake && !want.has(p)) p.sleep();
-    const awake = [...want];
-    // the nearest one or two, within arm's reach: finer voxels
-    let fine = 0;
+    const awake = [...want].sort((a, b) => dist(a.ht.pos, cam) - dist(b.ht.pos, cam));
+    // the nearest one or two, within arm's reach: finer voxels (a level finer again)
+    const fine = awake
+      .filter((p) => p.refines && p.baseH * PATCH.fineScale >= PATCH.hMin - 1e-9)
+      .map((p) => {
+        const d = dist(p.ht.pos, cam);
+        return { p, size: -d, level: pickLevel(-d, [[-PATCH.fineNear * k, -PATCH.fineFar * k]], p.tier ? 0 : 1) };
+      });
+    const finest = new Set(applyBudget(fine, PATCH.maxFine).map((e) => e.p));
     for (const p of awake) {
       if (!p.refines) continue;
-      const d = dist(p.ht.pos, cam);
-      const can = p.baseH * PATCH.fineScale >= PATCH.hMin - 1e-9;
-      const tier = can && fine < PATCH.maxFine && d < (p.tier ? PATCH.fineFar : PATCH.fineNear) ? 1 : 0;
-      if (tier) fine++;
+      const tier = finest.has(p) ? 1 : 0;
       if (tier !== p.tier) p.setTier(tier);
     }
     if (!awake.length) return;

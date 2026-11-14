@@ -4,6 +4,10 @@ import { buildCryptVault } from './cryptVault.js';
 import { StatueDrawing } from './statue.js';
 import { loadPolyHavenModel } from './assets.js';
 import { ChurchDrawing } from './church.js';
+import { lod } from './lod.js';
+
+/** Props' level of detail: the sizes on the screen (px) where they drop their shadow, and drop out. */
+export const PROP_LOD = [24, 1];
 
 /**
  * Detail that is drawn but not simulated (`props` of a model): the mast, radars
@@ -48,6 +52,7 @@ export class PropsRenderer {
     this.group.clear();
     this.spin = [];
     this.drawings = []; // props with a life of their own (the church: glass, timber that burns)
+    this.lodItems = [];
     this.world = world;
     for (const pr of world.props ?? []) {
       const o = this.build(pr);
@@ -62,6 +67,42 @@ export class PropsRenderer {
         }
       });
       this.group.add(o);
+      this.lodItems.push({ o, state: {}, r: 0, c: new THREE.Vector3(), seen: -1 });
+    }
+  }
+
+  /**
+   * Level of detail (render/lod.js) for every prop, by its size on the screen: 0 as built;
+   * 1 (under ~24 px) no shadow (a scanned statue's or candelabrum's shadow is the whole scan
+   * drawn again); 2 (under ~1 px) not drawn. Its bounds are taken again now and then (a scan
+   * arrives after it is placed).
+   */
+  updateLod() {
+    for (const it of this.lodItems ?? []) {
+      if (it.seen < 0 || (lod.frame - it.seen) % 120 === 0) {
+        if (it.seen < 0) it.seen = lod.frame;
+        const box = new THREE.Box3().setFromObject(it.o);
+        if (box.isEmpty()) continue;
+        box.getCenter(it.c);
+        it.r = box.getSize(new THREE.Vector3()).length() / 2;
+        if (this.group.parent) this.group.parent.worldToLocal(it.c); // (the world's own coordinates)
+      }
+      if (!it.r) continue;
+      const lv = lod.level(it.state, it.c.x, it.c.y, it.c.z, it.r, PROP_LOD);
+      it.o.visible = lv < 2;
+      const shadow = lv === 0;
+      if (shadow === it.shadow && (lod.frame - it.seen) % 120 !== 1) continue;
+      it.shadow = shadow;
+      it.o.traverse((c) => {
+        if (!c.isMesh) return;
+        if (!shadow && c.userData.lodShadow === undefined) {
+          c.userData.lodShadow = c.castShadow;
+          c.castShadow = false;
+        } else if (shadow && c.userData.lodShadow !== undefined) {
+          c.castShadow = c.userData.lodShadow;
+          delete c.userData.lodShadow;
+        }
+      });
     }
   }
 
@@ -237,5 +278,6 @@ export class PropsRenderer {
   update(dt) {
     for (const s of this.spin) s.o.rotation.y += s.rate * dt;
     for (const d of this.drawings ?? []) d.update(dt);
+    this.updateLod();
   }
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
 import { F_HIDDEN, F_FALLING } from '../sim/world.js';
+import { lod as detail } from './lod.js';
 
 // the wind in the grass (vertex shader, in place of three.js project_vertex)
 const WIND_GLSL = `#ifdef USE_INSTANCING
@@ -717,12 +718,13 @@ export class TreeRenderer {
   /**
    * Detail by distance (`cam`: the camera, world-local): close up every leaf card and twig;
    * further off fewer, bigger cards (the crown thinned evenly) and only the thicker branches,
-   * and no shadows from the leaves far away. (The grass thins out in its shader.)
+   * and no shadows from the leaves far away. (The grass thins out in its shader.) The distance
+   * is as it counts on the screen (render/lod.js: field of view, size of the view, detail bias).
    */
   lod(cam) {
     for (const it of this.items) {
       if (it.grass || !it.foot) continue;
-      const d = Math.hypot(cam[0] - it.foot[0], cam[1] - it.foot[1], cam[2] - it.foot[2]);
+      const d = detail.equivalentDistance(Math.hypot(cam[0] - it.foot[0], cam[1] - it.foot[1], cam[2] - it.foot[2]));
       const f = d < 20 ? 1 : Math.max(0.12, (20 / d) ** 1.5);
       it.leafMesh.count = Math.max(1, Math.round(it.n * f));
       it.TU.uLeafScale.value = Math.min(2.5, 1 / Math.sqrt(f));

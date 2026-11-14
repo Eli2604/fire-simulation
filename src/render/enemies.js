@@ -4,6 +4,77 @@ import { loadOperatorAssets, OperatorFigure, PhysicsWorld, MOVING, ONCE } from '
 import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 import { driveFromAI } from '../operator/drive.js';
+import { lod, updateEvery } from './lod.js';
+
+/**
+ * The soldiers' level of detail (render/lod.js), by their size on the screen (radius ~0.9 m):
+ *  0 (over ~120 px, within ~6 m; at most `lod.budgets.character` at once, the nearest): the full
+ *    meshes, every small part, the animation every frame;
+ *  1 (over ~40 px, to ~18 m): the 'low' meshes (a fifteenth of the triangles), no small gear
+ *    (helmet cords, antenna, mic, sheath, belt flash-bang...), the animation every 2nd frame;
+ *  2 (over ~12 px, to ~60 m): as 1, the animation every 4th frame;
+ *  3 (smaller): as 2, no shadow, the animation every 8th frame; out of view, too (only
+ *    its shadow can show).
+ * Out of view, the body is not drawn at all (its skinned meshes are culled with a sphere round
+ * the figure; before, every figure was drawn wherever it was).
+ */
+export const FIGURE_LOD = { radius: 0.9, levels: [120, 40, 12], rates: [1, 2, 4, 8], small: 0.08 };
+
+/** What the level of detail switches on a figure: its small parts and its shadow casters. */
+function prepareLod(f) {
+  f.autoDetail = false; // (the level of detail below decides, not the distance in onBeforeRender)
+  f.lodState = {};
+  f.lodDt = 0;
+  f.lodHidden = new Set();
+  const skip = new Set([f.drone, f.goggles, f.ctrl, f.thermal, f.nade, f.flashHand, f.rope, f.flash, ...(f.zones ?? [])].filter(Boolean));
+  const sphere = new THREE.Sphere();
+  f.lodSmall = [];
+  f.lodCasters = [];
+  const walk = (o) => {
+    if (skip.has(o)) return;
+    if (o.isSkinnedMesh) {
+      // culled when out of view: a sphere round the whole figure (whatever its pose)
+      o.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 2.2);
+      o.frustumCulled = true;
+    } else if (o.isMesh && o.geometry) {
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      sphere.copy(o.geometry.boundingSphere);
+      if (sphere.radius * o.scale.x < FIGURE_LOD.small) f.lodSmall.push(o);
+    }
+    if (o.isMesh && o.castShadow) f.lodCasters.push(o);
+    for (const c of o.children) walk(c);
+  };
+  walk(f.group);
+}
+
+/** Before the figure's update: its level; full detail back on when it comes near. */
+function lodBefore(f, e, k) {
+  const R = FIGURE_LOD.radius;
+  const lv = lod.level(f.lodState, e.p[0], e.p[1] + R, e.p[2], R, FIGURE_LOD.levels, 'character');
+  f.setDetail(lv === 0);
+  if (lv === 0 && f.lodHidden.size) {
+    for (const m of f.lodHidden) m.visible = true;
+    f.lodHidden.clear();
+  }
+  const shadow = lv < 3;
+  if (f.lodShadow !== shadow) {
+    f.lodShadow = shadow;
+    for (const m of f.lodCasters) m.castShadow = shadow;
+  }
+  // the animation: every frame near, less often further off or out of view (staggered)
+  const every = f.lodState.inView ? updateEvery(lv, FIGURE_LOD.rates) : FIGURE_LOD.rates.at(-1);
+  return every <= 1 || (lod.frame + k) % every === 0;
+}
+
+/** After it: the small parts hidden away from full detail. */
+function lodAfter(f) {
+  if (f.lodState.level === 0) return;
+  for (const m of f.lodSmall)
+    if (m.visible) {
+      m.visible = false;
+      f.lodHidden.add(m);
+    }
+}
 
 /**
  * The guards: soldiers in armour, with human proportions (1.8 m), built from
@@ -375,6 +446,7 @@ export class EnemyRenderer {
     while (this.ops.length < list.length) {
       const f = new OperatorFigure(this.op, { zones: false, loadout: list[this.ops.length]?.loadout });
       f.autoFlash = false;
+      prepareLod(f);
       this.scene.add(f.group);
       this.ops.push(f);
     }
@@ -453,7 +525,14 @@ export class EnemyRenderer {
     f.setGear({ thermal: !!e.thermal, light: !!e.light });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;
-    f.update(dt);
+    // the level of detail: the animation less often further off (the time it skipped made up)
+    f.lodDt += dt;
+    if (lodBefore(f, e, k)) {
+      f.update(f.lodDt);
+      f.lodDt = 0;
+      this.mixerUpdates = (this.mixerUpdates ?? 0) + 1;
+    }
+    lodAfter(f);
     if (e.state === 'lure' && !e.dead && this.flames) {
       const p = new THREE.Vector3();
       f.bones.handL.getWorldPosition(p);
