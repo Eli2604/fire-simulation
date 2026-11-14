@@ -36,6 +36,7 @@ import { VehicleRig } from './vehicles.js';
 import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS } from './objects.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
+import { recoilSpec } from '../ai/recoil.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -171,6 +172,10 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
     <label class="sl"><span>Reload ×</span><input type="range" data-id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output data-id="reloadO">×1.00</output></label>
     <label class="sl"><span>Look</span><input type="range" data-id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output data-id="lookO">0°</output></label>
+    <div class="lab">Weapon recoil (ai/recoil.js: from the cartridge and the weapon's mass)</div>
+    <label class="sl"><span>Recoil ×</span><input type="range" data-id="recoilS" min="0" max="3" step="0.05" value="1"><output data-id="recoilO">×1.00</output></label>
+    <label class="sl"><span>Fire mode</span><select data-id="fireMode" style="grid-column:2/4"><option value="single">Single</option><option value="burst" selected>Burst (3)</option><option value="auto">Auto</option></select></label>
+    <p class="hint" data-id="recoilInfo"></p>
     <p class="hint">Switching puts the weapon in his hands away (the rifle onto his back, the carbine over the shoulder, the knife into its sheath on the right thigh), then draws the other. Without armour he fights in his shirt. Look bends the head and upper body, the rifle with them, over any clip.</p>
     <p class="hint">The person, rifle (with magazine), helmet and backpack are separate, closed objects on their own bones (without the helmet you see his hair). Drop the rifle and he draws the compact carbine from his back. The flame trooper fires only standing. Detached, each becomes a rigid body with gravity, bounce and friction that collides with the ground.</p>
   </section>
@@ -341,12 +346,13 @@ export function mountRig(root, opts = {}) {
   let A = null;
   let dropOnDeath = true;
   const soldiers = [];
-  const GEAR = { armour: true, reload: 1, look: 0 };
+  const GEAR = { armour: true, reload: 1, look: 0, recoil: 1, fireMode: 'burst' };
   /** The settings on a (new) figure. */
   function applyGear(f) {
     f.setArmour(GEAR.armour);
     f.setClipSpeed('reload', GEAR.reload);
     f.setLook(GEAR.look);
+    f.setRecoil(recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode }));
   }
   /** The parkour props: a brick wall to vault, a concrete ledge to climb or drop off, low cover. */
   const PROP_MAT = {
@@ -825,6 +831,21 @@ export function mountRig(root, opts = {}) {
     $('lookO').textContent = Math.round((v * 180) / Math.PI) + '°';
     for (const e of gearTargets()) e.fig.setLook(v);
   };
+  // recoil: the override factor and the fire mode; the firing clips (Shoot, Crouch fire, Prone fire) rebaked
+  const recoilChanged = () => {
+    const R = recoilSpec('rifle', { recoil: GEAR.recoil, mode: GEAR.fireMode });
+    $('recoilO').textContent = '×' + GEAR.recoil.toFixed(2);
+    $('recoilInfo').textContent = `Rifle, 5.56 mm: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull at ${R.rpm} rounds/min (the climb piles up in a burst or on auto).`;
+    for (const e of soldiers) e.fig.setRecoil(R);
+  };
+  $('recoilS').oninput = () => {
+    GEAR.recoil = +$('recoilS').value;
+    recoilChanged();
+  };
+  $('fireMode').onchange = () => {
+    GEAR.fireMode = $('fireMode').value;
+    recoilChanged();
+  };
   function setRange(id, v) {
     $(id).value = v;
     $(id).oninput();
@@ -1016,6 +1037,12 @@ export function mountRig(root, opts = {}) {
     if (qs.get('armour') === '0') $('tgArmour').click();
     if (qs.get('reload')) setRange('reloadS', qs.get('reload'));
     if (qs.get('look')) setRange('lookS', qs.get('look'));
+    // ?recoil=<factor> ?fire=single|burst|auto
+    if (qs.get('recoil')) setRange('recoilS', qs.get('recoil'));
+    if (qs.get('fire')) {
+      $('fireMode').value = qs.get('fire');
+      $('fireMode').onchange();
+    }
     if (qs.get('weapon')) for (const e of soldiers) e.fig.switchWeapon(qs.get('weapon'));
     // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });

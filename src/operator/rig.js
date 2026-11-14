@@ -38,6 +38,7 @@ import { SC } from './sculpt.js';
 import { makeOperatorMaterial } from './shader.js';
 import { rootKeys, mono, MOVES as PK_MOVES, PARKOUR } from '../ai/parkour.js';
 import { rollKeys, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
+import { recoilSpec, recoilAt, pullTime } from '../ai/recoil.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -177,7 +178,7 @@ export function pose0() {
   return {
     hipsPos: Z3(), hips: Z3(), spine: Z3(), chest: Z3(), neck: Z3(), head: Z3(),
     thighR: Z3(), shinR: Z3(), footR: Z3(), thighL: Z3(), shinL: Z3(), footL: Z3(),
-    aim: 0, recoil: 0, wOff: Z3(), wRot: Z3(), cw: 0, cButt: [-0.13, 1.33, 0.05], cDir: [0, 1, 0], cUp: [0, 0, -1], sling: 0,
+    aim: 0, recoil: 0, climb: 0, wOff: Z3(), wRot: Z3(), cw: 0, cButt: [-0.13, 1.33, 0.05], cDir: [0, 1, 0], cUp: [0, 0, -1], sling: 0,
     lT: Z3(), lG: 1, lH: 1, lPole: Z3(), rT: Z3(), rG: 1, rH: 1, rPole: Z3(), lMag: 0, lMagOff: Z3(), mag: 0, magFall: -1, magHide: 0,
     // hand targets in figure space (blended in by lW / rW), the backpack (its centre) and the drone
     lTW: Z3(), rTW: Z3(), lW: 0, rW: 0, bagP: PACK_C.slice(), bagR: Z3(), droneP: [0, 1.25, -0.25], droneR: Z3(),
@@ -250,7 +251,8 @@ export function solve(ps) {
   if (ps.aim > 0) {
     const dir = new THREE.Vector3(Math.sin(AIM_YAW), -0.03, Math.cos(AIM_YAW)).normalize();
     const side = new THREE.Vector3().crossVectors(dir, UP).normalize();
-    const qA = new THREE.Quaternion().setFromAxisAngle(side, 0.075 * ps.recoil).multiply(frameQuat(dir, UP));
+    // recoil (ai/recoil.js): the muzzle's climb (rad), the kick back into the shoulder (recoil: 1 a rifle round's)
+    const qA = new THREE.Quaternion().setFromAxisAngle(side, ps.climb).multiply(frameQuat(dir, UP));
     const bA = AIM_BUTT.clone().add(V3(ps.wOff)).addScaledVector(dir, -0.028 * ps.recoil);
     q.slerp(qA, ps.aim);
     b.lerp(bA, ps.aim);
@@ -399,6 +401,39 @@ function burst(t) {
   let r = 0;
   for (const ts of [0, 0.12, 0.24]) if (t >= ts) r = Math.max(r, Math.exp(-(t - ts) / 0.035));
   return r;
+}
+/**
+ * The firing clips for a weapon's recoil R (ai/recoil.js recoilSpec: its kick, its muzzle rise,
+ * its recovery, the fire mode's rounds) and the shooter's control (1 a regular; less, a better
+ * shot): one trigger pull, the kick back into the shoulder each round, the climb piling up over a
+ * burst and pulled down again. [duration, pose(t)] for shoot, crouchShoot, proneShoot.
+ */
+const SHOOT_CACHE = new Map();
+export function shootClips(R = recoilSpec('rifle'), control = 1) {
+  const dur = pullTime(R);
+  return {
+    shoot: [dur, (t) => {
+      const p = stance(pose0());
+      aimUpper(p, 1);
+      const { kick: r, climb } = recoilAt(R, t, control);
+      p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb; p.head[0] -= 0.02 * r;
+      return p;
+    }],
+    crouchShoot: [dur, (t) => {
+      const p = crouchLegs(pose0());
+      p.spine[0] = 0.12; p.head[0] = -0.1; aimUpper(p, 1);
+      const { kick: r, climb } = recoilAt(R, t, control);
+      p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb;
+      return p;
+    }],
+    proneShoot: [dur, (t) => {
+      const p = prone(pose0());
+      const { kick: r, climb } = recoilAt(R, t, control);
+      // (lying on it: the muzzle climbs off the ground ahead, the shoulder takes the kick)
+      p.wOff = [0, -0.03 * r, -0.012 * r - 0.4 * climb]; p.head[0] -= 0.03 * r;
+      return p;
+    }],
+  };
 }
 const J = (o) => Object.assign(pose0(), o);
 /** Kneeling on the right knee (e: 0 standing .. 1 down), the rifle hanging at the front, hands free. */
@@ -940,25 +975,13 @@ const CLIPS = {
     aimUpper(p, 1); p.wOff = [0.004 * sin(f), 0.004 * sin(2 * f), 0]; p.chest[0] += 0.015 * sin(f);
     return p;
   }],
-  shoot: [0.36, (t) => {
-    const p = stance(pose0());
-    aimUpper(p, 1);
-    const r = burst(t);
-    p.recoil = r; p.chest[0] -= 0.03 * r; p.head[0] -= 0.02 * r;
-    return p;
-  }],
+
   crouchAim: [2.2, (t, u) => {
     const p = crouchLegs(pose0()), f = TAU * u;
     p.spine[0] = 0.12; p.head[0] = -0.1; aimUpper(p, 1); p.wOff = [0.003 * sin(f), 0.003 * sin(2 * f), 0];
     return p;
   }],
-  crouchShoot: [0.36, (t) => {
-    const p = crouchLegs(pose0());
-    p.spine[0] = 0.12; p.head[0] = -0.1; aimUpper(p, 1);
-    const r = burst(t);
-    p.recoil = r; p.chest[0] -= 0.03 * r;
-    return p;
-  }],
+
   aimWalk: [1.2, (t, u) => {
     const p = walkLegs(pose0(), TAU * u, 0.32), f = TAU * u;
     p.hipsPos[1] -= 0.06; p.thighR[0] -= 0.15; p.thighL[0] -= 0.15; p.shinR[0] += 0.25; p.shinL[0] += 0.25;
@@ -1042,12 +1065,8 @@ const CLIPS = {
     p.wOff = [0.003 * sin(TAU * u), 0, 0.002 * sin(2 * TAU * u)];
     return p;
   }],
-  proneShoot: [0.36, (t) => {
-    const p = prone(pose0());
-    const r = burst(t);
-    p.wOff = [0, -0.03 * r, -0.012 * r]; p.head[0] -= 0.03 * r;
-    return p;
-  }],
+  // firing: one trigger pull of a rifle (a burst), its recoil (shootClips; a figure rebakes them for its weapon: setRecoil)
+  ...shootClips(),
   // the secondary from the back: the right hand over the shoulder, the carbine round to the front
   drawSecondary: [1.2, (t) => {
     const p = stance(pose0());
@@ -2297,6 +2316,39 @@ export class OperatorFigure {
   setArmour(on) {
     this.armour = !!on;
     this.parts.carrier.visible = this.armour;
+    return this;
+  }
+  /**
+   * The weapon's recoil (ai/recoil.js recoilSpec: kick, muzzle rise, recovery, fire mode) and the
+   * shooter's control: the firing clips rebaked for it (one trigger pull each loop).
+   */
+  setRecoil(R, control = 1) {
+    const key = `${R.kind}|${R.scale}|${R.mode}|${R.rounds}|${control}`;
+    if (this.recoilKey === key) return this;
+    this.recoilKey = key;
+    this.recoil = R;
+    // (baked once for each weapon setting, shared by every figure with it)
+    let clips = SHOOT_CACHE.get(key);
+    if (!clips) {
+      const C = shootClips(R, control);
+      clips = Object.fromEntries(Object.keys(C).map((n) => [n, makeClip(n, C[n][0], C[n][1])]));
+      SHOOT_CACHE.set(key, clips);
+    }
+    for (const name of Object.keys(clips)) {
+      const old = this.actions[name];
+      const clip = clips[name];
+      const a = this.mixer.clipAction(clip);
+      this.actions[name] = a;
+      if (old) {
+        const playing = this.current === old;
+        old.stop();
+        this.mixer.uncacheAction(old.getClip());
+        if (playing) {
+          this.current = null;
+          this.play(name, { fade: 0 });
+        }
+      }
+    }
     return this;
   }
   /** How fast a clip plays from now on (e.g. a veteran's reload, 0.7..1.5). */

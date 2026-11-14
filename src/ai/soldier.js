@@ -18,13 +18,15 @@
  *  - Under heavy fire from one side (several enemies close together over there, or men
  *    being hit), someone throws a grenade that way and shouts it ("Frag out!").
  */
+import { recoilSpec } from './recoil.js';
 
 /** Expertise: scatter (x a regular's), reload and weapon-switch time (x), reaction (x). */
+// (control: how long he takes to bring the muzzle back down after a round, x a regular's: ai/recoil.js)
 export const SKILL = {
-  recruit: { aim: 1.8, reload: 1.35, react: 1.5 },
-  regular: { aim: 1.0, reload: 1.0, react: 1.0 },
-  veteran: { aim: 0.7, reload: 0.82, react: 0.8 },
-  elite: { aim: 0.5, reload: 0.7, react: 0.65 },
+  recruit: { aim: 1.8, reload: 1.35, react: 1.5, control: 1.4 },
+  regular: { aim: 1.0, reload: 1.0, react: 1.0, control: 1.0 },
+  veteran: { aim: 0.7, reload: 0.82, react: 0.8, control: 0.85 },
+  elite: { aim: 0.5, reload: 0.7, react: 0.65, control: 0.7 },
 };
 export const SKILLS = Object.keys(SKILL);
 
@@ -60,6 +62,17 @@ export function kit(m) {
 
 export const skillOf = (m) => SKILL[m.skill] ?? SKILL.regular;
 
+/**
+ * The recoil of the weapon in his hands (ai/recoil.js): its kind (rifle, the gunner's MG, the
+ * carbine), m.recoil (the override factor, 1 = physical), m.fireMode (single, burst, auto).
+ */
+export function recoilOf(m) {
+  const kind = weaponKind(m) === 'mg' ? 'mg' : weaponKind(m) === 'carbine' ? 'carbine' : 'rifle';
+  const key = `${kind}|${m.recoil ?? 1}|${m.fireMode ?? ''}`;
+  if (m.recoilSpec?.key !== key) m.recoilSpec = { ...recoilSpec(kind, { recoil: m.recoil, mode: m.fireMode }), key };
+  return m.recoilSpec;
+}
+
 /** Total rounds he has left (magazine + spares, primary and secondary). */
 export function roundsLeft(m) {
   const A = ARMS[m.primary ?? 'rifle'];
@@ -77,8 +90,11 @@ export function aimPoint(m, T, rand = Math.random) {
   if (m.wounds?.armL || m.wounds?.armR) s *= 2;
   if (m.weapon === 'secondary') s *= 1 + d / 25;
   if (m.squad === 'MG') s *= 1.3; // bursts from the bipod: a cone, not a point
+  // the muzzle still climbing from the rounds before (ai/recoil.js: a burst, a long string): wider, and high
+  const c = m.climb ?? 0;
+  s += 0.6 * c * d;
   const g = () => (rand() + rand() + rand() - 1.5) * 1.15; // ~gaussian
-  return [T[0] + g() * s, T[1] + 0.9 + g() * s * 0.8, T[2] + g() * s];
+  return [T[0] + g() * s, T[1] + 0.9 + g() * s * 0.8 + 0.5 * c * d, T[2] + g() * s];
 }
 
 /** The weapon in his hands and its magazine. */

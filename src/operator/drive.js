@@ -1,4 +1,5 @@
 import { ONCE, MOVING, RELOAD_TIME, PARKOUR, ROLL } from './rig.js';
+import { recoilOf, skillOf } from '../ai/soldier.js';
 
 /**
  * Show on a figure (operator/rig.js OperatorFigure) what the squad AI (ai/squad.js,
@@ -22,6 +23,8 @@ export function driveFromAI(f, d, st) {
     st.armour = arm;
     f.setArmour?.(arm);
   }
+  // his weapon's recoil (ai/recoil.js): the firing clips baked for it, his control of it
+  if (f.setRecoil && d.weapon !== 'knife' && d.weapon !== 'torch') f.setRecoil(recoilOf(d), skillOf(d).control);
   // the weapon: a switch the AI started, or catching up with what he has
   const want = d.switching?.to ?? d.weapon;
   if (want && FIG_WEAPON[want] && st.weapon !== want && f.switchWeapon) {

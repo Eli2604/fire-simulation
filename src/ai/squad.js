@@ -83,7 +83,8 @@
 import { analyse, openGround, moveGroup, endGroup, stepGroups, clearTo, stepClearing, joinUp, doorOnPath, startBreach, breachStep } from './tactics.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, rootEnd, costOf, surface, clear, MOVES as PK_MOVES, STEP, DROP_MIN } from './parkour.js';
 import { pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
-import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES } from './soldier.js';
+import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES, recoilOf, skillOf } from './soldier.js';
+import { stepClimb } from './recoil.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
@@ -1496,14 +1497,18 @@ export class SquadAI {
       const lie = m.crawling;
       const AIM = lie ? 'proneAim' : 'crouchAim', SHOOT = lie ? 'proneShoot' : 'crouchShoot';
       m.fireT = (m.fireT ?? 1) - dt;
+      // his weapon's recoil (ai/recoil.js): the fire mode's rounds at its rate, the climb between them
+      const R = recoilOf(m);
+      stepClimb(m, R, dt, false, skillOf(m).control);
       if (m.anim === SHOOT) {
         m.shotT = (m.shotT ?? 0) - dt;
         if (m.shotT <= 0 && m.rounds > 0 && canShoot(m)) {
           m.rounds--;
-          m.shotT = m.squad === 'MG' ? 0.09 : 0.12;
+          m.shotT = R.gap;
           spend(m);
           const aim = this.seen?.length ? this.seen.reduce((a, h) => (dist2(h.p, m.p) < dist2(a.p, m.p) ? h : a)).p : T;
           this.host.fire?.(m, aimPoint(m, aim), weaponKind(m));
+          stepClimb(m, R, 0, true);
         }
         if (m.fireT <= 0) {
           this.setAnim(m, AIM);
@@ -1515,7 +1520,7 @@ export class SquadAI {
           if (covering) {
             this.setAnim(m, SHOOT);
             m.fireT = m.squad === 'MG' ? 1.3 : 0.7;
-            m.rounds = (m.weapon === 'secondary' ? ARMS.secondary : ARMS[m.primary ?? 'rifle']).burst;
+            m.rounds = R.rounds;
             m.shotT = 0;
           } else m.fireT = 0.5;
         }
