@@ -96,6 +96,18 @@ export const EVADE_ACTS = {
   diveProne: { label: 'Dive roll to prone', from: 'grenade' },
 };
 
+/* ---------- casualty acts (soldier and squad): a man down and getting him out (ai/casualty.js) ---------- */
+/**
+ * The casualty acts on the rig stage: 'partner' is the second figure the act needs (the casualty
+ * the rescuer drags along by the collar, the man he treats); the stage puts him there.
+ */
+export const CASUALTY_ACTS = {
+  woundedDown: { label: 'Wounded down' },
+  dragCasualty: { label: 'Drag casualty (rescuer + casualty)', partner: 'dragged' },
+  firstAid: { label: 'First aid', partner: 'woundedDown' },
+  coverFire: { label: 'Cover fire' },
+};
+
 /** The obstacle height for an act: h (or its default) kept within the act's range. */
 export function parkourHeight(act, h) {
   const a = PARKOUR_ACTS[act];

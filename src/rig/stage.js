@@ -33,7 +33,8 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS } from './objects.js';
+import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
 import { recoilSpec } from '../ai/recoil.js';
@@ -133,6 +134,8 @@ const HTML = `
     <div class="grid" data-id="pkActs"></div>
     <div class="lab">Evade (combat rolls: out of a line of fire, a grenade, a dive)</div>
     <div class="grid" data-id="evActs"></div>
+    <div class="lab">Casualty (a man down, dragged out, first aid, cover fire)</div>
+    <div class="grid" data-id="casActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -428,6 +431,7 @@ export function mountRig(root, opts = {}) {
       this.endParkour();
       if (PARKOUR_ACTS[name]) return this.parkour(name);
       if (EVADE_ACTS[name]) return this.evade(name);
+      if (CASUALTY_ACTS[name]?.partner) return this.casualty(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -474,8 +478,41 @@ export function mountRig(root, opts = {}) {
       this.pkStep(0);
       return this;
     }
+    /**
+     * A casualty act with its second man (rig/objects.js CASUALTY_ACTS partner): dragging him back
+     * 5 m by the collar, his body in the rescuer's hands (DRAG_OFF ahead, both facing the same way),
+     * then again; or kneeling by him for the first aid.
+     */
+    casualty(kind) {
+      const act = CASUALTY_ACTS[kind];
+      const yaw = this.d.yaw;
+      const c = new Soldier({ name: 'casualty', position: this.home.slice(), facing: yaw });
+      c.fig.play(act.partner, { fade: 0 });
+      this.pk = { kind, t: 0, dur: kind === 'dragCasualty' ? 6.5 : 1e9, from: this.home.slice(), yaw, wait: 0, cas: c };
+      this.fig.play(kind, { fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
     pkStep(dt) {
       const P = this.pk;
+      if (P.cas) {
+        // the rescuer walks backwards (away from where he faces) 0.8 m/s; the casualty follows his hands
+        P.t += dt;
+        if (P.t > P.dur) P.t = 0;
+        const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
+        const back = P.kind === 'dragCasualty' ? 0.8 * P.t : 0;
+        this.d.p = [P.from[0] - f[0] * back, 0, P.from[2] - f[1] * back];
+        this.d.yaw = P.yaw;
+        const off = P.kind === 'dragCasualty' ? DRAG_OFF : 0.75;
+        // (first aid: he lies across in front of the kneeling man)
+        P.cas.d.yaw = P.kind === 'dragCasualty' ? P.yaw : P.yaw + Math.PI / 2;
+        P.cas.d.p = [this.d.p[0] + f[0] * off, 0, this.d.p[2] + f[1] * off];
+        const g = P.cas.fig.group;
+        g.position.set(...P.cas.d.p);
+        g.rotation.y = P.cas.d.yaw;
+        P.cas.fig.update(dt);
+        return;
+      }
       if (P.wait > 0) {
         // the pause at the end, then again from the start
         if ((P.wait -= dt) <= 0) {
@@ -495,6 +532,7 @@ export function mountRig(root, opts = {}) {
     }
     endParkour() {
       if (!this.pk) return;
+      if (this.pk.cas) this.pk.cas.dispose();
       this.d.yaw = this.pk.yaw;
       this.d.p = this.home.slice();
       this.pk = null;
@@ -763,7 +801,8 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : animBox).appendChild(b);
+    if (k === 'dragged') return; // (the casualty's own half of the drag: shown with Drag casualty)
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -1049,6 +1088,8 @@ export function mountRig(root, opts = {}) {
     if (qs.get('zones') === '1') $('tgZones').click();
     // ?ev=rollLeft|rollRight|rollForward|diveProne (a roll, over and over)
     if (qs.get('ev') && EVADE_ACTS[qs.get('ev')]) for (const e of soldiers) e.play(qs.get('ev'));
+    // ?cas=woundedDown|dragCasualty|firstAid|coverFire
+    if (qs.get('cas') && CASUALTY_ACTS[qs.get('cas')]) for (const e of soldiers) e.play(qs.get('cas'));
     if (qs.get('pk') && PARKOUR_ACTS[qs.get('pk')]) {
       if (qs.get('pkh')) pkHeight = +qs.get('pkh');
       pkShow(qs.get('pk'));

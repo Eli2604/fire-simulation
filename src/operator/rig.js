@@ -408,6 +408,66 @@ function burst(t) {
  * shot): one trigger pull, the kick back into the shoulder each round, the climb piling up over a
  * burst and pulled down again. [duration, pose(t)] for shoot, crouchShoot, proneShoot.
  */
+/* ---------- casualties: down wounded, dragged out, first aid (ai/casualty.js) ---------- */
+/**
+ * Where the dragged man's root goes, from the rescuer's (both facing the same way: the rescuer
+ * looks at him, walking backwards; the casualty lies on his back, his head towards the rescuer,
+ * his shoulders in the rescuer's hands): DRAG_OFF m ahead of the rescuer's root.
+ */
+export const DRAG_OFF = 1.05;
+/** The rescuer's hands (figure space) on the casualty's vest collar while dragging. */
+const DRAG_HANDS = [[0.13, 0.5, 0.52], [-0.13, 0.5, 0.52]];
+/** Lying on his back, hurt: one hand pressed on the wound (the right thigh), a knee up, writhing a little. */
+function downPose(p, f, lift = 0) {
+  p.hips = [-1.5 + lift, 0.04 * sin(f), 0.05 * sin(f * 0.5)];
+  p.hipsPos = [0, -0.8, 0];
+  p.spine = [-0.1 - 0.04 * sin(f), 0, 0];
+  p.neck = [0.2, 0, 0];
+  p.head = [0.35 + 0.06 * sin(f), 0.2 * sin(f * 0.5), 0];
+  p.thighR = [-0.55, 0, -0.12]; p.shinR = [1.05, 0, 0]; p.footR = [-0.3, 0, 0];
+  p.thighL = [0.05, 0, 0.12]; p.shinL = [0.12, 0, 0]; p.footL = [0.6, 0, 0];
+  p.sling = 1; p.lG = 0; p.lH = 0; p.rG = 0; p.rH = 0;
+  // the left hand pressing the wound high on the right thigh; the right arm out on the ground
+  p.lTW = [-0.1, 0.28 + 0.02 * sin(f), 0.28]; p.lW = 1; p.lPole = [1, 0.3, 0.6];
+  p.rTW = [-0.42, 0.1, -0.35]; p.rW = 1;
+  return p;
+}
+const CAS_CLIPS = {
+  woundedDown: [2.6, (t, u) => downPose(pose0(), TAU * u)],
+  // dragged by the collar: the shoulders lifted off the ground by the pull, the legs trailing, the
+  // right arm limp at his side, a hand still on the wound
+  dragged: [1.2, (t, u) => {
+    const p = downPose(pose0(), TAU * u, 0.32);
+    p.hipsPos = [0, -0.84, 0];
+    p.thighR = [-0.15, 0, -0.08]; p.shinR = [0.25, 0, 0]; p.thighL = [0.05, 0, 0.08]; p.shinL = [0.1, 0, 0];
+    p.footR = [0.5, 0, 0]; p.footL = [0.55, 0, 0];
+    p.head = [0.1, 0.12 * sin(TAU * u), 0];
+    p.rTW = [-0.3, 0.12, 0.15];
+    return p;
+  }],
+  // the rescuer: bent low, walking backwards, both hands on the casualty's collar, the rifle on his back
+  dragCasualty: [1.2, (t, u) => {
+    const p = walkLegs(pose0(), -TAU * u, 0.3);
+    p.hipsPos[1] -= 0.28; p.hipsPos[2] = 0.05;
+    p.thighR[0] -= 0.45; p.thighL[0] -= 0.45; p.shinR[0] += 0.55; p.shinL[0] += 0.55;
+    p.footR[0] -= 0.1; p.footL[0] -= 0.1;
+    p.spine = [0.65, 0, 0]; p.chest = [0.2, 0, 0]; p.head = [-0.55, 0, 0];
+    p.sling = 1; p.lG = 0; p.lH = 0; p.rG = 0; p.rH = 0;
+    p.lTW = DRAG_HANDS[0].slice(); p.rTW = DRAG_HANDS[1].slice(); p.lW = 1; p.rW = 1;
+    p.lPole = [1, -0.4, -0.3]; p.rPole = [-1, -0.4, -0.3];
+    return p;
+  }],
+  // first aid: kneeling by him, a tourniquet on the leg: both hands working low ahead
+  firstAid: [2.0, (t, u) => {
+    const p = droneKneel(pose0(), 1);
+    const f = TAU * u;
+    p.spine = [0.55, 0, 0]; p.head = [-0.35, 0, 0]; p.sling = 1;
+    p.lTW = [0.12 + 0.05 * sin(f), 0.3 + 0.04 * sin(2 * f), 0.5]; p.rTW = [-0.06 - 0.05 * sin(f), 0.3 - 0.04 * sin(2 * f), 0.52]; p.lW = 1; p.rW = 1;
+    return p;
+  }],
+};
+export const CASUALTY = { woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, coverFire: 1 };
+
 const SHOOT_CACHE = new Map();
 export function shootClips(R = recoilSpec('rifle'), control = 1) {
   const dur = pullTime(R);
@@ -1067,6 +1127,10 @@ const CLIPS = {
   }],
   // firing: one trigger pull of a rifle (a burst), its recoil (shootClips; a figure rebakes them for its weapon: setRecoil)
   ...shootClips(),
+  // casualties (ai/casualty.js): down wounded, dragged, the rescuer dragging, first aid; cover fire (an
+  // automatic string from a crouch, again and again: the man keeping their heads down)
+  ...CAS_CLIPS,
+  coverFire: shootClips(recoilSpec('rifle', { mode: 'auto', rounds: 8 })).crouchShoot,
   // the secondary from the back: the right hand over the shoulder, the carbine round to the front
   drawSecondary: [1.2, (t) => {
     const p = stance(pose0());
@@ -1217,12 +1281,13 @@ export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stair
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
-  vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS };
+  vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
+  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire' };
 export { PARKOUR, ROLL };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
-const NO_UNARMED = { drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
+const NO_UNARMED = { woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
 const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
