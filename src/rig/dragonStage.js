@@ -20,6 +20,7 @@ import { createSimulation } from '../sim/createSimulation.js';
 import { stepWounds } from '../sim/wounds.js';
 import { initDragon, pose, groundAt, PLAN, dragonZones, dragonWoundPoint, canFly, WING } from '../ai/dragon.js';
 import { startSnatch, stepSnatch, holdCarried, stepThrown, startFight, stepFight, addLoose } from '../ai/dragonAir.js';
+import { startEvade, stepEvade } from '../ai/dragonEvade.js';
 
 /** What the dragon really does, as buttons. */
 export const DRAGON_ACTS = {
@@ -43,7 +44,13 @@ export const DRAGON_ACTS = {
   wingGone: 'Wing shot: falls',
   snatch: 'Air grab (snatch & throw)',
   fight: 'Aerial fight',
+  // (ai/dragonEvade.js: out of the way of an arrow, a rocket, a jet's run, another dragon's fire)
+  evadeRoll: 'Evade: barrel roll',
+  evadeWingOver: 'Evade: wing-over',
+  evadeDive: 'Evade: dive',
 };
+/** The evade acts: which evasion each flies, again and again as it circles. */
+const EVADE_ACT = { evadeRoll: 'barrelRoll', evadeWingOver: 'wingOver', evadeDive: 'dive' };
 /** The acts that need it on the ground (in the air, it lands first). */
 const GROUND = new Set(['rest', 'walk', 'run', 'sniff', 'roar', 'breathe', 'bite', 'stamp', 'climb']);
 
@@ -173,6 +180,7 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
         // a badly hurt wing: down first, whatever the act (and no take-off till it mends)
       } else if (GROUND.has(st.act) && d.mode !== 'ground') landFirst(d, dt);
       else ACTS[st.act]?.(d, dt);
+      stepEvade(d, w, dt);
       ai.breath(d, w, dt);
       ai.animate(d, dt);
       ai.updateTrail(d);
@@ -362,6 +370,19 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
     fly(d, dt) {
       if (airborne(d, dt)) flyRound(d, dt, 14, 10, 9, 0.5);
     },
+    // the evade acts: flying round, and every few seconds it evades (the side it turns to, alternately)
+    ...Object.fromEntries(Object.keys(EVADE_ACT).map((k) => [k, (d, dt) => {
+      if (!airborne(d, dt)) return;
+      // (a dive wants height to dive from)
+      if (!d.evade) flyRound(d, dt, 16, k === 'evadeDive' ? 14 : 11, 10, 0.5);
+      else if (k !== 'evadeWingOver') flyRound(d, dt, 16, k === 'evadeDive' ? 6 : 11, 10, 0.5);
+      st.evT = (st.evT ?? 0) + dt;
+      if (!d.evade && st.evT > 2.6 && d.p[1] - groundAt(w, d.p[0], d.p[2]).y > 7) {
+        st.evT = 0;
+        st.evSide = -(st.evSide ?? 1);
+        startEvade(d, EVADE_ACT[k], st.evSide, w, 'rig');
+      }
+    }])),
     // wings spread and still, sailing on its speed
     glide(d, dt) {
       if (!airborne(d, dt)) return;

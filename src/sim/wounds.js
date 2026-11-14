@@ -204,6 +204,18 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   const dr = sim.dragonAI?.shot?.(from, d, tNear, 'bullet');
   if (dr) best = { dragon: dr.dragon, zone: dr.k, p: dr.p };
   w.noises.push({ p: from.slice(), loud: 70, time: w.time, kind: shooter ? 'enemy' : 'gunshot' });
+  // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
+  // (your rounds: they are all on the other side)
+  if (!shooter) {
+    const end = best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range];
+    const L = Math.hypot(end[0] - from[0], end[1] - from[1], end[2] - from[2]);
+    for (const e of w.enemies) {
+      if (e.dead || e === best?.enemy) continue;
+      const r = [e.p[0] - from[0], e.p[1] + 1.1 - from[1], e.p[2] - from[2]];
+      const t = Math.max(0, Math.min(L, r[0] * d[0] + r[1] * d[1] + r[2] * d[2]));
+      if (Math.hypot(r[0] - d[0] * t, r[1] - d[1] * t, r[2] - d[2] * t) < 1.5) e.shotAt = { time: w.time, from: from.slice(), dir: d.slice() };
+    }
+  }
   w.tracers.push({ a: from.slice(), b: best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range], t: w.time });
   if (w.tracers.length > 40) w.tracers.shift();
   if (best?.enemy) {

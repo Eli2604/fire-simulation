@@ -12,6 +12,7 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
+import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
@@ -1542,6 +1543,8 @@ export class Simulation {
       threat: squad[0].threat,
       // guards: the guard AI moves them on their patrol and when they run from fire (ai/enemies.js)
       ownMove: (m) => !!m.guardCtl,
+      // what threatens a man (a grenade by him, a rocket, rounds cracking past, a dragon): he rolls out of it (ai/evade.js)
+      dangers: (m) => dangers(w, m),
       // you: seen through doorways, not through walls or thick smoke
       hostiles: () => (pl() ? [pl()] : []),
       lineOfSight: (a, b) => this.ai.sees([a[0], a[1] + 1.6, a[2]], [b[0], b[1] + 1.5, b[2]]),

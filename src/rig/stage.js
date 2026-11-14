@@ -33,8 +33,9 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS } from './objects.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
+import { ROLLS, rollPoint } from '../ai/evade.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -129,6 +130,8 @@ const HTML = `
     <div class="grid" data-id="anims"></div>
     <div class="lab">Parkour (over its own wall or ledge)</div>
     <div class="grid" data-id="pkActs"></div>
+    <div class="lab">Evade (combat rolls: out of a line of fire, a grenade, a dive)</div>
+    <div class="grid" data-id="evActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -366,6 +369,27 @@ export function mountRig(root, opts = {}) {
     grp.rotation.y = yaw;
     return grp;
   }
+  /** What a roll is shown getting out of (EVADE_ACTS from): a grenade at his feet, tracer through where he stood. */
+  function makeThreat(what, from, yaw, kind) {
+    const grp = new THREE.Group();
+    const f = [Math.sin(yaw), Math.cos(yaw)], l = [Math.cos(yaw), -Math.sin(yaw)];
+    if (what === 'grenade') {
+      // behind him, where he dives away from
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshStandardMaterial({ color: '#3d4a32', roughness: 0.7 }));
+      m.position.set(from[0] - f[0] * 0.7, 0.06, from[2] - f[1] * 0.7);
+      grp.add(m);
+    } else if (what === 'fire') {
+      // a burst along a line through where he stood (from ahead), the side he rolls to clear of it
+      const s = kind === 'rollRight' ? 1 : -1;
+      for (const k of [-1, 0, 1]) {
+        const off = 0.12 * k + 0.05 * s;
+        const a = new THREE.Vector3(from[0] + f[0] * 25 + l[0] * off, 1.1 + 0.08 * k, from[2] + f[1] * 25 + l[1] * off);
+        const b = new THREE.Vector3(from[0] - f[0] * 8 + l[0] * off, 1.0 + 0.08 * k, from[2] - f[1] * 8 + l[1] * off);
+        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.85 })));
+      }
+    } else return null;
+    return grp;
+  }
   /** Where his grenades (and his drone) go: 9 m in front of him. */
   const aheadOf = (e) => [e.d.p[0] + Math.sin(e.d.yaw) * 9, 0, e.d.p[2] + Math.cos(e.d.yaw) * 9];
   class Soldier {
@@ -397,6 +421,7 @@ export function mountRig(root, opts = {}) {
       this.patrol = null;
       this.endParkour();
       if (PARKOUR_ACTS[name]) return this.parkour(name);
+      if (EVADE_ACTS[name]) return this.evade(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -428,6 +453,21 @@ export function mountRig(root, opts = {}) {
       this.pkStep(0);
       return this;
     }
+    /**
+     * A roll (rig/objects.js EVADE_ACTS): from his home along the roll's root path (ai/evade.js),
+     * with what he gets out of shown (a grenade by his feet, a burst of tracer past him); again
+     * after a pause.
+     */
+    evade(kind) {
+      const yaw = this.d.yaw;
+      const from = this.home.slice();
+      this.pk = { kind, t: 0, dur: ROLLS[kind].dur, from, yaw, wait: 0, roll: true };
+      this.pkProp = makeThreat(EVADE_ACTS[kind].from, from, yaw, kind);
+      if (this.pkProp) scene.add(this.pkProp);
+      this.fig.play(kind, { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
     pkStep(dt) {
       const P = this.pk;
       if (P.wait > 0) {
@@ -439,8 +479,11 @@ export function mountRig(root, opts = {}) {
       }
       P.t += dt;
       const u = Math.min(1, P.t / P.dur);
-      const [f, up] = rootAt(P.kind, u, P.geo);
-      this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      if (P.roll) this.d.p = rollPoint(P.kind, u, P.from, P.yaw);
+      else {
+        const [f, up] = rootAt(P.kind, u, P.geo);
+        this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      }
       this.d.yaw = P.yaw;
       if (u >= 1) P.wait = 0.9;
     }
@@ -714,7 +757,7 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    (PARKOUR_ACTS[k] ? $('pkActs') : animBox).appendChild(b);
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -734,7 +777,7 @@ export function mountRig(root, opts = {}) {
     pkHeight = +pkSlider.value;
     $('pkHo').textContent = pkHeight.toFixed(2) + ' m';
     if (!pkLast) return;
-    for (const e of allMode ? soldiers : [selected]) if (e?.pk) e.play(pkLast);
+    for (const e of allMode ? soldiers : [selected]) if (e?.pk && !e.pk.roll) e.play(pkLast);
   };
   const tg = (id, fn) => {
     const b = $(id);
@@ -977,6 +1020,8 @@ export function mountRig(root, opts = {}) {
     // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });
     if (qs.get('zones') === '1') $('tgZones').click();
+    // ?ev=rollLeft|rollRight|rollForward|diveProne (a roll, over and over)
+    if (qs.get('ev') && EVADE_ACTS[qs.get('ev')]) for (const e of soldiers) e.play(qs.get('ev'));
     if (qs.get('pk') && PARKOUR_ACTS[qs.get('pk')]) {
       if (qs.get('pkh')) pkHeight = +qs.get('pkh');
       pkShow(qs.get('pk'));

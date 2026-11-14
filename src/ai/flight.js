@@ -23,6 +23,14 @@
  *  - Leader loss: when the leader goes down the next one alive takes the lead and says so.
  *  - With `on` (AI on) the leader runs a little programme by itself while holding: a formation
  *    change, a flank attack, another formation, an attack in formation, a break, RTB, …
+ *  - Threats and evasion: what comes at a jet (a missile tracking it: launchMissile; a rocket, a
+ *    gun, a dragon: warn() or o.threats()) is seen (senseThreats), a wingman calls the break
+ *    ("Two, break right! Missile, 4 o'clock!"), and the jet flies a defensive manoeuvre (EVADES):
+ *    a hard break turn into the threat, a barrel roll, jinking, a split-S or a dive, beaming it
+ *    (turning it onto the beam), dispensing flares (this.flares: they fall away burning, trailing
+ *    smoke; a missile tracking it may take one salvo instead: FLARE_DECOY, drawn from the flight's
+ *    own seeded numbers). Manoeuvring lowers the chance of being hit (hitChance: the player's
+ *    rockets, the missiles that still reach it). Then it rejoins.
  *  - Deterministic: no Math.random; the seed only varies the break directions and the programme.
  *
  * Frame: heading h, forward (cos h, 0, -sin h) (render/jetMesh.js: nose +x, rotation.y = h);
@@ -67,6 +75,23 @@ export const FORMATIONS = {
   trail: 'Trail',
 };
 export const FORMATION_KEYS = Object.keys(FORMATIONS);
+
+/**
+ * The defensive manoeuvres: how long they last (s) and what they leave of the chance of being hit
+ * (a rocket or a gun at a jet flying straight: 1).
+ */
+export const EVADES = {
+  breakTurn: { label: 'Break turn', dur: 4.5, hit: 0.45 },
+  barrelRoll: { label: 'Barrel roll', dur: 4.8, hit: 0.3 },
+  jink: { label: 'Jinking', dur: 3.5, hit: 0.5 },
+  splitS: { label: 'Split-S', dur: 7, hit: 0.4 },
+  dive: { label: 'Dive', dur: 5, hit: 0.5 },
+  beam: { label: 'Beaming', dur: 5.5, hit: 0.6 },
+};
+/** A tracking missile's chance of taking one salvo of flares instead of the jet. */
+export const FLARE_DECOY = 0.65;
+const FLARES = 30; // per jet
+const MISSILE = { speed: 300, turn: 22 * 9.81, life: 12, fuze: 14 };
 
 export const FLIGHT_ORDERS = {
   formUp: 'Form up',
@@ -165,6 +190,10 @@ export class FlightAI {
     this.splashes = []; // where they came down: { p, t }
     this.pilots = []; // the ones who ejected: { m, chute, state, t, home }
     this.script = 0;
+    this.flares = []; // burning in the air: { id, p, v, t, by, trail }
+    this.missiles = []; // tracking missiles: { id, p, v, t, target: { m } | { flare } }
+    this.pending = []; // threats warned of since the last step (warn)
+    this.erand = rng(((o.seed ?? 1) * 7919 + 13) >>> 0); // (the evasion's own numbers: the rest flies as before)
     this.formCycle = FORMATION_KEYS.indexOf(this.formation);
     const n = clamp(Math.round(o.count ?? 4), 1, 8);
     this.lead = clamp(Math.round(o.leader ?? 0), 0, n - 1);
@@ -182,6 +211,8 @@ export class FlightAI {
       rockets: o.rockets ?? 4,
       dmg: new JetDamage(), // its hit parts, fires, and what happens when it is critical (sim/jetDamage.js)
       throttle: 0.5,
+      flares: o.flares ?? FLARES,
+      evade: null, // a defensive manoeuvre under way: { kind, t, dur, side, ... }
     }));
     this.place();
   }
@@ -458,8 +489,9 @@ export class FlightAI {
   }
 
   /* ---------------- flying ---------------- */
-  /** Fly member m towards the velocity dv (m/s, world) within its limits. */
+  /** Fly member m towards the velocity dv (m/s, world) within its limits (or its defensive manoeuvre). */
   steer(m, dv, dt, vmax = 1.4) {
+    if (m.evade) return this.evadeStep(m, dt);
     const hor = hyp(dv[0], dv[2]);
     const want = hor > 1e-3 ? headingOf(dv[0], dv[2]) : m.h;
     const e = wrap(want - m.h);
@@ -604,8 +636,11 @@ export class FlightAI {
         this.o.crash?.(m, m.p.slice(), info);
       }
     }
+    if (L) this.senseThreats(alive);
     if (L) this.fly(L, alive, dt);
     this.stepRockets(dt);
+    this.stepMissiles(dt);
+    this.stepFlares(dt);
     this.stepPilots(dt);
     this.flushRadio();
     if (this.splashes.length && this.time - this.splashes[0].t > 6) this.splashes.shift();
@@ -762,6 +797,325 @@ export class FlightAI {
     }
   }
 
+  /* ---------------- threats and evasion ---------------- */
+  /**
+   * Something coming at the flight: { kind: 'rocket' | 'missile' | 'gun' | 'dragon', p, v } (world
+   * frame, m and m/s). Seen in the next step: whoever it threatens evades.
+   */
+  warn(t) {
+    this.pending.push(t);
+  }
+  /** A missile that tracks member i, fired from `from` (the rig's act, a SAM, ...). */
+  launchMissile(from, i, { speed = MISSILE.speed, fuze = MISSILE.fuze } = {}) {
+    const m = this.members[i];
+    if (!m) return null;
+    const d = [m.p[0] - from[0], m.p[1] - from[1], m.p[2] - from[2]];
+    const l = Math.hypot(...d) || 1;
+    const M = { id: (this.mslN = (this.mslN ?? 0) + 1), p: from.slice(), v: d.map((x) => (x / l) * speed), t: 0, target: { m: i }, speed, fuze };
+    this.missiles.push(M);
+    return M;
+  }
+  /**
+   * The chance that a shot of `kind` ('rocket' | 'missile' | 'gun') at member i hits it now: 1 for a
+   * jet flying straight, less while it manoeuvres (EVADES[kind].hit, eased in over the first half
+   * second), a little less again for a gun.
+   */
+  hitChance(i, kind = 'rocket') {
+    const m = this.members[i];
+    if (!m?.alive) return 0;
+    const E = m.evade;
+    if (!E) return 1;
+    const k = Math.min(1, E.t / 0.5);
+    const h = EVADES[E.kind].hit;
+    return (1 - (1 - h) * k) * (kind === 'gun' ? 0.8 : 1);
+  }
+  /** Does this shot hit (the flight's seeded numbers)? */
+  rollHit(i, kind = 'rocket') {
+    return this.erand() < this.hitChance(i, kind);
+  }
+
+  /**
+   * Who is threatened by what (the warnings, the missiles in the air, o.threats()): each threatened
+   * jet not already evading starts a manoeuvre, and a wingman calls it.
+   */
+  senseThreats(alive) {
+    const list = [...this.pending, ...(this.o.threats?.() ?? [])];
+    this.pending.length = 0;
+    for (const M of this.missiles) if (M.target.m != null) list.push({ kind: 'missile', p: M.p, v: M.v, target: M.target.m });
+    for (const t of list) {
+      const at = t.target != null ? this.members[t.target] : this.threatened(t, alive);
+      if (!at || !at.alive || at.evade) continue;
+      // a missile is seen ~5 s out; a rocket or a gun when it is close; a dragon within a few spacings
+      const d = Math.hypot(at.p[0] - t.p[0], at.p[1] - t.p[1], at.p[2] - t.p[2]);
+      const vv = t.v ? Math.hypot(...t.v) : 0;
+      const tgo = vv > 1 ? d / vv : Infinity;
+      if (t.kind === 'missile' && tgo > 5) continue;
+      if ((t.kind === 'rocket' || t.kind === 'gun') && tgo > 3) continue;
+      if (t.kind === 'dragon') {
+        // a dragon: close, and coming at it (not one flying off)
+        const mv = this.vel(at), v = t.v ?? [0, 0, 0];
+        const closing = ((at.p[0] - t.p[0]) * (v[0] - mv[0]) + (at.p[1] - t.p[1]) * (v[1] - mv[1]) + (at.p[2] - t.p[2]) * (v[2] - mv[2])) / (d || 1);
+        if (d > 6 * this.spacing || closing < 3) continue;
+      }
+      this.startEvade(at, t, tgo);
+    }
+  }
+  /** The member a threat t will pass closest to (within 60 m in the next 4 s; a dragon: nearest), or null. */
+  threatened(t, alive) {
+    let best = null;
+    let bd = t.kind === 'dragon' ? 6 * this.spacing : 60;
+    for (const m of alive) {
+      const v = t.v ?? [0, 0, 0];
+      const mv = this.vel(m);
+      const r = [m.p[0] - t.p[0], m.p[1] - t.p[1], m.p[2] - t.p[2]];
+      const rv = [mv[0] - v[0], mv[1] - v[1], mv[2] - v[2]];
+      const vv = rv[0] ** 2 + rv[1] ** 2 + rv[2] ** 2;
+      const tc = t.kind === 'dragon' ? 0 : vv > 1e-6 ? clamp(-(r[0] * rv[0] + r[1] * rv[1] + r[2] * rv[2]) / vv, 0, 4) : 0;
+      const miss = Math.hypot(r[0] + rv[0] * tc, r[1] + rv[1] * tc, r[2] + rv[2] * tc);
+      if (miss < bd) {
+        bd = miss;
+        best = m;
+      }
+    }
+    return best;
+  }
+  /** Which manoeuvre against threat t (tgo: s until it gets there). */
+  pickEvade(m, t, tgo) {
+    const agl = m.p[1] - this.floor(m.p[0], m.p[2]);
+    const R = this.cruise ** 2 / (7 * G);
+    if (t.kind === 'missile') return tgo > 3.5 ? 'beam' : 'barrelRoll';
+    if (t.kind === 'gun') return 'jink';
+    if (t.kind === 'dragon') return agl > 2.4 * R + 40 ? 'splitS' : agl > 70 ? 'dive' : 'breakTurn';
+    return tgo > 1.2 ? 'breakTurn' : 'barrelRoll';
+  }
+  /** Start a defensive manoeuvre against t: the call, the side, flares against a missile or a rocket. */
+  startEvade(m, t, tgo = 3, kind = null) {
+    kind ??= this.pickEvade(m, t, tgo);
+    // the threat's bearing: which side, and the clock
+    const r = [t.p[0] - m.p[0], t.p[2] - m.p[2]];
+    const f = fwdOf(m.h), rt = rightOf(m.h);
+    const ahead = r[0] * f[0] + r[1] * f[2], right = r[0] * rt[0] + r[1] * rt[2];
+    const side = right >= 0 ? 1 : -1; // (into it: towards the side it comes from)
+    let clock = Math.round(((Math.atan2(right, ahead) * 6) / Math.PI + 12) % 12);
+    if (clock === 0) clock = 12;
+    const want = Math.atan2(-r[1], r[0]); // heading into the threat
+    m.evade = { kind, t: 0, dur: EVADES[kind].dur, side, h0: m.h, want, beam: wrap(want + (side * Math.PI) / 2), bank0: m.bank, phase: 0, threat: t.kind, flareT: 0 };
+    const flares = t.kind === 'missile' || t.kind === 'rocket';
+    if (flares) m.evade.flaresLeft = t.kind === 'missile' ? 4 : 2;
+    // the call: a wingman (his element mate first) calls it; he answers
+    const al = this.ranked();
+    const rk = this.rankOf(m);
+    const mate = al.find((o) => o !== m && Math.floor(this.rankOf(o) / 2) === Math.floor(rk / 2)) ?? al.find((o) => o !== m);
+    const who = m === this.leader ? 'Lead' : NUM[m.i];
+    const what = { missile: 'Missile', rocket: 'Rocket', gun: 'Guns', dragon: 'Dragon' }[t.kind] ?? 'Threat';
+    const dir = side > 0 ? 'right' : 'left';
+    if (mate) this.say(mate, who + ', break ' + dir + '! ' + what + ', ' + clock + " o'clock!", 'urgent');
+    this.say(m, NUM[m.i] + ', ' + (kind === 'barrelRoll' || kind === 'jink' ? 'defending' : 'breaking ' + dir) + (flares ? ', flares' : ''), 'urgent', mate ? 0.9 : 0);
+    m.evadeCount = (m.evadeCount ?? 0) + 1;
+    m.lastEvade = kind;
+    return m.evade;
+  }
+  /** One step of member m's manoeuvre (its own flying: bank, heading, pitch, speed); at its end, it rejoins. */
+  evadeStep(m, dt) {
+    const E = m.evade;
+    E.t += dt;
+    const v = Math.max(40, m.v);
+    const q = (7 * G) / v; // pulling 7 g
+    const floor = this.floor(m.p[0], m.p[2]);
+    const low = m.p[1] - floor < 45;
+    const bankTo = (b, rate = 4) => (m.bank += clamp(b - m.bank, -rate * dt, rate * dt));
+    const turnBy = (bank) => (m.h = wrap(m.h - Math.sign(Math.tan(bank)) * Math.min(Math.abs(G * Math.tan(bank)) / v, q) * dt));
+    const pitchTo = (g, rate = 0.8) => (m.gamma += clamp(g - m.gamma, -rate * dt, rate * dt));
+    m.throttle = 1;
+    m.v += clamp(1.15 * this.cruise - m.v, -0.2 * this.cruise * dt, 0.25 * this.cruise * dt);
+    switch (E.kind) {
+      case 'breakTurn': {
+        // hard over (~80 degrees of bank) towards the threat, 7 g, until the nose is on it
+        const e = wrap(E.want - m.h);
+        bankTo(Math.abs(e) > 0.15 ? -Math.sign(e) * 1.42 : 0);
+        turnBy(m.bank);
+        pitchTo(low ? 0.25 : 0.04);
+        if (Math.abs(e) < 0.12 && E.t > 1.5) E.t = Math.max(E.t, E.dur - 0.6);
+        break;
+      }
+      case 'barrelRoll': {
+        // round the line of flight, a full roll every 2.4 s, the nose describing a circle (a corkscrew)
+        const ph = ((2 * Math.PI) / 2.4) * E.t;
+        m.bank = E.bank0 + E.side * ph;
+        m.h = wrap(E.h0 - E.side * 0.16 * Math.sin(ph));
+        m.gamma = (low ? 0.15 : 0) + 0.13 * (1 - Math.cos(ph)) - 0.06;
+        break;
+      }
+      case 'jink': {
+        // hard left, hard right, every 0.7 s, never steady
+        const s = Math.floor(E.t / 0.7) % 2 ? -E.side : E.side;
+        bankTo(s * 1.3, 6);
+        turnBy(m.bank);
+        pitchTo(low ? 0.2 : 0.08 * Math.sin(E.t * 4.5), 1.5);
+        break;
+      }
+      case 'splitS': {
+        // roll inverted, pull through the bottom of a half loop, out the other way, lower
+        if (E.phase === 0) {
+          bankTo(E.side * Math.PI, 3.5);
+          pitchTo(0, 1);
+          if (Math.abs(m.bank - E.side * Math.PI) < 0.05) E.phase = 1;
+        } else if (E.phase === 1) {
+          m.gamma -= q * dt;
+          if (m.gamma <= -Math.PI / 2) {
+            // straight down: the same attitude written as heading turned round, wings level again
+            m.gamma = -Math.PI / 2 + 1e-3;
+            m.h = wrap(m.h + Math.PI);
+            m.bank -= E.side * Math.PI;
+            E.phase = 2;
+          }
+        } else {
+          m.gamma = Math.min(0, m.gamma + q * dt);
+          bankTo(0);
+          if (m.gamma >= 0) E.t = Math.max(E.t, E.dur - 0.3);
+        }
+        break;
+      }
+      case 'dive': {
+        // over and down, steep, then pull out well above the ground
+        bankTo(E.side * 0.7);
+        turnBy(m.bank);
+        if (E.phase === 0) {
+          pitchTo(-0.6, 0.9);
+          if (m.p[1] - floor < 70 || E.t > E.dur * 0.6) E.phase = 1;
+        } else pitchTo(0.15, 1.2);
+        break;
+      }
+      case 'beam': {
+        // turn to put the threat on the beam (90 degrees off the nose), and down a little
+        const e = wrap(E.beam - m.h);
+        bankTo(clamp(-e * 2, -1.35, 1.35));
+        turnBy(m.bank);
+        pitchTo(low ? 0.2 : -0.1);
+        break;
+      }
+    }
+    // flares: a salvo every 0.45 s while the manoeuvre calls for them and it has them
+    if (E.flaresLeft > 0 && (E.flareT -= dt) <= 0 && m.flares > 0) {
+      E.flareT = 0.45;
+      E.flaresLeft--;
+      this.dispense(m);
+    }
+    this.move(m, dt);
+    // never into the ground
+    if (m.p[1] < floor + 15) {
+      m.p[1] = floor + 15;
+      m.gamma = Math.max(m.gamma, 0.2);
+    }
+    if (E.t >= E.dur) {
+      m.evade = null;
+      m.bank = wrap(m.bank);
+      m.gamma = clamp(m.gamma, -0.45, 0.45);
+      m.want = null;
+      m.ff = 0;
+      const who = m === this.leader ? this.callsign + ' lead' : NUM[m.i];
+      this.say(m, who + (m === this.leader ? ', clear, back on course' : ', clear, rejoining'), 'reply');
+      if (m !== this.leader && this.mode === 'orbit') this.setMode('join');
+    }
+  }
+  /** A salvo of flares from member m: two, out behind it and down, burning for ~4 s. */
+  dispense(m) {
+    const v = this.vel(m);
+    const f = fwdOf(m.h), rt = rightOf(m.h);
+    const ids = [];
+    for (const s of [-1, 1]) {
+      if (m.flares <= 0) break;
+      m.flares--;
+      const id = (this.flareN = (this.flareN ?? 0) + 1);
+      const p = [m.p[0] - f[0] * 6 + rt[0] * s * 1.2, m.p[1] - 1.5, m.p[2] - f[2] * 6 + rt[2] * s * 1.2];
+      this.flares.push({ id, p, v: [v[0] * 0.55 + rt[0] * s * 18, v[1] * 0.55 - 12, v[2] * 0.55 + rt[2] * s * 18], t: 0, by: m.i, trail: [p.slice()] });
+      ids.push(id);
+    }
+    // a missile on this jet may take them (one chance per salvo, the flight's own numbers)
+    for (const M of this.missiles)
+      if (M.target.m === m.i && ids.length && Math.hypot(M.p[0] - m.p[0], M.p[1] - m.p[1], M.p[2] - m.p[2]) < 2500 && this.erand() < FLARE_DECOY) {
+        M.target = { flare: ids[0] };
+        M.decoyedBy = m.i;
+        this.say(m, NUM[m.i] + ", missile's on the flares", 'reply', 1.2);
+      }
+  }
+  stepFlares(dt) {
+    for (let k = this.flares.length - 1; k >= 0; k--) {
+      const F = this.flares[k];
+      F.t += dt;
+      for (let j = 0; j < 3; j++) F.v[j] *= Math.exp(-0.9 * dt);
+      F.v[1] -= G * dt;
+      for (let j = 0; j < 3; j++) F.p[j] += F.v[j] * dt;
+      F.tt = (F.tt ?? 0) + dt;
+      if (F.tt > 0.06) {
+        F.tt = 0;
+        F.trail.push(F.p.slice());
+        if (F.trail.length > 40) F.trail.shift();
+      }
+      if (F.t > 4.5 || F.p[1] < this.floor(F.p[0], F.p[2])) this.flares.splice(k, 1);
+    }
+  }
+  /** The missiles: towards their target (a jet, or the flare they took), a proximity fuze. */
+  stepMissiles(dt) {
+    for (let k = this.missiles.length - 1; k >= 0; k--) {
+      const M = this.missiles[k];
+      M.t += dt;
+      const T = M.target.m != null ? this.members[M.target.m] : null;
+      const F = M.target.flare != null ? this.flares.find((x) => x.id === M.target.flare) : null;
+      const tp = T?.alive ? T.p : F ? F.p : null;
+      const tv = T?.alive ? this.vel(T) : F ? F.v : [0, 0, 0];
+      if (tp) {
+        // lead pursuit: towards where it will be, turning at most MISSILE.turn
+        const d = [tp[0] - M.p[0], tp[1] - M.p[1], tp[2] - M.p[2]];
+        const tgo = Math.hypot(...d) / M.speed;
+        const aim = [d[0] + tv[0] * tgo, d[1] + tv[1] * tgo, d[2] + tv[2] * tgo];
+        const al = Math.hypot(...aim) || 1;
+        const dv = aim.map((x, j) => (x / al) * M.speed - M.v[j]);
+        const dl = Math.hypot(...dv);
+        const lim = MISSILE.turn * dt;
+        const s = dl > lim ? lim / dl : 1;
+        for (let j = 0; j < 3; j++) M.v[j] += dv[j] * s;
+        const vl = Math.hypot(...M.v) || 1;
+        for (let j = 0; j < 3; j++) M.v[j] *= M.speed / vl;
+      }
+      const prev = M.p.slice();
+      for (let j = 0; j < 3; j++) M.p[j] += M.v[j] * dt;
+      M.trail ??= [];
+      M.tt = (M.tt ?? 0) + dt;
+      if (M.tt > 0.05) {
+        M.tt = 0;
+        M.trail.push(M.p.slice());
+        if (M.trail.length > 60) M.trail.shift();
+      }
+      let gone = M.t > MISSILE.life || M.p[1] < this.floor(M.p[0], M.p[2]);
+      if (tp && !gone) {
+        // the closest approach on this step within the fuze: it goes off
+        const a = [prev[0] - tp[0], prev[1] - tp[1], prev[2] - tp[2]];
+        const ab = [M.p[0] - prev[0], M.p[1] - prev[1], M.p[2] - prev[2]];
+        const s = clamp(-(a[0] * ab[0] + a[1] * ab[1] + a[2] * ab[2]) / (ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2 || 1), 0, 1);
+        const miss = Math.hypot(a[0] + ab[0] * s, a[1] + ab[1] * s, a[2] + ab[2] * s);
+        if (miss < M.fuze) {
+          gone = true;
+          this.splashes.push({ id: (this.splashN = (this.splashN ?? 0) + 1), p: M.p.slice(), t: this.time, air: true });
+          if (T?.alive) {
+            // a jet manoeuvring hard may still slip it (the fuze goes off too far out)
+            if (this.rollHit(T.i, 'missile')) {
+              M.hit = true;
+              this.hit(T.i, ['engines', 'wingL', 'wingR', 'tail', 'fuel'][Math.floor(this.erand() * 5)], 350);
+            } else {
+              M.slipped = true;
+              this.say(T, NUM[T.i] + ', it missed me', 'reply', 0.5);
+            }
+          }
+        }
+      }
+      if (gone) {
+        M.done = true;
+        this.missiles.splice(k, 1);
+      }
+    }
+  }
+
   /** The leader's own programme while holding (AI on). */
   programme() {
     const n = this.ranked().length;
@@ -808,6 +1162,8 @@ export function stepWorldFlights(sim, dt) {
           return [D.windX ?? 0, D.windZ ?? 0];
         },
         radio: (m, text, kind) => w.events.push({ type: 'flightRadio', pos: m.p.slice(), time: w.time, name: `${m.call}: ${text}`, kind }),
+        // a dragon in the air coming at them: they evade it (senseThreats)
+        threats: () => (w.dragons ?? []).filter((d) => d.health > 0 && d.mode === 'air' && d.chest).map((d) => ({ kind: 'dragon', p: d.chest, v: [Math.sin(d.yaw) * d.speed, d.vy ?? 0, Math.cos(d.yaw) * d.speed] })),
         // the simulation's own sea (or ground) where it comes down: the blast, the crater, the fire
         water: (x, z) => !(x > 0 && z > 0 && x < w.size[0] && z < w.size[2]) || !!w.sea,
         crash: (m, p, info) => {

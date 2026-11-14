@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { buildJetMesh } from './jetMesh.js';
 import { radioSay } from '../audio/radio.js';
 import { PilotFigure } from './pilotFigure.js';
+import { FlareFx } from './flares.js';
 
 /**
  * The flights of jets (ai/flight.js, world.flights): each member drawn with the jet's own mesh
@@ -95,6 +96,7 @@ export class FlightRenderer {
     for (const t of it.trails) this.scene.remove(t.line);
     for (const f of it.pilots.values()) this.scene.remove(f.group);
     for (const r of it.rockets) this.scene.remove(r);
+    it.flares?.dispose();
     if (it.target) this.scene.remove(it.target);
   }
 
@@ -125,7 +127,7 @@ export class FlightRenderer {
     });
     const target = new THREE.Mesh(new THREE.RingGeometry(18, 24, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff5040, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
     this.scene.add(target);
-    return { jets, trails, rockets: [], target, splashes: 0, pilots: new Map() };
+    return { jets, trails, rockets: [], target, splashes: 0, pilots: new Map(), flares: new FlareFx(this.scene) };
   }
 
   update(time, dt) {
@@ -152,11 +154,21 @@ export class FlightRenderer {
         r.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), this._v.set(...q.v).normalize());
         if (Math.random() < dt * 30) this.fx.emit(r.position.clone(), 'smoke', 1.2, null, 1.5);
       });
-      // where they came down: a splash (or a fireball for a jet)
+      // flares falling away on their smoke, missiles after them (ai/flight.js evasion)
+      it.flares.update(ai.flares, ai.missiles, time ?? 0);
+      // where they came down: a splash (or a fireball for a jet; a missile's burst in the air)
       for (const s of ai.splashes) {
         if (s.id <= it.splashes) continue;
         it.splashes = s.id;
         const p = new THREE.Vector3(...s.p);
+        if (s.air) {
+          for (let k = 0; k < 18; k++) {
+            const v = new THREE.Vector3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);
+            this.fx.emit(p, 'fire', 3, v, 0.5);
+            this.fx.emit(p, 'smoke', 4, v.multiplyScalar(0.3), 3);
+          }
+          continue;
+        }
         const n = s.big ? 40 : 14;
         for (let k = 0; k < n; k++) {
           const v = new THREE.Vector3((Math.random() - 0.5) * 14, 6 + Math.random() * 16, (Math.random() - 0.5) * 14);

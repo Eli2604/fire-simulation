@@ -37,6 +37,7 @@ import * as THREE from 'three';
 import { SC } from './sculpt.js';
 import { makeOperatorMaterial } from './shader.js';
 import { rootKeys, mono, MOVES as PK_MOVES, PARKOUR } from '../ai/parkour.js';
+import { rollKeys, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -805,6 +806,104 @@ const PK_KEYS = {
   },
 };
 
+/* ---------- combat rolls (ai/evade.js): sideways log rolls, a shoulder roll, a dive to prone ---------- */
+/**
+ * A roll's clip, as a parkour clip (pkClip) but on a root that also goes sideways: key poses with
+ * the hips (hp) at [x (his left), y, z (forward)] from where the roll starts, and the root path
+ * (ai/evade.js rollAt: [side, forward, up]) taken off, so whoever carries the root along that
+ * path (the AIs, the rig stage) has the body roll along the ground with it.
+ */
+function rlClip(kind, build) {
+  let keys = null, RS, RF, RU;
+  return (t) => {
+    if (!keys) {
+      const R = rollKeys(kind);
+      RS = R.map((k) => [k[0], k[1]]);
+      RF = R.map((k) => [k[0], k[2]]);
+      RU = R.map((k) => [k[0], k[3]]);
+      keys = build().map(([kt, p, o = {}]) => {
+        if (o.hp) p.hipsPos = [o.hp[0], o.hp[1] - REST.hips.y, o.hp[2]];
+        return [kt, p];
+      });
+    }
+    const p = pose0();
+    for (const k in p) {
+      if (Array.isArray(p[k])) p[k] = p[k].map((_, i) => mono(keys.map(([kt, kp]) => [kt, kp[k][i]]), t));
+      else p[k] = mono(keys.map(([kt, kp]) => [kt, kp[k]]), t);
+    }
+    const u = t / ROLLS[kind].dur, s = mono(RS, u), f = mono(RF, u), up = mono(RU, u);
+    p.hipsPos = [p.hipsPos[0] - s, p.hipsPos[1] - up, p.hipsPos[2] - f];
+    return p;
+  };
+}
+// the rifle held in to the chest, muzzle up past the left shoulder, both hands on it (rolling over it)
+const HUG = { wRot: [-0.9, 0.1, 0.5], wOff: [0.03, -0.08, -0.12] };
+/** A side roll: sg 1 to his left, -1 to his right (ROLLS.rollLeft / rollRight: d 1.9 m in 1.1 s). */
+function sideRoll(sg) {
+  const D = ROLLS.rollLeft.geo.d;
+  const at = (f) => sg * f * D; // the root's side at that fraction (SIDE_K in ai/evade.js)
+  const st0 = aimUpper(stance(pose0()), 1);
+  // lying along the ground on the front (prone), turned about the body's long axis by a (log roll)
+  const log = (a, o = {}) => {
+    const p = prone(pose0());
+    Object.assign(p, HUG, { cw: 0, hips: [1.45, a, 0], thighR: [-0.02, 0, -0.06], thighL: [-0.02, 0, 0.06], shinR: [0.15, 0, 0], shinL: [0.15, 0, 0], footR: [0.4, 0, 0], footL: [0.4, 0, 0], head: [-0.7, 0, 0] }, o);
+    return p;
+  };
+  const end = aimUpper(crouchLegs(pose0()), 1);
+  end.spine[0] = 0.12;
+  end.head[0] = -0.1;
+  end.hips = [0, -sg * TAU, 0];
+  return [
+    [0, st0, { hp: [0, HY - 0.02, 0] }],
+    // the step out to that side, down low, leaning into it
+    [0.18, PK(crouchLegs(J({ ...HUG })), { hips: [0.55, -sg * 0.25, 0], spine: [0.35, 0, 0], thighR: [-1.3, 0, -0.12 - 0.25 * sg], thighL: [-1.3, 0, 0.12 - 0.25 * sg] }), { hp: [at(0.18), HY - 0.5, 0.08] }],
+    // down on the front, already turning onto the shoulder
+    [0.34, log(-sg * 0.7), { hp: [at(0.37), 0.24, 0.12] }],
+    // over the back
+    [0.52, log(-sg * Math.PI), { hp: [at(0.6), 0.26, 0.12] }],
+    // onto the front again, the far side
+    [0.7, log(-sg * (TAU - 0.5)), { hp: [at(0.79), 0.24, 0.12] }],
+    // up onto a knee
+    [0.86, PK(crouchLegs(J({ ...HUG })), { hips: [0.7, -sg * TAU, 0], spine: [0.45, 0, 0], head: [-0.4, 0, 0] }), { hp: [at(0.92), HY - 0.55, 0.05] }],
+    [1.1, end, { hp: [at(1), HY - 0.36, -0.08] }],
+  ];
+}
+const RL_KEYS = {
+  rollLeft: () => sideRoll(1),
+  rollRight: () => sideRoll(-1),
+  // the shoulder roll: a lunge, the leading shoulder down, over the back diagonally, up in a crouch
+  rollForward: () => {
+    const D = ROLLS.rollForward.geo.d;
+    const tuck = (a, o = {}) => PK(J({ ...HUG, hips: [a, 0, 0.15], spine: [0.6, 0, 0], chest: [0.3, 0, 0], head: [0.7, 0, 0], thighR: [-1.9, 0, -0.1], thighL: [-1.9, 0, 0.1], shinR: [2.2, 0, 0], shinL: [2.2, 0, 0], footR: [-0.4, 0, 0], footL: [-0.4, 0, 0] }), o);
+    const end = aimUpper(crouchLegs(pose0()), 1);
+    end.spine[0] = 0.12;
+    end.head[0] = -0.1;
+    end.hips = [TAU, 0, 0];
+    return [
+      [0, aimUpper(stance(pose0()), 1), { hp: [0, HY - 0.02, 0] }],
+      [0.2, PK(legs(J({ ...HUG, spine: [0.7, 0, 0], head: [-0.3, 0, 0] }), -1.3, 1.4, 0.4, 0.4, -0.1, 0.05), {}), { hp: [0, HY - 0.38, 0.19 * D] }],
+      [0.38, tuck(1.6), { hp: [0, 0.55, 0.4 * D] }],
+      [0.55, tuck(3.1), { hp: [0, 0.5, 0.56 * D] }],
+      [0.72, tuck(4.7), { hp: [0, 0.45, 0.73 * D] }],
+      [0.9, tuck(6.0, { head: [0.2, 0, 0], spine: [0.5, 0, 0] }), { hp: [0, 0.5, 0.875 * D] }],
+      [1.2, end, { hp: [0, HY - 0.36, D - 0.08] }],
+    ];
+  },
+  // a dive forward: off the front foot, flat through the air, the rifle out ahead, onto the chest,
+  // sliding a little, and down in the prone, aiming
+  diveProne: () => {
+    const D = ROLLS.diveProne.geo.d;
+    const fly = PK(prone(pose0()), { hips: [1.3, 0, 0], thighR: [0.15, 0, -0.1], thighL: [0.3, 0, 0.1], shinR: [0.3, 0, 0], shinL: [0.1, 0, 0], footR: [0.6, 0, 0], footL: [0.6, 0, 0], head: [-0.9, 0, 0] });
+    return [
+      [0, aimUpper(stance(pose0()), 1), { hp: [0, HY - 0.02, 0] }],
+      [0.25, PK(legs(aimUpper(J({ spine: [0.35, 0, 0], hips: [0.55, 0, 0] }), 1), -0.9, 0.9, 0.5, 0.3, -0.05, 0.05), {}), { hp: [0, HY - 0.2, 0.3 * D] }],
+      [0.5, fly, { hp: [0, 0.62, 0.65 * D] }],
+      [0.75, PK(prone(pose0()), { hips: [1.5, 0, 0], head: [-0.9, 0, 0] }), { hp: [0, 0.2, 0.9 * D] }],
+      [1.25, prone(pose0()), { hp: [0, HY - 0.82, D] }],
+    ];
+  },
+};
+
 const CLIPS = {
   idle: [2.4, (t, u) => {
     const p = pose0(), f = TAU * u;
@@ -1086,10 +1185,12 @@ const CLIPS = {
   peekOverAim: [2.4, (t, u) => peek(pose0(), TAU * u, true)],
   // parkour (ai/parkour.js MOVES: their durations and root paths)
   ...Object.fromEntries(Object.keys(PK_KEYS).map((k) => [k, [PK_MOVES[k].dur, pkClip(k, PK_KEYS[k])]])),
+  // combat rolls (ai/evade.js ROLLS: their durations and root paths)
+  ...Object.fromEntries(Object.keys(RL_KEYS).map((k) => [k, [ROLLS[k].dur, rlClip(k, RL_KEYS[k])]])),
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
@@ -1097,8 +1198,8 @@ export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stair
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
-  vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover' };
-export { PARKOUR };
+  vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS };
+export { PARKOUR, ROLL };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */

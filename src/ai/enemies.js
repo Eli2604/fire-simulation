@@ -2,6 +2,7 @@ import { traceVoxels } from './sight.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
+import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -231,6 +232,15 @@ export class EnemyAI {
     this.enlist();
     for (const e of w.enemies) {
       if (e.dead || (e.squad && !e.guard)) continue; // a soldiers' fire team has only its squad AI (ai/squad.js)
+      // a combat roll under way (ai/evade.js): carried along it (one the dragon's snatch started, it carries him itself)
+      if (e.trav && (!e.squad || e.guardCtl)) {
+        if (e.trav.ext) continue;
+        if (!e.trav.roll) e.trav = null; // (a vault the squad AI had him in when it let him go)
+        else {
+          stepRoll(e, dt, (x, z) => this.floorAt(x, z, e.p[1] + 0.5));
+          continue;
+        }
+      }
       e.timer = (e.timer ?? 0) - dt;
       e.lureCooldown = (e.lureCooldown ?? 10 + Math.random() * 10) - dt;
       e.repath = (e.repath ?? 0) - dt;
@@ -292,6 +302,9 @@ export class EnemyAI {
           }
         }
       }
+      // a grenade by him, a rocket coming, your rounds cracking past, a dragon on him: a roll out of it
+      if (!e.squad || e.guardCtl) this.dodge(e);
+      if (e.trav) continue;
       // --- danger first: get out of heat and smoke
       const hz = this.hazard(...e.p);
       let dragon = null;
@@ -500,6 +513,26 @@ export class EnemyAI {
       }
     }
     this.separate(dt);
+  }
+
+  /** Threatened (ai/evade.js dangers): roll out of it if he can (a guard on patrol, an enemy on his own). */
+  dodge(e) {
+    const w = this.world;
+    if (e.trav || e.dead || (e.stunnedUntil ?? 0) > w.time) return false;
+    for (const t of dangers(w, e)) {
+      if (!worthRolling(e, t, Math.random, w.time)) continue;
+      const pick = pickRoll(e, t, { solid: (x, y, z) => this.solidAt(x, y, z), floor: (x, z) => this.floorAt(x, z, e.p[1] + 0.5) });
+      if (!pick) continue;
+      startRoll(e, pick, w.time, { why: t.kind });
+      e.aiming = false;
+      if (t.kind === 'fire' && !e.alerted) {
+        // shot at: he knows someone is there
+        e.alerted = true;
+        w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + EYE, e.p[2]], time: w.time, name: 'enemy' });
+      }
+      return true;
+    }
+    return false;
   }
 
   /**

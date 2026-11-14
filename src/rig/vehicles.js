@@ -16,6 +16,7 @@ import { JetDamage } from '../sim/jetDamage.js';
 import { FlightAI, FORMATIONS } from '../ai/flight.js';
 import { Chute, chuteInput, ejectionEnvelope } from '../sim/ejection.js';
 import { PilotFigure } from '../render/pilotFigure.js';
+import { FlareFx } from '../render/flares.js';
 import { VEHICLE_ZONES, VEHICLE_WEAPONS, vehicleZones, rayZone, hitPart, integrity } from '../models/vehicleZones.js';
 import { buildCarMesh, buildJet, buildBoatMesh, Sea, disposeTree } from './vehicleMeshes.js';
 
@@ -158,6 +159,9 @@ export class VehicleRig {
       this.sea = null;
     }
     this.fx.clear();
+    this.flareFx?.dispose();
+    this.flareFx = null;
+    this.rigFlares = [];
     this.v = null;
     this.kind = null;
   }
@@ -344,7 +348,8 @@ export class VehicleRig {
       if (env.ok) this.ejectFrom(v, [Math.cos(s.yaw) * s.speed, s.vy ?? 0, -Math.sin(s.yaw) * s.speed], s.yaw);
     }
     if (jd?.state === 'falling' || jd?.state === 'crashed') return this.fall(dt);
-    const air = act === 'gearUp' || act === 'bank' || act === 'eject' || act === 'hit' || act === 'burning' || act === 'critical' || act === 'crash';
+    const evade = act === 'evadeBreak' || act === 'evadeRoll';
+    const air = evade || act === 'gearUp' || act === 'bank' || act === 'eject' || act === 'hit' || act === 'burning' || act === 'critical' || act === 'crash';
     const engineOut = (this.dmg.engines ?? 0) >= 1;
     // up off the ground (on a stand, as on a test rig) before the gear comes up; gear down before it settles
     const alt = act === 'critical' || act === 'eject' ? 30 : act === 'crash' ? 22 : act === 'gearUp' ? 3.5 : air ? 12 : 0;
@@ -357,15 +362,28 @@ export class VehicleRig {
     s.speed = approach(s.speed, taxi ? 5 : flying ? 26 : 0, flying ? 0.6 : 1.2, dt);
     let roll = 0;
     if (s.speed > 0.05) {
-      const R = flying ? 30 : 16;
+      // (a break turn: tight, at a steep bank)
+      const R = act === 'evadeBreak' ? 13 : flying ? 30 : 16;
       this.circle(R, s.speed, dt);
-      roll = flying ? Math.min(1.05, Math.atan((s.speed * s.speed) / (R * 9.81))) : 0;
+      roll = flying ? Math.min(act === 'evadeBreak' ? 1.4 : 1.05, Math.atan((s.speed * s.speed) / (R * 9.81))) : 0;
     }
     // a wing gone: it rolls towards it
     roll += 0.5 * ((this.dmg.wingR ?? 0) - (this.dmg.wingL ?? 0)) * (s.y > 1 ? 1 : 0);
-    s.roll = approach(s.roll, roll, 1.5, dt);
+    if (act === 'evadeRoll' && s.y > 6) {
+      // a barrel roll round its line of flight, over and over (a full roll every 2.4 s)
+      s.roll += ((2 * Math.PI) / 2.4) * dt;
+      s.rolled = true;
+    } else {
+      if (s.rolled) s.roll = Math.atan2(Math.sin(s.roll), Math.cos(s.roll));
+      s.rolled = false;
+      s.roll = approach(s.roll, roll, act === 'evadeBreak' ? 3 : 1.5, dt);
+    }
     v.group.position.set(s.x, s.y, s.z);
+    // (the evade acts: the aircraft's own order, heading then pitch then roll)
+    v.group.rotation.order = evade ? 'YZX' : 'XYZ';
     v.group.rotation.set(s.roll, s.yaw, flying ? 0.04 : 0);
+    if (evade) this.jetFlares(dt, s);
+    else if (this.rigFlares?.length) this.jetFlares(dt, s, false);
     // the gear folds up into the belly
     v.gear.scale.y = Math.max(0.02, s.gear);
     v.gear.position.y = (1 - s.gear) * 1.1;
@@ -376,6 +394,38 @@ export class VehicleRig {
     v.flame.scale.set(0.6 + fl * 0.5, 0.3 + fl * (1.3 + 0.12 * Math.sin(this.t * 40)), 0.6 + fl * 0.5);
     v.flame.children.forEach((c) => c.material.color.setHSL(0.07 - fl * 0.02, 1, 0.55 + fl * 0.1));
     v.glow.intensity = fl > 0.5 ? (fl - 0.5) * 80 * (0.9 + 0.1 * Math.random()) : 0;
+  }
+
+  /** The single jet's flares in the evade acts: a salvo every 0.45 s, four, then a pause; falling away burning. */
+  jetFlares(dt, s, drop = true) {
+    this.rigFlares ??= [];
+    this.flareFx ??= new FlareFx(this.holder);
+    s.flareT = (s.flareT ?? 0) - dt;
+    if (drop && s.flareT <= 0 && s.y > 6) {
+      s.salvo = ((s.salvo ?? 0) + 1) % 6;
+      s.flareT = s.salvo < 4 ? 0.45 : 1.2;
+      if (s.salvo < 4) {
+        const f = [Math.cos(s.yaw), 0, -Math.sin(s.yaw)], rt = [Math.sin(s.yaw), 0, Math.cos(s.yaw)];
+        for (const k of [-1, 1]) {
+          const p = [s.x - f[0] * 5.5 + rt[0] * k, s.y + 0.6, s.z - f[2] * 5.5 + rt[2] * k];
+          this.rigFlares.push({ id: (this.flareN = (this.flareN ?? 0) + 1), p, v: [f[0] * 10 + rt[0] * k * 9, -5, f[2] * 10 + rt[2] * k * 9], t: 0, trail: [p.slice()] });
+        }
+      }
+    }
+    for (let i = this.rigFlares.length - 1; i >= 0; i--) {
+      const F = this.rigFlares[i];
+      F.t += dt;
+      for (let j = 0; j < 3; j++) F.v[j] *= Math.exp(-0.9 * dt);
+      F.v[1] -= 9.81 * dt;
+      for (let j = 0; j < 3; j++) F.p[j] += F.v[j] * dt;
+      if ((F.tt = (F.tt ?? 0) + dt) > 0.05) {
+        F.tt = 0;
+        F.trail.push(F.p.slice());
+        if (F.trail.length > 40) F.trail.shift();
+      }
+      if (F.t > 4.5 || F.p[1] < 0.2) this.rigFlares.splice(i, 1);
+    }
+    this.flareFx.update(this.rigFlares, [], this.t);
   }
 
   boat(dt) {
@@ -957,12 +1007,43 @@ export class VehicleRig {
       // an engine fire: it burns, goes critical and falls; the next one takes the lead
       this.pick(ai.lead);
       this.hit('engines', 60);
-    } else ai.order(name);
+    } else if (name === 'evadeBreak' || name === 'evadeRoll') this.evadeAct(name);
+    else ai.order(name);
     this.status(true);
+  }
+
+  /**
+   * The evade acts (ai/flight.js): on the selected jet (or the lead), a rocket coming in from its
+   * right (it breaks hard into it, flares out), or a missile from behind (a barrel roll with flares:
+   * the missile may take the flares). Again every few seconds after it is over.
+   */
+  evadeAct(name) {
+    const ai = this.ai;
+    const i = ai.members[this.sel]?.alive ? this.sel : ai.lead;
+    const m = ai.members[i];
+    if (!m?.alive) return;
+    const f = [Math.cos(m.h), 0, -Math.sin(m.h)], rt = [Math.sin(m.h), 0, Math.cos(m.h)];
+    if (name === 'evadeBreak') {
+      const p = [m.p[0] + rt[0] * 160, m.p[1] - 10, m.p[2] + rt[2] * 160];
+      ai.startEvade(m, { kind: 'rocket', p, v: rt.map((x) => -x * 120) }, 2, 'breakTurn');
+    } else {
+      const from = [m.p[0] - f[0] * 220, m.p[1] - 15, m.p[2] - f[2] * 220];
+      ai.launchMissile(from, i, { speed: 80, fuze: 5 });
+      ai.startEvade(m, { kind: 'missile', p: from }, 2.5, 'barrelRoll');
+    }
+    this.evadeT = 0;
   }
 
   flight(dt) {
     this.ai.step(dt);
+    // the evade acts: flares and missiles drawn; once it is over, again
+    this.flareFx ??= new FlareFx(this.holder);
+    this.flareFx.update(this.ai.flares, this.ai.missiles, this.t);
+    if (this.act === 'evadeBreak' || this.act === 'evadeRoll') {
+      const busy = this.ai.members.some((m) => m.evade) || this.ai.missiles.length;
+      this.evadeT = busy ? 0 : (this.evadeT ?? 0) + dt;
+      if (this.evadeT > 3) this.evadeAct(this.act);
+    }
     // the ones who got out: seat, canopy, steering, landing
     this.flightPilots ??= new Map();
     for (const P of this.ai.pilots) {

@@ -1,6 +1,8 @@
 import { groundAt, canFly, wingDamage, WING, dragonZones, dragonWoundPoint, initDragon } from './dragon.js';
 import { splatter } from '../sim/wounds.js';
 import { explode } from '../sim/explosions.js';
+import { startRoll, stepRoll, pathClear, ROLLS } from './evade.js';
+import { startEvade as dragonEvade, hitFactor } from './dragonEvade.js';
 
 /**
  * The dragon in the air, against something: two acts on top of ai/dragon.js (which moves and
@@ -43,7 +45,7 @@ export const MASS = { enemy: 90, player: 90, cylinder: 35, drum: 180, crate: 25,
 export const BLOWS = { bite: { dmg: 90, tear: 55 }, claw: { dmg: 55, tear: 45 }, tail: { dmg: 45, tear: 30 }, buffet: { dmg: 20, tear: 12 } };
 
 /** What the events say (main.js shows them in its log). */
-export const AIR_EVENT_TEXT = { snatched: 'snatched its prey out of the air', snatchMiss: 'missed: it turns for another pass', thrown: 'threw its prey away', thrownLanded: 'hit the ground', dragonDuel: 'turns on the other dragon', dragonGrapple: 'locked talons: both spinning down', dragonBlow: 'is struck', dragonDuelEnd: 'won the fight' };
+export const AIR_EVENT_TEXT = { dragonEvade: 'evades', dragonDodged: 'slipped a shot', dragonPassDodged: 'twisted away from the blow', snatched: 'snatched its prey out of the air', snatchMiss: 'missed: it turns for another pass', thrown: 'threw its prey away', thrownLanded: 'hit the ground', dragonDuel: 'turns on the other dragon', dragonGrapple: 'locked talons: both spinning down', dragonBlow: 'is struck', dragonDuelEnd: 'won the fight' };
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a, b, s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
@@ -311,13 +313,28 @@ export function endSnatch(ai, d, why = 'done') {
   }
 }
 
-/** A guard (or the rig's dummy) sees it coming and jumps aside. */
+/**
+ * A guard (or the rig's dummy) sees it coming and gets out from under it. A guard rolls (ai/evade.js:
+ * turned to face the dragon, a log roll to his left or right, across its line of attack: the
+ * roll's own root path, which this carries him along: stepThrown); the dummy jumps aside.
+ */
 function dodge(S, x, d, w) {
-  const side = rnd(S) < 0.5 ? 1 : -1;
+  let side = rnd(S) < 0.5 ? 1 : -1;
   const f = [Math.sin(d.yaw), 0, Math.cos(d.yaw)];
+  S.dodged = (S.dodged ?? 0) + 1;
+  if (S.T.kind === 'enemy' && x.health !== undefined && !x.crawling) {
+    // facing the dragon (its track reversed), his left is across its track
+    const yaw = Math.atan2(-f[0], -f[2]);
+    let kind = side > 0 ? 'rollLeft' : 'rollRight';
+    const host = { solid: (a, b, c) => { const i = w.voxelAt?.(a, b, c) ?? -1; return i >= 0 && !!w.mat[i]; } };
+    if (!pathClear(x, kind, yaw, host)) kind = kind === 'rollLeft' ? 'rollRight' : 'rollLeft';
+    // (flung out quick and far: all he has)
+    const r = startRoll(x, { kind, yaw }, w.time, { ext: true, why: 'dragon', cool: 1, slow: 0.8 });
+    r.geo.d = ROLLS[kind].geo.d * 1.25; // (flung out further: all he has)
+    return;
+  }
   x.dodge = { v: [f[2] * side * 7, 0, -f[0] * side * 7], until: w.time + 0.6 };
   if (x.stunnedUntil !== undefined || x.health !== undefined) x.stunnedUntil = Math.max(x.stunnedUntil ?? 0, w.time + 0.8);
-  S.dodged = (S.dodged ?? 0) + 1;
 }
 
 /** One step of the snatch (ai/dragon.js calls it for state 'snatch'). */
@@ -368,7 +385,8 @@ export function stepSnatch(ai, d, w, dt) {
         S.committed = true;
         S.strikeAt = aim.p.slice(); // (the strike goes where it reckoned the target would be)
       }
-      diveMove(d, w, dt, aim.p, SNATCH.dive, S.committed ? 0.2 : 1.6);
+      // (committed: for where it reckoned the target would be, not where it goes now)
+      diveMove(d, w, dt, S.committed ? S.strikeAt : aim.p, SNATCH.dive, S.committed ? 0.2 : 1.6);
       d.look = S.committed ? S.strikeAt : c;
       const dm = dist(d.mouth, c);
       // the strike: in the last moments the neck shoots forward, the jaws open wide
@@ -439,6 +457,12 @@ export function stepSnatch(ai, d, w, dt) {
 export function stepThrown(sim, dt) {
   const w = sim.world;
   for (const x of [...(w.enemies ?? []), ...(w.loose ?? [])]) {
+    // a guard rolling out from under a dive: along the roll's root path, on the ground
+    if (x.trav?.ext && x.trav.roll) {
+      if (x.held || x.dead) x.trav = null;
+      else stepRoll(x, dt, (a, b) => groundAt(w, a, b, x.p[1] + 0.6).y);
+      continue;
+    }
     if (!x.dodge) continue;
     if (w.time > x.dodge.until || x.held) x.dodge = null;
     else {
@@ -658,6 +682,12 @@ function pass(ai, D) {
     move === 'claw' ? pick(D, [['chest', 0.3], ['belly', 0.3], ['wingL', 0.2], ['wingR', 0.2]]) :
     pick(D, [['head', 0.25], ['neck', 0.35], ['wingL', 0.2], ['wingR', 0.2]]);
   att.strikeT = 0.45;
+  // the one struck at evading (a roll, a wing-over, a dive: ai/dragonEvade.js): the blow may miss
+  if (def.evade && rnd(D) >= hitFactor(def)) {
+    D.dodged = (D.dodged ?? 0) + 1;
+    ai.world.events.push({ type: 'dragonPassDodged', pos: (def.chest ?? def.p).slice(), time: ai.world.time, name: 'the dragon' });
+    return;
+  }
   blow(ai, def, zone, move, att);
   if (rnd(D) < 0.35 && def.health > 0) {
     blow(ai, att, pick(D, [['head', 0.5], ['neck', 0.5]]), 'buffet', def);
@@ -765,7 +795,8 @@ export function stepFight(ai, d, w, dt) {
     d.airAct = null;
     return;
   }
-  if (d === D.a) advanceDuel(ai, D, w, dt);
+  // (run by the first dragon; by the other once the first is dead: its AI no longer steps the fight)
+  if (d === D.a || D.a.health <= 0) advanceDuel(ai, D, w, dt);
   if (!d.duel) return; // (it ended)
   const foe = d.foe;
   const k = d.k;
@@ -801,6 +832,14 @@ export function stepFight(ai, d, w, dt) {
       }
       ai.airMove(d, w, dt, dm < 10 * k ? foe.p : m, (foe.p[1] + d.p[1]) / 2 + s * 0.8 * k, 15);
       const dd = dist(d.chest, foe.chest);
+      // the other's fire pass coming at it: once a pass, it may twist out of it (a roll, a wing-over, a dive)
+      if (foe.joustFired && dd < 15 * k && dd > 5 * k && d.evadeTried !== D.passes && !d.evade) {
+        d.evadeTried = D.passes;
+        if (rnd(D) < 0.5) {
+          const kind = pick(D, [['barrelRoll', 0.4], ['wingOver', 0.3], ['dive', 0.3]]);
+          dragonEvade(d, kind, rnd(D) < 0.5 ? 1 : -1, w, 'dragon');
+        }
+      }
       if (!d.joustFired && dd < 22 * k && dd > 8 * k) {
         d.joustFired = true;
         d.breathLen = 1.1;
