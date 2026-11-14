@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { snowShare } from '../sim/snow.js';
+import { swirlPoint } from '../sim/stirrers.js';
+
+const SW = [0, 0];
 
 /**
  * Falling rain streaks; count follows the rain intensity, drift follows the wind.
@@ -113,6 +116,7 @@ export class RainRenderer {
     const wx = Math.cos(rad) * weather.windSpeed;
     const wz = Math.sin(rad) * weather.windSpeed;
     const len = Math.min(0.5, sy * 0.04);
+    const swirl = world.stirrers?.some((s) => s.kind === 'hose');
     const { nx, nz, h, colTop } = world;
     for (let k = 0; k < n; k++) {
       const s0 = this.seed[k * 3];
@@ -121,8 +125,10 @@ export class RainRenderer {
       const fall = ((this.t * speed) / H + s2) % 1;
       const y = H * (1 - fall);
       const drift = (H - y) / speed;
-      const x = (((s0 * sx + wx * drift) % sx) + sx) % sx;
-      const z = (((s1 * sz + wz * drift) % sz) + sz) % sz;
+      let x = (((s0 * sx + wx * drift) % sx) + sx) % sx;
+      let z = (((s1 * sz + wz * drift) % sz) + sz) % sz;
+      // (a wind hose whirls it round: sim/stirrers.js)
+      if (swirl) [x, z] = swirlPoint(world, x, y, z, drift, SW);
       const o = k * 6;
       // under a roof: this drop has already landed on it
       const cx = Math.min(nx - 1, Math.floor(x / h));
@@ -154,6 +160,7 @@ export class RainRenderer {
     const wz = Math.sin(rad) * weather.windSpeed;
     const { nx, nz, h, colTop } = world;
     const S = world.snow;
+    const swirl = world.stirrers?.some((s) => s.kind === 'hose');
     for (let k = 0; k < n; k++) {
       // (the last flakes of the pool, so that sleet's drops and flakes are different ones)
       const q = this.max - 1 - k;
@@ -164,8 +171,9 @@ export class RainRenderer {
       const y = H * (1 - fall);
       const drift = (H - y) / speed;
       const flutter = 0.25 * Math.sin(this.t * (1.3 + s0) + s1 * 40);
-      const x = (((s0 * sx + wx * drift + flutter) % sx) + sx) % sx;
-      const z = (((s1 * sz + wz * drift + flutter * 0.7) % sz) + sz) % sz;
+      let x = (((s0 * sx + wx * drift + flutter) % sx) + sx) % sx;
+      let z = (((s1 * sz + wz * drift + flutter * 0.7) % sz) + sz) % sz;
+      if (swirl) [x, z] = swirlPoint(world, x, y, z, drift, SW);
       const cx = Math.min(nx - 1, Math.floor(x / h));
       const cz = Math.min(nz - 1, Math.floor(z / h));
       let top = colTop ? (colTop[cx + nx * cz] + 1) * h : 0;

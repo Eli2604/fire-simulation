@@ -8,6 +8,7 @@ import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
+import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
 
 const EYE_STAND = 1.65;
@@ -1060,6 +1061,17 @@ export class Walkthrough {
         const nz = this.pos.z + Math.max(-0.3, Math.min(0.3, az));
         const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
         if (fl - this.pos.y > 0.42 || this.blocked(nx, nz, fl, eye)) continue;
+        this.pos.x = nx;
+        this.pos.z = nz;
+      }
+    }
+    // in the water, a whirlpool carries you round and draws you in (sim/stirrers.js)
+    if ((this.water?.depth ?? 0) > 0.6 && w.stirrers?.length) {
+      const c = waterStirAt(w, this.pos.x, this.pos.z);
+      const nx = this.pos.x + Math.max(-0.3, Math.min(0.3, c[0] * dt * 0.85));
+      const nz = this.pos.z + Math.max(-0.3, Math.min(0.3, c[1] * dt * 0.85));
+      const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
+      if (fl - this.pos.y <= 0.42 && !this.blocked(nx, nz, fl, eye)) {
         this.pos.x = nx;
         this.pos.z = nz;
       }

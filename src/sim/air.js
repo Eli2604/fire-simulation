@@ -7,6 +7,7 @@
 
 import { O2_AIR } from './world.js';
 import { conserveO2 } from './oxygen.js';
+import { stirAir } from './stirrers.js';
 
 const CP_AIR = 1005;
 const MAX_AIR_T = 1250;
@@ -249,6 +250,11 @@ export function stepAir(w, W, D, dt, sim) {
       }
     }
 
+  // wind hoses and jets (sim/stirrers.js): their own air on top
+  stirAir(w, dt);
+  const stirM = w.stirList?.length ? w.stirM : null;
+  const stirD = w.stirD;
+
   // --- 2. advection into the tmp buffers
   const oT = w.tmpA;
   const oS = w.tmpB;
@@ -280,6 +286,12 @@ export function stepAir(w, W, D, dt, sim) {
         let px = ax - vx[a] * inv;
         let py = ay - vy[a] * inv;
         let pz = az - vz[a] * inv;
+        if (stirM && stirM[a]) {
+          // (round a wind hose: back along the circle, sim/stirrers.js)
+          px = ax - stirD[a * 3] / ah;
+          py = ay - stirD[a * 3 + 1] / ah;
+          pz = az - stirD[a * 3 + 2] / ah;
+        }
         if (px < -0.5 || pz < -0.5 || px > anx - 0.5 || pz > anz - 0.5 || py > any - 0.5) {
           oT[a] = Tamb;
           oS[a] = oR[a] = oG[a] = oB[a] = oW[a] = oF[a] = oX[a] = 0;

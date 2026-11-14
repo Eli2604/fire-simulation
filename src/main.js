@@ -8,7 +8,7 @@ import { View } from './render/view.js';
 import { SCENARIOS, cloneScene, resolveScenario, openScenario, placeOrigin, LAKESIDE_WINTER } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
-import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift } from './sim/weather.js';
+import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift, WATER_SETTINGS } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
 import { lod } from './render/lod.js';
@@ -487,6 +487,8 @@ function buildWeatherFolder() {
   );
   live(fW.add(W, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)'));
   live(fW.add(W, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)'));
+  // the water: clarity, turbidity, grease, turbulence (render/waterOptics.js)
+  for (const s of WATER_SETTINGS) live(fW.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label));
   const fP = fW.addFolder('Presets').close();
   fP.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
   // lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)

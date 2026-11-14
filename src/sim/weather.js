@@ -20,8 +20,21 @@ export function defaultWeather() {
     iceSpeed: 1, // × how fast ice forms and melts (1: as it does; more to watch it happen)
     snowSpeed: 1, // × how fast snow builds up and melts (1: as it does; more to watch it happen)
     vary: 'fixed', // fixed | gentle | changeable: how it changes by itself (WeatherDrift)
+    // the water (sea, lakes, ponds: render/waterOptics.js)
+    waterClarity: 0.9, // 0..1 how clear it is in itself (the sea: ~35 m visibility at 0.9)
+    turbidity: 0, // 0..1 silt and plankton: you see less far down, brown-green
+    grease: 0, // 0..1 a film of oil: calmer, glassy patches with a rainbow sheen, less foam
+    waterTurbulence: 0, // 0..1 choppy, more foam and whitecaps, sediment stirred up near the shore
   };
 }
+
+/** The water's settings, as both weather panels (Play, Edit world) offer them (outdoors). */
+export const WATER_SETTINGS = [
+  { key: 'waterClarity', min: 0, max: 1, step: 0.01, label: 'Water clarity' },
+  { key: 'turbidity', min: 0, max: 1, step: 0.01, label: 'Water turbidity (silt, plankton)' },
+  { key: 'grease', min: 0, max: 1, step: 0.01, label: 'Grease / oil film on the water' },
+  { key: 'waterTurbulence', min: 0, max: 1, step: 0.01, label: 'Water turbulence (chop, foam)' },
+];
 
 /**
  * The seasons: a typical day of each in a temperate climate (the weather settings they

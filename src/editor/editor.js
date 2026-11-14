@@ -25,13 +25,15 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MODELS, defaultParams } from '../models/index.js';
 import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
-import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf } from '../sim/weather.js';
+import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf, WATER_SETTINGS } from '../sim/weather.js';
 import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
 const CHARACTERS = { squad: 'soldier', enemy: 'soldier', dragon: 'dragon' };
+// no voxels either: a whirlpool, a wind hose, a jet (sim/stirrers.js) are picked within 3 m
+const STIRRERS = { waterVortex: 1, windHose: 1, windJet: 1 };
 /** The palette, by kind (a model not named here goes under Other). */
 const GROUPS = [
   ['Cover & buildings', ['wall', 'crate', 'deck', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
@@ -39,6 +41,7 @@ const GROUPS = [
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
   ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
   ['Nature', ['tree', 'grass', 'volcano']],
+  ['Water & air', ['waterVortex', 'windHose', 'windJet']],
   ['Places', ['island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
 ];
 
@@ -500,6 +503,7 @@ export class Editor {
     };
     fw.add(speed, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)').onFinishChange(change);
     fw.add(speed, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)').onFinishChange(change);
+    for (const s of WATER_SETTINGS) fw.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label).onFinishChange(change);
   }
 
   showPalette() {
@@ -556,8 +560,8 @@ export class Editor {
     if (k < 0 || !C.scene.objects[k]) {
       let best = 1.5;
       C.scene.objects.forEach((o, i) => {
-        if (!CHARACTERS[o.type]) return;
-        const d = Math.hypot(o.x - hit.point[0], o.z - hit.point[2]);
+        if (!CHARACTERS[o.type] && !STIRRERS[o.type]) return;
+        const d = Math.hypot(o.x - hit.point[0], o.z - hit.point[2]) - (STIRRERS[o.type] ? 1.5 : 0);
         if (d < best) (best = d), (k = i);
       });
     }

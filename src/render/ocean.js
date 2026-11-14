@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { carrierHullEnds } from './hull.js';
+import { WATER_GLSL } from './waterOptics.js';
+import { WATER_UNIFORMS } from './waterSurface.js';
+import { funnelDepth } from '../sim/stirrers.js';
 
 /**
  * The open sea around a ship or an island.
@@ -19,6 +22,13 @@ import { carrierHullEnds } from './hull.js';
  *    and break: lines of surf run in to the beach, foam lies along the waterline.
  *  - Against a hull: the waves are damped in its lee and slap against it, with
  *    foam along the waterline of the hull. Whitecaps on the crests in a strong wind.
+ *  - Optics (render/waterOptics.js): the light coming back up is the floor's (sand in the
+ *    shallows: turquoise, red going first) or the water's own scattered light (deep blue);
+ *    turbidity makes it brown-green and less clear, turbulence chops it up (more foam, sediment
+ *    stirred up near the shore), grease calms the ripples in glassy patches with a rainbow
+ *    sheen and less foam. The sun glitters on the waves (its real direction and strength).
+ *  - A whirlpool (sim/stirrers.js): the sea leaves a hole for its funnel (render/stirrers.js)
+ *    and its waves die down round it.
  *
  * It is a MeshStandardMaterial with the waves and the colour patched in, so the
  * sun, its shadows, fog and tone mapping work as on everything else.
@@ -50,6 +60,9 @@ export class Ocean {
       // the sea frozen over (sim/ice.js): no waves under the ice, and it is drawn instead
       uIceTex: { value: null },
       uHasIce: { value: 0 },
+      // whirlpools: [x, z, radius, depth] (render/stirrers.js draws their funnels)
+      uVort: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },
+      uVortN: { value: 0 },
     };
     this.material = this.makeMaterial();
     this.weather = { windSpeed: 3, windDir: 0, rain: 0, fog: 0 };
@@ -235,6 +248,14 @@ export class Ocean {
     this.depthTex.needsUpdate = true;
   }
 
+  /** The whirlpools on the sea (up to 4: sim/stirrers.js). */
+  setVortices(list) {
+    const u = this.uniforms;
+    this.vort = (list ?? []).slice(0, 4);
+    this.vort.forEach((s, k) => u.uVort.value[k].set(s.p[0], s.p[2], s.radius, s.depth));
+    u.uVortN.value = this.vort.length;
+  }
+
   /** Waves from the wind: their height, length, direction and spread. */
   setWeather(weather, sky, grey) {
     this.weather = weather;
@@ -248,18 +269,20 @@ export class Ocean {
     const Lp = Math.min(110, Math.max(7, 0.83 * U * U));
     const f = [1, 0.63, 0.41, 0.27, 0.18, 0.12, 0.08, 0.055];
     const spread = [0, 0.45, -0.38, 0.8, -0.7, 1.05, -0.95, 0.25];
+    const turb = Math.max(0, Math.min(1, weather.waterTurbulence ?? 0));
     const u = this.uniforms;
     let sum = 0;
     for (let k = 0; k < MAX_WAVES; k++) sum += f[k];
     for (let k = 0; k < MAX_WAVES; k++) {
       const L = Lp * f[k];
       const a = dir + spread[k] * (0.5 + 0.5 * Math.min(1, U / 8)); // a short-crested sea in a wind
-      const amp = (Hs / 2) * (f[k] / sum) * 1.6;
+      // (turbulent water: the short waves choppier)
+      const amp = (Hs / 2) * (f[k] / sum) * 1.6 * (k >= 3 ? 1 + 1.5 * turb : 1);
       u.uWaves.value[k].set(Math.cos(a), Math.sin(a), (2 * Math.PI) / L, amp);
     }
     u.uHs.value = Hs;
     u.uWind.value = U;
-    u.uSteep.value = 0.35 + 0.45 * Math.min(1, U / 12); // choppier in a strong wind
+    u.uSteep.value = 0.35 + 0.45 * Math.min(1, U / 12) + 0.3 * turb; // choppier in a strong wind
     u.uRain.value = Math.min(1, (weather.rain ?? 0) / 20);
     if (sky) u.uSky.value.copy(sky);
     u.uGrey.value = grey ?? 0;
@@ -300,7 +323,15 @@ export class Ocean {
       damp *= 0.6 + 0.4 * s * s * (3 - 2 * s);
     }
     if (this.world?.ice?.at(this.world, x, z)?.sea) return 0;
-    let y = 0;
+    // round a whirlpool: calm, and down into its funnel
+    let dip = 0;
+    for (const s of this.vort ?? []) {
+      const r = Math.hypot(x - s.p[0], z - s.p[2]);
+      const t = Math.min(1, Math.max(0, (r - 0.7 * s.radius) / (0.9 * s.radius)));
+      damp *= t * t * (3 - 2 * t);
+      dip += funnelDepth(s, r);
+    }
+    let y = -dip;
     u.uWaves.value.forEach((wv, k) => {
       const om = Math.sqrt(9.81 * wv.z);
       y += wv.w * damp * Math.sin(wv.z * (wv.x * x + wv.y * z) - om * t + k * 1.7);
@@ -312,7 +343,7 @@ export class Ocean {
     const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.07, metalness: 0.0, transparent: true, side: THREE.DoubleSide, depthWrite: true });
     const U = this.uniforms;
     m.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, U);
+      Object.assign(shader.uniforms, U, WATER_UNIFORMS);
       const common = /* glsl */ `
 uniform float uTime, uSteep, uHs, uWind, uRain, uGrey, uLevel, uHasHole;
 uniform vec2 uDir;
@@ -324,6 +355,18 @@ uniform sampler2D uBathy;
 uniform float uHasBathy;
 uniform sampler2D uIceTex;
 uniform float uHasIce;
+uniform vec4 uVort[4];
+uniform float uVortN;
+${WATER_GLSL}
+// round a whirlpool the waves die down (1: none near)
+float oVortCalm(vec2 xz) {
+  float c = 1.0;
+  for (int k = 0; k < 4; k++) {
+    if (float(k) >= uVortN) break;
+    c *= smoothstep(0.7 * uVort[k].z, 1.6 * uVort[k].z, length(xz - uVort[k].xy));
+  }
+  return c;
+}
 // the sea frozen over here (0..1)
 float oIce(vec2 xz) {
   if (uHasIce < 0.5) return 0.0;
@@ -368,7 +411,7 @@ float oHull(vec2 xz) {
 float oDamp(vec2 xz, float depth) {
   float shoal = clamp(depth / max(0.6, 1.3 * uHs), 0.12, 1.0);
   float hull = smoothstep(-1.0, 6.0 + 3.0 * uHs, oHull(xz));
-  return shoal * mix(0.6, 1.0, hull);
+  return shoal * mix(0.6, 1.0, hull) * oVortCalm(xz);
 }
 // Gerstner waves at world (x, z): displacement (x, y, z) and the normal
 vec3 oWaves(vec2 xz, float damp, out vec3 n) {
@@ -418,14 +461,21 @@ vOWorld = oW + oD;`,
 if (uHasHole > 0.5 && vOLocal.x > uHole.x && vOLocal.x < uHole.z && -vOLocal.y > uHole.y && -vOLocal.y < uHole.w) discard;
 // frozen over: the ice is drawn there (render/ice.js), not the sea
 if (oIce(vOWorld.xz) > 0.5) discard;
+// a whirlpool's funnel is drawn there (render/stirrers.js)
+for (int k = 0; k < 4; k++) {
+  if (float(k) >= uVortN) break;
+  if (length(vOWorld.xz - uVort[k].xy) < uVort[k].z * 0.9) discard;
+}
 vec2 oxz = vOWorld.xz;
+// an oil film: calm, glassy patches
+float oSlick = wSlick(oxz);
 float oDep = oDepth(oxz);
 float oHd = oHull(oxz);
 float oDmp = oDamp(oxz, oDep);
 vec3 oN;
 oWaves(oxz, oDmp, oN);
 // ripples (wind) and rain rings: only in the normal
-float rip = 0.02 + 0.012 * min(uWind, 12.0) + 0.05 * uRain;
+float rip = (0.02 + 0.012 * min(uWind, 12.0) + 0.05 * uRain) * (1.0 + 2.5 * uWTurb) * (1.0 - 0.85 * oSlick);
 vec2 p1 = oxz * 1.7 + vec2(uTime * 0.6, uTime * 0.2);
 vec2 p2 = oxz * 4.3 - vec2(uTime * 0.3, -uTime * 0.7);
 float e = 0.05;
@@ -445,17 +495,18 @@ if (uRain > 0.0) {
 vec3 oV = normalize(cameraPosition - vOWorld);
 float oCos = abs(dot(oN, oV));
 float oFres = 0.02 + 0.98 * pow(1.0 - oCos, 5.0);
-// water colour by depth: clear turquoise over sand, dark blue deep down
+// water colour by depth (render/waterOptics.js): the light that comes back up, off the sandy
+// floor in the shallows (red absorbed first: turquoise), scattered by the water itself deep down
+// (dark blue; brown-green when turbid, stirred up near the shore when turbulent)
 float dep = max(oDep, 0.0);
-vec3 shallow = vec3(0.26, 0.62, 0.56);
-vec3 mid = vec3(0.04, 0.33, 0.42);
-vec3 deep = vec3(0.012, 0.075, 0.15);
-vec3 wcol = mix(shallow, mid, 1.0 - exp(-dep / 1.4));
-wcol = mix(wcol, deep, 1.0 - exp(-dep / (uHasBathy > 0.5 ? 12.0 : 7.0)));
+// (no island group's floor, and deeper than the depth map: the open ocean)
+float depO = uHasBathy > 0.5 ? dep : dep + smoothstep(8.0, 11.5, dep) * 400.0;
+float oT = wTurbidAt(depO);
+vec3 wcol = wSeenK(vec3(0.6, 0.53, 0.38), depO, oT, wPath(normalize(cameraPosition - vOWorld)));
 // under a grey sky the sea goes grey-green
 wcol = mix(wcol, vec3(0.16, 0.22, 0.23) * (0.6 + 0.4 * (1.0 - exp(-dep / 3.0))), uGrey * 0.55);
 // light scattered in the crests (thin water lit through)
-wcol += vec3(0.02, 0.10, 0.09) * clamp(vOCrest, 0.0, 1.0) * (1.0 - uGrey * 0.6);
+wcol += vec3(0.02, 0.10, 0.09) * clamp(vOCrest, 0.0, 1.0) * (1.0 - uGrey * 0.6) * (1.0 - 0.6 * oT);
 // foam: surf breaking on the shore, along the waterline, against the hull, whitecaps
 float fn = oNoise(oxz * 2.2 + uTime * 0.15) * 0.6 + oNoise(oxz * 7.0 - uTime * 0.3) * 0.4;
 float surf = 0.0;
@@ -466,21 +517,28 @@ if (dep < 1.4 * max(0.6, uHs)) {
 float edge = 1.0 - smoothstep(0.03, 0.22 + 0.15 * uHs, dep);
 float hull = (1.0 - smoothstep(0.0, 0.8 + 0.6 * uHs, oHd)) * (0.55 + 0.45 * sin(uTime * 1.9 + oxz.x * 0.7 + oxz.y * 0.5));
 // whitecaps: on the steepest crests, streaked along the wind
-float caps = smoothstep(0.75, 1.25, vOCrest + 0.35 * (fn - 0.5)) * smoothstep(5.0, 12.0, uWind);
+// (turbulent water breaks as in a stronger wind)
+float capW = uWind + 10.0 * uWTurb;
+float caps = smoothstep(0.75, 1.25, vOCrest + 0.35 * (fn - 0.5)) * smoothstep(5.0, 12.0, capW);
 // foam is lacy: bubbles and streaks, thinning out at its edges
 float lace = smoothstep(0.42, 0.78, oNoise(oxz * 5.0 + uTime * 0.2) * 0.65 + oNoise(oxz * 17.0 - uTime * 0.4) * 0.35);
 // spindrift: in a gale the wind tears the foam off the crests into long streaks along it
 float along = dot(oxz, uDir), across = dot(oxz, vec2(-uDir.y, uDir.x));
 // (broken up: patches of streaks that come and go, not lines across the whole sea)
 float drift = smoothstep(0.66, 0.92, oNoise(vec2(along * 0.12 - uTime * 0.9, across * 2.6)) * 0.7 + oNoise(vec2(along * 0.4, across * 7.0)) * 0.3) * smoothstep(0.45, 0.75, oNoise(oxz * 0.08 + uTime * 0.05)) * smoothstep(12.0, 20.0, uWind);
-caps = max(caps, smoothstep(0.55, 1.1, vOCrest) * smoothstep(14.0, 22.0, uWind));
-float cover = max(max(surf, edge), max(max(hull * 0.9, caps), drift * 0.8));
-float foam = clamp(cover * mix(lace, 1.0, cover * cover * 0.6) * smoothstep(0.3, 0.6, fn + 0.2), 0.0, 1.0) * 0.9;
+caps = max(caps, smoothstep(0.55, 1.1, vOCrest) * smoothstep(14.0, 22.0, capW));
+// turbulent water: patches of churned foam everywhere
+float chop = uWTurb * smoothstep(0.5, 0.85, fn + 0.25 * clamp(vOCrest, 0.0, 1.0));
+float cover = max(max(surf, edge), max(max(hull * 0.9, caps), max(drift * 0.8, chop * 0.8)));
+float foam = clamp(cover * mix(lace, 1.0, cover * cover * 0.6) * smoothstep(0.3, 0.6, fn + 0.2), 0.0, 1.0) * 0.9 * (1.0 - 0.75 * oSlick);
 diffuseColor.rgb = mix(wcol, vec3(0.92, 0.95, 0.96), foam);
 // clear where it is shallow (you see the bottom), opaque deep down and at grazing angles
 // (over the island group's sea floor, drawn everywhere, the water is clear: you see the
 // bottom down to ~25-30 m, a sandy bank under an anchored ship; without it, opaque below 5 m)
-float alpha = uHasBathy > 0.5 ? mix(0.3, 1.0, pow(smoothstep(0.0, 35.0, dep), 0.75)) : mix(0.32, 1.0, pow(smoothstep(0.0, 5.0, dep), 0.6));
+// (how far down you see: render/waterOptics.js; turbid water is milky even where shallow)
+float oVis = wVis(oT);
+float alpha = uHasBathy > 0.5 ? mix(0.22 + 0.4 * oT, 1.0, pow(smoothstep(0.0, oVis, dep), 0.75)) : mix(0.3 + 0.35 * oT, 1.0, pow(smoothstep(0.0, min(5.0, oVis), dep), 0.6));
+alpha = min(1.0, alpha + 0.06 * uWGrease + 0.08 * uWTurb);
 diffuseColor.a = clamp(max(alpha + oFres * 0.5, foam), 0.0, 1.0);
 vOFoam = foam;
 vONw = oN;
@@ -501,10 +559,12 @@ roughnessFactor = mix(roughnessFactor + 0.08 * uRain, 0.9, vOFoam);`,
           '#include <opaque_fragment>',
           /* glsl */ `// the sky mirrored in the water (Fresnel), not on the foam
 outgoingLight = mix(outgoingLight, uSky * 0.95, vOFres * (1.0 - vOFoam) * 0.85);
+// the sun glittering on the waves, an oil film's rainbow
+outgoingLight += (wGlint(vONw, oV, oxz, oSlick) + wSheen(vONw, oV, oxz, oSlick) * uSky) * (1.0 - vOFoam);
 #include <opaque_fragment>`,
         );
     };
-    m.customProgramCacheKey = () => 'ocean-v1';
+    m.customProgramCacheKey = () => 'ocean-v2';
     return m;
   }
 }

@@ -1,6 +1,7 @@
 import { MAT, materialId } from '../sim/materials.js';
 import { World, hash3 } from '../sim/world.js';
 import { MODELS, resolveParams } from './index.js';
+import { waterSurfaceAt } from '../sim/stirrers.js';
 
 /**
  * Primitive shapes, defined in a model's local frame (metres, y up, origin at
@@ -263,6 +264,13 @@ export function placeObject(world, obj, ownerIndex = -1) {
   }
   for (const c of built.cups ?? []) world.cups.push({ ...c, p: toWorld(...c.p), owner: ownerIndex });
   for (const pr of built.props ?? []) world.props.push({ ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
+  // what stirs the water and the air (sim/stirrers.js), and the loose things it can carry
+  for (const st of built.stirrers ?? []) world.stirrers.push({ ...st, owner: ownerIndex, p: toWorld(...st.p), ...(st.dir ? { dir: Array.isArray(st.dir) ? dirToWorld(st.dir) : st.dir } : {}), ...(st.kind === 'hose' ? { p0: toWorld(...st.p) } : {}) });
+  for (const lo of built.loose ?? []) {
+    const p = toWorld(...lo.p);
+    if (lo.onWater) p[1] = (waterSurfaceAt(world, p[0], p[2]) ?? p[1]) + (lo.half ?? 0.3) * 0.3;
+    (world.loose ??= []).push({ rot: [0, 0, 0], v: [0, 0, 0], held: false, flying: false, ...lo, p });
+  }
   for (const pq of built.plaques ?? []) world.plaques.push({ ...pq, p: toWorld(...pq.p), n: dirToWorld(pq.n) });
   for (const br of built.barrels ?? []) {
     const c = toWorld(br.c[0], 0, br.c[1]);
