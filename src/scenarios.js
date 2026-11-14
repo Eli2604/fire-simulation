@@ -1,4 +1,6 @@
 import { defaultWeather } from './sim/weather.js';
+import { carrierObject } from './models/carrier.js';
+import { liftPlaces } from './models/composite.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -332,48 +334,14 @@ export const SCENARIOS = {
         view: { camera: [-40, 45, 85], walk: true },
         proxy: { shape: 'carrier', length: 210, beam: 48, deck: 11, draft: 4, at: [106, 0, 26], color: '#6d7175', height: 8, fill: 0.9, sea: 4 },
         objects: [
-          { type: 'carrierDeck', params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' }, x: 106, z: 26 },
-          // on the catapults: two at the bow, two in the waist (each one's run clear of the parked
-          // ones' wings; their tails overhang the deck edge, as they do on a carrier)
-          ...[[145, 20], [145, 30], [85, 10.4], [85, 21.2]].map(([x, z], k) => ({ type: 'jet', params: { color: k % 2 ? '#7a8590' : '#6f7b86' }, x, z, y: 11, rotation: 0 })),
-          // parked along the bow, both sides, tails to the deck edge
-          ...[150, 161, 172, 183].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 42.5, y: 11, rotation: 90 })),
-          ...[160, 171, 182, 193].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 7.4, y: 11, rotation: -90 })),
-          // and aft of the island (the "corral")
-          ...[62, 73, 84, 95].map((x) => ({ type: 'jet', params: { rockets: 0, fuelLiters: 800 }, x, z: 42.5, y: 11, rotation: 90 })),
-          // a flight of four overhead (ai/flight.js): in formation round the ship, its leader calling the moves
-          { type: 'jetFlight', params: { count: 4, altitude: 160, orbitRadius: 600 }, x: 106, z: 26 },
-          // a tow tractor, oxygen and propane bottles by the island
-          { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 104.5, z: 39.5, y: 'auto', rotation: 90 },
-          { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 107.6, z: 48.2, y: 'auto' },
-          { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 108.3, z: 48.3, y: 'auto' },
-          // two oil drums by the island (models/scannedProp.js)
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 109.4, z: 48.1, y: 'auto' },
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 110.1, z: 48.2, y: 'auto', rotation: 40 },
+          // the carrier: one object (models/carrier.js), its jets, deck equipment and the flight
+          // overhead objects in it, and its places below deck (below deck, the lower decks under it:
+          // zones of this world, models/composite.js)
+          carrierObject({ x: 106, z: 26, params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' } }),
         ],
       },
-      below: {
-        name: 'Below deck',
-        indoor: true,
-        box: [-70, 5.6, 7.5], // (for the overview: in the hull under the flight deck, which is at 9.4 m)
-        world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
-        view: { camera: [16, 14, -8], walk: true },
-        objects: [
-          { type: 'carrierBelow', params: { downTo: 'lower' }, x: 16, z: 8.5 },
-          { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
-          { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
-        ],
-      },
-      // the lower decks, below the waterline: corridors, cabins, watertight doors; the fuel line
-      // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
-      lower: {
-        name: 'Lower decks (below the waterline)',
-        indoor: true,
-        box: [-63, -1.6, 11.4], // (for the overview: under that, down to the keel)
-        world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
-        view: { camera: [-3, 10, 14], walk: true },
-        objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],
-      },
+      // below deck and the lower decks are places in the carrier (lifted into zones below:
+      // liftPlaces; their schematic boxes where they lie in its hull)
       // a small islet out on the reef: a log-cabin campfire in a stone ring on dry grass
       // (the old Campfire scene), a boat back to the island
       islet: {
@@ -565,6 +533,10 @@ export const SCENARIOS = {
   },
 };
 
+// the places in objects (below deck in the carrier) as zones of their scenes
+for (const sc of Object.values(SCENARIOS)) liftPlaces(sc);
+
+/** A copy of a scene to edit (its places in objects zones again: models/composite.js). */
 export function cloneScene(s) {
-  return JSON.parse(JSON.stringify(s));
+  return liftPlaces(JSON.parse(JSON.stringify(s)));
 }

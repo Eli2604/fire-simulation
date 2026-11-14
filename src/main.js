@@ -8,6 +8,7 @@ import { View } from './render/view.js';
 import { SCENARIOS, cloneScene, resolveScenario, openScenario, placeOrigin, LAKESIDE_WINTER } from './scenarios.js';
 import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
+import { liftPlaces, flattenObjects } from './models/composite.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift, WATER_SETTINGS } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
@@ -100,7 +101,7 @@ function zoneSim(name) {
 function zoneDesc(name) {
   const zd = scene.zones[name];
   for (const o of zd.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
-  return { name: zd.name, world: zd.world, objects: zd.objects, weather: settingsOf(zd), exposure: exposureOf(zd), indoor: zd.indoor, view: zd.view, walkStart: zd.walkStart };
+  return { name: zd.name, world: zd.world, objects: zd.objects, weather: settingsOf(zd), exposure: exposureOf(zd), indoor: zd.indoor, view: zd.view, walkStart: zd.walkStart, within: zd.within };
 }
 
 /** Where you are: the current zone, or the scene. */
@@ -322,6 +323,7 @@ function switchZone(pt) {
 // ---------------------------------------------------------------------------
 function load(desc, fresh = true) {
   scene = desc;
+  liftPlaces(scene); // (places in objects, below deck in the carrier, as zones: models/composite.js)
   scene.voxelScale = state.voxelScale;
   prebuild.reset();
   if (scene.zones) {
@@ -753,7 +755,8 @@ function showInspect() {
     el.innerHTML = '<b>Gone</b> – this voxel burnt away or moved.';
     return;
   }
-  const o = d.owner >= 0 && scene.objects[d.owner] ? MODELS[scene.objects[d.owner].type].label : 'Ground';
+  const ob = d.owner >= 0 ? flattenObjects(scene.objects)[d.owner]?.node : null; // (objects in objects numbered depth first)
+  const o = ob ? MODELS[ob.type]?.label ?? ob.type : 'Ground';
   el.hidden = false;
   el.innerHTML = [
     `<b>${d.material}</b> <span style="color:var(--muted)">(${o})</span>`,
@@ -897,7 +900,7 @@ canvas.addEventListener('pointerup', (e) => {
       const keep = (scene.fireStarts ?? []).filter((f) => f.power > 0);
       scene.fireStarts = e.shiftKey ? [...keep, start] : [start];
       delete scene.noFire;
-      for (const o of scene.objects) o.ignite = false;
+      for (const e of flattenObjects(scene.objects)) e.node.ignite = false;
       restart();
       break;
     }

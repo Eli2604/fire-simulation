@@ -41,6 +41,11 @@ test('every model builds voxels with its default parameters', () => {
       assert.equal(world.stirrers.length, 1, 'a whirlpool, a wind hose or a jet stirs the water or the air (sim/stirrers.js), not voxels');
       continue;
     }
+    if (type === 'group' || type === 'place') {
+      // (objects of objects, models/composite.js: a group is what is in it, a place a world of its own)
+      assert.equal(countOwned(world, 0), 0, 'nothing of its own');
+      continue;
+    }
     if (type === 'jetFlight') {
       assert.equal(world.flights.length, 1, 'a flight of jets flies (ai/flight.js), not voxels');
       continue;
