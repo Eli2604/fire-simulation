@@ -297,6 +297,22 @@ const DEFS = {
     burnRate: 0.035, selfHeating: 0.25, residue: 0.06, smokeYield: 0.01, smokeColor: [0.6, 0.6, 0.6],
     moisture: 0.06, maxMoisture: 1.5, deadFuel: true, timeLag: 1800,
   },
+  // crumpled and torn-out pages: kindling (mostly air; each sheet catches at once and is gone in
+  // half a minute, like twigs)
+  pages: {
+    label: 'Crumpled pages (kindling)', color: [0.88, 0.85, 0.76], density: 30, burnTime: 30, specificHeat: 1300, conductivity: 0.05,
+    surfaceFactor: 6, combustible: true, ignitionTemp: 230, pyrolysisTemp: 180, heatOfCombustion: 16e6,
+    burnRate: 0.04, selfHeating: 0.3, residue: 0.05, smokeYield: 0.01, smokeColor: [0.62, 0.62, 0.6],
+    moisture: 0.06, maxMoisture: 1.5, deadFuel: true, timeLag: 1200,
+  },
+  // books: paper bound tight (a closed book is nearly solid: it chars a page at a time, slowly,
+  // like a log; its edges and loose pages catch first). Card or cloth covers burn with it.
+  books: {
+    label: 'Books (bound paper)', color: [0.55, 0.28, 0.2], density: 750, specificHeat: 1300, conductivity: 0.08,
+    combustible: true, ignitionTemp: 260, pyrolysisTemp: 190, heatOfCombustion: 16e6, burnRate: 0.004,
+    selfHeating: 0.3, residue: 0.12, residueMaterial: 'ash', smokeYield: 0.02, smokeColor: [0.55, 0.55, 0.55],
+    moisture: 0.07, maxMoisture: 1.2, deadFuel: true, timeLag: 30000, extinctionMoisture: 0.45,
+  },
   wax: {
     label: 'Paraffin wax', color: [0.95, 0.93, 0.86], density: 900, specificHeat: 2500, conductivity: 0.25,
     combustible: true, ignitionTemp: 250, pyrolysisTemp: 220, heatOfCombustion: 42e6, burnRate: 0.015,
