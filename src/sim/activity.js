@@ -119,6 +119,7 @@ export function updateActivity(sim, D) {
   for (const d of w.debris) mark(d.p, w.ah);
   for (const p of w.projectiles) mark(p.p, w.ah * 2);
   for (const l of w.leaks) mark(l.p, 1);
+  for (const s of w.stirrers ?? []) if (s.kind !== 'vortex') mark(s.p, s.kind === 'hose' ? Math.max(s.radius * 6, s.height) : s.range); // (wind hoses, jets: sim/stirrers.js)
   // wake the neighbours (further downwind: the air moves ~wind·dt a step)
   const reach = 1 + Math.ceil((Math.hypot(D.windX, D.windZ) * sim.dt) / (w.ah * AB));
   dilate(raw, act, bx, by, bz, reach);

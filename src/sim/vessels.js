@@ -1,4 +1,5 @@
 import { MATERIALS } from './materials.js';
+import { airStirAt } from './stirrers.js';
 import { F_BURNING, F_LIQUID, F_FALLING, F_ANCHOR } from './world.js';
 
 /**
@@ -372,6 +373,7 @@ export function launchVoxel(w, i, vel) {
 }
 
 /** Ballistic flight with air drag; fragments land back in the grid, still hot or burning. */
+const AIR = [0, 0, 0];
 export function stepDebris(sim, dt) {
   const w = sim.world;
   if (!w.debris.length) return;
@@ -387,9 +389,12 @@ export function stepDebris(sim, dt) {
     const sdt = dt / steps;
     let landed = false;
     let gone = false;
+    // (the drag is against the air: a wind hose or a jet carries the fragments with it, sim/stirrers.js)
+    const stir = w.stirrers.length ? airStirAt(w, d.p, AIR) : null;
     for (let s = 0; s < steps && !landed && !gone; s++) {
-      const spd = Math.hypot(...d.v);
-      for (let c = 0; c < 3; c++) d.v[c] -= k * spd * d.v[c] * sdt;
+      const rv = stir ? [d.v[0] - stir[0], d.v[1] - stir[1], d.v[2] - stir[2]] : d.v;
+      const spd = Math.hypot(...rv);
+      for (let c = 0; c < 3; c++) d.v[c] -= k * spd * rv[c] * sdt;
       d.v[1] -= 9.81 * sdt;
       const prev = d.p.slice();
       for (let c = 0; c < 3; c++) d.p[c] += d.v[c] * sdt;

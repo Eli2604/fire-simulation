@@ -3,6 +3,7 @@ import { MATERIALS } from '../sim/materials.js';
 import { F_LIQUID, F_BURNING, F_HIDDEN } from '../sim/world.js';
 import { addPatterns, PATTERN_OF_MAT, PATTERN_UNIFORMS } from './patterns.js';
 import { blackbody, heatmap } from './colors.js';
+import { addUnderwater } from './waterSurface.js';
 
 /**
  * Renders the surface voxels of the world as one InstancedMesh. Geometry is
@@ -23,12 +24,13 @@ export class VoxelRenderer {
     this.material = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.0 });
     this.material.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec3 aGlow;\nvarying vec3 vGlow;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;');
+        .replace('#include <common>', '#include <common>\nattribute vec3 aGlow;\nvarying vec3 vGlow;\nvarying vec3 vUwW;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;\nvUwW = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;')
+        .replace('#include <common>', '#include <common>\nvarying vec3 vGlow;\nvarying vec3 vUwW;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow;');
       addPatterns(shader, true); // limestone blocks, ossuary walls...
+      addUnderwater(shader, 'vUwW', { voxels: true }); // the sea floor: seen through the water (render/waterSurface.js)
     };
     this.matrix = new THREE.Matrix4();
   }

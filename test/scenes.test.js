@@ -37,6 +37,10 @@ test('every model builds voxels with its default parameters', () => {
       assert.ok(world.dragons.length > 0, 'a dragon is a creature, not voxels');
       continue;
     }
+    if (type === 'waterVortex' || type === 'windHose' || type === 'windJet') {
+      assert.equal(world.stirrers.length, 1, 'a whirlpool, a wind hose or a jet stirs the water or the air (sim/stirrers.js), not voxels');
+      continue;
+    }
     if (type === 'jetFlight') {
       assert.equal(world.flights.length, 1, 'a flight of jets flies (ai/flight.js), not voxels');
       continue;

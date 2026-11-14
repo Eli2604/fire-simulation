@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { makeArchipelago } from '../models/archipelago.js';
 import { PATTERN_UNIFORMS, PHOTO_GLSL, PHOTO, photoAtlas } from './patterns.js';
+import { addUnderwater } from './waterSurface.js';
 
 /**
  * The island group round the zone you are in (models/archipelago.js), drawn: the sea
@@ -9,7 +10,8 @@ import { PATTERN_UNIFORMS, PHOTO_GLSL, PHOTO, photoAtlas } from './patterns.js';
  * lagoons is light and clear, deep blue over the deep floor, and the waves break on
  * the other islands' shores.
  *
- *  - under water: sand (photographed), coral heads on the reefs, darker and bluer deeper;
+ *  - under water: sand (photographed), coral heads on the reefs, seen through the water
+ *    (render/waterSurface.js addUnderwater: red going first, bluer and darker deeper, caustics);
  *  - on land: beaches, then grass and forest (darker, rough), rock where it is steep or
  *    high, bare rock and ash on the volcanic cones.
  *
@@ -121,7 +123,7 @@ if (ht < 0.0) {
   // the sea floor: sand, coral heads on the reefs (shallow, rough), darker deep down
   float coral = smoothstep(0.58, 0.78, aNoise(vAW.xz / 6.0) * 0.65 + aNoise(vAW.xz / 1.7) * 0.35) * smoothstep(-9.0, -1.5, ht);
   col = mix(sandC, vec3(0.26, 0.22, 0.18) * (0.75 + 0.5 * aNoise(vAW.xz * 1.3)), coral * 0.65);
-  col *= mix(0.35, 1.0, exp(ht / 18.0));
+  // (the water over it: addUnderwater, below)
 } else {
   // beaches, then grass and forest, rock where it is steep or high
   float beach = 1.0 - smoothstep(1.2, 2.6, ht);
@@ -139,8 +141,9 @@ diffuseColor.rgb = col;`,
           `#include <normal_fragment_maps>
 if (uPhotoOn > 0.5) normal = normalize((viewMatrix * vec4(photoNormal(vAW.y < uSea + 1.5 ? ${PHOTO.sand} : ${PHOTO.rocks}, vAW * 0.3, normalize(vAN), 1.0), 0.0)).xyz);`,
         );
+      addUnderwater(sh, 'vAW');
     };
-    m.customProgramCacheKey = () => 'archipelago-v1';
+    m.customProgramCacheKey = () => 'archipelago-v2';
     this.mesh = new THREE.Mesh(g, m);
     this.mesh.receiveShadow = true;
     this.mesh.frustumCulled = false;

@@ -39,6 +39,8 @@ import { SNOW_COVER } from './archipelago.js';
 import { HULL_SNOW } from './hull.js';
 import { deriveWeather } from '../sim/weather.js';
 import { lod, projection } from './lod.js';
+import { InlandWaterRenderer, WATER_UNIFORMS, setWaterWeather, setWaterSun, setWaterSea } from './waterSurface.js';
+import { StirrerRenderer } from './stirrers.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
 const SKY_GREY = new THREE.Color(0x8d939a);
@@ -130,6 +132,8 @@ export class View {
     this.patches = new PatchRenderer(this.root); // fine detail close up: candles (sim/patches.js)
     this.puddles = new PuddleRenderer(this.root);
     this.ice = new IceRenderer(this.root); // ice on the water (sim/ice.js)
+    this.inland = new InlandWaterRenderer(this.root); // the surface of ponds, lakes, the canal (render/waterSurface.js)
+    this.stirrers = new StirrerRenderer(this.root); // whirlpools, wind hoses, wind jets (sim/stirrers.js)
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
@@ -223,6 +227,8 @@ export class View {
     this.surface.setWorld(world);
     this.puddles.setWorld(world);
     this.ice.setWorld(world);
+    this.inland.setWorld(world);
+    this.stirrers.setWorld(world);
     this.volume.setWorld(world);
     this.seenEvents = 0;
     this.flash = null;
@@ -246,6 +252,7 @@ export class View {
     // the island group round it: the sea floor and the other islands (render/archipelago.js)
     this.archipelago ??= new ArchipelagoRenderer(this.root);
     this.ocean.setBathy(this.archipelago.set(world.sea && !world.vacuum ? this.archSpec : null, this.zoneOrigin, world));
+    setWaterSea(world, this.sea ? this.ocean : null); // the floors under the sea see it (render/waterSurface.js)
     this.ground.scale.set(diag * 12, diag * 12, 1);
     // (a zone's view may say what lies round it: open water at its level, by a place of a world)
     this.ground.position.set(sx / 2, this.groundAround?.y ?? world.h * 0.9, sz / 2);
@@ -399,6 +406,10 @@ export class View {
     this.smoke.light = 0.55 + 0.45 * light;
     this.rh = D.rh;
     this.ocean.setWeather(weather, this.scene.background, grey);
+    // the water's clarity, turbidity, grease, turbulence (render/waterOptics.js)
+    this.waterWeather = weather;
+    setWaterWeather(weather);
+    WATER_UNIFORMS.uWSky.value.copy(this.scene.background);
     this.trees.setWind(D.windX, D.windZ); // the grass bends in it
     // the season: the leaves and the grass, a lower and weaker sun in winter
     this.season = weather.season ?? 'summer';
@@ -411,6 +422,24 @@ export class View {
     this.trees.setDew(cold ? 0 : sat, cold ? Math.max(sat, weather.ambient < -2 && D.rh > 0.8 ? 0.5 : 0) : 0);
     const sunK = { spring: 0.95, summer: 1, autumn: 0.85, winter: 0.7 }[this.season] ?? 1;
     this.sun.intensity *= sunK;
+  }
+
+  /**
+   * The water's light (render/waterSurface.js): the sun as it is now (where it is, its strength,
+   * for the glitter and the caustics), the time; ponds' and lakes' surfaces; the whirlpools,
+   * wind hoses and jets, and the holes the whirlpools need in the sea.
+   */
+  updateWater(dt) {
+    const U = WATER_UNIFORMS;
+    U.uWTime.value = this.time;
+    const d = this._sunD ?? (this._sunD = new THREE.Vector3());
+    d.copy(this.sun.position).sub(this.sun.target.position);
+    if (d.lengthSq() < 1e-9) d.set(0.6, 1.2, 0.4);
+    setWaterSun(d, this.sun.color, this.dark ? 0 : this.sun.intensity / 2.4);
+    if (!this.world) return;
+    this.inland.update(dt, this.waterWeather);
+    this.stirrers.update(this.world.time ?? 0);
+    if (this.sea) this.ocean.setVortices(this.stirrers.vortices());
   }
 
   /** Snow on the ground: the islands round the scene, the crowns of the trees, the light it throws back. */
@@ -629,6 +658,7 @@ export class View {
     this.updateSea();
     if (this.sea) this.ocean.update(this.time);
     if (this.sea) this.ocean.updateIce(this.world?.ice);
+    this.updateWater(dt);
     this.lightning(dt);
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)
