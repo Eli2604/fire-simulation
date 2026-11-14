@@ -135,7 +135,7 @@ test('the squad AI: an unarmed man closes in and fights hand-to-hand; his blows 
     s.step(0.05);
     if (MELEE[m.anim]) seen.add(m.anim);
   }
-  assert.ok(Math.hypot(m.p[0] - H.p[0], m.p[2] - H.p[2]) < 1.6, 'closed in');
+  assert.ok(Math.hypot(m.p[0] - H.p[0], m.p[2] - H.p[2]) < 2.1, 'closed in'); // (a front kick lands up to 1.5 m off and pushes him 0.5 m back)
   assert.ok(seen.size >= 2, `several moves: ${[...seen]}`);
   assert.ok(H.health < 100, `hurt him (${H.health})`);
 });
