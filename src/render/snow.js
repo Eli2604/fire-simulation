@@ -122,12 +122,18 @@ export class SnowRenderer {
     return this.coverShare ?? 0;
   }
 
+  /** Mean depth (m) of the snow where it can lie, for what is drawn round the scene (render/hull.js). */
+  meanDepth() {
+    return this.depthMean ?? 0;
+  }
+
   update(time) {
     const w = this.world;
     const S = w?.snow;
     if (!S) {
       if (this.mesh) this.drop();
       this.coverShare = 0;
+      this.depthMean = 0;
       return;
     }
     if (S !== this.field) {
@@ -146,6 +152,7 @@ export class SnowRenderer {
       const d = this.data;
       let covered = 0;
       let cells = 0;
+      let sum = 0;
       for (let j = 0; j < S.depth.length; j++) {
         d[j * 4] = S.depth[j];
         d[j * 4 + 1] = S.rho[j];
@@ -153,9 +160,11 @@ export class SnowRenderer {
         if (S.cover[j]) {
           cells++;
           if (S.depth[j] > 0.01) covered++;
+          sum += S.depth[j];
         }
       }
       this.coverShare = cells ? covered / cells : 0;
+      this.depthMean = cells ? sum / cells : 0;
       this.tex.needsUpdate = true;
       this.version = S.version;
       this.lastUpload = now;

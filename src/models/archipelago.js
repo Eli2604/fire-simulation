@@ -10,13 +10,16 @@
  *    falling away into the deep;
  *  - round a simulated zone (spec.zones: its box), a shelf that starts at the level of the
  *    zone's own voxel sea floor at its edge and slopes away from it: the ground under
- *    the water runs on without a seam.
+ *    the water runs on without a seam;
+ *  - banks (spec.banks: { box, floor }): a sandy bank at that depth, sloping away the same way
+ *    (where a ship lies at anchor: ground under it you see through the clear water).
  *
  * makeArchipelago(spec) → { heightAt(x, z), extent }.
  */
 export function makeArchipelago(spec) {
   const islands = spec.islands ?? [];
-  const zones = spec.zones ?? [];
+  // (the zones' shelves and the banks are made alike: flat at their floor, sloping away)
+  const zones = [...(spec.zones ?? []), ...(spec.banks ?? [])];
   const seed = spec.seed ?? 7;
   const hash = (x, z) => {
     let h = (Math.imul(x | 0, 374761393) + Math.imul(z | 0, 668265263) + Math.imul(seed, 2147483647)) | 0;

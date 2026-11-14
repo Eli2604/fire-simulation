@@ -35,6 +35,7 @@ import { BreathRenderer } from './breath.js';
 import { TeaRenderer } from './tea.js';
 import { MATERIALS } from '../sim/materials.js';
 import { SNOW_COVER } from './archipelago.js';
+import { HULL_SNOW } from './hull.js';
 import { deriveWeather } from '../sim/weather.js';
 import { lod, projection } from './lod.js';
 
@@ -414,6 +415,9 @@ export class View {
   updateSnowCover() {
     const c = this.snow.cover();
     SNOW_COVER.uSnowCover.value = c;
+    // and on a ship's deck drawn round its simulated slice (render/hull.js)
+    HULL_SNOW.uHullSnow.value = c;
+    HULL_SNOW.uHullSnowDepth.value = this.snow.meanDepth();
     if (Math.abs(c - (this.snowCover ?? 0)) > 0.04 || (c === 0 && this.snowCover > 0)) {
       this.snowCover = c;
       this.trees.setSeason(this.season ?? 'summer', c);

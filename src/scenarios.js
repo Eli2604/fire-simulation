@@ -304,6 +304,9 @@ export const SCENARIOS = {
         { box: [310.5, -404.5, 319.5, -396.5], floor: -1.6 }, // the islet's
         { box: [241, 151, 261, 168], floor: -1.6 }, // the lake island's
       ],
+      // the carrier lies at anchor over a sandy bank, ~12 m down under and round the ship (its
+      // keel ~4 m down: the bottom is seen through the clear water beside it)
+      banks: [{ box: [-200, -24, 92, 56], floor: -12 }],
       islands: [
         { c: [950, -700], rx: 600, rz: 330, rot: 0.35, peak: 140, reef: 1.35 },
         { c: [-700, -1000], rx: 700, rz: 170, rot: -0.45, peak: 80, reef: 1.5 },
