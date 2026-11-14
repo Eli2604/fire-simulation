@@ -77,6 +77,16 @@ builds the whole editor as one file.
   these can be changed while the fire burns.
 - **View**: realistic or thermal-camera mode, flames, smoke, steam, fire light, and a
   section cut to look inside objects (for example heat soaking into a wall).
+  - *Heat colours* (realistic view, `src/render/heatColor.js`): every solid is coloured by its
+    own temperature. Above about 500 °C it glows (dull red, cherry, orange, yellow, white), as
+    strongly as its emissivity: bright aluminium and copper glow far less than oxidised steel or
+    stone at the same temperature, and an oxide layer makes a metal glow more. The hottest a
+    surface has been leaves a lasting tint: steel takes its temper colours (straw ~220 °C,
+    bronze ~250, purple ~280, blue ~300, grey ~330, then black scale), copper tarnishes through
+    rose, violet and blue to dark oxide, aluminium goes matte, wood, paper and cloth brown before
+    they char, sandstone and limestone redden. The glow goes when it cools; the tint stays (it
+    moves, falls and lands with the voxel). On the metal bars the colours spread out from the
+    burner as the heat is conducted along them, and the steel glows over the flame.
   - *Surfaces*: **voxels** (exactly what is simulated) or **smooth**, a surface-nets mesh of
     the voxel field, rebuilt chunk by chunk as things burn, melt and collapse.
   - *Relief*: some surfaces are more than a colour per voxel.
@@ -874,7 +884,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Living room furniture | room width and depth, sofa and carpet colour, bookshelf, bed. A foam sofa, a coffee table, a bookshelf full of books and a carpet, without walls: the house's living room, to put anywhere. Lit, the sofa burns |
 | Candle | height, radius, paraffin or beeswax, colour, wick length, holder. In a coarse scene (voxels larger than the candle) it is drawn, and burns as a small flame that gives light |
 | Underground church (crypt chapel) | nave length and width, passage to the catacombs, rows of benches. A barrel-vaulted nave cut in the limestone, pillars, benches, a dais and an altar under a cross in a round apse, torches |
-| Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power and position, supports |
+| Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power, position and flame radius, supports |
 | Wood pile / campfire | log cabin / teepee / stack, number, length and radius of logs, moisture, kindling, stone ring |
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
@@ -968,7 +978,8 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
 
 1. **Heat transfer in solids.** Conduction between touching voxels uses the harmonic mean
    conductivity. Exposed faces exchange heat with the gas in front of them: natural
-   convection, plus wind, plus flame contact at about 1100 °C. Radiation goes both ways:
+   convection, plus wind, plus flame contact at about 1100 °C (a gas burner's premixed flame,
+   as under the metal bars, at about 1500 °C). Radiation goes both ways:
    hot surfaces emit εσ(T⁴−T∞⁴), and flames and embers feed a blurred, inverse-square
    calibrated radiation field. Absorption can never exceed emission, and irradiance is
    capped at flame black-body level. The blurred field reaches about a metre; further out

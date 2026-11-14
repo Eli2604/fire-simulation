@@ -6,7 +6,7 @@
  * seconds, as a falling tree does, to where they are. `t.fall` tells it how:
  * { pivot, axis, angle, t0, cutY, map: old voxel index -> new }.
  */
-const FIELDS = ['mat', 'temp', 'skin', 'wetSkin', 'dens', 'skinMelt', 'coat', 'vesselTag', 'group', 'paint', 'crack', 'pickupTag', 'doorTag', 'fuel', 'moist', 'melt', 'char', 'flags', 'hrr', 'owner'];
+const FIELDS = ['mat', 'temp', 'skin', 'wetSkin', 'dens', 'skinMelt', 'coat', 'vesselTag', 'group', 'paint', 'crack', 'pickupTag', 'doorTag', 'fuel', 'moist', 'melt', 'char', 'tmax', 'flags', 'hrr', 'owner'];
 
 export function fellTree(sim, t, cutRow, from) {
   const w = sim.world;

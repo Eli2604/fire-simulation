@@ -7,6 +7,7 @@ export default {
     elevation: { value: 0.25, min: 0.1, max: 1, step: 0.01, label: 'Height above ground (m)' },
     burnerPower: { value: 3000, min: 0, max: 30000, step: 100, label: 'Burner power (W)' },
     burnerAt: { value: 0.08, min: 0, max: 1, step: 0.01, label: 'Burner position along bar' },
+    flameRadius: { value: 0, min: 0, max: 0.3, step: 0.005, label: 'Flame radius (m, 0 = auto)' },
     supports: { value: true, label: 'Brick supports' },
   },
   build(p, { h }) {
@@ -24,7 +25,7 @@ export default {
     prims.push({ shape: 'cylinder', a: [bx, 0, 0], b: [bx, nozzleTop, 0], r: 0.02, material: 'steel', color: [0.25, 0.25, 0.28] });
     const heaters =
       p.burnerPower > 0
-        ? [{ pos: [bx, nozzleTop + h, 0], power: p.burnerPower, radius: Math.max(0.04, th * 1.2), height: y + th + 0.08 - nozzleTop }]
+        ? [{ pos: [bx, nozzleTop + h, 0], power: p.burnerPower, flameTemp: 1500, radius: p.flameRadius > 0 ? p.flameRadius : Math.max(0.04, th * 1.2), height: y + th + 0.08 - nozzleTop }]
         : [];
     return { prims, heaters };
   },

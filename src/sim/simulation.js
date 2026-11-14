@@ -1,5 +1,5 @@
 import { MATERIALS, TBL } from './materials.js';
-import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR } from './world.js';
+import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR, TMAX_STEP } from './world.js';
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepStirrers } from './stirrers.js';
@@ -518,6 +518,13 @@ export class Simulation {
     const w = this.world;
     const { anx, any, anz, ah } = w;
     w.heaters = w.heaters.filter((ht) => ht.until === undefined || ht.until > w.time);
+    // a gas burner's premixed flame is hotter than a fire's (heater.flameTemp, °C): the
+    // cells it fills say so for the flame contact in solidPassA (cleared each step)
+    const hot = w.hotFlameCells;
+    if (hot) {
+      for (const a of hot) w.flameT[a] = 0;
+      hot.length = 0;
+    }
     for (const ht of w.heaters) {
       if (!ht.on || ht.power <= 0) continue;
       // delayed sources (a pipe that bursts after some time)
@@ -572,6 +579,14 @@ export class Simulation {
             if (qx * qx + qy * qy + qz * qz <= rr * rr && w.occ[a] < 0.75) cells.push(a);
           }
       if (!cells.length) continue;
+      if (ht.flameTemp) {
+        w.flameT ??= new Float32Array(w.NA);
+        w.hotFlameCells ??= [];
+        for (const a of cells) {
+          if (w.flameT[a] < ht.flameTemp) w.flameT[a] = ht.flameTemp;
+          w.hotFlameCells.push(a);
+        }
+      }
       let wsum = 0;
       for (const a of cells) wsum += 1 - w.occ[a];
       for (const a of cells) {
@@ -616,7 +631,7 @@ export class Simulation {
     let radDemand = 0;
     let radEmit = 0;
 
-    const { gsum, dEs, gext, skin } = w;
+    const { gsum, dEs, gext, skin, flameT } = w;
     for (let k = 0; k < n; k++) {
       const i = solids[k];
       dE[i] = 0;
@@ -703,7 +718,7 @@ export class Simulation {
         airGT[a] += g * Ts;
         // Flame contact: the gas touching the surface is at flame temperature.
         // That heat comes out of the flames' heat release (global budget below).
-        const fT = FLAME_TEMP * fl;
+        const fT = (flameT !== undefined && flameT[a] > 0 ? flameT[a] : FLAME_TEMP) * fl;
         if (fT > Ta && fT > Ts) {
           const want = g * (fT - (Ta > Ts ? Ta : Ts));
           if (burningNow) dEx += want * sf * dt; // a burning surface sits inside its own flame
@@ -767,7 +782,7 @@ export class Simulation {
 
   solidPassB(dt, D) {
     const w = this.world;
-    const { nx, ny, h, mat, temp, fuel, moist, melt, char, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop, waterIn, coat, sfac } = w;
+    const { nx, ny, h, mat, temp, fuel, moist, melt, char, tmax, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop, waterIn, coat, sfac } = w;
     const { airQ, radSrc, flameAcc, smoke, smokeR, smokeG, smokeB, steam } = w;
     const A = h * h;
     const V = A * h;
@@ -1026,6 +1041,9 @@ export class Simulation {
       }
 
       // --- metals / paint / masonry discolour when hot
+      // (the hottest the surface has been stays on it: temper colours, scorching; render/heatColor.js)
+      const tq = Thot * (1 / TMAX_STEP);
+      if (tq > tmax[i]) tmax[i] = tq < 255 ? tq : 255;
       if (Thot > M.oxidizeTemp && char[i] < 1) char[i] = Math.min(1, char[i] + (dt * (Thot - M.oxidizeTemp)) / 4000);
 
       // --- combustion: driven by the surface temperature

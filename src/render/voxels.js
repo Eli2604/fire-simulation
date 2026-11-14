@@ -3,6 +3,7 @@ import { MATERIALS } from '../sim/materials.js';
 import { F_LIQUID, F_BURNING, F_HIDDEN } from '../sim/world.js';
 import { addPatterns, PATTERN_OF_MAT, PATTERN_UNIFORMS } from './patterns.js';
 import { blackbody, heatmap } from './colors.js';
+import { HEAT_KIND, TINT_FROM, heatTint, GLOW_EPS, GLOW_OX } from './heatColor.js';
 import { addUnderwater } from './waterSurface.js';
 
 /**
@@ -137,14 +138,16 @@ export class VoxelRenderer {
 }
 
 const tmp = [0, 0, 0];
+const tmp4 = [0, 0, 0, 0];
 
 /**
  * Colour (linear RGB) and emitted glow of voxel i, written to col/glow at offset o.
  * Shared by the voxel and the smooth surface renderers.
  */
 export function shadeVoxel(w, i, time, mode, col, glow, o) {
-  const { mat, temp, skin, char, flags, moist, tint, melt, waterIn, coat } = w;
-  const M = MATERIALS[mat[i]];
+  const { mat, temp, skin, char, flags, moist, tint, melt, waterIn, coat, tmax } = w;
+  const mt = mat[i];
+  const M = MATERIALS[mt];
   const T = skin[i] > temp[i] ? skin[i] : temp[i];
   if (mode === 'thermal') {
     heatmap(T, tmp);
@@ -202,6 +205,15 @@ export function shadeVoxel(w, i, time, mode, col, glow, o) {
       b *= m;
     }
   }
+  // heat tint that stays: temper colours, tarnish, scorching (render/heatColor.js)
+  const hk = HEAT_KIND[mt];
+  if (hk !== 0 && tmax !== undefined && pt <= 1 && !(f & F_LIQUID) && tmax[i] > TINT_FROM[hk]) {
+    heatTint(hk, tmax[i], tmp4);
+    const s = tmp4[3];
+    r += (tmp4[0] - r) * s;
+    g += (tmp4[1] - g) * s;
+    b += (tmp4[2] - b) * s;
+  }
   const ch = char[i] * 0.92;
   if (ch > 0) {
     const cc = M.charColor;
@@ -230,8 +242,9 @@ export function shadeVoxel(w, i, time, mode, col, glow, o) {
   col[o + 1] = g * g;
   col[o + 2] = b * b;
   blackbody(crust ? Math.min(T, 560 + (T - 1100) * 0.8) : T, tmp);
-  let gl = 1;
-  if (f & F_BURNING) gl = 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
+  // bright metal glows less than oxidised steel or stone at the same temperature
+  let gl = GLOW_EPS[mt] + GLOW_OX[mt] * char[i];
+  if (f & F_BURNING) gl *= 1.15 + 0.25 * Math.sin(time * 13 + i * 0.37);
   glow[o] = tmp[0] * gl;
   glow[o + 1] = tmp[1] * gl;
   glow[o + 2] = tmp[2] * gl;

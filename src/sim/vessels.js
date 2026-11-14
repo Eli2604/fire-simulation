@@ -361,6 +361,7 @@ export function launchVoxel(w, i, vel) {
     moist: w.moist[i],
     melt: w.melt[i],
     char: w.char[i],
+    tmax: w.tmax[i],
     flags: w.flags[i] & ~F_FALLING & ~64, // (no longer hidden: debris is drawn as what it is)
     dens: w.dens[i],
     owner: w.owner[i],
@@ -475,6 +476,7 @@ function place(w, j, d) {
   w.fuel[j] = d.fuel;
   w.melt[j] = d.melt;
   w.char[j] = d.char;
+  w.tmax[j] = d.tmax ?? 0;
   w.flags[j] = d.flags;
   w.tint[j * 3] = d.tint[0];
   w.tint[j * 3 + 1] = d.tint[1];
