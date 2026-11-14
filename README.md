@@ -1267,8 +1267,8 @@ gun** and the **flame gun** (its tanks on his back); the carbine is everyone's s
 ### Hand-to-hand: boxing and judo
 
 A man with no weapon (loadout *unarmed*: the squad's *Riflemen carry*, the guards' *Weapon*; or
-out of ammunition with the knife gone) fights with his fists, feet and throws (). Unarmed is the most
-agile profile ( : every move allowed, a little quicker). From a **boxing
+out of ammunition with the knife gone) fights with his fists, feet and throws (`ai/melee.js`). Unarmed is the most
+agile profile (`ai/weapons.js` `unarmed`: every move allowed, a little quicker). From a **boxing
 guard** (left fist forward, the right by the chin, light on his feet) he closes in and picks by
 the distance and his man's state: **jab, cross, hook, uppercut**, a **front kick, roundhouse kick,
 low kick** further out, the **clinch** close in, and from the clinch (or with his man dazed) a
