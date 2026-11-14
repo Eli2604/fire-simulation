@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { F_BURNING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
+import { lod } from './lod.js';
+
+/** Flames thin out beyond `near` m (as it counts on the screen: render/lod.js), to `min` of the particles. */
+export const FLAME_LOD = { near: 12, min: 0.2 };
 
 const VERT = /* glsl */ `
   attribute float aSize;
@@ -109,8 +113,22 @@ export class FlameRenderer {
     const h = w.h;
 
     // --- spawn flame particles from the flame field
+    // level of detail (render/lod.js): a flame far off on the screen gets fewer, bigger particles
+    // (the same area covered, as bright: count x size² kept), so the pool goes to the near ones
+    const cam = lod.cam;
+    const sc = lod.scale();
+    const thin = (x, y, z) => {
+      if (!cam) return 1;
+      const d = Math.hypot(x - cam[0], y - cam[1], z - cam[2]) / sc;
+      return d < FLAME_LOD.near ? 1 : Math.max(FLAME_LOD.min, FLAME_LOD.near / d);
+    };
+    const sxy0 = anx * any;
     let total = 0;
-    for (let a = 0; a < w.NA; a++) if (flame[a] > 0.04) total += flame[a];
+    for (let a = 0; a < w.NA; a++) {
+      if (flame[a] <= 0.04) continue;
+      const ax = a % anx, ay = ((a - ax) / anx) % any, az = (a - ax - ay * anx) / sxy0;
+      total += flame[a] * thin((ax + 0.5) * ah, (ay + 0.5) * ah, (az + 0.5) * ah);
+    }
     // particles per second per unit of flame, limited by the pool size
     const lifeBase = 0.22 + 0.12 * Math.sqrt(ah / 0.1);
     const targetAlive = this.max * 0.85;
@@ -121,10 +139,12 @@ export class FlameRenderer {
       for (let a = 0; a < w.NA; a++) {
         const fl = flame[a];
         if (fl <= 0.04) continue;
-        let n = fl * rate;
         const ax = a % anx;
         const ay = ((a - ax) / anx) % any;
         const az = (a - ax - ay * anx) / sxy;
+        const lf = thin((ax + 0.5) * ah, (ay + 0.5) * ah, (az + 0.5) * ah);
+        const grow = 1 / Math.sqrt(lf);
+        let n = fl * rate * lf;
         if (this.skip.length && this.skipped((ax + 0.5) * ah, (ay + 0.5) * ah, (az + 0.5) * ah)) continue;
         while (n > 0) {
           if (n < 1 && Math.random() > n) break;
@@ -137,7 +157,7 @@ export class FlameRenderer {
             px, py, pz,
             vx[a] * 0.8 + (Math.random() - 0.5) * 0.2, Math.max(vy[a] * 0.6, up) * (0.7 + Math.random() * 0.5), vz[a] * 0.8 + (Math.random() - 0.5) * 0.2,
             lifeBase * (0.5 + Math.random() * 0.8),
-            ah * (1.0 + fl * 1.1),
+            ah * (1.0 + fl * 1.1) * grow,
             0,
             fl,
           );

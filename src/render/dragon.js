@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { PLAN, bodyRadius, smoothGround, dragonZones, dragonWoundPoint, wingPose } from '../ai/dragon.js';
 import { splatTexture } from './blood.js';
+import { lod, updateEvery } from './lod.js';
+
+/**
+ * The dragon's level of detail (render/lod.js): its body, legs and wings are posed on the CPU
+ * every frame (the tube round the spine rebuilt); small on the screen, or out of view, they are
+ * posed less often (the time in between made up). Breathing fire, always every frame.
+ */
+export const DRAGON_LOD = { radius: 5, levels: [150, 50, 15], rates: [1, 1, 2, 4], out: 4 };
 
 /**
  * Draws the dragons from their simulated pose (ai/dragon.js: d.spine, d.head, legs from
@@ -736,7 +744,16 @@ export class DragonRenderer {
         if (f) this.scene.remove(f.root);
         f = this.figures[n] = this.figure(d);
       }
-      this.pose(f, d, world, time, dt);
+      // level of detail: posed less often small on the screen or out of view
+      const c = d.spine[Math.floor(d.spine.length / 3)];
+      const R = DRAGON_LOD.radius * (d.k ?? 1);
+      const lv = lod.level((f.lod ??= {}), c[0], c[1], c[2], R, DRAGON_LOD.levels);
+      const every = d.breathT > 0 || !f.posed ? 1 : f.lod.inView ? updateEvery(lv, DRAGON_LOD.rates) : DRAGON_LOD.out;
+      f.lodDt = (f.lodDt ?? 0) + dt;
+      if (every > 1 && (lod.frame + n) % every !== 0) return;
+      this.pose(f, d, world, time, Math.min(0.25, f.lodDt));
+      f.lodDt = 0;
+      f.posed = true;
     });
   }
 

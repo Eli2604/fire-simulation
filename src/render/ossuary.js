@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MATERIALS } from '../sim/materials.js';
+import { lod as detail } from './lod.js';
 
 /**
  * Ossuary walls built of bones, as in the catacombs of Paris: the facade of each
@@ -768,10 +769,10 @@ diffuseColor.rgb *= 0.8 + 0.2 * smoothstep(-0.4, 0.5, boneHeight(vBoneP));`,
       const d = cameraLocal ? ch.centre.distanceTo(cameraLocal) : 0;
       const near = !cameraLocal || d < DRAW_DIST;
       for (const m of ch.meshes) m.visible = near && m.count > 0;
-      // level of detail: the scanned skull up to ~7 m, the light one beyond
+      // level of detail: the scanned skull up to ~7 m (as it counts on the screen: render/lod.js), the light one beyond
       const sk = ch.meshes?.[K_SKULL];
       if (sk && this.scanSkull) {
-        const g = d < 7 ? this.scanSkull : this.lightSkull;
+        const g = detail.equivalentDistance(d) < 7 ? this.scanSkull : this.lightSkull;
         if (sk.geometry !== g) sk.geometry = g;
       }
       if (near && shadeNow) this.shade(ch);

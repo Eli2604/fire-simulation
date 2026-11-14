@@ -1,5 +1,14 @@
 import * as THREE from 'three';
 import { torchWall } from '../sim/patches.js';
+import { lod } from './lod.js';
+
+/**
+ * Their level of detail (render/lod.js), by size on the screen: 0 everything; 1 (under ~8 px)
+ * no inner flame, wick or shadow; 2 (under ~1.5 px) the flame and its glow only: a candle or a
+ * torch far off is the light it gives, not wax and iron. (Close up, a candle's or a torch's
+ * head is its detail patch: sim/patches.js, chosen by the same rules.)
+ */
+export const TORCH_LOD = [8, 1.5];
 
 /**
  * Wall torches drawn as objects, not voxels: a forged iron bracket on the wall,
@@ -143,7 +152,7 @@ export class TorchRenderer {
     core.material.color = new THREE.Color(0xfff0c0);
     obj.add(flame, core);
     this.group.add(obj);
-    return { obj, flame, core, head, headParts: [head, band], seed: Math.random() * 100 };
+    return { obj, flame, core, head, headParts: [head, band], parts, seed: Math.random() * 100, radius: 0.3, lod: {} };
   }
 
   /** A candle (models/candle.js in a coarse scene): wax, wick, holder and its small flame. */
@@ -179,7 +188,7 @@ export class TorchRenderer {
     obj.add(flame, core, halo);
     for (const m of [wax, wick]) m.castShadow = true;
     this.group.add(obj);
-    return { obj, flame, core, head: wax, halo, body, seed: Math.random() * 100, candle: true };
+    return { obj, flame, core, head: wax, halo, body, wick, seed: Math.random() * 100, candle: true, radius: Math.max(c.height / 2, c.radius * 2.2), lod: {} };
   }
 
   update(time) {
@@ -203,9 +212,12 @@ export class TorchRenderer {
       // close up its detail patch (sim/patches.js) is the candle: its voxels are the wax, its
       // flame burns where the patch's wick burns, as big as the patch's flame
       let size = 1;
+      const lv = lod.level(it.lod, ht.pos[0], ht.pos[1] - it.radius * 0.5, ht.pos[2], it.radius, TORCH_LOD);
       if (it.candle) {
         const live = !!ht.patchLive;
-        for (const m of it.body) m.visible = !live && !ht.candle.flameOnly;
+        for (const m of it.body) m.visible = !live && !ht.candle.flameOnly && lv < 2;
+        it.head.castShadow = it.wick.castShadow = lv === 0;
+        it.wick.visible &&= lv === 0;
         const q = live && ht.flamePos ? ht.flamePos : ht.pos;
         it.obj.position.set(q[0], q[1], q[2]);
         if (live) size = Math.max(0.35, Math.min(1.4, Math.sqrt(ht.power / 70)));
@@ -215,7 +227,8 @@ export class TorchRenderer {
       let off = null;
       if (!it.candle && it.headParts) {
         const live = !!ht.patchLive;
-        for (const m of it.headParts) m.visible = !live;
+        for (const m of it.parts) m.visible = lv < 2;
+        for (const m of it.headParts) m.visible = !live && lv < 2;
         if (live && ht.flamePos) {
           const d = [ht.flamePos[0] - ht.pos[0], ht.flamePos[1] - ht.pos[1], ht.flamePos[2] - ht.pos[2]];
           const r = it.obj.rotation.y;
@@ -233,7 +246,8 @@ export class TorchRenderer {
       // (a candle's flame is a small teardrop, ~4 cm, that hardly flickers in still air)
       const k = it.candle ? 0.14 * size : size;
       const hgt = (0.32 + 0.06 * Math.sin(time * 11 + s)) * f * (it.candle ? 0.96 + 0.04 * flick : flick) * k;
-      it.flame.visible = it.core.visible = f > 0.02;
+      it.flame.visible = f > 0.02;
+      it.core.visible = f > 0.02 && lv === 0;
       it.flame.scale.set(0.17 * k * f * (0.9 + 0.1 * Math.sin(time * 9 + s)), hgt, 1);
       // (the patch's flame position is over its top burning voxel; the drawn flame's base sits 5 cm under its origin)
       const [ox, oy, oz] = off ? [off[0], off[1] + 0.04 * k, off[2]] : [0, 0, 0];

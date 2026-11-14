@@ -35,6 +35,7 @@ import { TeaRenderer } from './tea.js';
 import { MATERIALS } from '../sim/materials.js';
 import { SNOW_COVER } from './archipelago.js';
 import { deriveWeather } from '../sim/weather.js';
+import { lod, projection } from './lod.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
 const SKY_GREY = new THREE.Color(0x8d939a);
@@ -310,6 +311,25 @@ export class View {
     };
     B.update(dt, this.time, scale, mouths, air);
     this.tea.update(dt, scale, air, B.light, this.cameraLocal());
+  }
+
+  /**
+   * Level of detail (render/lod.js): once a frame, the camera as every renderer measures it
+   * (in the world's own coordinates), the projection (the view's CSS height, so the adaptive
+   * resolution does not change what is drawn) and its frustum, for what is out of view.
+   */
+  beginLod() {
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    this.root.updateMatrixWorld();
+    const M = (this._lodM ??= new THREE.Matrix4()).multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).multiply(this.root.matrixWorld);
+    const F = (this._lodF ??= new THREE.Frustum()).setFromProjectionMatrix(M);
+    const S = (this._lodS ??= new THREE.Sphere());
+    const c = this.renderer.domElement;
+    const h = c.clientHeight || c.height || 800;
+    const fov = (2 * Math.atan(Math.tan((cam.fov * Math.PI) / 360) / (cam.zoom || 1)) * 180) / Math.PI;
+    this.lod = lod;
+    lod.begin(this.cameraLocal(), projection(h, fov), (x, y, z, r) => F.intersectsSphere(S.set(S.center.set(x, y, z), r)));
   }
 
   /** The camera's position in the world's own coordinates ([x, y, z]). */
@@ -592,6 +612,7 @@ export class View {
     this.governQuality();
     this.time += dt;
     if (this.controls.enabled) this.controls.update();
+    this.beginLod();
     this.markers.update(this.time, this.world);
     const smooth = this.surfaceMode === 'smooth';
     const volumetric = this.smokeMode === 'volumetric';

@@ -11,6 +11,7 @@ import { MODELS, defaultParams } from './models/index.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
 import { PATCH } from './sim/patches.js';
+import { lod } from './render/lod.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
@@ -500,6 +501,9 @@ fV.add(state, 'ao').name('Ambient occlusion').onChange((v) => (view.aoOn = v));
 // candles, torches and campfires close up in fine voxels of their own: wax and pitch that
 // melt, pool and drip, logs that char and fall in
 fV.add(state, 'detail').name('Fine detail close up');
+// level of detail (render/lod.js): soldiers, candles and torches, trees, props, flames, the
+// close-up patches, all by their size on the screen; over 1 more detail further off, under 1 less
+fV.add(lod, 'bias', 0.25, 3, 0.05).name('Detail (LOD bias)');
 // voxel sizes, to suit the hardware: the scene's (rebuilt), the fine detail's (patches rebuilt)
 const fD = gui.addFolder('Voxel size (performance vs detail)');
 fD.add(state, 'voxelScale', { 'Finer (0.75×: ~3× the work)': 0.75, 'As designed (1×)': 1, 'Coarser (1.5×: ~1/5)': 1.5, 'Coarse (2×: ~1/16)': 2 })
@@ -891,6 +895,7 @@ function frame(now) {
     speed += (done / Math.max(dt, 1e-3) - speed) * 0.1;
     // the candles near the camera in fine detail (sim/patches.js), within a few ms a frame
     if (sim.patches) sim.patches.enabled = state.detail;
+    if (sim.patches) sim.patches.reach = lod.bias;
     sim.patches?.update(view.cameraLocal(), 8);
   } else speed *= 0.9;
   if (scene.zones) updateProxies();
@@ -960,6 +965,8 @@ function startWalk() {
 const qs = new URLSearchParams(location.search);
 // ...&voxel=1.5: every scene's voxels 1.5x their size; ...&detailvoxel=0.7: the close-up detail's
 if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
+// ...&lod=2: the level-of-detail bias (render/lod.js; 0.25..3)
+if (Number(qs.get('lod')) > 0) lod.bias = Number(qs.get('lod'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
 // no graphics card (rendering in software): fewer close-up objects at once
 if (view.softwareGpu) PATCH.maxActive = 4;
