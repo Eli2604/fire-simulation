@@ -1,4 +1,5 @@
 import { MATERIALS, MAT } from './materials.js';
+import { emitSound, LOUDNESS } from '../ai/perception.js';
 
 // loose ground a blast digs a crater in (soil, sand, grass, gravel; weathered rock only cracks)
 const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock'].map((n) => MAT[n]).filter(Boolean));
@@ -197,7 +198,7 @@ export function explode(sim, center, E, opts = {}) {
   w.structureDirty = true;
   w.listDirty = true;
   w.events.push({ type: 'explosion', pos: center, time: w.time, energy: E, radius: blastR, name: opts.name ?? 'grenade', flash: opts.flash !== false });
-  w.noises.push({ p: center.slice(), loud: 80, time: w.time, kind: 'explosion' });
+  emitSound(w, { pos: center, loudness_dB: opts.name === 'grenade' || !opts.name ? LOUDNESS.grenade : LOUDNESS.explosion, kind: 'explosion' });
   sim.ai?.blast(center, blastR);
   sim.dragonAI?.blast(center, blastR);
   sim.phoenixAI?.blast(center, blastR);
@@ -278,7 +279,7 @@ export function stepGasPipes(sim) {
 export function flashbang(sim, p, by = null) {
   const w = sim.world;
   w.events.push({ type: 'flashbang', pos: p.slice(), time: w.time, name: 'flashbang' });
-  w.noises.push({ p: p.slice(), loud: 60, time: w.time, kind: 'flashbang' });
+  emitSound(w, { pos: p, loudness_dB: LOUDNESS.flashbang, kind: 'flashbang' });
   for (const e of w.enemies) {
     if (e.dead || (by && e.unit === by)) continue;
     const d = Math.hypot(e.p[0] - p[0], e.p[1] + 1.5 - p[1], e.p[2] - p[2]);

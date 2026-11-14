@@ -1,4 +1,5 @@
 import { MATERIALS } from '../sim/materials.js';
+import { senses } from './perception.js';
 
 /**
  * A phoenix: a bird of fire, locked in a dungeon cell in the catacombs
@@ -292,7 +293,8 @@ export class PhoenixAI {
     f.pos = [f.perch[0], f.perch[1] + Math.max(0, Math.sin(f.flap * 0.5)) * 0.04 * f.wing, f.perch[2]];
     // watch you when you are close; call the first time it sees you, and now and then
     let sees = false;
-    if (pl && dist(pl.head, f.pos) < 9 && this.sim.ai.sees(pl.head, f.pos)) {
+    // (its senses: ai/perception.js, 9 m in its dark cell by default; f.sightRange to change it)
+    if (pl && dist(pl.head, f.pos) < senses(f, 'phoenix').sightRange && this.sim.ai.sees(pl.head, f.pos, Infinity)) {
       sees = true;
       f.look = pl.head.slice();
       if (!f.metPlayer) {

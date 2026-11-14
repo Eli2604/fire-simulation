@@ -241,11 +241,13 @@ export function placeObject(world, obj, ownerIndex = -1) {
   const hullCandidates = [];
   // pick-up items (wall extinguisher, hose reel), sprinklers and the sea level of a ship
   for (const pk of built.pickups ?? []) world.pickups.push({ ...pk, p: toWorld(...pk.p), owner: ownerIndex, voxels: [], taken: false });
+  // their senses and lights (ai/perception.js, ai/flashlight.js), only what the scene set
+  const senseFields = (en) => Object.fromEntries(['sightRange', 'fov', 'hearing', 'nightSight', 'weaponLight', 'flashlight'].filter((k) => en[k] !== undefined).map((k) => [k, en[k]]));
   for (const en of built.enemies ?? []) {
     const p = toWorld(...en.p);
     // the patrol area in world coordinates (its corners, so a rotated object rotates it)
     const area = en.area ? { mode: en.area.mode, corners: en.area.corners.map((c) => toWorld(...c)) } : null;
-    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.recoil != null ? { recoil: en.recoil } : {}), ...(en.fireMode ? { fireMode: en.fireMode } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}), ...(!en.squad && en.soldier ? { unit: en.unit, skill: en.skill, armour: en.armour, soldier: true, lureCooldown: Infinity } : {}) });
+    world.enemies.push({ p, home: p.slice(), health: 100, state: 'patrol', yaw: 0, area, leg: (en.routeStart ?? 0) % 4, ...(en.key ? { key: en.key } : {}), ...(en.recoil != null ? { recoil: en.recoil } : {}), ...(en.fireMode ? { fireMode: en.fireMode } : {}), ...(en.squad ? { squad: en.squad, unit: en.unit, loadout: en.loadout, threat: toWorld(...en.threat), skill: en.skill, armour: en.armour } : {}), ...(!en.squad && en.soldier ? { unit: en.unit, skill: en.skill, armour: en.armour, soldier: true, lureCooldown: Infinity } : {}), ...senseFields(en) });
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const fl of built.flights ?? []) world.flights.push({ ...fl, p: toWorld(...fl.p), target: toWorld(...fl.target), home: toWorld(...fl.home), owner: ownerIndex });

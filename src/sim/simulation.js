@@ -13,6 +13,7 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
+import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
 import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
 import { shoot } from './wounds.js';
@@ -1557,11 +1558,14 @@ export class Simulation {
       // you: seen through doorways, not through walls or thick smoke
       hostiles: () => (pl() ? [pl()] : []),
       lineOfSight: (a, b) => this.ai.sees([a[0], a[1] + 1.6, a[2]], [b[0], b[1] + 1.5, b[2]]),
+      // from an eye to a point (ai/perception.js: crouched, standing, peeking over a wall or round a corner)
+      sightLine: (eye, at) => this.ai.sightLine(eye, at),
       unit,
       // fog, smoke and darkness: how far they can see; what they hear
-      visibility: () => (w.dark ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
-      dark: () => !!w.dark,
-      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, kind: n.kind, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
+      // (the dark: the world's flag, or its light level when it has a time of day: ai/perception.js ambientLight)
+      visibility: () => (isDark(w) ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
+      dark: () => isDark(w),
+      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, dB: n.dB, time: n.time, kind: n.kind, source: n.source, squad: n.source?.unit ?? (n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit) })),
       peers: () => this.squads ?? [],
       radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
       fire: (e, target, weapon = 'rifle') => {
@@ -1630,13 +1634,13 @@ export class Simulation {
   /** A fire arrow from p with velocity v (m/s). */
   shootArrow(from, vel) {
     this.world.projectiles.push({ type: 'arrow', p: from.slice(), v: vel.slice(), resting: false });
-    this.world.noises.push({ p: from.slice(), loud: 4, time: this.world.time, kind: 'bow' });
+    emitSound(this.world, { pos: from, loudness_dB: LOUDNESS.bow, kind: 'bow', source: this.ai?.player ?? null });
   }
 
   /** A rocket: motor for a few seconds, explodes on impact (energy J). */
   fireRocket(from, vel, energy = 1.5e6) {
     this.world.projectiles.push({ type: 'rocket', p: from.slice(), v: vel.slice(), resting: false, energy, burn: 3 });
-    this.world.noises.push({ p: from.slice(), loud: 60, time: this.world.time, kind: 'rocket' });
+    emitSound(this.world, { pos: from, loudness_dB: LOUDNESS.rocket, kind: 'rocket' });
   }
 
   /** A hand-held fire torch: a burning jet that follows the aim point while held. */

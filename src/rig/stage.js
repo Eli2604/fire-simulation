@@ -35,7 +35,10 @@ import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { PhoenixRig } from './phoenix.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS, PEEK_ACTS } from './objects.js';
+import { lightSource, hasWeaponLight, LIGHT_MOUNT } from '../ai/flashlight.js';
+import { senses as senseProfile, SENSES } from '../ai/perception.js';
+import { FlashlightPool } from '../render/flashlights.js';
 import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
@@ -142,6 +145,8 @@ const HTML = `
     <div class="grid" data-id="casActs"></div>
     <div class="lab">Hand-to-hand (boxing and judo: strikes, kicks, defence, the clinch, throws with a partner)</div>
     <div class="grid" data-id="melActs"></div>
+    <div class="lab">Peek (over a low wall, round a corner, slicing the pie; the hand torch, with a hand free)</div>
+    <div class="grid" data-id="peekActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -183,6 +188,15 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <div class="lab">Weapon in hand</div>
     <div class="grid" data-id="weapons"></div>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
+    <div class="lab">Lights (ai/flashlight.js): on the weapon, or the hand torch from the belt</div>
+    <div class="row"><button data-id="tgWLight" type="button" aria-pressed="false" title="A light on the weapon in his hands (an attachment: rifle, carbine and shotgun by default)">Light on this weapon</button><button data-id="tgLight" type="button" aria-pressed="false">Light on</button></div>
+    <label class="sl"><span>Torch grip</span><select data-id="torchGrip" style="grid-column:2/4" aria-label="Torch grip with a pistol"><option value="harries">Harries (wrists back to back under the pistol)</option><option value="fbi">FBI (out to the side, high)</option></select></label>
+    <p class="hint" data-id="lightInfo"></p>
+    <div class="lab">Senses (ai/perception.js; experience scales them)</div>
+    <label class="sl"><span>Sight</span><input type="range" data-id="sightS" min="10" max="1000" step="5" value="400"><output data-id="sightO">400 m</output></label>
+    <label class="sl"><span>Field of view</span><input type="range" data-id="fovS" min="60" max="360" step="5" value="360"><output data-id="fovO">360°</output></label>
+    <label class="sl"><span>Hearing ×</span><input type="range" data-id="hearS" min="0" max="3" step="0.05" value="1"><output data-id="hearO">×1.00</output></label>
+    <p class="hint" data-id="senseInfo"></p>
     <label class="sl"><span>Reload ×</span><input type="range" data-id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output data-id="reloadO">×1.00</output></label>
     <label class="sl"><span>Look</span><input type="range" data-id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output data-id="lookO">0°</output></label>
     <div class="lab">Weapon recoil (ai/recoil.js: from the cartridge and the weapon's mass)</div>
@@ -297,6 +311,7 @@ export function mountRig(root, opts = {}) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   stage.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
+  let flashPool = null;
   {
     const c = document.createElement('canvas');
     c.width = 4;
@@ -904,6 +919,7 @@ export function mountRig(root, opts = {}) {
     });
     showHandling(e);
     showWeapons(e);
+    showLights(e);
     if (document.activeElement !== $('skillSel')) $('skillSel').value = e.skill ?? 'regular';
   }
   /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
@@ -941,7 +957,22 @@ export function mountRig(root, opts = {}) {
       onChange();
     };
     if (k === 'dragged' || k.endsWith('_d')) return; // (the other man's half of a pair: shown with the act)
-    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : MELEE_ACTS[k] ? $('melActs') : animBox).appendChild(b);
+    if (PEEK_ACTS[k]?.torch)
+      b.onclick = () => {
+        // the torch only with a hand free (the knife, a pistol, bare hands): ai/flashlight.js
+        for (const e of allMode ? soldiers : [selected]) {
+          if (!e || e.d.dead) continue;
+          const s = lightSource({ handling: e.fig.handling, weaponLight: false });
+          if (k === 'drawTorch' && s.src !== 'hand') {
+            toast(`${e.name}: ${s.why}`);
+            continue;
+          }
+          e.fig.drawTorch(k === 'drawTorch');
+          e.fig.setTorch(k === 'drawTorch', k === 'drawTorch', $('torchGrip').value);
+        }
+        onChange();
+      };
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : MELEE_ACTS[k] ? $('melActs') : PEEK_ACTS[k] ? $('peekActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -1050,6 +1081,57 @@ export function mountRig(root, opts = {}) {
       box.appendChild(b);
     }
   }
+  /* ---------- lights and senses (ai/flashlight.js, ai/perception.js) ---------- */
+  function lightKind(e) {
+    return e.fig.handling ?? 'rifle';
+  }
+  function showLights(e) {
+    if (!e) return;
+    const k = lightKind(e);
+    const on = hasWeaponLight({ weaponLight: e.weaponLight }, k);
+    $('tgWLight').setAttribute('aria-pressed', String(on));
+    $('tgLight').setAttribute('aria-pressed', String(!!(e.fig.lightOn || e.fig.torchOn)));
+    const s = lightSource({ handling: k, weaponLight: e.weaponLight });
+    $('lightInfo').textContent = s.src === 'weapon' ? `The light on the ${HANDLING[k]?.label ?? k} shines along the muzzle, where he aims.` : s.src === 'hand' ? 'A hand free: the torch from the pouch on the left of his belt, in the left hand' + (k === 'pistol' ? ' (with the pistol: under the wrist, Harries; or out to the side, FBI).' : '.') : s.why;
+    const P = senseProfile({ skill: e.skill, ...(e.senses ?? {}) }, 'soldier');
+    $('senseInfo').textContent = `As ${e.skill ?? 'regular'}: picks up an enemy in clear sight to ${Math.round(P.sightRange)} m in daylight (less in fog, smoke and the dark; his light or the enemy's helps), sees ${P.fov}° round, notices something plain and close in ${P.react.toFixed(2)} s, hears ${P.hearing.toFixed(2)}× as far (a rifle shot ~3 km, a walk ~10 m).`;
+  }
+  tg('tgWLight', (v) => {
+    for (const e of gearTargets()) {
+      e.weaponLight = { ...(typeof e.weaponLight === 'object' ? e.weaponLight : {}), [lightKind(e)]: v };
+      if (!v) e.fig.setGear({ thermal: e.fig.thermal.visible, light: false });
+      showLights(e);
+    }
+  });
+  tg('tgLight', (v) => {
+    for (const e of gearTargets()) {
+      const s = lightSource({ handling: lightKind(e), weaponLight: e.weaponLight });
+      if (v && !s.src) toast(`${e.name}: ${s.why}`);
+      e.fig.setGear({ thermal: e.fig.thermal.visible, light: v && s.src === 'weapon' });
+      if (s.src === 'hand') {
+        if (v && !e.fig.torchOut) e.fig.drawTorch(true);
+        e.fig.setTorch(v || e.fig.torchOut, v, $('torchGrip').value);
+      }
+      showLights(e);
+    }
+  });
+  $('torchGrip').onchange = () => {
+    for (const e of gearTargets()) e.fig.setTorch(e.fig.torchOut, e.fig.torchOn, $('torchGrip').value);
+  };
+  const senseSlider = (id, out, key, fmt) => {
+    $(id).oninput = () => {
+      const v = +$(id).value;
+      $(out).textContent = fmt(v);
+      for (const e of gearTargets()) {
+        e.senses = { ...(e.senses ?? {}), [key]: v };
+        showLights(e);
+      }
+    };
+  };
+  senseSlider('sightS', 'sightO', 'sightRange', (v) => v + ' m');
+  senseSlider('fovS', 'fovO', 'fov', (v) => v + '°');
+  senseSlider('hearS', 'hearO', 'hearing', (v) => '×' + v.toFixed(2));
+  void SENSES; void LIGHT_MOUNT;
   tg('tgArmour', (v) => {
     GEAR.armour = v;
     for (const e of soldiers) e.fig.setArmour(v);
@@ -1345,6 +1427,13 @@ export function mountRig(root, opts = {}) {
     now += dt;
     for (let i = LATER.length - 1; i >= 0; i--) if (now >= LATER[i].at) LATER.splice(i, 1)[0].fn();
     for (const e of soldiers) e.update(dt);
+    // their lights: the pool's few spot lights (render/flashlights.js)
+    flashPool ??= new FlashlightPool(scene);
+    flashPool.update(soldiers.map((e) => {
+      const s = e.fig.group.visible ? e.fig.lightSource() : null;
+      if (s) s.key = e;
+      return s;
+    }));
     physics.step(dt);
     stepGrenades(dt);
   }

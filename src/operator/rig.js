@@ -46,6 +46,8 @@ import { rollKeys, rollAt, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
 import { recoilSpec, recoilAt, pullTime, pumpTimes } from '../ai/recoil.js';
 import { allows as handlingAllows } from '../ai/weapons.js';
 import { MELEE, REACT } from '../ai/melee.js';
+import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
+import { TORCH_T } from '../ai/flashlight.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -1332,6 +1334,97 @@ const GEAR_CLIPS = {
   pickupOne: [1.0, (t) => pickupOnePose(t)],
   dropPack: [PACK_OFF_T, (t) => keyed(PACK_K, t)],
 };
+/* ---------- peeking (ai/peek.js) and the hand torch (ai/flashlight.js) ---------- */
+/**
+ * Over a low wall: from the crouch he rises just enough for his eyes to clear the top (the legs
+ * straighten, the rifle up at the shoulder over it), looks left and right, and drops back.
+ */
+function peekWallPose(t) {
+  const D = PEEK_CLIPS.peekWall;
+  const r = env(t, 0.12, 0.55, D - 0.75, D - 0.2);
+  const c = crouchLegs(pose0());
+  const p = pose0();
+  for (const k of ['hipsPos', 'thighR', 'thighL', 'shinR', 'shinL', 'footR', 'footL']) p[k] = c[k].map((v) => v * (1 - 0.85 * r));
+  p.spine = [0.25 - 0.13 * r, 0, 0];
+  p.head = [-0.18 + 0.08 * r, 0, 0];
+  aimUpper(p, 1);
+  // the look: a sweep left and right while up
+  const sweep = Math.sin(((t - 0.55) / Math.max(0.5, D - 1.3)) * TAU) * r;
+  p.chest[1] += 0.18 * sweep; p.head[1] += 0.12 * sweep;
+  return p;
+}
+/**
+ * Round a corner: from the aim stance he leans out (the weight onto the leg on that side, the
+ * spine and chest rolled over it, the head kept level), looks, and comes back. side: 1 right, -1
+ * left. A right-handed shooter leans out right more naturally; to the left he leans further (the
+ * rifle stays at his right shoulder, his head over it).
+ */
+function leanPose(t, side) {
+  const D = PEEK_CLIPS.leanRight;
+  const e = env(t, 0.1, 0.42, D - 0.6, D - 0.12);
+  const k = side > 0 ? 0.85 : 1.15;
+  const p = stance(pose0());
+  aimUpper(p, 1);
+  p.hipsPos[0] += -side * 0.07 * e * k;
+  p.hips[2] += side * 0.05 * e;
+  p.spine[2] += side * 0.16 * e * k; p.chest[2] += side * 0.2 * e * k;
+  p.neck[2] -= side * 0.08 * e; p.head[2] -= side * 0.14 * e * k;
+  // the leg on that side takes the weight, the other trails
+  if (side > 0) {
+    p.thighR = [0.05, 0, -0.05 - 0.1 * e]; p.thighL = [-0.12, 0, 0.05 + 0.16 * e]; p.shinL[0] += 0.08 * e;
+  } else {
+    p.thighL = [0.05, 0, 0.05 + 0.1 * e]; p.thighR = [0.12, 0, -0.05 - 0.16 * e]; p.shinR[0] += 0.08 * e;
+  }
+  return p;
+}
+/**
+ * Slicing the pie: side steps round the corner in an arc, the muzzle on each new slice (the upper
+ * body turns a little further each step), then back. side: 1 right, -1 left.
+ */
+function slicePose(t, side) {
+  const D = PEEK_CLIPS.sliceRight;
+  const u = t / D;
+  const p = walkLegs(pose0(), TAU * 3 * u, 0.18);
+  p.hipsPos[1] -= 0.08; p.thighR[0] -= 0.18; p.thighL[0] -= 0.18; p.shinR[0] += 0.3; p.shinL[0] += 0.3;
+  // the steps go sideways: the legs swing out and in
+  p.thighR[2] += 0.1 * Math.sin(TAU * 3 * u); p.thighL[2] += 0.1 * Math.sin(TAU * 3 * u);
+  aimUpper(p, 1);
+  const arc = env(t, 0, D * 0.15, D * 0.65, D) * 0.45;
+  p.spine[1] += -side * arc * 0.4; p.chest[1] += -side * arc * 0.6;
+  p.spine[2] += side * 0.06 * arc;
+  return p;
+}
+/**
+ * The hand torch from the pouch on the left of the belt (or back into it): the free left hand
+ * down to it and up to the front (the torch then held where the figure's torch hold puts it).
+ */
+const TORCH_POUCH = [0.2, 0.93, 0.1];
+const TORCH_HOLD = [0.2, 1.3, 0.38];
+function torchPose(t, draw) {
+  const D = draw ? TORCH_T.draw : TORCH_T.stow;
+  const u = draw ? t / D : 1 - t / D;
+  const p = stance(pose0());
+  const reach = env(u, 0, 0.1, 0.55, 1.0);
+  // (the hand off the weapon at the start of the draw; back on it at the end of the stow)
+  p.lG = 1 - sm01(u / 0.2);
+  p.lH = 0; p.lPole = [1, -0.7, -0.3];
+  p.lT = u < 0.5 ? lerpA(FREE_L, TORCH_POUCH, sm01(u / 0.5)) : lerpA(TORCH_POUCH, TORCH_HOLD, sm01((u - 0.5) / 0.5));
+  p.head = [0.25 * reach * (u < 0.6 ? 1 : 0), 0.2 * reach * (u < 0.6 ? 1 : 0), 0];
+  return p;
+}
+const PEEK_TORCH_CLIPS = {
+  peekWall: [PEEK_CLIPS.peekWall, (t) => peekWallPose(t)],
+  leanLeft: [PEEK_CLIPS.leanLeft, (t) => leanPose(t, -1)],
+  leanRight: [PEEK_CLIPS.leanRight, (t) => leanPose(t, 1)],
+  sliceLeft: [PEEK_CLIPS.sliceLeft, (t) => slicePose(t, -1)],
+  sliceRight: [PEEK_CLIPS.sliceRight, (t) => slicePose(t, 1)],
+  drawTorch: [TORCH_T.draw, (t) => torchPose(t, true)],
+  stowTorch: [TORCH_T.stow, (t) => torchPose(t, false)],
+};
+/** The peek clips (one-shots, played at the pace the AI exposes him: ai/peek.js) and the torch's. */
+export const PEEK = Object.fromEntries(Object.keys(PEEK_CLIPS).map((k) => [k, 1]));
+export const TORCH_CLIPS = { drawTorch: 1, stowTorch: 1 };
+const PEEK_TORCH_LABELS = { ...PEEK_LABELS, drawTorch: 'Torch: draw from the belt', stowTorch: 'Torch: back on the belt' };
 const GEAR_LABELS = { dropWeapon: 'Drop weapon', pickupOne: 'Pick up (one hand)', dropPack: 'Pack off (unstrap, lower)', rollPickup: 'Roll pick-up' };
 
 const CLIPS = {
@@ -1609,19 +1702,21 @@ const CLIPS = {
   ...MELEE_CLIPS,
   // gear: the weapon dropped, the pack taken off and put down, picking things up
   ...GEAR_CLIPS,
+  // peeking over a wall and round corners, slicing the pie; the hand torch drawn and put away
+  ...PEEK_TORCH_CLIPS,
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE, dropWeapon: 1, pickupOne: 1, dropPack: 1 };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE, dropWeapon: 1, pickupOne: 1, dropPack: 1, ...PEEK, ...TORCH_CLIPS };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
-export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
+export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1, peekWall: 1, leanLeft: 1, leanRight: 1, sliceLeft: 1, sliceRight: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stairs up', stairsDown: 'Stairs down', slide: 'Slide (hill)', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
-  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS };
+  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS, ...PEEK_TORCH_LABELS };
 export { PARKOUR, ROLL };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
@@ -1733,6 +1828,8 @@ export const WEAPON_STYLE = {
     carry: { wOff: [0.1, 0.08, 0.03], wRot: [0.4, -0.9, 0] },
     aOff: [0.15, 0.0, 0.18], square: 0.75, muzzle: 0.43,
     oneHand: { run: 1, walk: 1, stairsUp: 1, stairsDown: 1, jump: 1, slide: 1 },
+    // peeking round a corner with the pistol: one-handed, the left hand flat on the wall's edge
+    oneHandAim: { leanLeft: [0.34, 1.42, 0.3], leanRight: [-0.1, 1.38, 0.34], sliceLeft: [0.3, 1.3, 0.25], sliceRight: [-0.05, 1.3, 0.3] },
   },
   torch: {
     carry: { wOff: [0.01, -0.08, 0.04], wRot: [0.2, 0, 0] }, aOff: [0.06, -0.22, 0.0], aPitch: 0.14, square: 0.3, muzzle: 1.0,
@@ -1751,6 +1848,11 @@ function styled(S, name, base) {
       const s = Math.sin(TAU * u);
       p.lT = lerpA(p.lT, [0.25, name === 'run' ? 1.14 + 0.1 * mx0(s) : 0.98, 0.07 + (name === 'run' ? 0.25 : 0.14) * s], p.lG);
       p.lPole = [1, -0.2, -1];
+      p.lG = 0; p.lH = 0;
+    }
+    if (S.oneHandAim?.[name] && a > 0.5) {
+      p.lT = S.oneHandAim[name].slice();
+      p.lPole = [1, -0.5, -0.4];
       p.lG = 0; p.lH = 0;
     }
     const c = (1 - a) * (1 - p.cw) * (1 - p.sling) * (1 - p.sling2) * Math.max(p.rG, p.lG);
@@ -2515,6 +2617,47 @@ const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0 };
  * point while moving; detach(part, physics) drops the rifle, helmet or pack.
  * onRelease(worldPos, figure) is called when a thrown grenade leaves the hand.
  */
+/**
+ * Two-bone inverse kinematics on the figure's own bones (world space): the upper arm turned so the
+ * elbow is where the arm's lengths and the pole put it, the forearm so the wrist reaches T.
+ */
+const _q = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
+function turnWorld(bone, from, to) {
+  const q = _q[0].setFromUnitVectors(from.normalize(), to.normalize());
+  const wq = bone.getWorldQuaternion(_q[1]);
+  const pq = bone.parent.getWorldQuaternion(_q[2]);
+  bone.quaternion.copy(pq.invert().multiply(q.multiply(wq)));
+  bone.updateMatrixWorld(true);
+}
+export function armIK(upper, fore, hand, T, pole) {
+  const S = upper.getWorldPosition(new THREE.Vector3()), E = fore.getWorldPosition(new THREE.Vector3()), W = hand.getWorldPosition(new THREE.Vector3());
+  const a = S.distanceTo(E), b = E.distanceTo(W);
+  const E1 = ikV(S, T, a, b, pole);
+  turnWorld(upper, E.clone().sub(S), E1.clone().sub(S));
+  const W1 = hand.getWorldPosition(new THREE.Vector3()), E2 = fore.getWorldPosition(new THREE.Vector3());
+  turnWorld(fore, W1.sub(E2), T.clone().sub(E2));
+}
+/** A faint cone of light in the air (the beam: seen in smoke, fog and the dark); 1 m long, along +y from its tip. */
+const BEAM_GEO = (() => {
+  const geo = new THREE.ConeGeometry(Math.tan(0.3), 1, 16, 1, true);
+  geo.translate(0, -0.5, 0);
+  geo.rotateX(Math.PI);
+  return geo;
+})();
+export function makeBeam(len = 9) {
+  const m = new THREE.Mesh(BEAM_GEO, new THREE.MeshBasicMaterial({ color: '#fff1d0', transparent: true, opacity: 0.045, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  m.userData.len = len;
+  m.visible = false;
+  m.renderOrder = 4;
+  m.raycast = () => {};
+  return m;
+}
+const _Y = new THREE.Vector3(0, 1, 0);
+export function placeBeam(m, from, dir) {
+  m.position.copy(from);
+  m.quaternion.setFromUnitVectors(_Y, dir.clone().normalize());
+  m.scale.setScalar(m.userData.len);
+}
 export class OperatorFigure {
   constructor(A, { zones = true, loadout = 'rifle' } = {}) {
     this.A = A;
@@ -2680,6 +2823,35 @@ export class OperatorFigure {
     thermal.visible = false;
     hf.add(thermal);
     this.lightOn = false;
+    // the hand torch (ai/flashlight.js): in its pouch on the left of the belt, or in the left hand
+    const tMat = new THREE.MeshStandardMaterial({ color: '#1c1e21', roughness: 0.45, metalness: 0.6 });
+    const torchBody = (tg) => {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.014, 0.15, 10), tMat);
+      b.rotation.z = -Math.PI / 2;
+      b.position.x = 0.02;
+      const h = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.016, 0.04, 12), tMat);
+      h.rotation.z = -Math.PI / 2;
+      h.position.x = 0.11;
+      tg.add(b, h);
+      return tg;
+    };
+    const belt = (this.torchBelt = torchBody(new THREE.Group()));
+    belt.rotation.z = Math.PI / 2;
+    belt.position.set(0.2, -0.05, 0.1);
+    bones.hips.add(belt);
+    const held = (this.torchMesh = torchBody(new THREE.Group()));
+    const lens = (this.torchLens = new THREE.Sprite(new THREE.SpriteMaterial({ map: A.flashTex, color: '#fff2c8', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })));
+    lens.position.x = 0.135;
+    lens.scale.setScalar(0.08);
+    held.add(lens);
+    held.visible = lens.visible = false;
+    g.add(held);
+    this.hasTorch = true;
+    this.torchOut = false;
+    this.torchOn = false;
+    this.torchGrip = 'harries';
+    this.torchBeam = makeBeam();
+    g.add(this.torchBeam);
     // the grenade in the right hand while throwing
     const nade = (this.nade = new THREE.Group());
     nade.add(new THREE.Mesh(A.grenade, A.grenadeMat), new THREE.Mesh(A.grenadeFuse, A.black));
@@ -3332,6 +3504,9 @@ export class OperatorFigure {
         Pq.multiply(b.quaternion);
       }
     }
+    // the hand torch held by the left arm over the clip; the weapon light's beam (ai/flashlight.js)
+    this.holdTorch();
+    this.placeLampBeam();
     const u = this.mat.userData.uHit;
     if (u.value > 0) u.value = Math.max(0, u.value - dt * 3.5);
     // muzzle flash: told (flashUntil) or from the firing clips
@@ -3463,19 +3638,127 @@ export class OperatorFigure {
     this.thermal.visible = thermal;
     if (light === this.lightOn) return;
     this.lightOn = light;
-    if (light && !this.lamp) {
-      const lamp = (this.lamp = new THREE.SpotLight('#fff4dc', 6, 28, 0.32, 0.5, 1.6));
-      lamp.position.copy(rl2w(0.75, 0.045, 0.052));
-      const tgt = new THREE.Object3D();
-      tgt.position.copy(rl2w(3, 0.045, 0.052));
-      this.bones.weapon.add(lamp, tgt);
-      lamp.target = tgt;
+    // (the light itself: render/flashlights.js lights the nearest few from lightSource(); each
+    // figure has only the lens's glow and a faint beam in the air)
+    if (light && !this.lampGlow) {
       const glow = (this.lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.A.flashTex, color: '#fff2c8', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })));
       glow.position.copy(rl2w(0.76, 0.045, 0.052));
       glow.scale.setScalar(0.09);
       this.bones.weapon.add(glow);
+      this.lampBeam = makeBeam();
+      this.group.add(this.lampBeam);
     }
-    if (this.lamp) this.lamp.visible = this.lampGlow.visible = light;
+    if (this.lampGlow) this.lampGlow.visible = this.lampBeam.visible = light;
+    if (this.lampGlow) this.lampGlow.position.copy(rl2w(this.lampX(), 0.045, 0.052));
+  }
+  /** Where the weapon light sits along the weapon in his hands (rifle-local x). */
+  lampX() {
+    const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
+    return pk === 'carbine' ? 0.6 : (WEAPON_STYLE[pk]?.muzzle ?? 1.03) - 0.27;
+  }
+  /**
+   * The hand torch (ai/flashlight.js): out (in the left hand) and on; grip with a pistol: 'harries'
+   * (the wrists back to back under the gun) or 'fbi' (out to the side, high). The drawTorch and
+   * stowTorch clips take it from and put it back in the pouch on the belt; in between the left arm
+   * holds it by its own inverse kinematics over whatever clip plays (holdTorch), pointing it
+   * where he looks or aims.
+   */
+  setTorch(out, on = false, grip = this.torchGrip) {
+    this.torchOut = !!out;
+    this.torchOn = !!out && !!on;
+    this.torchGrip = grip === 'fbi' ? 'fbi' : 'harries';
+    return this;
+  }
+  /** The torch drawn or put away (plays the clip; the hand takes it at the pouch). */
+  drawTorch(out = true) {
+    this.play(out ? 'drawTorch' : 'stowTorch', { restart: true, fade: 0.12 });
+    this.torchOut = out;
+    if (!out) this.torchOn = false;
+    return this;
+  }
+  /**
+   * The light he shines (world space), for the light pool (render/flashlights.js): { pos, dir, kind:
+   * 'weapon' | 'hand' } or null.
+   */
+  lightSource() {
+    if (this.torchLens.visible && this.torchWorld) return { pos: this.torchWorld.clone(), dir: this.torchDirW.clone(), kind: 'hand' };
+    if (this.lightOn && this.lampGlow?.visible) {
+      const p = rl2w(this.lampX(), 0.045, 0.052);
+      this.bones.weapon.localToWorld(p);
+      const q = new THREE.Quaternion();
+      this.bones.weapon.getWorldQuaternion(q);
+      return { pos: p, dir: V3(P.R.x).applyQuaternion(q).normalize(), kind: 'weapon' };
+    }
+    return null;
+  }
+  /** Where he looks (world, unit): at the aim point, else ahead, pitched as he looks. */
+  lookDir() {
+    const g = this.group;
+    const p = new THREE.Vector3();
+    g.getWorldPosition(p);
+    if (this.aimAt) {
+      const d = this.aimAt.clone().add(new THREE.Vector3(0, AIM_H, 0)).sub(p.add(new THREE.Vector3(0, 1.45, 0)));
+      if (d.lengthSq() > 0.25) return d.normalize();
+    }
+    const y = g.rotation.y + this.twist * 0.5, c = Math.cos(this.pitch);
+    return new THREE.Vector3(Math.sin(y) * c, Math.sin(this.pitch) - 0.05, Math.cos(y) * c).normalize();
+  }
+  /**
+   * The torch in his left hand, after the clip has posed him: the left arm reaches for where the
+   * torch is held (two bones, by the elbow's pole), the torch along where he looks; with a pistol
+   * aimed, under his right wrist (Harries) or out to the side and high (FBI).
+   */
+  holdTorch() {
+    const a = this.current;
+    let inHand = this.torchOut;
+    const drawing = this.shown === 'drawTorch' || this.shown === 'stowTorch';
+    if (a && this.shown === 'drawTorch') inHand = a.time >= TORCH_T.draw * 0.5;
+    else if (a && this.shown === 'stowTorch') inHand = a.time < TORCH_T.stow * 0.5;
+    this.torchMesh.visible = inHand;
+    this.torchBelt.visible = this.hasTorch && !inHand;
+    this.torchLens.visible = inHand && this.torchOn && !drawing;
+    this.torchBeam.visible = this.torchLens.visible;
+    if (!inHand) return;
+    const g = this.group, B = this.bones;
+    g.updateMatrixWorld(true);
+    const dir = this.lookDir();
+    const T = new THREE.Vector3();
+    if (!drawing) {
+      const pistol = this.weapon === 'primary' && this.primaryKind === 'pistol' && !!AIMING[this.shown];
+      if (pistol && this.torchGrip === 'harries') {
+        // the back of the left wrist against the back of the right, the torch under the gun
+        B.handR.getWorldPosition(T);
+        T.add(new THREE.Vector3(0, -0.075, 0)).addScaledVector(dir, -0.05);
+      } else if (pistol) {
+        // FBI: out to the left and high, away from the body
+        B.upperArmL.getWorldPosition(T);
+        const left = new THREE.Vector3(dir.z, 0, -dir.x).normalize();
+        T.addScaledVector(left, 0.22).add(new THREE.Vector3(0, 0.12, 0)).addScaledVector(dir, 0.32);
+      } else {
+        // in front of the left shoulder, pointing where he looks
+        B.chest.localToWorld(T.set(0.17, 0.03, 0.36));
+      }
+      armIK(B.upperArmL, B.foreArmL, B.handL, T, new THREE.Vector3(1, -0.8, -0.3).transformDirection(g.matrixWorld));
+    }
+    // the torch in the fist, along where he looks
+    const hp = new THREE.Vector3();
+    B.handL.localToWorld(hp.set(0.045, -0.06, 0.02));
+    this.torchWorld = hp.clone();
+    this.torchDirW = drawing ? new THREE.Vector3(0, -1, 0.3).transformDirection(g.matrixWorld) : dir.clone();
+    const gi = g.matrixWorld.clone().invert();
+    this.torchMesh.position.copy(hp.clone().applyMatrix4(gi));
+    const dl = this.torchDirW.clone().transformDirection(gi);
+    this.torchMesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dl);
+    if (this.torchBeam.visible) placeBeam(this.torchBeam, this.torchMesh.position.clone().addScaledVector(dl, 0.14), dl);
+  }
+  /** The weapon light's beam in the air (group space), after the pose. */
+  placeLampBeam() {
+    if (!this.lampBeam?.visible) return;
+    const src = this.lightSource();
+    if (!src || src.kind !== 'weapon') return;
+    this.group.updateMatrixWorld(true);
+    const gi = this.group.matrixWorld.clone().invert();
+    placeBeam(this.lampBeam, src.pos.applyMatrix4(gi), src.dir.transformDirection(gi));
   }
   hitFlash() {
     this.mat.userData.uHit.value = 1;
