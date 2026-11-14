@@ -33,6 +33,7 @@ export default {
     // lights (ai/flashlight.js): on the weapon, or a hand torch from the belt with a hand free
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
+    force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
@@ -50,6 +51,7 @@ export default {
         recoil: p.recoil ?? 1,
         fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
         sightRange: p.sightRange !== 400 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false,
+        forceScale: p.force ?? 1,
       })),
     };
   },

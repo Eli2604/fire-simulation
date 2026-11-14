@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { defaultSpawn, spawnFloor } from '../sim/createSimulation.js';
 import { SoundScape } from '../audio/sound.js';
+import { shakeAt, bodyLanding } from '../sim/impact.js';
+import { FireAudio } from '../sim/fireAudio.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
@@ -922,6 +924,9 @@ export class Walkthrough {
     const lock = this.view.renderer.domElement.requestPointerLock();
     lock?.catch?.(() => {});
     this.sound.start();
+    // the fire's sound comes from the simulation's burning regions (sim/fireAudio.js)
+    const sim = this.hooks.getSim?.();
+    if (sim && !sim.fireAudio) sim.fireAudio = new FireAudio();
   }
 
   pause() {
@@ -942,6 +947,7 @@ export class Walkthrough {
     this.active = false;
     const s0 = this.hooks.getSim();
     if (s0?.ai) s0.ai.player = null;
+    if (s0) s0.fireAudio = null;
     this.spraying = false;
     if (document.pointerLockElement) document.exitPointerLock();
     this.sound.stop();
@@ -1264,6 +1270,7 @@ export class Walkthrough {
       moving = 1;
       if (u >= 1) {
         this.trav = null;
+        bodyLanding(sim, { p: [this.pos.x, this.pos.y, this.pos.z], name: 'you' }, { speed: T.kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'your roll' });
         if (T.kind === 'diveProne') this.crawl = true; // (down flat: the crawl's eye height, as the dip ends)
       }
     } else if (this.trav) {
@@ -1277,7 +1284,11 @@ export class Walkthrough {
       moving = 1;
       if (u >= 1) {
         this.trav = null;
+        const was = this.pos.y;
         this.pos.y = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
+        // landing (a drop, the far side of a vault): its force and sound from the height (sim/impact.js)
+        const fall = T.kind.startsWith('drop') ? T.geo?.h ?? 1 : Math.max(0, was - this.pos.y) + (T.kind.startsWith('vault') ? 0.5 : 0);
+        if (fall > 0.3) bodyLanding(sim, { p: [this.pos.x, this.pos.y, this.pos.z], name: 'you' }, { height: fall, roll: T.kind === 'dropRoll', name: 'your landing' });
       }
     } else if (len > 0) {
       const sy = Math.sin(this.yaw);
@@ -1398,7 +1409,10 @@ export class Walkthrough {
     if (!this.trav) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
-    cam.position.set(this.pos.x, this.pos.y + eye - dip + bob, this.pos.z);
+    // a big impact near you (a dragon landing, a crash): the ground shakes, and you with it (sim/impact.js shakeAt)
+    this.shake = (this.shake ?? 0) * Math.exp(-dt * 5);
+    const sh = this.shake > 0.002 ? this.shake : 0;
+    cam.position.set(this.pos.x + (Math.random() - 0.5) * sh * 0.3, this.pos.y + eye - dip + bob + (Math.random() - 0.5) * sh * 0.4, this.pos.z + (Math.random() - 0.5) * sh * 0.3);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     // leaning round a corner, rising over a low wall (Z / X): the head goes out, the view tilts a little
     const lean = this.stepLean(dt, locked, eye);
@@ -1628,6 +1642,7 @@ export class Walkthrough {
     // a guard noticed the light
     for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++) {
       const ev = sim.world.events[this.seenEv];
+      if (ev.type === 'shockwave' || (ev.type === 'impact' && ev.energy > 500)) this.shake = Math.max(this.shake ?? 0, shakeAt(ev, Math.hypot(ev.pos[0] - head[0], ev.pos[1] - head[1], ev.pos[2] - head[2])));
       if (ev.type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
       // a flashbang in view: blinded for a few seconds
       else if (ev.type === 'flashbang' && !this.downed) {
@@ -1715,6 +1730,14 @@ export class Walkthrough {
     this.sound.update({
       listener: { pos: head, forward: [fwd.x, fwd.y, fwd.z], up: [up.x, up.y, up.z] },
       fire: sim.stats.hrr > 0 ? { pos: [fl.position.x, fl.position.y, fl.position.z], hrr: sim.stats.hrr } : null,
+      // the fire per region, from the simulation (sim/fireAudio.js), and what carries the sound
+      fireSources: sim.fireAudio?.sources,
+      fireVersion: sim.fireAudio?.version,
+      wind: { speed: sim.weather?.windSpeed ?? 0 },
+      rain: sim.weather?.rain ?? 0,
+      underwater: !!this.underwater,
+      indoors: !!sim.world.vacuum || (this.indoorsT = (this.indoorsT ?? 0) + 1) % 30 === 0 ? (this.indoorsV = roofedAt(sim, head)) : this.indoorsV,
+      lineOfSight: (a, b) => sim.ai?.sees ? sim.ai.sees(a, [b[0], b[1] + 0.3, b[2]]) : true,
       jet,
       spraying: this.spraying && locked,
       effort: moving,
@@ -1731,6 +1754,12 @@ export class Walkthrough {
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });
   }
+}
+
+/** Under a roof (2.2-10 m above the head): the wind and rain are muffled. */
+function roofedAt(sim, p) {
+  for (let y = p[1] + 0.8; y < p[1] + 10; y += sim.world.h) if (sim.ai?.solidAt?.(p[0], y, p[2])) return true;
+  return false;
 }
 
 /** What the walk-through says when the phoenix (ai/phoenix.js) does something. */

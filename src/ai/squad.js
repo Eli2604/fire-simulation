@@ -908,6 +908,8 @@ export class SquadAI {
     if (T.roll) {
       // a combat roll (ai/evade.js): along its path on the floor; then down in a crouch (or flat), aiming
       if (!stepRoll(m, dt, (x, z, who) => this.host.floor(x, z, who))) return;
+      // (the body meeting the ground through the roll: sim/impact.js, the host's)
+      if (!m.dead) this.host.landing?.(m, { speed: T.kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'a roll' });
       if (T.kind === 'diveProne') this.setAnim(m, 'proneAim', 1.6);
       else this.setAnim(m, 'crouchAim', 0.5);
       return;
@@ -925,6 +927,9 @@ export class SquadAI {
     m.animUntil = 0;
     const fy = this.host.floor(m.p[0], m.p[2], m);
     if (fy != null) m.p[1] = fy;
+    // a drop (or a vault down the far side): he lands from its height (a roll spreads it: sim/impact.js)
+    const fall = T.kind.startsWith('drop') ? T.geo?.h ?? 1 : Math.max(0, T.geo?.drop ?? 0) + (T.kind.startsWith('vault') ? 0.5 : 0);
+    if (fall > 0.3) this.host.landing?.(m, { height: fall, roll: T.kind === 'dropRoll', name: T.kind });
     if (!m.path) return;
     // past the points the move took him over (its start, the top of the wall)
     while (m.pathI < m.path.length) {

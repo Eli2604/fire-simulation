@@ -1,5 +1,6 @@
 import { traceVoxels } from './sight.js';
 import { crush } from '../sim/crush.js';
+import { impact as hitImpact, groundMaterial } from '../sim/impact.js';
 import { iceBears } from '../sim/ice.js';
 import { splatter } from '../sim/wounds.js';
 import { stepSnatch, stepFight, stepThrown, startSnatch, startFight, rival, holdCarried, BLOWS } from './dragonAir.js';
@@ -1361,6 +1362,8 @@ export class DragonAI {
       hits.push([C[0] + F[0] * (reach + 0.5 * k), stand + 0.8 * k, C[2] + F[2] * (reach + 0.5 * k)]);
       let broke = 0;
       for (const p of hits) broke += crush(this.sim, p, 1.15 * k, 1.1, C);
+      // the stamp itself: its forefeet (a quarter of its weight) driven down at ~4.5 m/s
+      this.impactOf(d, w, 'stomp', [F[0] * 1.5, -4.5 * Math.sqrt(k), F[2] * 1.5], hits[0], 0.25);
       d.stampMiss = broke ? 0 : (d.stampMiss ?? 0) + 1;
       if (d.stampMiss >= 3) {
         d.stampMiss = 0;
@@ -1485,6 +1488,7 @@ export class DragonAI {
       d.fold = approach(d.fold, 0.4, 1, dt);
       const g = groundAt(w, d.p[0], d.p[2], d.p[1] + 1).y;
       if (d.p[1] <= g + 0.6 * d.k) {
+        this.impactOf(d, w, 'fall', [Math.sin(d.yaw) * d.speed, Math.min(-1, d.vy), Math.cos(d.yaw) * d.speed], [d.p[0], g, d.p[2]]);
         d.mode = 'dead';
         d.p[1] = g + 0.6 * d.k;
         w.events.push({ type: 'dragonDown', pos: d.p.slice(), time: w.time, name: 'the dragon' });
@@ -1745,6 +1749,18 @@ export class DragonAI {
     w.noises.push({ p: d.chest.slice(), loud: (heavy ? 30 : 10 + 4 * d.speed) * k, time: w.time, kind: 'dragon' });
   }
 
+  /**
+   * Its weight (× massK: a stamp is its forefeet) coming down at `at` with velocity vel
+   * (sim/impact.js): the force, the shockwave (people near it stagger, loose things jump, a ring of
+   * dust), the sound from its scales on what is there. The damage and crushing stay its own code's.
+   */
+  impactOf(d, w, kind, vel, at = d.p, massK = 1) {
+    const k = d.k ?? 1;
+    const g = groundAt(w, at[0], at[2], at[1] + 1);
+    const pos = [at[0], Math.max(g.y, Math.min(at[1], g.y + 3)), at[2]];
+    return hitImpact(this.sim ?? w, { pos, normal: [0, 1, 0], mass: DRAGON_KG * k ** 3 * massK, velocity: vel, materials: ['scales', groundMaterial(w, pos, g.water)], radius: 0.6 * k, size: 3 * k, sizeA: 2 * k, footprint: 2 * k, source: d, kind, name: 'the dragon', noiseKind: 'dragon', effects: { damage: false, crush: false } });
+  }
+
   /** Into the air: a crouch, a leap and hard wingbeats. */
   takeoff(d, w, dt) {
     if (d.mode === 'air') {
@@ -1828,6 +1844,10 @@ export class DragonAI {
       // the impact: its weight coming down on all four feet at once (harder the faster it came
       // in): on a roof, tiles and boards break and stone cracks; land on it often and it gives
       const impact = 0.55 + 0.06 * d.speed + 0.12 * Math.abs(d.vy ?? 0);
+      // (its weight and speed: the force, a shockwave, the sound: sim/impact.js)
+      // (it comes down the last of its height at once: v² = vy² + 2 g h)
+      const drop = Math.max(0, d.p[1] - (here + 0.6 * k));
+      this.impactOf(d, w, 'landing', [Math.sin(d.yaw) * d.speed, -Math.max(1.5, Math.sqrt((d.vy ?? 0) ** 2 + 2 * G * drop)), Math.cos(d.yaw) * d.speed]);
       d.mode = 'ground';
       d.speed = Math.min(d.speed, 1.5);
       d.vy = 0;
@@ -1991,6 +2011,7 @@ export class DragonAI {
     if (d.p[1] > g + 0.6 * k) return;
     // the crash
     const v = Math.abs(d.vy);
+    this.impactOf(d, w, 'crash', [Math.sin(d.yaw) * d.speed, -v, Math.cos(d.yaw) * d.speed], [d.p[0], g, d.p[2]]);
     d.p[1] = g + 0.6 * k;
     d.mode = 'ground';
     d.speed = 0;

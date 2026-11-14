@@ -157,3 +157,90 @@ export function parkourHeight(act, h) {
   if (!a) return null;
   return Math.max(a.min, Math.min(a.max, Number.isFinite(+h) && h !== null && h !== '' ? +h : a.h));
 }
+
+/* ---------- impacts: every act with a contact declares it (sim/impact.js computes the force) ---------- */
+/**
+ * What each object weighs (kg): the body mass its parts' striking masses are fractions of
+ * (sim/impact.js PART_MASS).
+ */
+export const BODY_MASS = { soldier: 85, squad: 85, dragon: 3000, phoenix: 12, jet: 10000, jetFlight: 10000, car: 1300, pilot: 95, boat: 1500 };
+/**
+ * The contacts of each act, as impact keyframes: { t, part, material, target, targetMaterial, v,
+ * mass?, contactTime?, zone?, kind?, label?, fromHeight?, sim?, trigger? }.
+ *  t            when, as a fraction of the act (0..1)
+ *  part         the body part / contact (a bone where the stage can measure its speed: handR,
+ *               footR, ...; else body, feet, shoulder, jaw, tail, hull, door)
+ *  material     what strikes (sim/materials.js mechanics(): flesh, scales, steel, ...)
+ *  target       'opponent' (the nearest other figure within reach), 'ground', 'wall', 'object'
+ *  v            the contact speed (m/s) when the stage cannot measure it from the animation
+ *  fromHeight   a landing: v = √(2 g h) from the act's obstacle height (the Obstacle slider)
+ *  sim          the simulation's own code makes it (ai/dragon.js impactOf): the stage reads its events
+ *  trigger      not at a time but when it happens: 'ground' (the object comes down on the ground),
+ *               'doorsShut' (a door swinging shut)
+ * The stage (rig/stage.js) plays them with a Force × per act and per object (sim/impact.js
+ * ACT_FORCE) and shows the force. Other acts add theirs with declareImpacts().
+ */
+export const ACT_IMPACTS = {
+  soldier: {
+    jump: [{ t: 0.72, part: 'feet', target: 'ground', v: 3, label: 'landing' }],
+    vaultSpeed: [{ t: 0.82, part: 'feet', target: 'ground', v: 3.1, label: 'landing' }],
+    vaultSide: [{ t: 0.82, part: 'feet', target: 'ground', v: 3.1, label: 'landing' }],
+    vaultStep: [{ t: 0.8, part: 'feet', target: 'ground', v: 2.4, label: 'landing' }],
+    dropDown: [{ t: 0.62, part: 'feet', target: 'ground', fromHeight: true, label: 'landing' }],
+    dropRoll: [{ t: 0.42, part: 'feet', target: 'ground', fromHeight: true, contactTime: 0.35, label: 'landing roll' }],
+    rollLeft: [{ t: 0.35, part: 'shoulder', target: 'ground', v: 2.4, contactTime: 0.3, label: 'roll' }],
+    rollRight: [{ t: 0.35, part: 'shoulder', target: 'ground', v: 2.4, contactTime: 0.3, label: 'roll' }],
+    rollForward: [{ t: 0.35, part: 'shoulder', target: 'ground', v: 2.6, contactTime: 0.3, label: 'roll' }],
+    diveProne: [{ t: 0.45, part: 'body', target: 'ground', v: 3.2, contactTime: 0.22, label: 'dive' }],
+    die: [{ t: 0.55, part: 'body', target: 'ground', v: 4.4, contactTime: 0.12, kind: 'fall', label: 'body falls' }],
+    woundedDown: [{ t: 0.5, part: 'body', target: 'ground', v: 3.8, contactTime: 0.15, kind: 'fall', label: 'falls wounded' }],
+    stab: [{ t: 0.42, part: 'weapon', material: 'steel', target: 'opponent', v: 6, mass: 3, zone: 'torso', label: 'knife' }],
+    // unarmed combat (operator/rig.js clips of these names: punches, kicks, throws)
+    punch: [{ t: 0.45, part: 'handR', target: 'opponent', v: 8, zone: 'head', label: 'punch' }],
+    jab: [{ t: 0.4, part: 'handL', target: 'opponent', v: 7, zone: 'head', label: 'jab' }],
+    cross: [{ t: 0.45, part: 'handR', target: 'opponent', v: 9, zone: 'head', label: 'cross' }],
+    hook: [{ t: 0.5, part: 'handR', target: 'opponent', v: 9, zone: 'head', label: 'hook' }],
+    elbow: [{ t: 0.45, part: 'elbow', target: 'opponent', v: 7, zone: 'head', label: 'elbow' }],
+    knee: [{ t: 0.5, part: 'knee', target: 'opponent', v: 6, zone: 'torso', label: 'knee' }],
+    kick: [{ t: 0.45, part: 'footR', target: 'opponent', v: 11, zone: 'torso', label: 'kick' }],
+    frontKick: [{ t: 0.45, part: 'footR', target: 'opponent', v: 10, zone: 'torso', label: 'front kick' }],
+    roundhouse: [{ t: 0.5, part: 'shinR', target: 'opponent', v: 12, zone: 'torso', label: 'roundhouse' }],
+    judoThrow: [{ t: 0.7, part: 'body', target: 'opponent', v: 5.5, mass: 85, massB: Infinity, targetMaterial: 'soil', kind: 'throw', label: 'thrown down' }],
+    hipThrow: [{ t: 0.7, part: 'body', target: 'opponent', v: 5.5, mass: 85, massB: Infinity, targetMaterial: 'soil', kind: 'throw', label: 'thrown down' }],
+  },
+  dragon: {
+    land: [{ part: 'feet', material: 'scales', target: 'ground', sim: true, label: 'landing' }],
+    wingHurt: [{ part: 'feet', material: 'scales', target: 'ground', sim: true, label: 'landing' }],
+    stamp: [{ part: 'feet', material: 'scales', target: 'ground', sim: true, label: 'stamp' }],
+    fall: [{ part: 'body', material: 'scales', target: 'ground', sim: true, label: 'falls' }],
+    wingGone: [{ part: 'body', material: 'scales', target: 'ground', sim: true, label: 'crash' }],
+    snatch: [{ part: 'body', target: 'ground', sim: true, label: 'thrown, lands' }],
+    bite: [{ t: 0.6, part: 'jaw', material: 'bone', target: 'opponent', v: 6, label: 'bite' }],
+    run: [{ part: 'feet', material: 'scales', target: 'ground', sim: true, label: 'footfall' }],
+  },
+  phoenix: {
+    land: [{ t: 0.85, part: 'talons', material: 'feathers', target: 'ground', v: 2.5, label: 'landing' }],
+  },
+  jet: {
+    crash: [{ trigger: 'ground', part: 'hull', material: 'aluminium', target: 'ground', targetMaterial: 'soil', radius: 1.5, footprint: 6, size: 8, kind: 'crash', label: 'impact' }],
+    critical: [{ trigger: 'ground', part: 'hull', material: 'aluminium', target: 'ground', targetMaterial: 'soil', radius: 1.5, footprint: 6, size: 8, kind: 'crash', label: 'impact' }],
+    gearDown: [{ trigger: 'ground', part: 'wheels', material: 'rubber', target: 'ground', targetMaterial: 'concrete', label: 'touchdown' }],
+  },
+  car: {
+    doors: [{ trigger: 'doorsShut', part: 'door', material: 'steel', target: 'object', targetMaterial: 'steel', mass: 30, massB: 1300, size: 1.2, sizeA: 1, label: 'door slams' }],
+  },
+  pilot: {
+    plf: [{ t: 0.3, part: 'feet', target: 'ground', v: 5, contactTime: 0.3, label: 'parachute landing fall' }],
+    splashdown: [{ t: 0.2, part: 'body', target: 'ground', targetMaterial: 'water', v: 5, label: 'splashdown' }],
+  },
+};
+/** The impact keyframes of an act of kind ('squad' plays the soldier's), or []. */
+export function impactsOf(kind, act) {
+  const k = kind === 'squad' ? 'soldier' : kind === 'jetFlight' ? 'jet' : kind;
+  return ACT_IMPACTS[k]?.[act] ?? [];
+}
+/** Declare (replace) the impact keyframes of an act: declareImpacts('soldier', 'kick', [{ t: 0.45, part: 'footR', target: 'opponent', v: 11 }]). */
+export function declareImpacts(kind, act, list) {
+  (ACT_IMPACTS[kind] ??= {})[act] = list;
+  return list;
+}

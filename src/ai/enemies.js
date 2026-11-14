@@ -3,6 +3,7 @@ import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
 import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
+import { impact, groundMaterial, bodyLanding } from '../sim/impact.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -243,7 +244,8 @@ export class EnemyAI {
         if (e.trav.ext) continue;
         if (!e.trav.roll) e.trav = null; // (a vault the squad AI had him in when it let him go)
         else {
-          stepRoll(e, dt, (x, z) => this.floorAt(x, z, e.p[1] + 0.5));
+          const kind = e.trav.kind;
+          if (stepRoll(e, dt, (x, z) => this.floorAt(x, z, e.p[1] + 0.5)) && !e.dead) bodyLanding(this.sim, e, { speed: kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'a roll' });
           continue;
         }
       }
@@ -795,6 +797,8 @@ export class EnemyAI {
       e.dead = true;
       e.health = 0;
       this.world.events.push({ type: 'enemyDown', pos: e.p.slice(), time: this.world.time, name: 'enemy' });
+      // his body falling: ~1 m for its middle, ~4.4 m/s onto what is there (sim/impact.js: the thud)
+      if (!e.held && !e.thrown) impact(this.sim ?? this.world, { pos: e.p.slice(), normal: [0, 1, 0], mass: 85, velocity: [0, -4.4, 0], materials: ['flesh', groundMaterial(this.world, e.p)], radius: 0.25, contactTime: 0.12, target: 'ground', kind: 'fall', name: 'a body falling', effects: { damage: false, crush: false } });
     }
   }
 
@@ -868,6 +872,8 @@ export class EnemyAI {
           const m = MATERIALS[d.mat].density * d.dens * w.h ** 3;
           this.damage(e, Math.min(100, (0.5 * m * v * v) / 8));
           d.hitEnemy = true;
+          // (sim/impact.js: the blow staggers or knocks him down, and is heard: the fragment on flesh)
+          if (!e.dead) impact(this.sim ?? w, { pos: d.p.slice(), mass: m, velocity: d.v.slice(), materials: [MATERIALS[d.mat].name, 'flesh'], radius: w.h * 0.4, target: e, zone: 'torso', kind: 'debris', name: 'debris', effects: { damage: false, crush: false } });
         }
       }
     }

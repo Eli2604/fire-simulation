@@ -24,8 +24,10 @@ export default {
     sightRange: { value: 45, min: 5, max: 400, step: 1, label: 'Sight: how far it picks up someone in clear sight (m; dozing: 13 m of 45)' },
     fov: { value: 360, min: 30, max: 360, step: 5, label: 'Field of view (degrees; 360: all round)' },
     hearing: { value: 1.6, min: 0, max: 5, step: 0.1, label: 'Hearing (× how far a sound carries)' },
+    // its impacts (sim/impact.js: landings, stamps, crashes): the closing speed ×, so force ×, energy ײ
+    force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (landings, stamps: shockwave, sound)' },
   },
   build(p) {
-    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed, sightRange: p.sightRange, fov: p.fov, hearing: p.hearing }] };
+    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed, sightRange: p.sightRange, fov: p.fov, hearing: p.hearing, forceScale: p.force ?? 1 }] };
   },
 };

@@ -36,6 +36,7 @@ export default {
     // lights (ai/flashlight.js): on the weapon, or a hand torch from the belt with a hand free
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
+    force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
   },
   build(p, { rng }) {
     const enemies = [];
@@ -47,7 +48,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false, forceScale: p.force ?? 1 });
     }
     return { prims: [], enemies };
   },
