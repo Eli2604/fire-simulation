@@ -314,7 +314,8 @@ export class Walkthrough {
         }
         return this.say(d0.glass?.length ? 'Locked. Break the glass (F) and reach through' : 'Locked', 3);
       }
-      toggleDoor(sim, best.door);
+      // (a pressure door with vacuum on one side: the difference holds it shut, sim/doors.js)
+      if (!toggleDoor(sim, best.door) && w.doors[best.door].equalize) return this.say(`${w.doors[best.door].name}: the pressure difference holds it shut – its valve hisses open to level it`, 3);
       const d = w.doors[best.door];
       this.sound.door?.();
       return this.say(`${d.name}: ${d.open ? 'opened' : 'closed'}`, 2);

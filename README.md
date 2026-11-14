@@ -474,20 +474,41 @@ the engine room, which has machinery, cable trays and a propellant tank. Along i
 crew quarters, the mess, the cargo bay, a lab and the airlock. Guards walk the corridor,
 and a cable fire starts in the engine room after 40 s.
 
-**Decompression** (sim/vacuum.js) replaces flooding: outside the hull there is vacuum, not
-water or air. Breach the hull with a grenade or rocket, shoot out a window, or open both
-airlock doors, and every space connected to the hole empties:
+**Decompression** (sim/vacuum.js) is flooding the other way round (sim/breach.js): on a ship
+holed below the waterline the sea is the higher pressure and comes in; in space the cabin
+air is, and goes out. Breach the hull with a grenade or rocket, shoot out a window, or open
+both airlock doors, and every space connected to the hole empties:
 
-- How fast depends on the path to the hole and its size: about 1 s right next to a big hole,
-  several seconds at the end of the corridor.
-- The air streams to the hole, carrying smoke and loose light things with it, and cools as
-  it expands.
-- The oxygen goes too, so fires die.
-- Closed doors hold: a room behind one keeps its pressure.
+- Each compartment (the air cells joined through open faces; closed doors and bulkheads
+  part them) has one pressure. Through the hole the air leaves as a choked jet,
+  ṁ = Cd·A·p·√(γ/RT)·(2/(γ+1))^((γ+1)/(2(γ−1))) (the pressure ratio to vacuum is always
+  under the critical 0.528), so it empties as exp(−t/τ), τ = V / (Cd·A·0.685·√(RT)): a
+  1 m² hole empties 100 m³ in about a second, a fist-sized one takes minutes.
+- The air converges on the hole: the flow potential of a compartment expanding uniformly
+  (∇²φ = −1/τ, φ = 0 outside the hole) is solved, so the air is slow in the far corners,
+  faster where the way narrows (a doorway) and fastest in the hole (the jet, up to the speed
+  of sound). It carries the smoke out, and drags what is loose with it: ½·ρ·Cd·A·|u−v|·(u−v)
+  against the thing's weight and its friction on the floor. Crates, a gas cylinder, debris,
+  bodies and soldiers (who hold on harder) slide and tumble to the hole, go through it and
+  drift on in space (no air, no gravity out there). Something bigger than the hole is
+  pressed into it and plugs it: the leak almost stops until the pressure behind it (p·A,
+  tonnes) crushes it through. What is strapped down or bolted stays.
+- The oxygen goes too, so fires die. The gas cools as it expands (T ∝ p^((γ−1)/γ)) and
+  its vapour condenses: a fog flash in the compartment, a white plume out of the hole.
+- Interior doors close themselves once their compartment loses pressure (unless something
+  is in the doorway; *Doors close themselves* in the spaceship's parameters). A closed door
+  holds the difference: you cannot open it against it (18 t on a door); its equalising valve
+  lets the air through first (subsonic or choked by the pressure ratio) and it opens once
+  the two sides are level, the air shared out by volume. A door burnt or blown half away
+  bursts when the difference is more than it can take.
+
+The sea's breach works the same way round: the jet of sea water coming in through the hole
+(√(2 g Δh)) shoves loose things away from it, deeper into the ship, the flood floats what
+floats, and soldiers in its way are knocked over.
 
 For you: the suction pulls you towards the hole, and below a third of cabin pressure you get
 hurt. Your breathing apparatus gives you air but not pressure, so get behind a closed door.
-The HUD shows the cabin pressure, and the sound is a roar of escaping air.
+The HUD shows the cabin pressure, and the sound is a roar of escaping air, doors slamming.
 
 ### A world of places: boxes from afar, the scenery close up
 
@@ -834,13 +855,13 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
-| Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
+| Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power, loose stores. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
 | Catacombs | passages along x and z (default 4 × 4), spacing, width and height, flat or vaulted ceiling, share of masonry walls, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
 | Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
-| Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
+| Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |

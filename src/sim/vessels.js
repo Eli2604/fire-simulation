@@ -1,5 +1,7 @@
 import { MATERIALS } from './materials.js';
 import { airStirAt } from './stirrers.js';
+import { breachFlowAt } from './breach.js';
+import { inHull } from './vacuum.js';
 import { F_BURNING, F_LIQUID, F_FALLING, F_ANCHOR } from './world.js';
 
 /**
@@ -390,17 +392,35 @@ export function stepDebris(sim, dt) {
     let landed = false;
     let gone = false;
     // (the drag is against the air: a wind hose or a jet carries the fragments with it, sim/stirrers.js)
-    const stir = w.stirrers.length ? airStirAt(w, d.p, AIR) : null;
+    let stir = w.stirrers.length ? airStirAt(w, d.p, AIR) : null;
+    // a hull breach (sim/breach.js): the air streaming out to a hole in space, the sea's jet
+    // coming in; in space itself nothing (no air to drag, no gravity outside the ship's own)
+    let rho = 1.2;
+    let space = false;
+    if (w.vacuum || w.sea?.ship) {
+      const u = [0, 0, 0];
+      rho = breachFlowAt(sim, d.p, u);
+      if (u[0] || u[1] || u[2]) stir = stir ? [stir[0] + u[0], stir[1] + u[1], stir[2] + u[2]] : u;
+      space = !!w.vacuum && !inHull(w, d.p);
+    }
+    const kk = (k * rho) / 1.2;
     for (let s = 0; s < steps && !landed && !gone; s++) {
-      const rv = stir ? [d.v[0] - stir[0], d.v[1] - stir[1], d.v[2] - stir[2]] : d.v;
+      if (w.vacuum && s > 0) space = !inHull(w, d.p);
+      const rv = stir ? [d.v[0] - stir[0], d.v[1] - stir[1], d.v[2] - stir[2]] : d.v.slice();
       const spd = Math.hypot(...rv);
-      for (let c = 0; c < 3; c++) d.v[c] -= k * spd * rv[c] * sdt;
-      d.v[1] -= 9.81 * sdt;
+      const f = Math.min(1, kk * spd * sdt); // (in the sea's jet: it takes the water's speed at once)
+      for (let c = 0; c < 3; c++) d.v[c] -= f * rv[c];
+      if (!space) d.v[1] -= 9.81 * sdt;
       const prev = d.p.slice();
       for (let c = 0; c < 3; c++) d.p[c] += d.v[c] * sdt;
       const x = Math.floor(d.p[0] / h);
       const y = Math.floor(d.p[1] / h);
       const z = Math.floor(d.p[2] / h);
+      if (space && (x < 0 || y < 1 || z < 0 || x >= w.nx || y >= w.ny || z >= w.nz)) {
+        // drifting off into space: kept (drawn) until it is far away
+        if (Math.hypot(d.p[0] - w.size[0] / 2, d.p[1] - w.size[1] / 2, d.p[2] - w.size[2] / 2) > 600) gone = true;
+        continue;
+      }
       if (x < 0 || z < 0 || x >= w.nx || z >= w.nz || y >= w.ny + 20) {
         gone = true; // left the simulated area
         break;
