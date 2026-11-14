@@ -522,7 +522,7 @@ export class Editor {
       else c = fp.add(ob.params, key, spec.min, spec.max, spec.step);
       c.name(spec.label ?? key).onFinishChange(change);
     }
-    if (RIG_TYPES[ob.type]) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
+    if (RIG_TYPES[ob.type] && rigTargetFor(ob)) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
   }
 
   /**

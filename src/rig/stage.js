@@ -26,12 +26,14 @@
  * ?pk=vaultSpeed|climbJump|… &pkh=<obstacle height m> (a parkour act over its prop),
  * ?obj=soldier|squad|dragon|car|jet|boat (&vact= &vzones=1 &vhits=engine,fuel for a vehicle),
  * and the dragon's (?dragon=1 ?dact= ?dzones=1 ?dhits= ?dsteps= ?dspeed= ?dfollow=1: rig/dragon.js).
+ * The phoenix (rig/phoenix.js): ?phoenix=1 ?pact= ?pzones=1 ?pspan= ?pheat= ?psize= ?pfly= ?phits= ?psteps= ?pspeed= ?pfollow=1 ?pdark=0.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, placeZone, LABELS, MOVING, ONCE } from '../operator/rig.js';
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
+import { PhoenixRig } from './phoenix.js';
 import { VehicleRig } from './vehicles.js';
 import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS } from './objects.js';
 import { DRAG_OFF } from '../operator/rig.js';
@@ -206,6 +208,26 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <label class="sl"><span>Damage ×</span><input type="range" data-id="dzM" min="0.1" max="5" step="0.1"><output data-id="dzMo"></output></label>
     <div class="row"><button data-id="dRevive" type="button">Revive</button><button data-id="dClean" type="button">Wash the blood away</button></div>
     <p class="hint" data-id="dLastHit">The simulation's own dragon (ai/dragon.js moves and poses it; render/dragon.js draws it). Its hit zones follow the pose; the same zones decide where arrows, bullets and rockets land in the simulation. A wound bleeds: health drains, blood drips where it goes (a trail of drops, in flight too), sprays onto the ground behind the hit and stains its scales. Click it to see a zone; with Damage on click, to hit it there.</p>
+  </section>
+
+  <section data-pane="phoenix" hidden>
+    <div class="sel">
+      <div class="selrow"><b>Phoenix</b><span data-id="pState">perch · 100 HP</span></div>
+      <div class="hp"><i data-id="pHp"></i></div>
+    </div>
+    <div class="grid" data-id="pAnims"></div>
+    <label class="sl"><span>Speed</span><input type="range" data-id="pSpeed" min="0" max="2" step="0.05" value="1"><output data-id="pSpeedO"></output></label>
+    <label class="sl"><span>Wing span</span><input type="range" data-id="pSpan"><output data-id="pSpanO"></output></label>
+    <label class="sl"><span>Flames</span><input type="range" data-id="pHeat"><output data-id="pHeatO"></output></label>
+    <label class="sl"><span>Size</span><input type="range" data-id="pSize"><output data-id="pSizeO"></output></label>
+    <label class="sl"><span>Flight m/s</span><input type="range" data-id="pFly"><output data-id="pFlyO"></output></label>
+    <div class="row"><button data-id="tgPZones" type="button" aria-pressed="false">Show hit areas</button><button data-id="tgPFire" type="button" aria-pressed="false">Damage on click</button><button data-id="tgPFollow" type="button" aria-pressed="false">Follow</button><button data-id="tgPDark" type="button" aria-pressed="true">Dusk</button></div>
+    <label class="sl"><span>Weapon</span><select data-id="pWeapon" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Zone</span><select data-id="pZoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Radius</span><input type="range" data-id="pzR" min="0.03" max="0.5" step="0.01"><output data-id="pzRo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" data-id="pzM" min="0.1" max="5" step="0.1"><output data-id="pzMo"></output></label>
+    <div class="row"><button data-id="pRevive" type="button">Revive</button></div>
+    <p class="hint" data-id="pLastHit">The simulation's own phoenix (ai/phoenix.js flies it; render/phoenix.js draws it), on a stone perch like the one in its cell in the catacombs. It watches you (the camera) from its perch. Its hit zones follow the pose (the wings only when spread); the same zones decide what the guards' bullets do to it. Fire does not hurt it. Killed, it bursts into flame, lies as glowing ash and is born again from it. Click it to see a zone; with Damage on click, to hit it there.</p>
   </section>
 
   <section data-pane="vehicle" hidden>
@@ -1118,9 +1140,10 @@ export function mountRig(root, opts = {}) {
 
   /* ================= the dragon (rig/dragon.js, built the first time it is picked) and the vehicles ================= */
   let dragonRig = null;
+  let phoenixRig = null; // (rig/phoenix.js, built the first time it is picked)
   const vehicleRig = new VehicleRig({ scene, camera, controls, renderer, toast, $, qs });
   /** The soldiers are on the stage (not the dragon or a vehicle). */
-  const people = () => !dragonRig?.active && !vehicleRig.active;
+  const people = () => !dragonRig?.active && !phoenixRig?.active && !vehicleRig.active;
 
   /* ================= the squad: a fire team in formation (models/squad.js's roles) ================= */
   const ROLE = { CMD: 'commander', MG: 'gunner', R1: 'rifleman', R2: 'rifleman', UAV: 'drone operator' };
@@ -1164,6 +1187,7 @@ export function mountRig(root, opts = {}) {
   objSel.onchange = () => setKind(objSel.value);
   const STATS = {
     dragon: 'The simulation’s dragon · ai/dragon.js',
+    phoenix: 'The simulation’s phoenix · ai/phoenix.js · render/phoenix.js',
     car: 'models/car.js, drawn · 4 wheels, 2 doors',
     jet: 'render/jetMesh.js · gear, flaps, afterburner, damage and crash',
     pilot: 'render/pilotFigure.js · sim/ejection.js · seat, canopy, PLF',
@@ -1177,11 +1201,16 @@ export function mountRig(root, opts = {}) {
     const man = kind === 'soldier' || kind === 'squad';
     // off first (each puts the camera back), then on
     if (kind !== 'dragon') dragonRig?.setActive(false);
+    if (kind !== 'phoenix') phoenixRig?.setActive(false);
     const vehicle = VEHICLE_STAGE.includes(kind);
     if (!vehicle) vehicleRig.setKind(null);
     if (kind === 'dragon') {
       dragonRig ??= new DragonRig({ scene, camera, controls, renderer, toast, $, qs, root });
       dragonRig.setActive(true);
+    }
+    if (kind === 'phoenix') {
+      phoenixRig ??= new PhoenixRig({ scene, camera, controls, renderer, toast, $, qs });
+      phoenixRig.setActive(true);
     }
     if (vehicle) vehicleRig.setKind(kind, what.params ?? null);
     $('tabs').hidden = !man;
@@ -1200,7 +1229,7 @@ export function mountRig(root, opts = {}) {
           }
       }
       arrange(kind);
-    } else openTab(kind === 'dragon' ? 'dragon' : 'vehicle');
+    } else openTab(kind === 'dragon' || kind === 'phoenix' ? kind : 'vehicle');
   }
   const soldierStats = () => (A ? `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips` : 'Skinned sculpt · 21 bones');
 
@@ -1281,6 +1310,7 @@ export function mountRig(root, opts = {}) {
   // ?tab=anim|hit|gear|dragon (the dragon's own options: rig/dragon.js), ?obj=car|jet|boat|squad|… (&vact= &vzones=1 &vhits=)
   if (['anim', 'hit', 'gear'].includes(qs.get('tab'))) clickTab(qs.get('tab'));
   if (qs.get('dragon') || qs.get('tab') === 'dragon') setKind('dragon');
+  else if (qs.get('phoenix') || qs.get('tab') === 'phoenix') setKind('phoenix');
   else if (qs.get('obj')) setKind(qs.get('obj'));
   if (vehicleRig.active) {
     if (qs.get('vact')) vehicleRig.play(qs.get('vact'));
@@ -1334,6 +1364,7 @@ export function mountRig(root, opts = {}) {
     }
     if (soldiers.length && Math.random() < 0.08) onChange();
     dragonRig?.update(dt);
+    phoenixRig?.update(dt);
     vehicleRig.update(dt);
     controls.update();
     renderer.render(scene, camera);
@@ -1417,6 +1448,10 @@ export function mountRig(root, opts = {}) {
     /** The dragon's rig (rig/dragon.js), once the dragon has been picked. */
     get dragon() {
       return dragonRig;
+    },
+    /** The phoenix's rig (rig/phoenix.js), once the phoenix has been picked. */
+    get phoenix() {
+      return phoenixRig;
     },
     /** The car / jet / boat (rig/vehicles.js). */
     vehicles: vehicleRig,

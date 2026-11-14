@@ -187,9 +187,9 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
       }
     }
     if (best) break;
-    const bird = sim.phoenixAI?.at(p);
+    const bird = sim.phoenixAI?.hitAt(p);
     if (bird) {
-      best = { phoenix: bird, p };
+      best = { phoenix: bird.f, zone: bird.k, mult: bird.zone.mult, p };
       break;
     }
     if (player) {
@@ -231,7 +231,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     return best;
   }
   if (best?.phoenix) {
-    sim.phoenixAI.wound(best.phoenix, 22);
+    sim.phoenixAI.wound(best.phoenix, 22 * (best.mult ?? 1)); // (by its hit zone: ai/phoenix.js PHOENIX_ZONES)
     return best;
   }
   if (wall) {

@@ -10,6 +10,7 @@ export const RIG_OBJECTS = [
   { kind: 'soldier', label: 'Soldier' },
   { kind: 'squad', label: 'Squad (fire team)' },
   { kind: 'dragon', label: 'Dragon' },
+  { kind: 'phoenix', label: 'Phoenix' },
   { kind: 'car', label: 'Car' },
   { kind: 'jet', label: 'Jet' },
   { kind: 'jetFlight', label: 'Jet flight (formation)' },
@@ -42,7 +43,7 @@ export function rigKind(what) {
 }
 
 /** Scene object types (models/index.js) the rig can open, and as what. */
-export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight' };
+export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight', catacombs: 'phoenix' };
 
 /** What the rig should show for a scene object ({ type, params }), or null if it has no rig. */
 export function rigTargetFor(o) {
@@ -52,6 +53,8 @@ export function rigTargetFor(o) {
   if (kind === 'soldier') return { kind, loadout: p.flameTrooper ? 'torch' : 'rifle' };
   if (kind === 'squad') return { kind, unit: p.unit, flameTrooper: !!p.flameTrooper, droneOperator: !!p.droneOperator };
   if (VEHICLES.includes(kind) || VEHICLE_GROUPS[kind]) return { kind, params: { ...p } };
+  // the catacombs' phoenix (models/catacombs.js `phoenix`, on unless switched off)
+  if (kind === 'phoenix') return p.phoenix === false ? null : { kind };
   return { kind };
 }
 
@@ -60,6 +63,7 @@ export const RIG_BUTTON = {
   soldier: '🦴 Rig the soldier (animations, gear, hit zones)',
   squad: '🦴 Rig the squad (formation, members, hit zones)',
   dragon: '🦴 Rig the dragon (acts, wings, hit zones)',
+  phoenix: '🦴 Rig the phoenix (acts, flame wings, hit zones, rebirth)',
   car: '🦴 Rig the car (drive, doors, hit parts)',
   jet: '🦴 Rig the jet (gear, flaps, afterburner, hit parts, crash)',
   jetFlight: '🦴 Rig the jet flight (formations, orders, hit parts)',
