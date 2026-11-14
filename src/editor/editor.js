@@ -27,6 +27,7 @@ import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
 import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf } from '../sim/weather.js';
 import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
+import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -110,7 +111,9 @@ export class Editor {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       v.controls.enabled = !e.value;
       this.dragging = e.value;
-      if (!e.value) this.applyGizmo();
+      // where the drag began: a height is only written when the object went up or down
+      if (e.value) this.dragStart = this.pivotPose();
+      else this.applyGizmo();
     });
     this.box = new THREE.Box3Helper(new THREE.Box3(), 0xffb347);
     this.box.visible = false;
@@ -381,12 +384,23 @@ export class Editor {
     const ws = S.world;
     gui.add(ob, 'x', 0, ws.size[0], 0.01).name('X (m)').onFinishChange(change);
     gui.add(ob, 'z', 0, ws.size[2], 0.01).name('Z (m)').onFinishChange(change);
-    if (typeof ob.y !== 'string') {
-      ob.y ??= 0;
-      gui.add(ob, 'y', 0, ws.size[1], 0.01).name('Height (m)').onFinishChange(change);
-    }
+    // the height: metres above the ground layer, or sitting on what is under it ('auto'); the
+    // slider shows where a sitting object rests, and moving it lifts the object off ('auto' off)
+    const rest = () => +Math.max(0, (C.sim.world.origins?.[this.sel]?.[1] ?? C.sim.world.h) - C.sim.world.h).toFixed(2);
+    const hy = {
+      get auto() { return typeof ob.y !== 'number'; },
+      set auto(on) { ob.y = on ? 'auto' : rest(); },
+      get height() { return typeof ob.y === 'number' ? ob.y : rest(); },
+      set height(v) { ob.y = v; },
+    };
+    gui.add(hy, 'auto').name('Sit on the ground (auto height)').onFinishChange(change);
+    gui.add(hy, 'height', 0, ws.size[1], 0.01).name('Height (m)').onFinishChange(change);
     ob.rotation ??= 0;
     gui.add(ob, 'rotation', 0, 360, 1).name('Turn (°)').onFinishChange(change);
+    // a tilt (about the model's own x and z), as the turn gizmo's red and blue rings make one
+    const tilt = (k) => ({ get v() { return ob[k] ?? 0; }, set v(d) { if (d) ob[k] = d; else delete ob[k]; } });
+    gui.add(tilt('tiltX'), 'v', -180, 180, 1).name('Tilt X (°)').onFinishChange(change);
+    gui.add(tilt('tiltZ'), 'v', -180, 180, 1).name('Tilt Z (°)').onFinishChange(change);
     ob.ignite ??= false;
     if (!CHARACTERS[ob.type]) gui.add(ob, 'ignite').name('Burning at start').onFinishChange(change);
     const fp = gui.addFolder('Parameters');
@@ -536,35 +550,34 @@ export class Editor {
       }
     if (!n) b.setFromCenterAndSize(new THREE.Vector3(o.x, (typeof o.y === 'number' ? o.y : 0) + 0.9, o.z), new THREE.Vector3(1.2, 1.8, 1.2));
     else b.expandByScalar(w.h / 2);
-    const y = typeof o.y === 'number' ? o.y : n ? b.min.y : 0;
-    this.pivot.position.set(o.x, y, o.z);
-    this.pivot.rotation.set(0, ((o.rotation ?? 0) * Math.PI) / 180, 0); // (as the voxelizer turns it)
+    // at the model's origin, where the voxelizer put it (on what it sits on, or at its height),
+    // turned and tilted as the voxelizer turns it
+    const pose = recordToPose(o, { h: w.h, originY: w.origins?.[this.sel]?.[1] });
+    this.pivot.position.set(pose.x, pose.y, pose.z);
+    this.pivot.rotation.set(pose.rx, pose.ry, pose.rz, 'YXZ');
     this.pivot.updateMatrixWorld();
     this.gizmo.setMode(this.gizmoMode ?? 'translate');
-    this.gizmo.showY = this.gizmo.mode === 'translate' && typeof o.y !== 'string';
-    this.gizmo.showX = this.gizmo.mode === 'translate';
-    this.gizmo.showZ = this.gizmo.mode === 'translate';
-    if (this.gizmo.mode === 'rotate') this.gizmo.showY = true;
+    // the arrows move in the world; the rings turn the object in its own frame (green: turn,
+    // red and blue: tilt), so a turned object tilts about its own axes
+    this.gizmo.setSpace(this.gizmo.mode === 'rotate' ? 'local' : 'world');
+    this.gizmo.showX = this.gizmo.showY = this.gizmo.showZ = true;
+  }
+
+  /** The stand-in's pose: { x, y, z } and its Euler angles (order 'YXZ', radians). */
+  pivotPose() {
+    const p = this.pivot.position;
+    const e = new THREE.Euler().setFromQuaternion(this.pivot.quaternion, 'YXZ');
+    return { x: p.x, y: p.y, z: p.z, rx: e.x, ry: e.y, rz: e.z };
   }
 
   applyGizmo() {
     const C = this.ctx, o = C.scene.objects[this.sel];
     if (!o) return;
-    const p = this.pivot.position;
-    const was = [o.x, o.y, o.z, o.rotation];
-    const w = C.scene.world.size;
-    o.x = +Math.max(0, Math.min(w[0], p.x)).toFixed(2);
-    o.z = +Math.max(0, Math.min(w[2], p.z)).toFixed(2);
-    if (typeof o.y !== 'string' && (typeof o.y === 'number' || p.y > 0.05)) o.y = +Math.max(0, p.y).toFixed(2);
-    // turned (degrees, about the vertical, as models/voxelizer.js turns it)
-    const e = new THREE.Euler().setFromQuaternion(this.pivot.quaternion, 'YXZ');
-    o.rotation = Math.round(((((e.y * 180) / Math.PI) % 360) + 360) % 360);
-    if (was[0] === o.x && was[1] === o.y && was[2] === o.z && was[3] === o.rotation) return;
-    const keep = { ...o };
-    Object.assign(o, { x: was[0], y: was[1], z: was[2], rotation: was[3] });
+    const fields = poseToRecord(o, this.pivotPose(), { start: this.dragStart, size: C.scene.world.size, h: C.sim.world.h });
+    this.dragStart = null;
+    if (Object.entries(fields).every(([k, v]) => (k === 'rotation' ? o[k] ?? 0 : o[k]) === v)) return;
     this.snapshot();
-    Object.assign(o, keep);
-    if (o.y === undefined) delete o.y;
+    applyRecord(o, fields);
     this.rebuild();
   }
 

@@ -183,6 +183,22 @@ export function buildScene(scene) {
   return { world, ignitions, spawn };
 }
 
+/**
+ * The row-major 3x3 rotation of a scene object: `rotation` about the vertical, then (in the
+ * model's frame) `tiltX` about x and `tiltZ` about z, all in degrees. As three.js turns an
+ * Object3D with Euler(tiltX, rotation, tiltZ, 'YXZ'): R = Ry * Rx * Rz.
+ */
+export function rotationMatrix(rotation = 0, tiltX = 0, tiltZ = 0) {
+  const d = Math.PI / 180;
+  const cy = Math.cos((rotation ?? 0) * d), sy = Math.sin((rotation ?? 0) * d);
+  const cx = Math.cos((tiltX ?? 0) * d), sx = Math.sin((tiltX ?? 0) * d);
+  const cz = Math.cos((tiltZ ?? 0) * d), sz = Math.sin((tiltZ ?? 0) * d);
+  // Rx * Rz
+  const a = [cz, -sz, 0, cx * sz, cx * cz, -sx, sx * sz, sx * cz, cx];
+  // Ry * (Rx * Rz)
+  return [cy * a[0] + sy * a[6], cy * a[1] + sy * a[7], cy * a[2] + sy * a[8], a[3], a[4], a[5], -sy * a[0] + cy * a[6], -sy * a[1] + cy * a[7], -sy * a[2] + cy * a[8]];
+}
+
 /** Voxelise one scene object into the world. */
 export function placeObject(world, obj, ownerIndex = -1) {
   const model = MODELS[obj.type];
@@ -213,10 +229,13 @@ export function placeObject(world, obj, ownerIndex = -1) {
     }
   }
   const rot = ((obj.rotation ?? 0) * Math.PI) / 180;
-  const cr = Math.cos(rot);
-  const sr = Math.sin(rot);
-  const toWorld = (lx, ly, lz) => [ox + cr * lx + sr * lz, oy + ly, oz - sr * lx + cr * lz];
-  const dirToWorld = (d) => (d ? [cr * d[0] + sr * d[2], d[1], -sr * d[0] + cr * d[2]] : undefined);
+  // turned about the vertical (rotation), optionally tilted (tiltX, tiltZ: degrees, applied in
+  // the model's own frame first, as three.js Euler order 'YXZ': R = Ry * Rx * Rz)
+  const R = rotationMatrix(obj.rotation, obj.tiltX, obj.tiltZ);
+  const toWorld = (lx, ly, lz) => [ox + R[0] * lx + R[1] * ly + R[2] * lz, oy + R[3] * lx + R[4] * ly + R[5] * lz, oz + R[6] * lx + R[7] * ly + R[8] * lz];
+  const dirToWorld = (d) => (d ? [R[0] * d[0] + R[1] * d[1] + R[2] * d[2], R[3] * d[0] + R[4] * d[1] + R[5] * d[2], R[6] * d[0] + R[7] * d[1] + R[8] * d[2]] : undefined);
+  // where the model's origin went (the editor's gizmo sits there)
+  if (ownerIndex >= 0) (world.origins ??= [])[ownerIndex] = [ox, oy, oz];
 
   const hullCandidates = [];
   // pick-up items (wall extinguisher, hose reel), sprinklers and the sea level of a ship
@@ -312,10 +331,12 @@ export function placeObject(world, obj, ownerIndex = -1) {
         for (let x = x0; x <= x1; x++) {
           // world voxel centre -> local
           const wx = (x + 0.5) * h - ox;
+          const wy = (y + 0.5) * h - oy;
           const wz = (z + 0.5) * h - oz;
-          const lx = cr * wx - sr * wz;
-          const lz = sr * wx + cr * wz;
-          const ly = (y + 0.5) * h - oy;
+          // (the inverse of a rotation: its transpose)
+          const lx = R[0] * wx + R[3] * wy + R[6] * wz;
+          const ly = R[1] * wx + R[4] * wy + R[7] * wz;
+          const lz = R[2] * wx + R[5] * wy + R[8] * wz;
           if (!test(lx, ly, lz)) continue;
           const i = world.idx(x, y, z);
           if (mode === 'fill' && world.mat[i]) continue;
