@@ -845,6 +845,11 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
+| Camp island | size, sea level, ground and pad heights, how far east the pad reaches, ridge height, place and width, where the landing ground is, pier length, the zone the boat goes to, seed. A height field like the island: the level camp pad in the west, the ridge across the middle, the landing ground (its walk-in start) and a pier with a boat in the east |
+| Drone camp | bastion ring radius, which way the gate faces, drones on launch pads, monitors on the desk, jammers, operations and floodlight loads (kW), the grid it runs on, tent canvas moisture. HESCO bastions, the command tent with the operations desk (a monitor per drone, the tactical map), crew tents, launch pads with quadcopters, a radio mast, jammers, floodlights, the power panel |
+| Solar panel park | rows, panels in a row, tilt, facing (compass), row spacing, panel peak power, battery (kWh) and its charge at the start, the grid it feeds, where its cable runs. Panels on steel frames, an inverter/battery container |
+| Wind turbine (windmill) | hub height, rotor radius, rated power, cut-in, rated and cut-out wind, restart speed after a cut-out, yaw rate, the grid it feeds, where its cable runs. Tower, nacelle, three blades turning with the weather's wind |
+| Soldier squad on patrol | soldiers, the round's radius and corners, clockwise, call sign, expertise, body armour, ground height, recoil |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.
@@ -1270,3 +1275,41 @@ drone (its camera and status: leader, battery, GNSS, link to the camp) and a tac
 each drone last reported. Jammers (from the drones repo) cut GNSS or the radio link to the camp;
 place more with *Place jammer*. `node scripts/build-rig-artifact.mjs out.html camp` builds it as
 one file.
+
+### The camp island (in the carrier's world)
+
+Another island of the carrier's world (the place **Camp island: drone camp**, `src/campIsland.js`;
+`?scenario=campIsland`), out on its own south-west of the lake house: a drone camp
+(models/droneCamp.js: the camp page's tents, operations desk, launch pads with drones, radio mast
+and jammers, as objects of the voxel world) inside a ring of bastions on a level pad in the west,
+powered by a **solar park** (models/solarPark.js) and a **wind turbine** (models/windTurbine.js)
+beside it, their cables laid on the ground to the camp's power panel. Across the middle of the
+island runs a **ridge** (11 m), and behind it, in the east, a grassy **landing ground** with a pier
+(a boat to the island).
+
+- **Power** (sim/power.js, every heat step): the turbine takes the weather's wind at its hub (the
+  wind at 2 m by the 1/7 power law), turns into it at 6°/s, idles below cut-in (3 m/s), makes
+  ½ρAv³·Cp up to its rating (30 kW at 11 m/s), and above cut-out (25 m/s: a storm) is feathered
+  and braked to a stop, starting again only below 20 m/s; its rotor spins up and down with
+  inertia at a tip-speed ratio of ~6.5. The panels take the weather's sunlight (the season's sun
+  through clouds, rain and fog) by how high the sun stands and the angle it meets them at
+  (beam and sky light), less 0.4 %/K for hot cells and the inverter's 4 %. The sun's direction
+  comes from a time-of-day sky if the simulation has one (`sim.sky.sunDir`, `world.sunDir`,
+  `weather.sunDir` or an hour `weather.timeOfDay`), else a midday sun of the season from a
+  little east of south. A small battery (1 kWh) in the park's container evens it out. Short of
+  power the floodlights (on at night) go out first, then the operations: the monitors, the map,
+  the drones' and jammers' lights go dark. A panel blown away or burnt gives nothing (and is
+  not drawn); the turbine's nacelle or the park's inverter gone, nothing at all.
+- **The patrol** (models/campPatrol.js): a squad of four soldiers (call sign Kilo: a commander,
+  a gunner, two riflemen, in armour) walks a round of eight corners about the camp, outside the
+  bastions, in file (ai/enemies.js), and is a fire team the moment it sees or hears you
+  (ai/squad.js: cover, bounding overwatch, radio, parkour only once alerted). Soldiers, not
+  guards: they do not light fires to lure you.
+- **Deploy**: Play › *Deploy: the camp island, behind the ridge*, the *🪂 Deploy here* entry
+  under the place in Edit world's places list, or `?deploy=camp` (or `?scenario=campIsland&walk=1`)
+  puts you down walking on the landing ground, the island's walk-in start, out of sight of the
+  camp and its patrol (the ridge is between: test/campIsland.test.js traces every line of sight).
+  Like every place it is also a box in the overview (click it), and the jet can fly there.
+- **Level of detail** (render/campPower.js): the rotor, the panels (one instanced mesh) and the
+  camp's screens and lights by their size on the screen; frames, cables, drones and antennas go
+  first; the soldiers are the characters' own (render/enemies.js).

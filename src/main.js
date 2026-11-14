@@ -275,6 +275,22 @@ function goToPlace(name) {
   editor.refresh();
 }
 
+/**
+ * Put the player down at a place (a zone with `deploy`: the camp island's landing ground behind its
+ * ridge): it runs, and you are walking from its walk-in start (its terrain's spawn, src/campIsland.js).
+ * The places list ("Deploy here"), the Play panel and ?deploy=<place> do it.
+ */
+function deploy(name = Object.keys(scene.zones ?? {}).find((k) => scene.zones[k].deploy)) {
+  const zd = scene.zones?.[name];
+  if (!zd?.deploy) return;
+  if (editor.mode !== 'play') editor.setMode('play'); // (walking is Play's)
+  editor.select(-1);
+  if (walk.active) walk.exit();
+  if (name !== scene.zone) activateZone(name);
+  startWalk();
+  walk.say(zd.deploy.label ?? zd.name, 4);
+}
+
 /** The place whose box (or name) is under the pointer, if it is nearer than the scenery there. */
 const placeRay = new Raycaster();
 function placeAt(e) {
@@ -364,6 +380,7 @@ function load(desc, fresh = true) {
   buildWeatherFolder();
   buildObjectsFolder();
   updateLegend();
+  deployCtl.show(Object.values(scene.zones ?? {}).some((z) => z.deploy));
 }
 
 function restart() {
@@ -386,6 +403,8 @@ gui.add(state, 'scenario', scenarioNames).name('Scenario').onChange((k) => (page
 gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
 gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
+// (a world with a place to be put down in: the camp island behind its ridge)
+const deployCtl = gui.add({ deploy: () => deploy() }, 'deploy').name('🪂 Deploy: the camp island, behind the ridge');
 
 // --- fire starts: shown as markers; the "Set fire start" tool replaces them (Shift+click adds)
 const fFire = gui.addFolder('Fire start');
@@ -999,6 +1018,7 @@ const editor = new Editor({
   io,
   activateZone,
   goToPlace,
+  deploy,
   pickPlace: (e) => {
     const pl = placeAt(e);
     if (pl) goToPlace(pl);
@@ -1089,6 +1109,8 @@ if (qs.get('shot')) {
   st.textContent = 'body > *:not(#view):not(#mask) { display: none !important } #mask > *:not(canvas) { display: none !important } .lil-gui { display: none !important }';
   document.head.appendChild(st);
 }
+// ...&deploy=camp: put down at that place (its deploy point), walking
+if (qs.get('deploy') && scene.zones?.[qs.get('deploy')]?.deploy) deploy(qs.get('deploy'));
 if (qs.get('walk')) {
   const at = (qs.get('at') ?? '').split(',').map(Number);
   if (at.length >= 3 && at.every(Number.isFinite)) sim.spawn = { p: [at[0], at[1], at[2]], yaw: ((at[3] ?? 0) * Math.PI) / 180 };
