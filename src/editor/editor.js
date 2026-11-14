@@ -41,7 +41,7 @@ const GROUPS = [
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
   ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
   ['Nature', ['tree', 'grass', 'volcano']],
-  ['Water & air', ['waterVortex', 'windHose', 'windJet']],
+  ['Water & air', ['waterVortex', 'windHose', 'windJet', 'mill']],
   ['Places', ['island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
 ];
 

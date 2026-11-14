@@ -1147,8 +1147,8 @@ export class Walkthrough {
         this.pos.z = nz;
       }
     }
-    // in the water, a whirlpool carries you round and draws you in (sim/stirrers.js)
-    if ((this.water?.depth ?? 0) > 0.6 && w.stirrers?.length) {
+    // in the water, a whirlpool carries you round and draws you in, a river carries you down (sim/stirrers.js)
+    if ((this.water?.depth ?? 0) > 0.6 && (w.stirrers?.length || w.rivers?.length)) {
       const c = waterStirAt(w, this.pos.x, this.pos.z);
       const nx = this.pos.x + Math.max(-0.3, Math.min(0.3, c[0] * dt * 0.85));
       const nz = this.pos.z + Math.max(-0.3, Math.min(0.3, c[1] * dt * 0.85));
