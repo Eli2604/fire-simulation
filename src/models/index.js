@@ -42,6 +42,8 @@ import droneCamp from './droneCamp.js';
 import solarPark from './solarPark.js';
 import windTurbine from './windTurbine.js';
 import campPatrol from './campPatrol.js';
+import hedge from './hedge.js';
+import livingRoom from './livingRoom.js';
 
 /**
  * Model registry. Every model is:
@@ -53,7 +55,7 @@ import campPatrol from './campPatrol.js';
  *   }
  * See voxelizer.js for the primitive shapes; models/composite.js for objects in objects.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol, hedge, livingRoom };
 
 export function resolveParams(model, given = {}) {
   const out = {};

@@ -36,12 +36,13 @@ const CHARACTERS = { squad: 'soldier', enemy: 'soldier', dragon: 'dragon' };
 // no voxels either: a whirlpool, a wind hose, a jet (sim/stirrers.js) are picked within 3 m
 const STIRRERS = { waterVortex: 1, windHose: 1, windJet: 1 };
 /** The palette, by kind (a model not named here goes under Other). */
-const GROUPS = [
+export const GROUPS = [
   ['Cover & buildings', ['wall', 'crate', 'deck', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
   ['Characters', ['squad', 'enemy', 'dragon']],
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
-  ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
-  ['Nature', ['tree', 'grass', 'volcano']],
+  ['Vehicles', ['car']],
+  ['Furniture & props', ['couch', 'livingRoom', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp']],
+  ['Nature', ['tree', 'grass', 'hedge', 'volcano']],
   ['Water & air', ['waterVortex', 'windHose', 'windJet']],
   ['Camp & power', ['droneCamp', 'solarPark', 'windTurbine', 'campPatrol', 'campIsland']],
   ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
