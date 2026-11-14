@@ -18,6 +18,7 @@ export default {
     // their weapons' recoil (ai/recoil.js: physical from the cartridge and the weapon, times this) and fire mode
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
     fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode (weapon: each its own; the MG on auto)' },
+    force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
@@ -34,6 +35,7 @@ export default {
         armour: p.armour !== false,
         recoil: p.recoil ?? 1,
         fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
+        forceScale: p.force ?? 1,
       })),
     };
   },

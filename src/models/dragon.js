@@ -20,8 +20,10 @@ export default {
     start: { value: 'rest', options: ['rest', 'fly'], label: 'At the start' },
     route: { value: '', label: 'Route: "x,z action; ..." (rest, climb, sniff, fly, fight)' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Random seed' },
+    // its impacts (sim/impact.js: landings, stamps, crashes): the closing speed ×, so force ×, energy ײ
+    force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (landings, stamps: shockwave, sound)' },
   },
   build(p) {
-    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed }] };
+    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed, forceScale: p.force ?? 1 }] };
   },
 };

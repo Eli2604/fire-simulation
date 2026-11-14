@@ -40,6 +40,9 @@ import { ROLLS, rollPoint } from '../ai/evade.js';
 import { recoilSpec } from '../ai/recoil.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
+import { BODY_MASS, impactsOf } from './objects.js';
+import { impact, computeImpact, actImpactArgs, ACT_FORCE, actForce } from '../sim/impact.js';
+import { SoundScape } from '../audio/sound.js';
 
 /* Layout: full-bleed field; tabbed control panel docked left; FPS readout top-right; build progress centered */
 const CSS = `
@@ -96,6 +99,15 @@ const CSS = `
 .rigst .toast{position:absolute;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);
   border-radius:4px;padding:8px 14px;font-family:var(--display);letter-spacing:.06em;text-transform:uppercase;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
 @media (max-width:640px){.rigst .panel{top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-height:48%}.rigst .fps{min-width:0}}
+/* the force indicator (impacts: sim/impact.js) */
+.rigst .forcebox{position:absolute;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));width:min(300px,calc(100vw - 32px));
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px;display:grid;gap:7px;font-size:13px}
+.rigst .forcebox .fbar{height:8px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden}
+.rigst .forcebox .fbar i{display:block;height:100%;width:0;background:var(--ok);transition:width .15s,background .15s}
+.rigst .forcebox .fread{font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap}
+.rigst .forcebox .fbig{font-family:var(--display);font-size:22px;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+.rigst .forcebox label.sl{grid-template-columns:70px 1fr 44px}
+@media (max-width:640px){.rigst .forcebox{top:calc(16px + env(safe-area-inset-top,0px));bottom:auto;width:min(230px,calc(100vw - 32px))}}
 `;
 
 const HTML = `
@@ -108,6 +120,15 @@ const HTML = `
 </div>
 <div class="fps" data-id="fps" aria-label="Performance"><b data-id="fpsN" class="g">--</b> fps<div data-id="fpsD">-- ms</div><div data-id="fpsT">--</div><canvas data-id="fpsG" width="150" height="28"></canvas></div>
 <div class="toast" data-id="toast" role="status" aria-live="polite"></div>
+
+<div class="forcebox" data-id="forceBox" aria-label="Force indicator" aria-live="polite">
+  <div class="selrow"><b class="lab" data-id="fAct">Force</b><span class="fbig" data-id="fN">– N</span></div>
+  <div class="fbar"><i data-id="fBar"></i></div>
+  <div class="fread" data-id="fRead">Play an act with a contact (a landing, a kick, a stamp, a crash).</div>
+  <label class="sl"><span>Force ×</span><input type="range" data-id="fAx" min="0" max="4" step="0.05" value="1" aria-label="Force multiplier of this act"><output data-id="fAxO">×1.00</output></label>
+  <label class="sl"><span>Object ×</span><input type="range" data-id="fOx" min="0" max="4" step="0.05" value="1" aria-label="Force multiplier of this object"><output data-id="fOxO">×1.00</output></label>
+  <div class="row"><button data-id="tgFSound" type="button" aria-pressed="false">Sound</button><button data-id="tgFShow" type="button" aria-pressed="true">Arrow</button></div>
+</div>
 
 <aside class="panel" data-id="panel" aria-label="Character controls">
   <button type="button" class="back" data-id="back" hidden>← Back to the world</button>
@@ -1111,6 +1132,237 @@ export function mountRig(root, opts = {}) {
     for (const k of (qs.get('vhits') ?? '').split(',').filter(Boolean)) vehicleRig.hit(k, 350);
   }
 
+  /* ================= impacts: the force indicator (sim/impact.js; rig/objects.js ACT_IMPACTS) ================= */
+  // Every act with a contact declares it (ACT_IMPACTS: when, which part, what it hits); here the
+  // force is worked out from the contact speed measured off the animation (the part's bone, frame
+  // to frame) and the body's mass, times the act's and the object's Force ×; it is applied (the
+  // opponent hurt, staggered, knocked down), shown (an arrow at the contact, the readout, a ring
+  // for the shockwave) and heard (audio/sound.js, Sound on). The dragon's come from the
+  // simulation's own code (ai/dragon.js impactOf: its events); the jet's crash and a car door
+  // slamming from what the vehicle does.
+  const forceSound = new SoundScape();
+  const FBONE = { feet: ['footL', 'footR'], body: ['hips'], hips: ['hips'], back: ['chest'], shoulder: ['upperArmR'], knee: ['shinR'], elbow: ['foreArmR'], head: ['head'], fist: ['handR'], weapon: ['handR'], shinR: ['footR'], shinL: ['footL'] };
+  const fArrow = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(), 1, 0xffb347, 0.22, 0.14);
+  fArrow.visible = false;
+  const fRing = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffd28a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  scene.add(fArrow, fRing);
+  const F = { show: true, flash: 0, ring: 0, ringR: 0, seenDragon: 0, track: new WeakMap(), veh: null, act: null, kind: null };
+  const fmt = (n, u) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' M' : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + ' k' : n.toFixed(n >= 10 ? 0 : 1) + ' ') + u;
+  /** The act on the stage now: { kind, act, u (0..1 through it, or null) }. */
+  function actNow() {
+    if (kind === 'soldier' || kind === 'squad') {
+      const e = selected ?? soldiers[0];
+      const a = e?.fig.current;
+      return { kind: 'soldier', act: e?.fig.shown ?? 'idle', u: a ? (a.time % a.getClip().duration) / a.getClip().duration : null };
+    }
+    if (kind === 'dragon') return { kind: 'dragon', act: dragonRig?.stage.act ?? 'rest', u: null };
+    return { kind: vehicleRig.kind ?? kind, act: vehicleRig.act ?? 'idle', u: null };
+  }
+  const fAx = $('fAx'), fOx = $('fOx');
+  function forceSliders() {
+    const { kind: k, act } = actNow();
+    if (k === F.kind && act === F.act) return;
+    F.kind = k;
+    F.act = act;
+    fAx.value = ACT_FORCE[`${k}:${act}`] ?? 1;
+    fOx.value = ACT_FORCE[k] ?? 1;
+    $('fAxO').textContent = '×' + (+fAx.value).toFixed(2);
+    $('fOxO').textContent = '×' + (+fOx.value).toFixed(2);
+    preview();
+  }
+  fAx.oninput = () => {
+    ACT_FORCE[`${F.kind}:${F.act}`] = +fAx.value;
+    $('fAxO').textContent = '×' + (+fAx.value).toFixed(2);
+    preview();
+  };
+  fOx.oninput = () => {
+    ACT_FORCE[F.kind] = +fOx.value;
+    $('fOxO').textContent = '×' + (+fOx.value).toFixed(2);
+    preview();
+  };
+  tg('tgFSound', (v) => (v ? forceSound.start() : forceSound.stop()));
+  tg('tgFShow', (v) => (F.show = v));
+  /** What the act's first contact will do (its declared speed): before it happens, and as Force × moves. */
+  function preview() {
+    const decl = impactsOf(F.kind, F.act)[0];
+    if (!decl) {
+      $('fAct').textContent = `Force · ${F.act}`;
+      $('fRead').textContent = 'No contact in this act. Play one that has (a landing, a roll, a kick, a stamp, a crash).';
+      $('fN').textContent = '– N';
+      $('fBar').style.width = '0';
+      return;
+    }
+    if (decl.sim || decl.trigger) {
+      $('fAct').textContent = `Force · ${decl.label ?? decl.part}`;
+      $('fRead').textContent = `Measured when it happens (${decl.sim ? 'the simulation’s own ' + F.kind : decl.trigger === 'ground' ? 'when it hits the ground' : 'when it shuts'}): × ${actForce(F.kind, F.act).toFixed(2)}.`;
+      return;
+    }
+    const r = computeImpact({ ...actImpactArgs(decl, { bodyMass: BODY_MASS[F.kind], speed: decl.fromHeight ? Math.sqrt(2 * 9.81 * (parkourHeight(F.act, pkHeight) ?? 1)) : decl.v, scale: actForce(F.kind, F.act) }), targetIsPerson: decl.target === 'opponent' });
+    readout(r, `${decl.label ?? decl.part} (expected)`);
+  }
+  function readout(r, label) {
+    $('fAct').textContent = `Force · ${label}`;
+    $('fN').textContent = fmt(r.force, 'N');
+    const lv = Math.min(1, Math.max(0, Math.log10(Math.max(1, r.force)) / 6.5));
+    const bar = $('fBar');
+    bar.style.width = (lv * 100).toFixed(0) + '%';
+    bar.style.background = r.force < 2e3 ? 'var(--ok)' : r.force < 2e4 ? 'var(--accent)' : 'var(--hurt)';
+    $('fRead').textContent =
+      `v ${r.speed.toFixed(1)} m/s · m ${fmt(r.mu, 'kg')} · ×${(r.scale ?? 1).toFixed(2)}\n` +
+      `impulse ${fmt(r.impulse, 'N·s')} · contact ${(r.contactTime * 1000).toFixed(0)} ms\n` +
+      `energy ${fmt(r.energy, 'J')} · peak ${fmt(r.peakForce, 'N')}\n` +
+      `damage ${r.damage.toFixed(0)} HP${r.knock !== 'none' ? ' · ' + r.knock : ''}${r.shock ? ` · shockwave ${r.shock.radius.toFixed(1)} m` : ''}\n` +
+      `sound ${r.sound.db.toFixed(0)} dB (${r.materials.join(' on ')})`;
+  }
+  /** Show an impact that happened at p (scene coordinates). */
+  function showImpact(r, p, label) {
+    readout(r, label);
+    if (F.show && p) {
+      const dir = new THREE.Vector3(...(r.dir ?? [0, -1, 0])).normalize();
+      const L = 0.35 + 0.3 * Math.log10(1 + r.force / 100);
+      fArrow.position.set(p[0] - dir.x * L, p[1] - dir.y * L, p[2] - dir.z * L);
+      fArrow.setDirection(dir);
+      fArrow.setLength(L, Math.min(0.5, L * 0.3), Math.min(0.3, L * 0.18));
+      fArrow.setColor(r.force < 2e3 ? 0x8fb36a : r.force < 2e4 ? 0xd9a441 : 0xd4553b);
+      fArrow.visible = true;
+      F.flash = 1.2;
+      if (r.shock) {
+        fRing.position.set(p[0], 0.03, p[2]);
+        F.ringR = r.shock.radius;
+        F.ring = 1;
+      }
+    }
+    if (forceSound.running && p) forceSound.impact({ ...r.event, pos: p });
+  }
+  function soundListener() {
+    if (!forceSound.running) return;
+    const L = forceSound.ctx.listener;
+    const fw = new THREE.Vector3();
+    camera.getWorldDirection(fw);
+    const pos = camera.position;
+    if (L.positionX) {
+      L.positionX.value = pos.x;
+      L.positionY.value = pos.y;
+      L.positionZ.value = pos.z;
+      L.forwardX.value = fw.x;
+      L.forwardY.value = fw.y;
+      L.forwardZ.value = fw.z;
+    }
+    forceSound.state = { listener: { pos: [pos.x, pos.y, pos.z] } };
+  }
+  const rigWorld = { time: 0, events: [], enemies: soldiers, noises: null };
+  const partPos = (e, part) => {
+    const names = FBONE[part] ?? [part];
+    const v = new THREE.Vector3();
+    let n = 0;
+    for (const b of names) {
+      const bone = e.fig.bones?.[b];
+      if (!bone) continue;
+      v.add(bone.getWorldPosition(new THREE.Vector3()));
+      n++;
+    }
+    return n ? v.divideScalar(n) : new THREE.Vector3(e.d.p[0], e.d.p[1] + 1, e.d.p[2]);
+  };
+  function soldierContacts(dt) {
+    rigWorld.time = now;
+    for (const e of soldiers) {
+      if (!e.fig) continue;
+      const a = e.fig.current;
+      const act = e.fig.shown;
+      const u = a ? (a.time % a.getClip().duration) / a.getClip().duration : 0;
+      const decls = impactsOf('soldier', act).filter((x) => x.t != null);
+      let T = F.track.get(e);
+      if (!T) F.track.set(e, (T = { act, u, pos: {} }));
+      for (const decl of decls) {
+        const p = partPos(e, decl.part);
+        const was = T.pos[decl.part];
+        const vel = was && dt > 0 ? p.clone().sub(was).divideScalar(dt) : null;
+        T.pos[decl.part] = p;
+        if (T.act !== act || dt <= 0) continue;
+        const crossed = u >= T.u ? T.u < decl.t && decl.t <= u : T.u < decl.t || decl.t <= u;
+        if (!crossed) continue;
+        // the contact: its speed off the animation (the part's bone), else as declared
+        const measured = vel && vel.length() > 0.8 && !decl.fromHeight ? vel.length() : null;
+        const speed = measured ?? (decl.fromHeight ? Math.sqrt(2 * 9.81 * (parkourHeight(act, pkHeight) ?? 1)) : decl.v);
+        let target = null;
+        if (decl.target === 'opponent') {
+          let best = 1.6;
+          for (const o of soldiers) {
+            if (o === e || o.d.dead) continue;
+            const d = Math.hypot(o.d.p[0] - p.x, o.d.p[2] - p.z);
+            if (d < best) {
+              best = d;
+              target = o;
+            }
+          }
+        }
+        const args = actImpactArgs(decl, { bodyMass: BODY_MASS.soldier, speed, dir: measured && decl.target !== 'ground' ? vel.clone().normalize().toArray() : null, pos: [p.x, decl.target === 'ground' ? 0 : p.y, p.z], scale: actForce('soldier', act), target });
+        const r = impact(rigWorld, { ...args, targetIsPerson: decl.target === 'opponent', effects: { crush: false } });
+        showImpact(r, args.pos, `${decl.label ?? decl.part}${target ? ' → ' + target.name : decl.target === 'opponent' ? ' (no one in reach)' : ''}`);
+      }
+      T.act = act;
+      T.u = u;
+    }
+    rigWorld.events.length = 0;
+  }
+  function dragonContacts() {
+    const st = dragonRig?.stage;
+    if (!st) return;
+    st.dragon.forceScale = actForce('dragon', st.act);
+    const ev = st.world.events;
+    if (F.seenDragon > ev.length) F.seenDragon = 0;
+    for (; F.seenDragon < ev.length; F.seenDragon++) {
+      const e = ev[F.seenDragon];
+      if (e.type !== 'impact') continue;
+      const o = dragonRig.group.position;
+      const p = [e.pos[0] + o.x, e.pos[1] + o.y, e.pos[2] + o.z];
+      const r = computeImpact({ mass: e.mass, massB: Infinity, velocity: e.speed, materials: e.materials, radius: e.radius, footprint: e.footprint, kind: e.kind });
+      showImpact({ ...r, event: e }, p, `${e.name} · ${e.kind}`);
+    }
+  }
+  function vehicleContacts(dt) {
+    const v = vehicleRig.v;
+    if (!vehicleRig.kind || !v?.group || dt <= 0) return (F.veh = null);
+    const k = vehicleRig.kind;
+    const p = v.group.getWorldPosition(new THREE.Vector3());
+    const doors = vehicleRig.s?.doors ?? 0;
+    const was = F.veh;
+    F.veh = { p, doors };
+    if (!was) return;
+    const vel = p.clone().sub(was.p).divideScalar(dt);
+    for (const decl of impactsOf(k, vehicleRig.act)) {
+      let speed = null;
+      let at = null;
+      if (decl.trigger === 'ground' && was.p.y > 0.35 && p.y <= 0.35 && vel.y < -1) {
+        speed = vel.length();
+        at = [p.x, 0, p.z];
+      } else if (decl.trigger === 'doorsShut' && was.doors > 0.1 && doors <= 0.03) {
+        speed = Math.max(1, ((was.doors - doors) / dt) * 1.2);
+        at = [p.x, 0.9, p.z];
+      }
+      if (speed == null) continue;
+      const args = actImpactArgs({ ...decl, mass: decl.mass ?? BODY_MASS[k] }, { bodyMass: BODY_MASS[k], speed, dir: decl.trigger === 'ground' ? vel.clone().normalize().toArray() : null, pos: at, scale: actForce(k, vehicleRig.act) });
+      const r = impact({ time: now, events: [] }, { ...args, effects: { crush: false } });
+      showImpact(r, at, decl.label ?? decl.part);
+    }
+  }
+  function forceTick(dt) {
+    forceSliders();
+    if (kind === 'soldier' || kind === 'squad') soldierContacts(dt);
+    else if (kind === 'dragon') dragonContacts();
+    else vehicleContacts(dt);
+    soundListener();
+    // the arrow fades, the shockwave's ring runs out to its radius
+    F.flash = Math.max(0, F.flash - dt);
+    fArrow.visible = F.show && F.flash > 0;
+    if (F.ring > 0) {
+      F.ring = Math.max(0, F.ring - dt * 1.4);
+      const s = Math.max(0.05, F.ringR * (1 - F.ring));
+      fRing.scale.set(s, 1, s);
+      fRing.material.opacity = 0.7 * F.ring;
+    } else fRing.material.opacity = 0;
+  }
+
   /* ================= loop + FPS ================= */
   function resize() {
     const w = stage.clientWidth, h = stage.clientHeight;
@@ -1157,6 +1409,7 @@ export function mountRig(root, opts = {}) {
     }
     if (soldiers.length && Math.random() < 0.08) onChange();
     dragonRig?.update(dt);
+    forceTick(frozen ? 0 : dt);
     vehicleRig.update(dt);
     controls.update();
     renderer.render(scene, camera);
@@ -1218,6 +1471,7 @@ export function mountRig(root, opts = {}) {
     clearTimeout(toast.h);
     for (const e of soldiers) e.dispose();
     vehicleRig.dispose();
+    forceSound.stop();
     soldiers.length = 0;
     controls.dispose();
     renderer.dispose();

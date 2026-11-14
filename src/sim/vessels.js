@@ -323,9 +323,11 @@ function impact(sim, d, x, y, z, M) {
   const m = M.density * d.dens * w.h ** 3;
   const E = 0.5 * m * (d.v[0] ** 2 + d.v[1] ** 2 + d.v[2] ** 2);
   d.impactE = E;
+  let hitName = 'soil';
   if (y >= 0 && y < w.ny && x >= 0 && z >= 0 && x < w.nx && z < w.nz) {
     const j = w.idx(x, y, z);
     const T = MATERIALS[w.mat[j]];
+    if (w.mat[j]) hitName = T.name;
     if (w.mat[j] && !(w.flags[j] & F_ANCHOR)) {
       if (T.shatterTemp !== Infinity && E > 5) {
         w.flags[j] |= F_FALLING;
@@ -340,7 +342,8 @@ function impact(sim, d, x, y, z, M) {
   if (d.flags & F_BURNING && M.combustible) sim.ignite(d.p, w.h * 1.2);
   if (E > 50 && !d.silent) {
     w.noises.push({ p: d.p.slice(), loud: Math.min(40, 5 + Math.sqrt(E) * 0.5), time: w.time, kind: 'impact' });
-    if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label });
+    // (its sound: the fragment's material on what it hit, from its mass and speed: audio/physics.js)
+    if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label, materials: [M.name, hitName], mass: m, speed: Math.hypot(d.v[0], d.v[1], d.v[2]), size: 1, sizeA: w.h, radius: w.h * 0.3, kind: 'debris' });
   }
 }
 

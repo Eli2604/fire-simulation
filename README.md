@@ -1058,6 +1058,76 @@ Big scenes are split twice over:
 voxel faces; ossuary bones are drawn only in the chunks near you. The resolution is the same
 everywhere in a zone: a coarser grid far from you is not done.
 
+### Impacts: force, damage, shockwaves
+
+`sim/impact.js` is one model for every collision: a kick, a punch, a judo throw, a soldier
+landing from a drop or a roll, a body falling, the dragon coming down from the sky or stamping, a
+loose drum it threw hitting the ground, a jet crashing, a car door slamming, a fragment hitting a
+wall. From the masses (reduced mass μ), the closing speed v and the two materials it works out
+the impulse J = μ(1+e)v (e, the restitution, from the materials' hardness and damping), the
+energy ½μv², the contact time (Hertz contact of the two materials: tens of µs steel on steel,
+~0.1 s flesh on soil; a roll spreads a landing over ~0.35 s) and the mean force F = J / t. What it
+does follows from those: blunt trauma to a person (logarithmic in the energy taken, more to the
+head, less through armour and in a long contact; a landing on your feet is harmless up to
+~6.5 m/s), a stagger or a knock-down by the change of speed it gives him (0.6 / 1.5 m/s), loose
+objects knocked flying, voxels crushed (`sim/crush.js`) and, from ~4 kJ on, a **shockwave**
+through the ground of radius 0.25·E^⅓ m (a dragon landing ~10 m, a jet crash ~60 m): a ring of
+dust and clods kicked up (drawn by `render/debris.js`), people near it staggered (close in,
+knocked down), loose things jumping (`render/loose.js`), the camera shaking with the distance
+(`shakeAt`). Every impact is an event (`{ type: 'impact', force, impulse, energy, materials,
+db, ... }`) and, when big, a `shockwave`.
+
+    impact(simOrWorld, { pos, normal, mass, velocity, massB, materials: ['flesh', 'soil'], scale, contactTime, source, target, zone, kind, effects })
+    computeImpact(o)                                   // the physics only (the rig's readout)
+
+**Force ×**: every impact's closing speed is multiplied by its act's and its object's Force ×
+(so the impulse and force ×, the energy ײ). Each act with a contact declares it in
+`rig/objects.js` `ACT_IMPACTS` (`{ t, part, material, target, v }`: when as a fraction of the
+act, which body part, what it hits); the Rig stage measures the part's speed off the animation,
+takes its share of the body's mass (`PART_MASS`: a fist ~5 %, a foot ~12 %, a landing body all of
+it) and shows a **force indicator**: the force in N on a bar, the impulse, energy, contact time,
+damage, knock-down, shockwave radius and the dB, an arrow at the contact and a ring for the
+shockwave, the Force × of the act and of the object as sliders, and (Sound on) the sound. The
+dragon's come from the simulation's own code (`ai/dragon.js impactOf`: landing, stamp, crash,
+falling dead), the jet's crash when it reaches the ground, a car door when it slams. In the
+world editor the dragon, the squad and the enemies have a *Force ×* parameter. Wired in the
+world: the dragon's landings, stamps and crashes, the jet crash (`sim/jetDamage.js`), parkour
+drops, vaults and rolls (`ai/squad.js`, `ai/enemies.js`, your own in the walk-through), a man
+falling dead, debris hitting people (`ai/enemies.js`) and walls (`sim/vessels.js`), and
+whatever the dragon throws (`ai/dragonAir.js`).
+
+### Sound from physics
+
+The sounds are synthesised, not recorded, and take their parameters from the state of their
+source (`audio/physics.js`, used by `audio/sound.js`):
+
+- **Struck solids** (modal synthesis): each body rings at modes set by its material's stiffness
+  and density (c = √(E/ρ)) and its size and shape (flexural f ∝ c·t/L², solid f = c/2L: bigger
+  is lower, stiffer is higher), each decaying with the material's loss factor (τ = 1/(π f η):
+  steel clangs for seconds, wood knocks, flesh only thuds). The contact time decides how high
+  they are excited (hard on hard: bright). The level is 10·log10 of the radiated energy (a share
+  of the impact's, by material). Glass and ice shatter into ringing shards, water splashes with
+  bubbles at their Minnaert frequency (3.3 kHz at 1 mm), a very big impact adds a ground boom.
+  Mechanical and acoustic properties per material: `sim/materials.js mechanics()` (also flesh,
+  scales, feathers, a ceramic plate, kevlar, ice).
+- **Fire**, per burning region of the simulation (`sim/fireAudio.js`, gathered in the solid pass
+  only while the sound runs): the roar is turbulent combustion noise (~2·10⁻⁶ of the heat
+  release, louder in wind), its spectrum peaking at ~160/√D Hz (a bigger fire rumbles lower),
+  puffing at 1.5/√D Hz; the crackle is a pulse train per material whose rate comes from its
+  moisture (steam pockets bursting: most at ~20 %, less when soaked), resin (pine pops more than
+  oak) and grain (grass crackles fast and small, logs seldom and loud); paper flutters, books
+  smoulder quietly, plastics and fuels whoosh; water on hot surfaces hisses by the steam made;
+  metals tick as they heat and cool (thermal expansion); a region flaring up all at once whoomps.
+- **Flows**: the jet engine from its thrust (exhaust velocity, Lighthill's V⁸, Strouhal 0.2, the
+  turbine whine from the spool speed), a breach in the hull from the pressure across it, a gas
+  leak from its mass flow, wind (Aeolian tones), rain (drop rate, bubbles), the dragon's and the
+  phoenix's wings from their area and beat, gunshots from the cartridge's energy, explosions
+  from theirs.
+- **Propagation**: inverse-square, the air absorbing the highs with distance, the speed of sound
+  (a far crash comes late and dull), muffled through walls (line of sight) and under water.
+- **CPU**: at most 28 one-shots at a time (a quiet one is dropped for a louder), three fire voices
+  (the loudest regions, the rest merged), less detail with distance.
+
 ### Limitations
 
 This is a real-time, approximate model, not a CFD fire code like FDS. The air flow is not
@@ -1132,7 +1202,7 @@ src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, pa
                 volumetric smoke/steam, rain, extinguisher spray, debris, view
 src/ai/         enemies: senses, path finding around fire, luring with fire
 src/walk/       first-person walk-through (firefighter), flying the jet
-src/audio/      procedural sound
+src/audio/      procedural sound, synthesised from physics (physics.js: modes, flows, propagation)
 src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library
 src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
 src/camp/       the drone operations camp stage (stage.js; opened from the editor)

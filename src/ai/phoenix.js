@@ -1,4 +1,5 @@
 import { MATERIALS } from '../sim/materials.js';
+import { impact, groundMaterial } from '../sim/impact.js';
 
 /**
  * A phoenix: a bird of fire, locked in a dungeon cell in the catacombs
@@ -374,6 +375,9 @@ export class PhoenixAI {
     // the wings: spread and beating in flight (faster hovering and climbing, slower
     // cruising); folded on the floor. In a narrow place they do not open quite as wide.
     const landed = land && d < 0.08;
+    // touching down: its talons on what is there (sim/impact.js: ~12 kg, a soft landing)
+    if (landed && !f.wasLanded) impact(this.sim, { pos: f.pos.slice(), normal: [0, 1, 0], mass: f.mass ?? 12, velocity: [f.vel[0], -Math.max(1.5, Math.abs(f.vel[1])), f.vel[2]], materials: ['feathers', groundMaterial(this.world, f.pos)], radius: 0.04, target: 'ground', kind: 'landing', source: f, name: 'the phoenix', effects: { damage: false, crush: false } });
+    f.wasLanded = landed;
     const right = [Math.cos(f.yaw), 0, -Math.sin(f.yaw)];
     const narrow = this.solidAt([f.pos[0] + right[0] * 0.75, f.pos[1], f.pos[2] + right[2] * 0.75]) || this.solidAt([f.pos[0] - right[0] * 0.75, f.pos[1], f.pos[2] - right[2] * 0.75]);
     f.wing = approach(f.wing, landed ? 0 : narrow ? 0.72 : 1, 4, dt);

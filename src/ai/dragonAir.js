@@ -1,6 +1,7 @@
 import { groundAt, canFly, wingDamage, WING, dragonZones, dragonWoundPoint, initDragon } from './dragon.js';
 import { splatter } from '../sim/wounds.js';
 import { explode } from '../sim/explosions.js';
+import { impact as hitImpact, groundMaterial } from '../sim/impact.js';
 import { startRoll, stepRoll, pathClear, ROLLS } from './evade.js';
 import { startEvade as dragonEvade, hitFactor } from './dragonEvade.js';
 
@@ -542,8 +543,14 @@ export function stepThrown(sim, dt) {
     }
     w.events.push({ type: 'thrownLanded', pos: at, time: w.time, name: th.kind === 'enemy' ? 'a guard' : th.kind === 'player' ? 'you' : `a ${th.ref.kind}`, speed, damage, water });
     w.noises.push({ p: at, loud: 12 + speed, time: w.time, kind: 'impact' });
+    // (sim/impact.js: the force, its sound by what hits what, a shockwave from a heavy one;
+    // the harm above stays as it was)
+    const obj = th.kind === 'object' ? th.ref : null;
+    hitImpact(sim, { pos: at, normal: [0, 1, 0], mass: obj ? obj.mass ?? MASS[obj.kind] ?? 50 : MASS[th.kind] ?? 90, velocity: v.slice(), materials: [obj ? LOOSE_MAT[obj.kind] ?? 'wood' : 'flesh', water ? 'water' : groundMaterial(w, at)], sizeA: obj ? 2 * (obj.r ?? 0.3) : 0.5, size: 2, radius: obj ? obj.r ?? 0.3 : 0.15, target: 'ground', kind: 'throw', name: th.kind === 'enemy' ? 'a guard' : th.kind === 'player' ? 'you' : `a ${th.ref.kind}`, effects: { damage: false, crush: false } });
   }
 }
+/** What the loose things are made of (their impact's sound: sim/impact.js). */
+const LOOSE_MAT = { drum: 'steel', cylinder: 'steel', crate: 'wood', dummy: 'fabric' };
 
 // -----------------------------------------------------------------------------
 // two dragons

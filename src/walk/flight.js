@@ -5,6 +5,7 @@ import { placeObject } from '../models/voxelizer.js';
 import { MAT } from '../sim/materials.js';
 import { deriveWeather } from '../sim/weather.js';
 import { jetImpact, JetDamage } from '../sim/jetDamage.js';
+import { jetEngine } from '../audio/physics.js';
 import { ejectionEnvelope, Chute } from '../sim/ejection.js';
 import { PilotFigure } from '../render/pilotFigure.js';
 
@@ -804,10 +805,13 @@ export class Flight {
     if (this.engine) {
       const t = this.walk.sound.ctx.currentTime;
       const run = this.fuelLeft > 0 ? 1 - D.engine * 0.6 : 0;
-      this.engine.o.frequency.setTargetAtTime((45 + this.throttle * 70 + this.speed * 0.3) * (1 - D.engine * 0.3), t, 0.1);
-      this.engine.o2.frequency.setTargetAtTime(90 + this.throttle * 160 + (D.engine > 0.3 ? Math.random() * 60 * D.engine : 0), t, 0.05);
-      this.engine.f.frequency.setTargetAtTime(400 + this.throttle * 1800, t, 0.1);
-      this.engine.g.gain.setTargetAtTime((0.04 + this.throttle * 0.22 + (this.boosting ? 0.25 : 0)) * run * (0.3 + 0.7 * Math.min(1, this.rho() * 4)), t, 0.1);
+      // from the thrust (audio/physics.js jetEngine: the exhaust velocity, Lighthill's V⁸, the
+      // jet noise peaking at Strouhal 0.2, the turbine whine from the spool speed); ~10 t of jet
+      const J = jetEngine({ thrust: Math.max(0.05, this.throttle) * THRUST * 1e4 * run * (this.boosting ? 1.6 : 1), afterburner: !!this.boosting, nozzle: 0.9, maxThrust: THRUST * 1e4 });
+      this.engine.o.frequency.setTargetAtTime(Math.max(30, J.peak * 0.5 + this.speed * 0.3) * (1 - D.engine * 0.3), t, 0.1);
+      this.engine.o2.frequency.setTargetAtTime(J.whine * 0.12 + (D.engine > 0.3 ? Math.random() * 60 * D.engine : 0), t, 0.05);
+      this.engine.f.frequency.setTargetAtTime(J.cutoff, t, 0.1);
+      this.engine.g.gain.setTargetAtTime((0.04 + 0.4 * J.gain) * run * (0.3 + 0.7 * Math.min(1, this.rho() * 4)), t, 0.1);
     }
     const alt = this.pos.y - this.seaLevel;
     // the sky darkens and the stars come out as you climb

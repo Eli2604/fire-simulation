@@ -20,6 +20,7 @@ import { stepVacuum } from './vacuum.js';
 import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
+import { impact, bodyLanding } from './impact.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
@@ -172,6 +173,7 @@ export class Simulation {
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
+    this.fireAudio?.step(w, dt); // (only while something listens: sim/fireAudio.js)
     this.solidPassB(dt, D);
     stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
@@ -776,6 +778,7 @@ export class Simulation {
     (this.flakeList = this.flakeList ?? []).length = 0;
     let hrrTotal = 0;
     let burning = 0;
+    const fau = this.fireAudio ?? null; // the fire's sound sources (sim/fireAudio.js), while listened to
     let maxT = -Infinity;
     let liquids = 0;
 
@@ -858,6 +861,7 @@ export class Simulation {
           const evap = Math.min(water, ((Ts - 100) * Csurf) / per);
           Ts -= (evap * per) / Csurf;
           steam[fa] += evap;
+          if (fau) fau.steam(x, y, z, evap);
           rest -= evap;
         }
         if (rest > 0) {
@@ -1113,6 +1117,7 @@ export class Simulation {
             if (char[i] < ch) char[i] = ch;
             if (fuel[i] <= 1e-6) burnouts.push(i);
             burning++;
+            if (fau) fau.burn(x, y, z, q, m, mo, Ts);
           }
         }
         if (!(f & F_BURNING) && Ts > M.pyrolysisTemp && ex > 0) {
@@ -1143,6 +1148,7 @@ export class Simulation {
       if (Ts > maxT) maxT = Ts;
       if (T > maxT) maxT = T;
       if (f & F_LIQUID) liquids++;
+      if (fau && M.conductivity > 15) fau.metal(x, y, z, T - temp[i], m); // (metals tick as they heat and cool)
       temp[i] = T;
       skin[i] = ex > 0 ? Ts : T;
       wetSkin[i] = mo > 0 ? ws : 0;
@@ -1564,6 +1570,10 @@ export class Simulation {
         if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle, weapon });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
+      // landing from a drop, a vault, a roll: the force and its sound (sim/impact.js)
+      landing: (e, o) => bodyLanding(this, e, o),
+      // a blow, a throw (rig/objects.js ACT_IMPACTS; sim/impact.js): impact(sim, { ... })
+      impact: (o) => impact(this, o),
       flashbang: (e, from, vel) => w.projectiles.push({ type: 'flash', p: from.slice(), v: vel.slice(), fuse: 1.5, by: e.unit, resting: false }),
       // the knife: into you (the torso, or the neck over the collar of your gear)
       stab: (e, h) => {
