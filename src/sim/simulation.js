@@ -1569,6 +1569,10 @@ export class Simulation {
       stab: (e, h) => {
         if (h === pl()) w.playerHits.push({ zone: Math.random() < 0.3 ? 'head' : 'torso', time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'knife' });
       },
+      // hand-to-hand (ai/melee.js): a punch, a kick or a throw into you
+      melee: (e, h, res) => {
+        if (h === pl()) w.playerHits.push({ zone: res.zone === 'legs' ? 'legs' : res.zone, time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'fist', melee: res.kind, down: res.down });
+      },
       shout: (e, text) => w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text }),
       now: () => w.time,
       // a way to another floor (stairs): the guard AI's 3D paths over floors and stairs (ai/enemies.js)

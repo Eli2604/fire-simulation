@@ -86,6 +86,7 @@ import { pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES, recoilOf, skillOf } from './soldier.js';
 import { stepClimb } from './recoil.js';
 import { gaitK } from './weapons.js';
+import { stepKnocked } from './melee.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
 
@@ -1426,6 +1427,11 @@ export class SquadAI {
       if (this.host.ownMove?.(m)) continue;
       // down wounded, or in a rescue (fetching him, covering): ai/casualty.js has him
       if (m.down || m.rescueRole) continue;
+      // thrown or knocked down hand-to-hand (ai/melee.js): on his back, then up again
+      if (stepKnocked(m, this.time)) {
+        m.path = null;
+        continue;
+      }
       // blinded and deafened by a flashbang: he can do nothing for a few seconds
       if (m.stunnedUntil && m.stunnedUntil > (this.host.now?.() ?? this.time)) {
         m.path = null;

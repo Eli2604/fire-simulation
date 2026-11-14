@@ -33,7 +33,7 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS } from './objects.js';
 import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import { ROLLS, rollPoint } from '../ai/evade.js';
@@ -137,6 +137,8 @@ const HTML = `
     <div class="grid" data-id="evActs"></div>
     <div class="lab">Casualty (a man down, dragged out, first aid, cover fire)</div>
     <div class="grid" data-id="casActs"></div>
+    <div class="lab">Hand-to-hand (boxing and judo: strikes, kicks, defence, the clinch, throws with a partner)</div>
+    <div class="grid" data-id="melActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -443,6 +445,7 @@ export function mountRig(root, opts = {}) {
       if (PARKOUR_ACTS[name]) return this.parkour(name);
       if (EVADE_ACTS[name]) return this.evade(name);
       if (CASUALTY_ACTS[name]?.partner) return this.casualty(name);
+      if (MELEE_ACTS[name]?.d) return this.spar(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -504,8 +507,47 @@ export function mountRig(root, opts = {}) {
       this.pkStep(0);
       return this;
     }
+    /**
+     * A hand-to-hand act with a sparring partner (rig/objects.js MELEE_ACTS): unarmed, d m in front,
+     * facing him; he takes the strike (his reaction at its hit time), is thrown or held (the other
+     * half of the pair), or throws the punch this one blocks or slips; again after a pause.
+     */
+    spar(kind) {
+      const act = MELEE_ACTS[kind];
+      const yaw = this.d.yaw;
+      const c = new Soldier({ name: 'sparring partner', position: this.home.slice(), facing: yaw + Math.PI, loadout: 'unarmed' });
+      this.pk = { kind, t: 0, dur: this.fig.A.clips[kind].duration, from: this.home.slice(), yaw, wait: 0, cas: c, mel: act };
+      this.fig.play(kind, { restart: true, fade: 0 });
+      c.fig.play(act.partner ?? 'guard', { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
     pkStep(dt) {
       const P = this.pk;
+      if (P.mel) {
+        const A = P.mel;
+        P.t += dt;
+        if (A.react && !P.reacted && P.t >= A.at) {
+          P.reacted = true;
+          P.cas.fig.play(A.react, { restart: true, fade: 0.05 });
+        }
+        if (P.t > P.dur + 1.0) {
+          P.t = 0;
+          P.reacted = false;
+          this.fig.play(P.kind, { restart: true, fade: 0 });
+          P.cas.fig.play(A.partner ?? 'guard', { restart: true, fade: 0 });
+        }
+        const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
+        this.d.p = P.from.slice();
+        this.d.yaw = P.yaw;
+        P.cas.d.p = [P.from[0] + f[0] * A.d, 0, P.from[2] + f[1] * A.d];
+        P.cas.d.yaw = P.yaw + Math.PI;
+        const g = P.cas.fig.group;
+        g.position.set(...P.cas.d.p);
+        g.rotation.y = P.cas.d.yaw;
+        P.cas.fig.update(dt);
+        return;
+      }
       if (P.cas) {
         // the rescuer walks backwards (away from where he faces) 0.8 m/s; the casualty follows his hands
         P.t += dt;
@@ -798,7 +840,7 @@ export function mountRig(root, opts = {}) {
   /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
   function showHandling(e) {
     const sel = $('primarySel');
-    if (sel && document.activeElement !== sel) sel.value = e.loadout === 'torch' ? 'torch' : e.fig.primaryKind;
+    if (sel && document.activeElement !== sel) sel.value = e.loadout === 'torch' || e.loadout === 'unarmed' ? e.loadout : e.fig.primaryKind;
     const H = HANDLING[e.fig.handling];
     if (!H || !$('handlingInfo')) return;
     const no = Object.keys(LABELS).filter((k) => !e.fig.allows(k)).map((k) => LABELS[k]);
@@ -829,8 +871,8 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    if (k === 'dragged') return; // (the casualty's own half of the drag: shown with Drag casualty)
-    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : animBox).appendChild(b);
+    if (k === 'dragged' || k.endsWith('_d')) return; // (the other man's half of a pair: shown with the act)
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : MELEE_ACTS[k] ? $('melActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -885,7 +927,7 @@ export function mountRig(root, opts = {}) {
   $('primarySel').onchange = () => {
     const k = $('primarySel').value;
     for (const e of gearTargets()) {
-      if (k === 'torch' || e.loadout === 'torch') e.setLoadout(k);
+      if (k === 'torch' || e.loadout === 'torch' || k === 'unarmed' || e.loadout === 'unarmed') e.setLoadout(k);
       else {
         e.loadout = k;
         e.fig.setPrimary(k);

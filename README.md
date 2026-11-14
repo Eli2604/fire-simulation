@@ -1264,6 +1264,23 @@ gun** and the **flame gun** (its tanks on his back); the carbine is everyone's s
 - **Rig**: the Gear tab's *Primary* select shows each weapon's poses (Animate tab), lists its
   grip, carry, aim and what it rules out, and greys out the acts it does not allow.
 
+### Hand-to-hand: boxing and judo
+
+A man with no weapon (loadout *unarmed*: the squad's *Riflemen carry*, the guards' *Weapon*; or
+out of ammunition with the knife gone) fights with his fists, feet and throws (). Unarmed is the most
+agile profile ( : every move allowed, a little quicker). From a **boxing
+guard** (left fist forward, the right by the chin, light on his feet) he closes in and picks by
+the distance and his man's state: **jab, cross, hook, uppercut**, a **front kick, roundhouse kick,
+low kick** further out, the **clinch** close in, and from the clinch (or with his man dazed) a
+**hip throw** (o-goshi), **shoulder throw** (seoi-nage) or **foot sweep** (de-ashi-barai). Each
+move lands at its time if the other man is still within its reach (out of it: a miss) for its
+damage and a daze; a **block** takes three quarters off, a **slip** makes a punch to the head miss.
+Hard blows can **knock him down**; a thrown man lands on his back over the thrower (the throws and
+the clinch are paired clips, the thrower's and the thrown man's, in step), lies there, and
+**gets back up**. In the walk-through: **G** punch, **V** kick, **B** throw the man in front of
+you. The rig's Animate tab has a *Hand-to-hand* group: each strike against a sparring partner
+who takes it, the throws and the clinch with the partner in the other half of the pair.
+
 ### Team tactics: formations, files, splitting, rooms, floors
 
 `ai/tactics.js` measures the ground on the squad's grid (how wide it is, the rooms, junctions).

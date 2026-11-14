@@ -45,6 +45,7 @@ import { rootKeys, mono, MOVES as PK_MOVES, PARKOUR } from '../ai/parkour.js';
 import { rollKeys, rollAt, ROLLS, ROLL, ROLL_LABELS } from '../ai/evade.js';
 import { recoilSpec, recoilAt, pullTime, pumpTimes } from '../ai/recoil.js';
 import { allows as handlingAllows } from '../ai/weapons.js';
+import { MELEE, REACT } from '../ai/melee.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -1045,6 +1046,197 @@ function sideStep(sg) {
   return K.map(([t, p, drop]) => [t, p, { hp: [at(t), HY - drop, t === 0 ? 0 : -0.08] }]);
 }
 
+/* ---------- hand-to-hand (ai/melee.js): the boxing guard, strikes, kicks, defence, judo throws ---------- */
+/**
+ * No weapon in his hands (the rifle on his back, if he has one): fists up in a boxing guard, light
+ * on his feet. Each strike is the guard with the striking limb thrown out and back (lands at
+ * MELEE[k].hit); the throws and the clinch are pairs: the thrower's clip and the thrown man's
+ * (`<move>_d`), both made for the two facing each other PAIR_D apart; the thrown man's ends on his
+ * back where he lands (MELEE[k].land along his facing), as 'downed' then lies, and 'getUp' gets
+ * him up again.
+ */
+/** The guard (f: the bounce on his feet): left foot and fist forward, the right fist by the chin, elbows in. */
+function boxGuard(p, f = 0) {
+  const b = sin(2 * f);
+  p.hipsPos = [0, -0.1 + 0.015 * b, 0.02];
+  p.thighL = [-0.6, 0, 0.1]; p.shinL = [0.85, 0, 0]; p.footL = [-0.25, 0, 0];
+  p.thighR = [0.3, 0, -0.12]; p.shinR = [0.35, 0, 0]; p.footR = [-0.65, 0, 0];
+  p.spine = [0.12, -0.22, 0]; p.chest = [0.05, -0.08, 0]; p.neck = [-0.05, 0.1, 0]; p.head = [-0.12, 0.2, 0];
+  fistsFree(p);
+  p.lT = [0.1, 1.5 + 0.01 * sin(f + 1), 0.32]; p.rT = [-0.1, 1.52 + 0.01 * b, 0.21];
+  p.lPole = [1, -0.9, -0.2]; p.rPole = [-1, -0.9, -0.2];
+  return p;
+}
+/** Hands off any weapon, the rifle on his back (when he has one). */
+function fistsFree(p) {
+  p.rG = p.lG = p.rH = p.lH = 0;
+  p.sling = 0; p.sling2 = 1; p.cw = 0; p.aim = 0; p.kW = 0; p.mag = 0; p.lMag = 0;
+  return p;
+}
+const G = () => boxGuard(pose0());
+/** A strike: the guard, with what fn(p, e, t) does at e (0..1: thrown out, held, back) over env(t, a, b, c, d). */
+const strike = (a, b, c, d, fn) => (t) => {
+  const p = G();
+  fn(p, env(t, a, b, c, d), t);
+  return p;
+};
+/** Lying on his back (head back the way he came), hands by his sides: thrown, knocked down. */
+function lying(p, f = 0, z = 0) {
+  downPose(p, f);
+  fistsFree(p);
+  p.lW = p.rW = 0; p.lT = [0.3, 1.0, 0.0]; p.rT = [-0.3, 1.0, 0.0];
+  p.hipsPos = [0, -0.8, z];
+  return p;
+}
+/** Holding the other man in a clinch: a hand behind his neck, the other on his arm, heads together. */
+function clinchPose(p, f = 0) {
+  boxGuard(p, f);
+  p.spine = [0.3, 0.05 * sin(f), 0]; p.chest = [0.1, 0, 0]; p.head = [-0.25, 0, 0];
+  p.lT = [0.12, 1.42 + 0.01 * sin(f), 0.42]; p.rT = [-0.1, 1.3, 0.4];
+  p.lPole = [1, -0.4, -0.3]; p.rPole = [-1, -0.7, -0.2];
+  return p;
+}
+const T2 = Math.PI * 2;
+/** The thrower's keys: in close, turned in under him (hips about), the lift, the throw, standing over him. */
+function throwKeys(dur, low, hit) {
+  const k = (o) => Object.assign(clinchPose(pose0()), o);
+  return [
+    [0, clinchPose(pose0())],
+    [hit * 0.45, k({ hips: [0, Math.PI, 0], hipsPos: [0, -0.15 - low, 0.32], spine: [0.25, 0, 0], thighL: [-0.5, 0, 0.15], thighR: [-0.5, 0, -0.15], shinL: [0.9, 0, 0], shinR: [0.9, 0, 0], footL: [-0.4, 0, 0], footR: [-0.4, 0, 0], lT: [0.15, 1.2, 0.35], rT: [-0.15, 1.25, 0.3] })],
+    [hit, k({ hips: [0, Math.PI, 0], hipsPos: [0, -0.1 - low, 0.32], spine: [0.9, 0, 0], head: [-0.4, 0, 0], thighL: [-0.4, 0, 0.15], thighR: [-0.4, 0, -0.15], shinL: [0.7, 0, 0], shinR: [0.7, 0, 0], footL: [-0.3, 0, 0], footR: [-0.3, 0, 0], lT: [0.2, 1.1, 0.45], rT: [-0.15, 1.05, 0.4] })],
+    [dur, k({ hips: [0, Math.PI, 0], hipsPos: [0, -0.12, 0.32], spine: [0.45, 0, 0], head: [-0.3, 0, 0], thighL: [-0.3, 0, 0.12], thighR: [-0.2, 0, -0.12], shinL: [0.5, 0, 0], shinR: [0.4, 0, 0], footL: [-0.2, 0, 0], footR: [-0.2, 0, 0], lT: [0.2, 1.0, 0.45], rT: [-0.2, 1.0, 0.45] })],
+  ];
+}
+/** The thrown man's keys: pulled onto the thrower's hip, over it (head first), onto his back `land` m on. */
+function thrownKeys(dur, arc, hit, land) {
+  const k = (o) => Object.assign(clinchPose(pose0()), o);
+  const end = lying(pose0(), 0, land);
+  end.hips[0] += T2; // (over forwards: a turn and a half, landing face up)
+  return [
+    [0, clinchPose(pose0())],
+    [hit * 0.45, k({ spine: [0.45, 0, 0], hipsPos: [0, -0.05, 0.15], head: [-0.4, 0, 0] })],
+    [hit * 0.82, k({ hips: [1.45, 0, 0], hipsPos: [0, 0.15 + arc, 0.55], spine: [0.1, 0, 0], thighL: [0.1, 0, 0.1], thighR: [0.1, 0, -0.1], shinL: [0.3, 0, 0], shinR: [0.2, 0, 0], footL: [0.3, 0, 0], footR: [0.3, 0, 0] })],
+    [hit, k({ hips: [Math.PI, 0, 0], hipsPos: [0, 0.25 + arc, 0.5 + 0.45 * land], spine: [0.15, 0, 0], thighL: [-0.4, 0, 0.1], thighR: [-0.3, 0, -0.1], shinL: [0.5, 0, 0], shinR: [0.4, 0, 0] })],
+    [hit + (dur - hit) * 0.45, end],
+    [dur, lying(Object.assign(pose0(), {}), 0.5, land)],
+  ].map(([t, p], i, a) => (i === a.length - 1 ? [t, Object.assign(p, { hips: [p.hips[0] + T2, p.hips[1], p.hips[2]] })] : [t, p]));
+}
+/** The foot sweep's thrown man: his leading foot swept out from under him, he goes over backwards. */
+function sweptKeys(dur, hit, land) {
+  const k = (o) => Object.assign(clinchPose(pose0()), o);
+  return [
+    [0, clinchPose(pose0())],
+    [hit, k({ thighR: [-0.9, 0, -0.2], shinR: [0.1, 0, 0], hips: [-0.3, 0, 0], hipsPos: [0, -0.05, 0], spine: [-0.1, 0, 0], head: [0.3, 0, 0] })],
+    [hit + 0.25, k({ thighR: [-1.2, 0, -0.2], thighL: [-0.6, 0, 0.1], shinL: [0.6, 0, 0], hips: [-1.0, 0, 0], hipsPos: [0, -0.45, land * 0.6], head: [0.6, 0, 0] })],
+    [dur, lying(pose0(), 0, land)],
+  ];
+}
+function sweepKeys(dur, hit) {
+  const k = (o) => Object.assign(clinchPose(pose0()), o);
+  return [
+    [0, clinchPose(pose0())],
+    [hit * 0.6, k({ thighL: [-0.3, 0, -0.1], shinL: [0.3, 0, 0], footL: [0.3, 0, 0], hipsPos: [0, -0.06, 0.05] })],
+    [hit, k({ thighL: [-0.55, 0, -0.45], shinL: [0.1, 0, 0], footL: [0.5, 0, 0], chest: [0.1, 0.4, 0], lT: [0.12, 1.2, 0.45], rT: [-0.05, 1.15, 0.42], hipsPos: [0, -0.08, 0.05] })],
+    [dur, G()],
+  ];
+}
+const KNOCK_K = (() => {
+  const back = -0.55;
+  return [
+    [0, G()],
+    [0.2, Object.assign(G(), { head: [0.5, 0.2, 0], chest: [-0.25, 0, 0], hipsPos: [0, -0.15, -0.08] })],
+    [0.55, Object.assign(G(), { hips: [-0.9, 0, 0], hipsPos: [0, -0.62, -0.3], thighL: [-0.9, 0, 0.1], thighR: [-0.9, 0, -0.1], shinL: [1.2, 0, 0], shinR: [1.2, 0, 0], head: [0.3, 0, 0], lT: [0.3, 0.9, -0.1], rT: [-0.3, 0.9, -0.1] })],
+    [1.0, lying(pose0(), 0, back)],
+  ];
+})();
+const GETUP_K = [
+  [0, lying(pose0())],
+  [0.35, Object.assign(lying(pose0()), { hips: [-0.7, 0, 0], hipsPos: [0, -0.68, 0], spine: [0.5, 0, 0], head: [0, 0, 0], thighR: [-1.2, 0, -0.1], shinR: [2.0, 0, 0], lT: [0.3, 0.9, -0.15] })],
+  [0.8, (() => {
+    const p = droneKneel(pose0(), 1);
+    fistsFree(p);
+    p.lT = [0.12, 1.25, 0.3]; p.rT = [-0.12, 1.25, 0.25];
+    return p;
+  })()],
+  [1.3, G()],
+];
+/** The hand-to-hand clips: [duration, pose(t, u)]. */
+const MELEE_CLIPS = {
+  guard: [1.2, (t, u) => boxGuard(pose0(), TAU * u)],
+  fistsUp: [0.5, (t) => lerpPose(handsFree(fistsFree(stance(pose0()))), G(), sm01(t / 0.5))],
+  jab: [MELEE.jab.dur, strike(0.02, MELEE.jab.hit, MELEE.jab.hit + 0.04, MELEE.jab.dur, (p, e) => {
+    p.lT = lerpA(p.lT, [0.04, 1.5, 0.66], e); p.spine[1] -= 0.12 * e; p.hipsPos[2] += 0.06 * e; p.lPole = [1, -0.6, -0.1];
+  })],
+  cross: [MELEE.cross.dur, strike(0.04, MELEE.cross.hit, MELEE.cross.hit + 0.05, MELEE.cross.dur, (p, e) => {
+    p.rT = lerpA(p.rT, [-0.02, 1.5, 0.62], e); p.spine[1] += 0.5 * e; p.chest[1] += 0.25 * e; p.footR[1] = 0.4 * e; p.hipsPos[2] += 0.06 * e;
+  })],
+  hook: [MELEE.hook.dur, (t) => {
+    const p = G(), w = env(t, 0, 0.12, 0.14, 0.24), e = env(t, 0.12, MELEE.hook.hit, MELEE.hook.hit + 0.04, MELEE.hook.dur);
+    p.rT = lerpA(lerpA(p.rT, [-0.4, 1.48, 0.22], w), [0.08, 1.5, 0.42], e);
+    p.rPole = lerpA(p.rPole, [-1, 0.5, -0.2], Math.max(w, e)); p.spine[1] += 0.65 * e - 0.15 * w; p.chest[1] += 0.2 * e;
+    return p;
+  }],
+  uppercut: [MELEE.uppercut.dur, (t) => {
+    const p = G(), dip = env(t, 0, 0.12, 0.15, 0.3), e = env(t, 0.15, MELEE.uppercut.hit, MELEE.uppercut.hit + 0.04, MELEE.uppercut.dur);
+    p.rT = lerpA(lerpA(p.rT, [-0.12, 1.12, 0.26], dip), [-0.03, 1.64, 0.42], e);
+    p.hipsPos[1] += -0.1 * dip + 0.05 * e; p.spine[0] -= 0.15 * e; p.spine[1] += 0.35 * e; p.rPole = [-1, -1, 0.2];
+    return p;
+  }],
+  frontKick: [MELEE.frontKick.dur, (t) => {
+    const p = G(), c = env(t, 0.04, 0.2, 0.42, 0.62), x = env(t, 0.2, MELEE.frontKick.hit, MELEE.frontKick.hit + 0.06, 0.5);
+    p.thighR = [0.3 - 1.85 * c, 0, -0.08]; p.shinR = [0.35 + 1.6 * c - 1.75 * x, 0, 0]; p.footR = [-0.65 + 0.9 * c, 0, 0];
+    p.thighL = [-0.25, 0, 0.08]; p.shinL = [0.35, 0, 0]; p.footL = [-0.1, 0, 0]; p.spine[0] -= 0.25 * c; p.hipsPos[2] -= 0.05 * c;
+    return p;
+  }],
+  roundKick: [MELEE.roundKick.dur, (t) => {
+    const p = G(), c = env(t, 0.05, 0.25, 0.5, 0.75), x = env(t, 0.25, MELEE.roundKick.hit, MELEE.roundKick.hit + 0.06, 0.6);
+    p.hips = [0, 1.0 * c, 0]; p.spine[1] -= 0.6 * c; p.spine[2] = 0.35 * c;
+    p.thighR = [0.3 - 0.8 * c, 0, -0.12 - 1.25 * c]; p.shinR = [0.35 + 1.5 * c - 1.65 * x, 0, 0]; p.footR = [-0.65 + 0.8 * c, 0, 0];
+    p.thighL = [-0.25, 0, 0.1]; p.shinL = [0.35, 0, 0]; p.footL = [-0.1, 0, 0];
+    return p;
+  }],
+  lowKick: [MELEE.lowKick.dur, (t) => {
+    const p = G(), c = env(t, 0.04, MELEE.lowKick.hit, MELEE.lowKick.hit + 0.05, MELEE.lowKick.dur);
+    p.hips = [0, 0.55 * c, 0]; p.spine[1] -= 0.35 * c;
+    p.thighR = [0.3 - 0.7 * c, 0, -0.12 - 0.55 * c]; p.shinR = [0.35 - 0.15 * c, 0, 0]; p.footR = [-0.65 + 0.5 * c, 0, 0];
+    return p;
+  }],
+  block: [MELEE.block.dur, strike(0, 0.12, 0.42, MELEE.block.dur, (p, e) => {
+    p.lT = lerpA(p.lT, [0.09, 1.68, 0.22], e); p.rT = lerpA(p.rT, [-0.09, 1.68, 0.2], e); p.head[0] += 0.2 * e;
+    p.lPole = lerpA(p.lPole, [1, -0.3, 0.6], e); p.rPole = lerpA(p.rPole, [-1, -0.3, 0.6], e);
+  })],
+  slip: [MELEE.slip.dur, strike(0, 0.12, 0.3, MELEE.slip.dur, (p, e) => {
+    p.hipsPos[1] -= 0.14 * e; p.spine[2] = 0.3 * e; p.spine[0] += 0.15 * e; p.thighL[0] -= 0.2 * e; p.thighR[0] -= 0.2 * e; p.shinL[0] += 0.3 * e; p.shinR[0] += 0.3 * e;
+  })],
+  clinch: [MELEE.clinch.dur, (t, u) => clinchPose(pose0(), TAU * u)],
+  clinch_d: [MELEE.clinch.dur, (t, u) => clinchPose(pose0(), TAU * u + 1)],
+  hipThrow: [MELEE.hipThrow.dur, (t) => keyed(throwKeys(MELEE.hipThrow.dur, 0, MELEE.hipThrow.hit), t)],
+  hipThrow_d: [MELEE.hipThrow.dur, (t) => keyed(thrownKeys(MELEE.hipThrow.dur, 0.1, MELEE.hipThrow.hit, MELEE.hipThrow.land), t)],
+  shoulderThrow: [MELEE.shoulderThrow.dur, (t) => keyed(throwKeys(MELEE.shoulderThrow.dur, 0.25, MELEE.shoulderThrow.hit), t)],
+  shoulderThrow_d: [MELEE.shoulderThrow.dur, (t) => keyed(thrownKeys(MELEE.shoulderThrow.dur, 0.3, MELEE.shoulderThrow.hit, MELEE.shoulderThrow.land), t)],
+  footSweep: [MELEE.footSweep.dur, (t) => keyed(sweepKeys(MELEE.footSweep.dur, MELEE.footSweep.hit), t)],
+  footSweep_d: [MELEE.footSweep.dur, (t) => keyed(sweptKeys(MELEE.footSweep.dur, MELEE.footSweep.hit, MELEE.footSweep.land), t)],
+  hitHead: [REACT.hitHead.dur, strike(0, 0.06, 0.12, REACT.hitHead.dur, (p, e) => {
+    p.head[0] += 0.5 * e; p.head[1] += 0.3 * e; p.neck[0] += 0.15 * e; p.chest[0] -= 0.15 * e; p.hipsPos[2] -= 0.06 * e; p.lT[1] -= 0.1 * e;
+  })],
+  hitBody: [REACT.hitBody.dur, strike(0, 0.08, 0.22, REACT.hitBody.dur, (p, e) => {
+    p.spine[0] += 0.5 * e; p.head[0] -= 0.2 * e; p.hipsPos[2] -= 0.08 * e; p.lT = lerpA(p.lT, [0.08, 1.2, 0.25], e); p.rT = lerpA(p.rT, [-0.08, 1.2, 0.24], e);
+  })],
+  knockDown: [REACT.knockDown.dur, (t) => keyed(KNOCK_K, t)],
+  downed: [2.6, (t, u) => lying(pose0(), TAU * u)],
+  getUp: [REACT.getUp.dur, (t) => keyed(GETUP_K, t)],
+};
+export const MELEE_CLIP = Object.fromEntries(Object.keys(MELEE_CLIPS).map((k) => [k, 1]));
+const MELEE_LOOP = { guard: 1, clinch: 1, clinch_d: 1, downed: 1 };
+const MELEE_ONCE = Object.fromEntries(Object.keys(MELEE_CLIPS).filter((k) => !MELEE_LOOP[k]).map((k) => [k, 1]));
+const MELEE_LABELS = {
+  guard: 'Guard (boxing)', fistsUp: 'Fists up', ...Object.fromEntries(Object.entries(MELEE).map(([k, v]) => [k, v.label])),
+  ...Object.fromEntries(Object.entries(REACT).map(([k, v]) => [k, v.label])), downed: 'Down (on his back)',
+  clinch_d: 'Clinch (held)', hipThrow_d: 'Hip throw (thrown)', shoulderThrow_d: 'Shoulder throw (thrown)', footSweep_d: 'Foot sweep (swept)',
+};
+/** Unarmed (weapon 'fists'): what each clip becomes (the rest: the empty-handed versions). */
+const FIST_AS = { aim: 'guard', shoot: 'guard', crouchAim: 'guard', crouchShoot: 'guard', knifeReady: 'guard', stab: 'jab', flame: 'guard', reload: 'guard', idle: 'guard', proneShoot: 'proneAim' };
+
 const CLIPS = {
   idle: [2.4, (t, u) => {
     const p = pose0(), f = TAU * u;
@@ -1316,10 +1508,12 @@ const CLIPS = {
   ...Object.fromEntries(Object.keys(PK_KEYS).map((k) => [k, [PK_MOVES[k].dur, pkClip(k, PK_KEYS[k])]])),
   // combat rolls (ai/evade.js ROLLS: their durations and root paths)
   ...Object.fromEntries(Object.keys(RL_KEYS).map((k) => [k, [ROLLS[k].dur, rlClip(k, RL_KEYS[k])]])),
+  // hand-to-hand (ai/melee.js): the guard, strikes, kicks, defence, the clinch and throws (pairs), down and up again
+  ...MELEE_CLIPS,
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
@@ -1328,12 +1522,12 @@ export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stair
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
   throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
-  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire' };
+  woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS };
 export { PARKOUR, ROLL };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
-const NO_UNARMED = { woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
+const NO_UNARMED = { ...MELEE_CLIP, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
 const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
@@ -1524,7 +1718,7 @@ function pistolReload(t) {
 }
 const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
-const NO_STYLE = { ...CASUALTY, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
+const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
@@ -2221,7 +2415,8 @@ export class OperatorFigure {
   constructor(A, { zones = true, loadout = 'rifle' } = {}) {
     this.A = A;
     this.loadout = loadout;
-    this.weapon = loadout === 'torch' ? 'torch' : 'primary';
+    // (unarmed: no weapon at all, fists up: hand-to-hand, ai/melee.js)
+    this.weapon = loadout === 'torch' ? 'torch' : loadout === 'unarmed' ? 'fists' : 'primary';
     // the primary (setPrimary): the rifle, a shotgun, a pistol, the MG; the clips held its way (restyle)
     this.primaryKind = loadout === 'torch' ? 'torch' : 'rifle';
     this.styleKind = 'rifle';
@@ -2449,6 +2644,10 @@ export class OperatorFigure {
       else if (was === 'rappelEnd' && this.weapon === 'primary' && this.parts.rifle.parent === this.bones.weapon) this.play('drawRifle', { fade: 0.1 });
       else this.play(this.resume || 'idle', { fade: 0.2 });
     });
+    if (loadout === 'unarmed') {
+      // no rifle, no carbine: nothing but his hands
+      rifle.visible = mag.visible = this.sling.visible = sec.visible = false;
+    }
     if (PRIMARY_MESH[loadout]) this.setPrimary(loadout);
     else this.restyle();
     this.play('idle', { fade: 0 });
@@ -2459,6 +2658,11 @@ export class OperatorFigure {
    */
   clipName(name) {
     if (NO_UNARMED[name]) return name;
+    if (this.weapon === 'fists') {
+      // fists up: the guard for the aimed clips, the hand-to-hand clips themselves, else empty-handed
+      const n = FIST_AS[name] ?? KNIFE_AS[name] ?? name;
+      return NO_UNARMED[n] ? n : n + '_k';
+    }
     if (this.weapon === 'knife' || this.weapon === 'none') {
       const n = KNIFE_AS[name] ?? name;
       return NO_UNARMED[n] ? n : n + '_k';
@@ -2559,10 +2763,11 @@ export class OperatorFigure {
    */
   switchWeapon(to) {
     const want = to === 'rifle' || to === 'primary' ? 'primary' : to;
-    const draw = { primary: 'drawRifle', secondary: 'drawSecondary', knife: 'drawKnife' }[want];
+    const draw = { primary: 'drawRifle', secondary: 'drawSecondary', knife: 'drawKnife', fists: 'fistsUp' }[want];
     const P = this.parts, W = this.bones.weapon;
     if (!draw || this.shown === 'die' || this.loadout === 'torch' || want === this.weapon) return 0;
-    if (P[want === 'primary' ? 'rifle' : want].userData.pivot) return 0;
+    if (this.loadout === 'unarmed' && want !== 'fists') return 0;
+    if (want !== 'fists' && P[want === 'primary' ? 'rifle' : want].userData.pivot) return 0;
     const put = this.weapon === 'knife' ? 'sheathKnife'
       : this.weapon === 'secondary' && P.secondary.parent === W ? 'holsterSecondary'
       : this.weapon === 'primary' && this.armed && P.rifle.parent === W ? 'holsterRifle' : null;
@@ -2613,6 +2818,14 @@ export class OperatorFigure {
         return name;
       case 'sheathKnife':
         return this.weapon === 'knife' ? name : null;
+      case 'fistsUp':
+        // hand-to-hand: the carbine back over the shoulder, the rifle on his back
+        if (P.secondary.parent === W) {
+          this.stowSecondary();
+          this.unstowRifle();
+        }
+        this.weapon = 'fists';
+        return name;
     }
     return name;
   }
@@ -2682,6 +2895,7 @@ export class OperatorFigure {
     if (this.loadout === 'torch') return 'torch';
     if (this.weapon === 'secondary') return 'carbine';
     if (this.weapon === 'knife' || this.weapon === 'none') return this.weapon;
+    if (this.weapon === 'fists') return 'unarmed';
     return this.primaryKind;
   }
   /** May he do act (a clip name: a roll, crawl, a parkour move...) with the weapon in his hands? (ai/weapons.js) */
@@ -2718,7 +2932,7 @@ export class OperatorFigure {
   /** The clips held the way the weapon in his hands is (WEAPON_STYLE), when that changes. */
   restyle() {
     const k = this.handling;
-    if (k === 'knife' || k === 'none') return; // (the knife and empty-handed clips are their own)
+    if (k === 'knife' || k === 'none' || k === 'unarmed') return; // (the knife, empty-handed and hand-to-hand clips are their own)
     const kind = WEAPON_STYLE[k] !== undefined ? k : 'rifle';
     if (kind === this.styleKind && this.bakedKey) return;
     this.styleKind = kind;
@@ -2965,7 +3179,7 @@ export class OperatorFigure {
     else if (a && this.shown === 'sheathKnife') inHand = a.time < KNIFE_T.release;
     this.holdKnife(inHand);
     // the rifle's sling goes with the rifle (not with the carbine on the weapon bone)
-    if (this.loadout !== 'torch') this.sling.visible = this.parts.rifle.parent === this.bones.weapon;
+    if (this.loadout !== 'torch' && this.loadout !== 'unarmed') this.sling.visible = this.parts.rifle.parent === this.bones.weapon;
     const roped = this.shown === 'rappel' || this.shown === 'rappelStart' || (this.shown === 'rappelEnd' && a && a.time < 1.0);
     this.rope.visible = !!roped;
     if (roped) this.updateRope();

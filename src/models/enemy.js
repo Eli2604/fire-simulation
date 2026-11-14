@@ -26,7 +26,7 @@ export default {
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
     fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode' },
     // what they carry (ai/weapons.js: grips, carry, aim, and what each allows); mixed: every third a shotgun, the next a pistol
-    weapon: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed'], label: 'Weapon' },
+    weapon: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Weapon (unarmed: they fight hand-to-hand)' },
   },
   build(p, { rng }) {
     const enemies = [];

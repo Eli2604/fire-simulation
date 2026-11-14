@@ -84,11 +84,19 @@ export const HANDLING = {
     moves: { roll: false, diveProne: false, climbJump: 1.15, mantle: 1.1 },
   },
   knife: { label: 'Knife', gun: null, mass: 0.3, hands: 1, grip: 'Right hand, blade forward', carry: 'low at the side', aim: 'fighting stance', fire: 'stab', moves: { sprint: 1.03 } },
+  // no weapon at all (or out of ammunition, the knife gone): fists and feet, boxing and judo
+  // (ai/melee.js); the lightest and the most agile: every move, a little quicker
+  unarmed: {
+    label: 'Unarmed (hand-to-hand)', gun: null, mass: 0, hands: 0,
+    grip: 'Fists up: a boxing guard, the left hand forward, the right by the chin',
+    carry: 'guard, light on the feet', aim: 'guard', fire: 'punches, kicks, throws',
+    moves: { sprint: 1.06, vault: 0.9, climbJump: 0.92, mantle: 0.9, crawl: 1.1 },
+  },
   none: { label: 'Empty-handed', gun: null, mass: 0, hands: 0, grip: 'Hands free', carry: '', aim: '', fire: '', moves: { sprint: 1.03 } },
 };
 export const WEAPON_KINDS = Object.keys(HANDLING);
-/** The weapons a soldier can carry as his primary (the rig stage's select; the models' options). */
-export const PRIMARIES = ['rifle', 'shotgun', 'pistol', 'mg', 'torch'];
+/** The weapons a soldier can carry as his primary (the rig stage's select; the models' options): 'unarmed', none at all. */
+export const PRIMARIES = ['rifle', 'shotgun', 'pistol', 'mg', 'torch', 'unarmed'];
 
 const prof = (kind) => HANDLING[kind] ?? HANDLING.rifle;
 const rule = (kind, act) => {
@@ -108,6 +116,7 @@ export function handKind(m = {}) {
   if (m.weapon === 'torch' || m.loadout === 'torch') return 'torch';
   if (m.weapon === 'secondary') return 'carbine';
   if (m.weapon === 'knife') return 'knife';
+  if (m.weapon === 'fists' || m.loadout === 'unarmed') return 'unarmed';
   if (m.weapon === 'none') return 'none';
   if (m.primary && HANDLING[m.primary]) return m.primary;
   if (m.loadout && HANDLING[m.loadout]) return m.loadout;

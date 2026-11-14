@@ -19,6 +19,7 @@
  *    being hit), someone throws a grenade that way and shouts it ("Frag out!").
  */
 import { recoilSpec } from './recoil.js';
+import { FIGHT_D, pickMelee, startMelee, resolveMelee, applyMelee, defendAgainst } from './melee.js';
 
 /** Expertise: scatter (x a regular's), reload and weapon-switch time (x), reaction (x). */
 // (control: how long he takes to bring the muzzle back down after a round, x a regular's: ai/recoil.js)
@@ -52,7 +53,8 @@ export function kit(m) {
   if (m.kitted) return;
   m.kitted = true;
   m.skill = SKILL[m.skill] ? m.skill : 'regular';
-  m.weapon = m.loadout === 'torch' ? 'torch' : 'rifle';
+  // (unarmed: no weapon at all, he fights hand-to-hand: ai/melee.js)
+  m.weapon = m.loadout === 'torch' ? 'torch' : m.loadout === 'unarmed' ? 'fists' : 'rifle';
   // his primary: the gunner's MG, else what his loadout says (a shotgun, a pistol), else a rifle
   m.primary = m.squad === 'MG' ? 'mg' : m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle';
   const A = ARMS[m.primary];
@@ -62,6 +64,7 @@ export function kit(m) {
   m.secMags ??= ARMS.secondary.mags;
   m.armour ??= false;
   m.helmet ??= !!m.armour; // the helmet comes with the armour kit
+  if (m.loadout === 'unarmed') m.mag = m.mags = m.secMag = m.secMags = 0;
 }
 
 export const skillOf = (m) => SKILL[m.skill] ?? SKILL.regular;
@@ -114,7 +117,7 @@ function current(m) {
 
 /** Can he fire a round now? (a round in the magazine, the gun in his hands) */
 export function canShoot(m) {
-  if (m.weapon === 'knife' || m.weapon === 'torch' || m.switching) return false;
+  if (m.weapon === 'knife' || m.weapon === 'torch' || m.weapon === 'fists' || m.switching) return false;
   return m[current(m).mag] > 0;
 }
 
@@ -125,7 +128,7 @@ export function spend(m) {
 }
 
 /** The weapon kind for sim/wounds.js. */
-export const weaponKind = (m) => (m.weapon === 'secondary' ? 'carbine' : m.weapon === 'knife' ? 'knife' : ARMS[m.primary ?? 'rifle'].kind);
+export const weaponKind = (m) => (m.weapon === 'secondary' ? 'carbine' : m.weapon === 'knife' ? 'knife' : m.weapon === 'fists' ? 'fist' : ARMS[m.primary ?? 'rifle'].kind);
 
 /**
  * Each step for each member (not busy with another one-shot animation): reloading, running
@@ -155,6 +158,9 @@ export function manage(sq, m, dt, enemies) {
     const d = Math.hypot(h.p[0] - m.p[0], h.p[2] - m.p[2]);
     if (Math.abs((h.p[1] ?? 0) - m.p[1]) < 1.5 && d < nd) (nd = d), (near = h);
   }
+  // no weapon (unarmed, or dry with the knife gone): fists, feet and throws (ai/melee.js)
+  if (m.weapon !== 'fists' && m.noKnife && m.dry && near && nd < CLEAR) m.weapon = 'fists';
+  if (m.weapon === 'fists') return near && nd < HAND_RANGE ? handFight(sq, m, near, nd, dt) : false;
   if (near && nd < CLOSE && m.weapon !== 'knife' && !m.crawling && !(m.wounds?.armR)) {
     switchTo(sq, m, 'knife');
     return true;
@@ -205,6 +211,61 @@ export function switchTo(sq, m, to) {
   m.switching = { to, from: m.weapon, until: sq.time + dur };
   m.reloadUntil = 0;
   sq.setAnim(m, to === 'knife' ? 'drawKnife' : to === 'secondary' ? 'drawSecondary' : m.weapon === 'knife' ? 'sheathKnife' : 'drawRifle', dur);
+}
+
+/** An unarmed man takes on an enemy within this (m). */
+export const HAND_RANGE = 9;
+/**
+ * Hand-to-hand (ai/melee.js): close in to fighting distance, then strikes, the clinch and throws
+ * picked by the distance and the state of his man; a move lands at its time if he is still in
+ * reach (host.melee(m, h, result), else applied to h itself); he blocks or slips what comes his way.
+ */
+function handFight(sq, m, h, d, dt) {
+  const t = sq.time;
+  sq.face(m, h.p, dt, 8);
+  if (m.meleeAt != null) {
+    if (t >= m.meleeAt) {
+      const kind = m.meleeKind;
+      m.meleeAt = null;
+      const dd = Math.hypot(h.p[0] - m.p[0], h.p[2] - m.p[2]);
+      const res = resolveMelee(m, h, kind, dd, { now: t });
+      m.lastMelee = res;
+      if (res.hit) {
+        if (sq.host.melee) sq.host.melee(m, h, res);
+        else applyMelee(h, res, t, m);
+      }
+    }
+    return true;
+  }
+  if (sq.busy(m)) return true;
+  // what is coming his way: a block or a slip
+  const def = defendAgainst(m, h, t, Math.random, skillOf(m).react);
+  if (def) {
+    startMelee(m, def, t);
+    return true;
+  }
+  if (d > 1.45) {
+    // close in to fighting distance, fast
+    const ux = (h.p[0] - m.p[0]) / d, uz = (h.p[2] - m.p[2]) / d;
+    m.path = [[h.p[0] - ux * FIGHT_D, m.p[1], h.p[2] - uz * FIGHT_D]];
+    m.pathI = 0;
+    m.moveMode = 'run';
+    m.then = null;
+    m.clinchedBy = null;
+    return false; // the squad's move() takes him there
+  }
+  m.path = null;
+  m.meleeCd = (m.meleeCd ?? 0) - dt;
+  if (m.meleeCd <= 0) {
+    const k = pickMelee(m, h, d, { now: t });
+    if (k) {
+      startMelee(m, k, t);
+      m.meleeCd = 0.2 * skillOf(m).react;
+      return true;
+    }
+  }
+  if (!sq.busy(m)) sq.setAnim(m, 'guard');
+  return true;
 }
 
 /** With the knife: close in, stab when in reach. */

@@ -3,6 +3,7 @@
  * scene object opens (editor.js: "Rig the …" and R in Edit world). No three.js here: the tests
  * use it as it is.
  */
+import { MELEE, REACT, PAIR_D } from '../ai/melee.js';
 
 /** The rig's objects, in the drop-down's order. */
 export const RIG_OBJECTS = [
@@ -111,6 +112,25 @@ export const CASUALTY_ACTS = {
   coverFire: { label: 'Cover fire' },
 };
 
+/* ---------- hand-to-hand acts (soldier and squad): boxing and judo (ai/melee.js) ---------- */
+/**
+ * The hand-to-hand acts on the rig stage: a strike with a sparring partner d m in front of him
+ * who takes it (react, at the strike's hit time 'at'); a throw or the clinch with the partner in
+ * the other half of the pair (partner: '<move>_d'); a block or a slip against the partner's punch
+ * (partner: his strike); the rest (the guard, being hit, down, getting up) on his own.
+ */
+export const MELEE_ACTS = (() => {
+  const A = { guard: { label: 'Guard (boxing)' }, fistsUp: { label: 'Fists up' } };
+  for (const [k, M] of Object.entries(MELEE)) {
+    const d = M.reach ? (M.kind === 'strike' ? (M.reach[0] + M.reach[1]) / 2 : PAIR_D) : 0.8;
+    if (M.kind === 'strike') A[k] = { label: M.label, d, react: M.zone === 'head' ? 'hitHead' : 'hitBody', at: M.hit };
+    else if (M.kind === 'defend') A[k] = { label: M.label, d, partner: k === 'block' ? 'cross' : 'jab' };
+    else A[k] = { label: M.label, d, partner: k + '_d' };
+  }
+  for (const [k, R] of Object.entries(REACT)) A[k] = { label: R.label };
+  A.downed = { label: 'Down (on his back)' };
+  return A;
+})();
 /** The obstacle height for an act: h (or its default) kept within the act's range. */
 export function parkourHeight(act, h) {
   const a = PARKOUR_ACTS[act];

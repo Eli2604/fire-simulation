@@ -819,7 +819,7 @@ export class EnemyAI {
    */
   fireAt(e, pl, dt) {
     const w = this.world;
-    if (e.canFire === false || e.dead || ['lure', 'flee'].includes(e.state)) return false;
+    if (e.canFire === false || e.dead || e.loadout === 'unarmed' || e.weapon === 'fists' || ['lure', 'flee'].includes(e.state)) return false; // (unarmed: no gun to fire, ai/melee.js)
     const d = Math.hypot(pl.head[0] - e.p[0], pl.head[2] - e.p[2]);
     if (d > 28) return false;
     e.yaw = Math.atan2(pl.p[0] - e.p[0], pl.p[2] - e.p[2]);

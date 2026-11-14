@@ -18,7 +18,7 @@ export default {
     unit: { value: 'Alpha', options: ['Alpha', 'Bravo', 'Charlie'], label: 'Team call sign' },
     flameTrooper: { value: false, label: 'Rifleman two carries a flame gun' },
     // the riflemen's primary (ai/weapons.js: each its grips, carry, aim, and what it allows: no roll with the flame gun...)
-    riflemen: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed'], label: 'Riflemen carry (mixed: rifleman one a shotgun, the commander a pistol)' },
+    riflemen: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Riflemen carry (mixed: rifleman one a shotgun, the commander a pistol; unarmed: hand-to-hand)' },
     droneOperator: { value: false, label: 'A drone operator (deploys a drone from his backpack)' },
     level: { value: 0, min: 0, max: 20, step: 0.1, label: 'Floor height (m)' },
     skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Expertise (mixed: a veteran commander, regulars, a recruit)' },

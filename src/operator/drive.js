@@ -9,8 +9,8 @@ import { recoilOf, skillOf } from '../ai/soldier.js';
  * Used by the simulation's renderer (render/enemies.js) and the character rig (rig/stage.js).
  * st keeps what was shown last ({ animT, weapon, armour }).
  */
-const SWITCHES = new Set(['drawKnife', 'drawRifle', 'sheathKnife', 'drawSecondary', 'holsterRifle', 'holsterSecondary']);
-const FIG_WEAPON = { rifle: 'rifle', secondary: 'secondary', knife: 'knife' };
+const SWITCHES = new Set(['drawKnife', 'drawRifle', 'sheathKnife', 'drawSecondary', 'holsterRifle', 'holsterSecondary', 'fistsUp']);
+const FIG_WEAPON = { rifle: 'rifle', secondary: 'secondary', knife: 'knife', fists: 'fists' };
 
 export function driveFromAI(f, d, st) {
   if (d.dead) {
@@ -27,7 +27,7 @@ export function driveFromAI(f, d, st) {
   // the clips held its way (ai/weapons.js, operator/rig.js WEAPON_STYLE)
   if (f.setPrimary && d.primary) f.setPrimary(d.primary);
   // his weapon's recoil (ai/recoil.js): the firing clips baked for it, his control of it
-  if (f.setRecoil && d.weapon !== 'knife' && d.weapon !== 'torch') f.setRecoil(recoilOf(d), skillOf(d).control);
+  if (f.setRecoil && d.weapon !== 'knife' && d.weapon !== 'torch' && d.weapon !== 'fists') f.setRecoil(recoilOf(d), skillOf(d).control);
   // the weapon: a switch the AI started, or catching up with what he has
   const want = d.switching?.to ?? d.weapon;
   if (want && FIG_WEAPON[want] && st.weapon !== want && f.switchWeapon) {

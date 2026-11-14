@@ -42,6 +42,7 @@ export const WEAPONS = {
   shotgun: { dmg: 1.5, pen: 0.02, penHelmet: 0.15, bleed: 1.3 }, // 12 gauge buckshot: hard close in, no use against plates
   pistol: { dmg: 0.65, pen: 0.03, penHelmet: 0.35, bleed: 0.85 }, // 9 mm from a pistol
   knife: { dmg: 0.75, pen: 0, penHelmet: 0, bleed: 1.7 },
+  fist: { dmg: 0.2, pen: 0, penHelmet: 0, bleed: 0.1 }, // hand-to-hand (ai/melee.js): bruises, no bleeding to speak of
   fragment: { dmg: 0.5, pen: 0.1, penHelmet: 0.25, bleed: 1 },
   arrow: { dmg: 1, pen: 0.05, penHelmet: 0.2, bleed: 1.2 },
 };

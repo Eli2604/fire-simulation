@@ -13,6 +13,7 @@ import { shoot, WEAPONS } from '../sim/wounds.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
 import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
 import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
+import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -33,6 +34,7 @@ const AIR_LITRES = 2040;
  * air round you, smoke and heat and all, and it stings your eyes; on, the cylinder again).
  * 7 (or Q, to swap to it and back) is the rifle: hold the right mouse button to bring it up
  * to your eye, looking along its sight, the view zoomed in a little.
+ * Hand-to-hand (ai/melee.js): G punches, V kicks, B throws the man in front of you.
  *
  * The mask view shows the remaining air (consumption depends on effort and
  * heat), the gas temperature at your face, a rough visibility estimate and
@@ -176,6 +178,8 @@ export class Walkthrough {
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
       if (e.code === 'KeyF') this.strike();
+      // hand-to-hand (ai/melee.js): G punch, V kick, B throw
+      if (!e.repeat && (e.code === 'KeyG' || e.code === 'KeyV' || e.code === 'KeyB') && !this.crawl && !this.swimming && !this.downed) this.melee({ KeyG: 'punch', KeyV: 'kick', KeyB: 'throw' }[e.code]);
       // Space by a low wall, a ledge or a drop ahead: over it, up onto it, down off it
       if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.downed) this.parkour();
       // a direction key tapped twice quickly: a combat roll that way (A / D sideways, W forward;
@@ -410,6 +414,45 @@ export class Walkthrough {
       w.noises.push({ p: hit.point, loud: 8, time: w.time, kind: 'strike' });
       this.sound.door?.();
     }
+  }
+
+  /**
+   * Hand-to-hand (ai/melee.js), as the soldiers fight: what ('punch', 'kick', 'throw') at the
+   * nearest man in front of you within reach: punches (a jab and a cross, close in a hook or an
+   * uppercut), kicks (front or roundhouse, close in a low kick), throws (hip or shoulder throw
+   * close in, a foot sweep a little further out). The move he would make at that distance; out of
+   * its reach it misses. Returns the result (or null: nobody there).
+   */
+  melee(what) {
+    const sim = this.hooks.getSim();
+    const w = sim?.world;
+    if (!w || this.flight || (this.meleeCd ?? 0) > w.time) return null;
+    const fwd = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    let best = null, bd = 1.8;
+    for (const e of w.enemies ?? []) {
+      if (e.dead) continue;
+      const dx = e.p[0] - this.pos.x, dz = e.p[2] - this.pos.z, d = Math.hypot(dx, dz);
+      if (Math.abs(e.p[1] - this.pos.y) > 1.2 || d >= bd || (dx * fwd[0] + dz * fwd[1]) / (d || 1) < 0.5) continue;
+      best = e;
+      bd = d;
+    }
+    const n = (this.meleeN = (this.meleeN ?? 0) + 1);
+    const kind = playerMove(what, bd, n);
+    this.meleeCd = w.time + MELEE[kind].dur;
+    this.arm = { mode: 'swing', t: 0 };
+    if (!best) return null;
+    const me = { p: [this.pos.x, this.pos.y, this.pos.z], yaw: Math.atan2(fwd[0], fwd[1]) };
+    const res = resolveMelee(me, best, kind, bd, { now: w.time });
+    if (res.hit) {
+      // the damage through the guard AI (its death, its alarm), the daze and the fall here
+      if (sim.ai?.damage && res.dmg) sim.ai.damage(best, res.dmg);
+      applyMelee(best, { ...res, dmg: sim.ai?.damage ? 0 : res.dmg }, w.time, me);
+      w.noises.push({ p: best.p.slice(), loud: 6, time: w.time, kind: 'strike' });
+      this.sound.door?.();
+    }
+    const label = MELEE[kind].label;
+    this.say(res.hit ? `${label}${res.blocked ? ' – blocked' : res.down ? ' – he goes down' : ''}` : `${label} – ${res.why || 'missed'}`, 1.2);
+    return res;
   }
 
   /** O: flood the room you are in with inert gas. */
@@ -1449,8 +1492,8 @@ export class Walkthrough {
       // what hit you matters as much as where (sim/wounds.js WEAPONS)
       const dmg = ({ head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20) * (WEAPONS[hit.weapon ?? 'rifle']?.dmg ?? 1);
       this.hurt(dmg);
-      if (hit.zone === 'head') this.damageMask(0.35, 0.5, 0.4);
-      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : `You are hit – ${hit.zone}!`, 2);
+      if (hit.zone === 'head' && hit.weapon !== 'fist') this.damageMask(0.35, 0.5, 0.4);
+      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : hit.weapon === 'fist' ? (hit.down ? 'Thrown – you hit the ground' : `Struck – ${hit.zone}!`) : `You are hit – ${hit.zone}!`, 2);
     }
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
     if (this.lampOn && !this.downed) {
