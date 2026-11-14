@@ -16,6 +16,13 @@
  *  - Grenades: a covering rifleman throws one at the threat when it is in range.
  *  - A soldier who lost his rifle (unarmed) runs to it, picks it up and carries on.
  *  - Both legs hit: they crawl, and fire lying down.
+ *  - Parkour (ai/parkour.js): the grid knows where a low wall can be vaulted, a ledge climbed
+ *    (jump climb, or a mantle from a standstill) and a drop jumped down (with a roll when it is
+ *    deep): links between cells that cost what the move takes. So routes go straight over low
+ *    walls instead of round them, the gunner climbs onto higher ground, and a man running to low
+ *    cover slides in behind it. Moving, a man who meets such an obstacle does the move: m.trav
+ *    carries him along the move's root path while the clip of the same name plays. Wounded men
+ *    do not climb (and vault slowly), a heavy load limits how high; they go round instead.
  *  - A flame trooper (member.loadout 'torch') stands up and fires the flame gun when the
  *    threat is within its reach (host.flame), and only covers otherwise.
  *  - Radio: on first contact, when the threat moves and when a man is down, the radio man
@@ -74,10 +81,14 @@
  * signal { text, until }, moving, speed.
  */
 import { analyse, openGround, moveGroup, endGroup, stepGroups, clearTo, stepClearing, joinUp, doorOnPath, startBreach, breachStep } from './tactics.js';
+import { probe, moveFor, ability, geoFor, durFor, rootAt, rootEnd, costOf, surface, clear, MOVES as PK_MOVES, STEP, DROP_MIN } from './parkour.js';
 import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES } from './soldier.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
+// a plain step between grid cells: up a stair, down a steep slope; more is a parkour move
+const PLAIN_UP = 0.6, PLAIN_DOWN = 0.8;
+const FIT = ability({});
 const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
@@ -365,6 +376,7 @@ export class SquadAI {
       }
     this.blocked = bl.map((v) => (v ? 1 : 0));
     this.solidCell = raw;
+    this.buildParkour();
     // distance to the nearest wall, and the cost: cheaper alongside walls
     const d = (this.dObs = new Float32Array(nx * nz).fill(1e9));
     const q = [];
@@ -391,6 +403,98 @@ export class SquadAI {
     analyse(this); // widths, doorways (ai/tactics.js)
   }
 
+  /**
+   * Parkour on the grid (ai/parkour.js): cells on top of something he can get onto (a low wall, a
+   * crate, a platform within a jump climb of the ground round it, with room to stand) become
+   * places to be (this.walk, at the height of the top), and from each cell where the ground ahead
+   * is not a plain step a probe finds the move there: this.links (cell -> [{ to, geo, kind0 }]).
+   */
+  buildParkour() {
+    const { nx, nz } = this;
+    const H = this.host, raw = this.solidCell;
+    const solid = (x, y, z) => H.solid(x, y, z);
+    this.walk = new Uint8Array(nx * nz);
+    this.raised = new Uint8Array(nx * nz);
+    for (let k = 0; k < nx * nz; k++) this.walk[k] = this.blocked[k] ? 0 : 1;
+    this.links = new Map();
+    if (!H.solid) return;
+    for (let k = 0; k < nx * nz; k++) {
+      if (!raw[k]) continue;
+      const i = k % nx, j = (k / nx) | 0;
+      // the ground round it
+      let g = Infinity;
+      for (let dj = -2; dj <= 2; dj++)
+        for (let di = -2; di <= 2; di++) {
+          const a = i + di, b = j + dj;
+          if (a >= 0 && b >= 0 && a < nx && b < nz && !raw[b * nx + a]) g = Math.min(g, this.fy[b * nx + a]);
+        }
+      if (g === Infinity) continue;
+      const [x, , z] = this.cellPos(k);
+      const top = surface(solid, x, z, this.fy[k], 2.6);
+      if (!(top > g + STEP) || top - g > 2.35 || !clear(solid, x, z, top, 0.1, 1.75) || !this.standsOn(x, z, top)) continue;
+      this.raised[k] = 1;
+      this.walk[k] = 1;
+      this.fy[k] = top;
+    }
+    // further in on a broad top (a platform): on from its edges at about the same height
+    const q = [];
+    for (let k = 0; k < nx * nz; k++) if (this.raised[k]) q.push(k);
+    for (let h = 0; h < q.length; h++) {
+      const k = q[h], i = k % nx, j = (k / nx) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const a = i + di, b = j + dj, kk = b * nx + a;
+        if (a < 0 || b < 0 || a >= nx || b >= nz || !raw[kk] || this.raised[kk]) continue;
+        const [x, , z] = this.cellPos(kk);
+        const top = surface(solid, x, z, this.fy[k] - 0.3, 0.6);
+        if (Math.abs(top - this.fy[k]) > 0.3 || !clear(solid, x, z, top, 0.1, 1.75) || !this.standsOn(x, z, top)) continue;
+        this.raised[kk] = 1;
+        this.walk[kk] = 1;
+        this.fy[kk] = top;
+        q.push(kk);
+      }
+    }
+    for (let k = 0; k < nx * nz; k++) {
+      if (!this.walk[k]) continue;
+      const i = k % nx, j = (k / nx) | 0;
+      const p = this.cellPos(k);
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const a = i + di, b = j + dj;
+        if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
+        const kk = b * nx + a, dh = this.fy[kk] - this.fy[k];
+        if (this.walk[kk] && dh <= PLAIN_UP && dh >= -PLAIN_DOWN) continue;
+        const geo = probe(solid, p, [di, dj], { range: 1.3 });
+        if (!geo || geo.type === 'wall') continue;
+        const kind0 = moveFor(geo, FIT, 'run');
+        if (!kind0) continue;
+        const [f, up] = rootEnd(kind0, geoFor(kind0, geo));
+        if (!this.standsOn(p[0] + di * f, p[2] + dj * f, p[1] + up)) continue;
+        const E = [p[0] + di * f, p[1] + up, p[2] + dj * f];
+        const ke = this.cellOf(E[0], E[2]);
+        if (ke < 0 || ke === k || !this.walk[ke] || Math.abs(this.fy[ke] - E[1]) > 0.35) continue;
+        if (!this.links.has(k)) this.links.set(k, []);
+        this.links.get(k).push({ to: ke, geo, kind0 });
+      }
+    }
+  }
+  /** Does the host's own floor put a man standing at height y at (x, z) there (a top he can be on)? */
+  standsOn(x, z, y) {
+    const fy = this.host.floor(x, z, { p: [x, y, z] });
+    return fy != null && Math.abs(fy - y) < 0.3;
+  }
+  /** A cell with the ground round it at about its height (a platform's top, not a wall's). */
+  flatTop(k) {
+    const { nx, nz } = this, i = k % nx, j = (k / nx) | 0;
+    // (on top of something: room round him, not the top of a wall or a crate)
+    const r = this.raised?.[k] ? 2 : 1;
+    for (const [di, dj] of [[r, 0], [-r, 0], [0, r], [0, -r], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a = i + di, b = j + dj;
+      if (a < 0 || b < 0 || a >= nx || b >= nz) return false;
+      const kk = b * nx + a;
+      if (!this.walk[kk] || Math.abs(this.fy[kk] - this.fy[k]) > 0.3) return false;
+    }
+    return true;
+  }
+
   computeCovers() {
     this.covers = [];
     const { nx, nz } = this;
@@ -398,7 +502,7 @@ export class SquadAI {
     let lo = Infinity;
     for (let k = 0; k < nx * nz; k++) if (!this.blocked[k]) lo = Math.min(lo, this.fy[k]);
     this.high = [];
-    for (let k = 0; k < nx * nz; k++) if (!this.blocked[k] && this.fy[k] > lo + 0.6 && k % 2 === 0) this.high.push({ k, p: this.cellPos(k), q: 0, high: this.fy[k] - lo });
+    for (let k = 0; k < nx * nz; k++) if (this.walk[k] && this.fy[k] > lo + 0.6 && k % 2 === 0 && this.flatTop(k)) this.high.push({ k, p: this.cellPos(k), q: 0, high: this.fy[k] - lo });
     if (!this.threat) return;
     for (let j = 2; j < nz - 2; j++)
       for (let i = 2; i < nx - 2; i++) {
@@ -431,9 +535,11 @@ export class SquadAI {
     const x = this.x0 + ((k % this.nx) + 0.5) * this.cs, z = this.z0 + (((k / this.nx) | 0) + 0.5) * this.cs;
     return [x, this.fy[k], z];
   }
-  nearestFree(x, z) {
+  nearestFree(x, z, y) {
     const k = this.cellOf(x, z);
     if (k >= 0 && !this.blocked[k]) return k;
+    // up on something (a platform, a crate) he got onto: that cell
+    if (k >= 0 && y != null && this.walk?.[k] && Math.abs(this.fy[k] - y) < 0.5) return k;
     const i0 = Math.floor((x - this.x0) / this.cs), j0 = Math.floor((z - this.z0) / this.cs);
     for (let r = 1; r < 15; r++)
       for (let dj = -r; dj <= r; dj++)
@@ -446,8 +552,11 @@ export class SquadAI {
     return -1;
   }
 
-  /** A* from p0 to p1: world points, hugging walls. */
-  route(p0, p1) {
+  /**
+   * A* from p0 to p1: world points, hugging walls; over, up and down obstacles where m (if given:
+   * his wounds and load, ai/parkour.js ability) can do the move.
+   */
+  route(p0, p1, m) {
     if (!this.blocked) this.rebuildNav(); // (before any contact it may not be built yet)
     // to another level (the deck, down from it): the grid is one level, so by the stairs (hosts
     // with lookouts; elsewhere ai/tactics.js clearTo takes the team between floors)
@@ -463,10 +572,11 @@ export class SquadAI {
         return c;
       }
       // a way by the stairs (foot ... head, then p1): to its start (or from its end) on the grid
-      if (via?.length > 1) return y1 > y0 ? [...this.route(p0, via[0]), ...via.slice(1)] : [...via.slice(0, -1), ...this.route(via[via.length - 2], p1)];
+      if (via?.length > 1) return y1 > y0 ? [...this.route(p0, via[0], m), ...via.slice(1)] : [...via.slice(0, -1), ...this.route(via[via.length - 2], p1, m)];
     }
     const { nx, nz } = this;
-    const s = this.nearestFree(p0[0], p0[2]), g = this.nearestFree(p1[0], p1[2]);
+    const s = this.nearestFree(p0[0], p0[2], p0[1]), g = this.nearestFree(p1[0], p1[2], p1[1]);
+    const ab = ability(m), links = this.links, via = new Map();
     if (s < 0 || g < 0) return [p1.slice()];
     const G = new Float32Array(nx * nz).fill(1e9), from = new Int32Array(nx * nz).fill(-1), closed = new Uint8Array(nx * nz);
     const gi = g % nx, gj = (g / nx) | 0;
@@ -516,15 +626,32 @@ export class SquadAI {
           const a = i + di, b = j + dj;
           if (a < 0 || b < 0 || a >= nx || b >= nz) continue;
           const kk = b * nx + a;
-          if (this.blocked[kk] || closed[kk]) continue;
-          if (di && dj && (this.blocked[j * nx + a] || this.blocked[b * nx + i])) continue;
+          if (!this.walk[kk] || closed[kk]) continue;
+          if (di && dj && (!this.walk[j * nx + a] || !this.walk[b * nx + i])) continue;
+          // a plain step: no more than a stair up (a steep slope down); higher needs a move
+          const dh = this.fy[kk] - this.fy[k];
+          if (dh > PLAIN_UP || dh < -PLAIN_DOWN) continue;
           const c = G[k] + (di && dj ? 1.414 : 1) * this.cost[kk];
           if (c < G[kk]) {
             G[kk] = c;
             from[kk] = k;
+            via.delete(kk);
             push(kk, c + H(kk));
           }
         }
+      // parkour: over a wall, up onto a ledge, down off one (what he can do)
+      for (const L of links?.get(k) ?? []) {
+        if (closed[L.to]) continue;
+        const kind = moveFor(L.geo, ab, 'run');
+        if (!kind) continue;
+        const c = G[k] + costOf(kind, geoFor(kind, L.geo), ab) / this.cs;
+        if (c < G[L.to]) {
+          G[L.to] = c;
+          from[L.to] = k;
+          via.set(L.to, L);
+          push(L.to, c + H(L.to));
+        }
+      }
     }
     if (from[g] < 0 && g !== s) return [p1.slice()];
     const cells = [];
@@ -533,27 +660,32 @@ export class SquadAI {
       if (k === s) break;
     }
     cells.reverse();
-    // drop the points in the middle of straight runs
+    // drop the points in the middle of straight runs (not where a move starts or ends: he lines
+    // up on it from its start, straight at where it lands)
     const pts = [];
-    let pd = null;
+    let pd = null, lastFixed = false;
     for (let i = 0; i < cells.length; i++) {
       const p = this.cellPos(cells[i]);
-      if (i > 0 && i < cells.length - 1) {
+      const fixed = via.has(cells[i]) || (i + 1 < cells.length && via.has(cells[i + 1]));
+      if (via.has(cells[i])) p.move = via.get(cells[i]).kind0;
+      if (i > 0 && i < cells.length - 1 && !fixed) {
         const n = this.cellPos(cells[i + 1]);
         const d = [Math.sign(n[0] - p[0]), Math.sign(n[2] - p[2])];
-        if (pd && d[0] === pd[0] && d[1] === pd[1]) {
+        if (pd && !lastFixed && d[0] === pd[0] && d[1] === pd[1]) {
           pts[pts.length - 1] = p;
           continue;
         }
         pd = d;
-      }
+      } else pd = null;
       pts.push(p);
+      lastFixed = fixed;
     }
     return pts;
   }
 
   /* ---------- per member ---------- */
   setAnim(m, a, dur) {
+    if (m.trav && a !== m.trav.kind) return; // over a wall, up a ledge: that first
     if (m.anim === a && !dur) return;
     m.anim = a;
     m.animT = this.time;
@@ -592,6 +724,7 @@ export class SquadAI {
   move(m, dt) {
     m.moving = false;
     m.speed = 0;
+    if (m.trav) return this.traverse(m, dt);
     if (!m.path || this.busy(m)) return;
     const mode = m.crawling ? 'crawl' : m.moveMode;
     const tgt = m.path[m.pathI];
@@ -635,6 +768,21 @@ export class SquadAI {
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
     let sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
+    // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop)
+    if (mode !== 'crawl' && sp > 0.05 && Math.abs(dy) < 0.5) {
+      const pk = this.parkourAhead(m, mode, dist);
+      if (pk === 'go') return;
+      // up to where the move starts, not past it (it starts there next step)
+      if (pk?.near != null) sp = Math.min(sp, Math.max(0.02, pk.near) / Math.max(dt, 1e-3));
+      if (pk === 'cannot') {
+        m.path = null;
+        m.then = null;
+        m.arrived = true;
+        m.cannotT = this.time;
+        return;
+      }
+      if (!pk && this.slideIn(m, mode, dist, dy)) return;
+    }
     // the ground ahead: stairs (or a steep climb) up or down; down a steep hill outdoors he slides
     let anim = mode;
     if (mode !== 'crawl' && sp > 0.05) {
@@ -655,10 +803,114 @@ export class SquadAI {
     }
     const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
     const fy = this.host.floor(nx, nz, m);
+    // off an edge he did not line up for (turning at it): jump down properly, or not at all
+    if (fy != null && m.p[1] - fy > DROP_MIN && mode !== 'crawl' && this.host.solid) {
+      const dir = [Math.sin(m.yaw), Math.cos(m.yaw)];
+      const geo = probe((x, y, z) => this.host.solid(x, y, z), m.p, dir, { range: sp * dt + 0.3 });
+      const kind = geo?.type === 'down' ? moveFor(geo, ability(m), mode) : null;
+      if (kind) return this.startMove(m, kind, geo, dir);
+      if (geo?.type === 'down' && geo.room && geo.h > ability(m).drop) return; // too deep for him: he stays up here
+    }
     m.p = [nx, fy ?? m.p[1], nz];
     m.moving = sp > 0.05;
     m.speed = sp;
     this.setAnim(m, anim);
+  }
+  /**
+   * What is ahead as he goes (along his heading, towards a target dist m off): 'go' (a move has
+   * started), 'cannot' (an obstacle he cannot get over: wounded at a ledge), { near } (one to do
+   * once he has gone `near` m more, to its start), or null (nothing: walk on).
+   */
+  parkourAhead(m, mode, dist) {
+    const H = this.host;
+    if (!H.solid) return null;
+    const dir = [Math.sin(m.yaw), Math.cos(m.yaw)];
+    const geo = probe((x, y, z) => H.solid(x, y, z), m.p, dir, { range: Math.min(1.4, dist + 0.6) });
+    if (!geo || geo.type === 'wall') return null;
+    // where he is going lies on it or beyond it (not a spot in front of it)
+    if (dist < geo.face + 0.05) return null;
+    if (geo.type === 'up' && !geo.thin) {
+      const k0 = moveFor(geo, FIT, mode);
+      const e = k0 && rootEnd(k0, geoFor(k0, geo));
+      if (!e || !this.standsOn(m.p[0] + dir[0] * e[0], m.p[2] + dir[1] * e[0], m.p[1] + e[1])) return null;
+    }
+    const kind = moveFor(geo, ability(m), mode);
+    if (!kind) return moveFor(geo, FIT, mode) ? 'cannot' : null;
+    const pre = PK_MOVES[kind].geo.pre;
+    if (geo.face > pre + 0.06) return { near: geo.face - pre };
+    this.startMove(m, kind, geo, dir);
+    return 'go';
+  }
+  /** Start a parkour move (ai/parkour.js) along dir: m.trav, his clip. */
+  startMove(m, kind, geo, dir) {
+    const g = geoFor(kind, geo), dur = durFor(kind, ability(m));
+    m.trav = { kind, t: 0, dur, geo: g, from: m.p.slice(), dir: dir.slice(), yaw: Math.atan2(dir[0], dir[1]) };
+    m.yaw = m.trav.yaw;
+    m.anim = kind;
+    m.animT = this.time;
+    m.animDur = dur;
+    m.animUntil = this.time + dur;
+    m.moving = true;
+  }
+  /** On the move: carried along its root path; at its end, back on the floor and on along his path. */
+  traverse(m, dt) {
+    const T = m.trav;
+    if (m.dead) {
+      m.trav = null;
+      return;
+    }
+    T.t += dt;
+    const u = Math.min(1, T.t / T.dur);
+    const [f, up] = rootAt(T.kind, u, T.geo);
+    const px = m.p[0], pz = m.p[2];
+    m.p = [T.from[0] + T.dir[0] * f, T.from[1] + up, T.from[2] + T.dir[1] * f];
+    m.yaw = T.yaw;
+    m.moving = true;
+    m.speed = Math.hypot(m.p[0] - px, m.p[2] - pz) / Math.max(dt, 1e-3);
+    if (u < 1) return;
+    m.trav = null;
+    m.animUntil = 0;
+    const fy = this.host.floor(m.p[0], m.p[2], m);
+    if (fy != null) m.p[1] = fy;
+    if (!m.path) return;
+    // past the points the move took him over (its start, the top of the wall)
+    while (m.pathI < m.path.length) {
+      const q = m.path[m.pathI], d = Math.hypot(q[0] - m.p[0], q[2] - m.p[2]);
+      const ahead = (q[0] - m.p[0]) * T.dir[0] + (q[2] - m.p[2]) * T.dir[1];
+      if (d < 0.5 || (ahead < -0.05 && d < 2.5)) m.pathI++;
+      else break;
+    }
+    if (m.pathI >= m.path.length) {
+      m.path = null;
+      const then = m.then;
+      m.then = null;
+      then?.(m);
+    }
+  }
+  /**
+   * Running the last stretch to cover that is low (he would kneel behind it), under fire, on
+   * clear flat ground: a baseball slide in behind it.
+   */
+  slideIn(m, mode, dist, dy) {
+    if (mode !== 'run' || !this.contacted || m.coverCell == null || m.coverCell < 0 || m.pathI !== m.path.length - 1) return false;
+    if (dist < 1.9 || dist > 3.0 || Math.abs(dy) > 0.25 || m.slidT === m.coverCell || ability(m).wounded) return false;
+    const H = this.host, c = m.path[m.path.length - 1], T = this.threat;
+    if (!H.solid || !T) return false;
+    const tx = T[0] - c[0], tz = T[2] - c[2], tl = Math.hypot(tx, tz) || 1;
+    let low = false;
+    for (const r of [0.4, 0.6, 0.8]) {
+      const x = c[0] + (tx / tl) * r, z = c[2] + (tz / tl) * r;
+      if (H.solid(x, c[1] + 0.6, z)) {
+        low = !H.solid(x, c[1] + 1.35, z);
+        break;
+      }
+    }
+    if (!low) return false;
+    const dir = [Math.sin(m.yaw), Math.cos(m.yaw)];
+    if (probe((x, y, z) => H.solid(x, y, z), m.p, dir, { range: dist })) return false;
+    m.slidT = m.coverCell;
+    this.startMove(m, 'slideCover', { d: dist }, dir);
+    return true;
   }
   face(m, p, dt, rate = 2.4) {
     let dy = Math.atan2(p[0] - m.p[0], p[2] - m.p[2]) - (m.yaw ?? 0);
@@ -713,7 +965,7 @@ export class SquadAI {
     m.lookout = true;
     m.cover = best.slice();
     this.say(m, `${this.unit}, ${NAME[m.squad]}, going up top for a look`, 'none');
-    this.follow(m, this.route(m.p, best), 'run', (q) => {
+    this.follow(m, this.route(m.p, best, m), 'run', (q) => {
       q.arrived = true;
       this.say(q, `${this.unit}, ${NAME[q.squad]}, up top, watching the area`, 'intel');
     });
@@ -761,7 +1013,7 @@ export class SquadAI {
           u.cover = hb.p.slice();
           u.highGround = true;
           u.lookout = hb.k < 0;
-          this.follow(u, this.route(u.p, hb.p), 'run', (m) => {
+          this.follow(u, this.route(u.p, hb.p, u), 'run', (m) => {
             m.arrived = true;
             m.fireT = 0.6;
             this.say(m, m.lookout ? `${this.unit}, gunner, up top, I have eyes on the whole area and your backs` : `${this.unit}, gunner, on high ground, I have eyes on the area and your backs`, 'intel');
@@ -800,7 +1052,7 @@ export class SquadAI {
         const k = this.nearestFree(u.p[0] + (d[0] / l) * 3.5, u.p[2] + (d[1] / l) * 3.5);
         dest = k >= 0 ? this.cellPos(k) : u.p.slice();
       }
-      const path = this.route(u.p, dest);
+      const path = this.route(u.p, dest, u);
       let L = 0, pr = u.p;
       for (const p of path) {
         L += dist2(p, pr);
@@ -867,7 +1119,7 @@ export class SquadAI {
       const to = urgent ? [p[0] + Math.cos(a) * 2, p[1], p[2] + Math.sin(a) * 2] : [p[0] + (i ? 1.2 : -1.2), p[1], p[2]];
       m.coverCell = -1;
       m.cover = to;
-      this.follow(m, this.route(m.p, to), urgent ? 'run' : 'aimWalk', (q) => (q.arrived = true));
+      this.follow(m, this.route(m.p, to, m), urgent ? 'run' : 'aimWalk', (q) => (q.arrived = true));
       m.aimAt = p;
     });
   }
@@ -933,7 +1185,7 @@ export class SquadAI {
         const a = Math.random() * Math.PI * 2, r = 1 + Math.random() * 3.5;
         const to = [I.p[0] + Math.cos(a) * r, I.p[1], I.p[2] + Math.sin(a) * r];
         m.cover = to;
-        this.follow(m, this.route(m.p, to), 'aimWalk', (q) => (q.arrived = true));
+        this.follow(m, this.route(m.p, to, m), 'aimWalk', (q) => (q.arrived = true));
       }
     } else if (this.inv?.clearing) {
       // clearing a building: tactics.js moves them (stepClearing)
@@ -989,7 +1241,7 @@ export class SquadAI {
     for (const m of I.men) {
       if (m.dead) continue;
       m.cover = null;
-      if (nothing && back) this.follow(m, this.route(m.p, [back[0] + (Math.random() - 0.5) * 3, back[1], back[2] + (Math.random() - 0.5) * 3]), 'aimWalk', (q) => (q.arrived = true));
+      if (nothing && back) this.follow(m, this.route(m.p, [back[0] + (Math.random() - 0.5) * 3, back[1], back[2] + (Math.random() - 0.5) * 3], m), 'aimWalk', (q) => (q.arrived = true));
     }
     if (nothing && cmd) {
       const who = I.men.find((m) => !m.dead) ?? cmd;
@@ -1035,6 +1287,11 @@ export class SquadAI {
     for (const m of ms) {
       m.aimAt = this.threat;
       if (m.dead) {
+        if (m.trav) {
+          m.trav = null;
+          const fy = this.host.floor(m.p[0], m.p[2], m);
+          if (fy != null) m.p[1] = fy;
+        }
         m.anim = 'die';
         m.path = null;
         m.moving = false;
@@ -1105,7 +1362,7 @@ export class SquadAI {
           if (m.path || this.busy(m) || m.dead) return;
           const a = (i / al.length) * Math.PI * 2;
           const to = [this.threat[0] + Math.cos(a) * 7, this.threat[1], this.threat[2] + Math.sin(a) * 7];
-          this.follow(m, this.route(m.p, to), 'run', (q2) => (q2.arrived = true));
+          this.follow(m, this.route(m.p, to, m), 'run', (q2) => (q2.arrived = true));
         });
     }
     const T = this.threat;
@@ -1167,7 +1424,7 @@ export class SquadAI {
         if (r) {
           m.goingFor = r;
           const d = [r[0] - m.p[0], r[2] - m.p[2]], l = Math.hypot(...d) || 1;
-          this.follow(m, this.route(m.p, [r[0] - (d[0] / l) * 0.45, r[1], r[2] - (d[1] / l) * 0.45]), 'run', (q) => {
+          this.follow(m, this.route(m.p, [r[0] - (d[0] / l) * 0.45, r[1], r[2] - (d[1] / l) * 0.45], m), 'run', (q) => {
             this.face(q, r, 1, 10);
             this.setAnim(q, 'pickup');
           });

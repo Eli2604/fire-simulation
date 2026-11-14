@@ -529,6 +529,12 @@ export const SCENARIOS = {
         ['crate', 21.2, 13.8, 0], ['wall', 23.4, 10.6, 0], ['crate', 14.4, 10.2, 0], ['crate', 18.6, 9.4, 0]].map(([type, x, z, rotation]) => ({ type, params: {}, x, z, rotation })),
       // a lookout west of the walls: a deck 3 m up, its stairs coming down towards the teams
       { type: 'deck', params: {}, x: 4.5, z: 18 },
+      // parkour: low walls across the way in (a 0.9 m one to vault, a 0.6 m one to step over, a
+      // gap between them) and a raised concrete block 1.6 m high between the teams (climbed onto, jumped off)
+      { type: 'wall', params: { length: 8, height: 0.9, thickness: 0.3 }, x: 18, z: 26.6 },
+      { type: 'wall', params: { length: 4, height: 0.6, thickness: 0.3 }, x: 11, z: 26.6 },
+      { type: 'wall', params: { length: 4, height: 1.6, thickness: 1, material: 'concrete' }, x: 11, z: 21.5 },
+      { type: 'wall', params: { length: 4, height: 1.6, thickness: 1, material: 'concrete' }, x: 11, z: 22.5 },
       { type: 'squad', params: { unit: 'Alpha', threatX: 0, threatZ: -21, droneOperator: true }, x: 18, z: 29 },
       // a second team on the left flank: the two talk on the radio
       { type: 'squad', params: { unit: 'Bravo', threatX: 12, threatZ: -21, flameTrooper: true }, x: 6, z: 29 },

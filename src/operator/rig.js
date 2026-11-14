@@ -25,12 +25,18 @@
  *  - Armour: the plate carrier is a mesh of its own over the shirt (setArmour). setLook bends the
  *    upper body up or down over any clip, the rifle with it. He rappels down a wall on a rope and
  *    peeks down over an edge lying prone.
+ *  - Parkour (ai/parkour.js): vaults over a low wall (speed, side, step-over: the left hand
+ *    planted, the rifle in the right), a jump climb and a mantle onto a ledge (the rifle swung onto
+ *    the back, both hands on the edge), drops (with a landing roll) and a slide into cover. Their
+ *    root moves along the move's path (whoever plays them carries the figure along rootAt), so
+ *    the body stays on the obstacle whatever its height.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
 import * as THREE from 'three';
 import { SC } from './sculpt.js';
 import { makeOperatorMaterial } from './shader.js';
+import { rootKeys, mono, MOVES as PK_MOVES, PARKOUR } from '../ai/parkour.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -624,6 +630,181 @@ function peek(p, f, aim) {
   return p;
 }
 
+/* ---------- parkour: vaults, climbs, drops, the slide into cover (ai/parkour.js) ---------- */
+/**
+ * A parkour clip from key poses laid out in the obstacle's frame (z forward from where the move
+ * starts, y up from the floor it starts on, for the move's nominal obstacle: ai/parkour.js
+ * MOVES[kind].geo). Each key: [t (s), pose, { hp: [x, y, z] the hips there (absolute in that
+ * frame), lp / rp: [x, y, z] a hand planted there (figure space, absolute too) }]. The poses are
+ * blended smoothly (monotone cubic per channel) and the root's path (ai/parkour.js rootAt) is
+ * taken off, so the clip plays on a root that the AI (or the rig stage) carries along that path;
+ * over a higher or lower obstacle the root path changes and the body goes with it.
+ */
+function pkClip(kind, build) {
+  let keys = null, RF, RU;
+  return (t) => {
+    if (!keys) {
+      const R = rootKeys(kind);
+      RF = R.map((k) => [k[0], k[1]]);
+      RU = R.map((k) => [k[0], k[2]]);
+      keys = build().map(([kt, p, o = {}]) => {
+        if (o.hp) p.hipsPos = [o.hp[0], o.hp[1] - REST.hips.y, o.hp[2]];
+        if (o.lp) (p.lTW = o.lp.slice()), (p.lW = o.lw ?? 1);
+        if (o.rp) (p.rTW = o.rp.slice()), (p.rW = o.rw ?? 1);
+        return [kt, p];
+      });
+      // a hand not planted at a key keeps the plant's place (so it blends in and out there)
+      for (const s of ['l', 'r']) {
+        const planted = keys.filter(([, p]) => p[s + 'W'] > 0);
+        for (const [kt, p] of keys)
+          if (!(p[s + 'W'] > 0) && planted.length) {
+            const n = planted.reduce((a, b) => (Math.abs(b[0] - kt) < Math.abs(a[0] - kt) ? b : a));
+            p[s + 'TW'] = n[1][s + 'TW'].slice();
+          }
+      }
+    }
+    const p = pose0();
+    for (const k in p) {
+      if (Array.isArray(p[k])) p[k] = p[k].map((_, i) => mono(keys.map(([kt, kp]) => [kt, kp[k][i]]), t));
+      else p[k] = mono(keys.map(([kt, kp]) => [kt, kp[k]]), t);
+    }
+    const u = t / PK_MOVES[kind].dur, f = mono(RF, u), up = mono(RU, u);
+    p.hipsPos = [p.hipsPos[0], p.hipsPos[1] - up, p.hipsPos[2] - f];
+    p.lTW = [p.lTW[0], p.lTW[1] - up, p.lTW[2] - f];
+    p.rTW = [p.rTW[0], p.rTW[1] - up, p.rTW[2] - f];
+    return p;
+  };
+}
+/** Key-pose helpers: a base pose with changes; the hips where the base had them, moved to z (and up y). */
+const PK = (base, o) => Object.assign(base, o);
+const runAt = (u) => CLIPS.run[1](0, u);
+const walkAt = (u) => CLIPS.walk[1](0, u);
+const HY = REST.hips.y; // the hips' height standing
+// the rifle in the right hand alone (the left is free to plant): run-style carry, muzzle low
+const ONE_HAND = { lG: 0, lH: 0, rG: 1, rH: 1, wOff: [0.0, 0.0, 0.03], wRot: [0.25, 0.05, 0.08] };
+// both hands free, the rifle swung onto the back on its sling
+const SLUNG = { sling: 1, lG: 0, lH: 0, rG: 0, rH: 0 };
+const flat = (p, s) => (p['foot' + s] = [-(p.hips[0] + p['thigh' + s][0] + p['shin' + s][0]), 0, 0]);
+const legs = (p, tr, sr, tl, sl, zr = 0, zl = 0) => {
+  p.thighR = [tr, 0, zr]; p.shinR = [sr, 0, 0]; p.thighL = [tl, 0, zl]; p.shinL = [sl, 0, 0];
+  flat(p, 'R'); flat(p, 'L');
+  return p;
+};
+const PK_KEYS = {
+  // speed vault: run in, plant the left hand, legs tucked and swung over on the right side, the
+  // rifle in the right hand out for balance, land on the right foot and run on
+  vaultSpeed: () => [
+    [0, runAt(0), { hp: [0, HY - 0.05, 0] }],
+    [0.22, PK(legs(J({ ...ONE_HAND, spine: [0.45, 0, 0], head: [-0.3, 0, 0], lPole: [1, 0.2, -0.6] }), 0.4, 0.35, -1.2, 1.3, 0, 0.1), {}),
+      { hp: [0, HY - 0.12, 0.5], lp: [0.12, 0.93, 0.82], lw: 0.85 }],
+    [0.42, PK(legs(J({ ...ONE_HAND, hips: [0.1, 0.45, -0.35], spine: [0.25, 0, -0.1], head: [-0.1, -0.35, 0.1], lPole: [1, 0.3, -0.4], wOff: [-0.05, 0.08, 0.05] }), -1.4, 1.2, -1.3, 1.4, -0.6, -0.35), {}),
+      { hp: [-0.15, 0.9 + 0.3, 0.95], lp: [0.12, 0.93, 0.82] }],
+    [0.62, PK(legs(J({ ...ONE_HAND, hips: [0.05, 0.15, 0], spine: [0.3, 0, 0], head: [-0.2, 0, 0], lT: [0.3, 1.2, 0.25], lPole: [1, -0.2, -1] }), -0.6, 0.6, 0.1, 0.9, -0.05, 0.1), {}),
+      { hp: [0, HY - 0.12, 1.45] }],
+    [0.95, runAt(0.5), { hp: [0, HY - 0.05, 1.9] }],
+  ],
+  // side vault, one hand: slower and upright, the body turned side-on, both legs swung over
+  // together, the rifle held off to the side in the right hand
+  vaultSide: () => [
+    [0, walkAt(0), { hp: [0, HY, 0] }],
+    [0.28, PK(legs(J({ ...ONE_HAND, spine: [0.35, 0, 0], head: [-0.25, 0, 0], lPole: [1, 0.2, -0.6] }), 0.25, 0.3, -0.5, 0.4), {}),
+      { hp: [0, HY - 0.1, 0.4], lp: [0.15, 0.93, 0.72] }],
+    [0.58, PK(legs(J({ ...ONE_HAND, hips: [0, 1.0, -0.2], spine: [0.15, -0.3, 0], head: [0, -0.6, 0], lPole: [1, 0.4, -0.2], wOff: [-0.06, 0.1, 0.04] }), -1.45, 0.5, -1.4, 0.6, -0.25, -0.1), {}),
+      { hp: [-0.1, 0.9 + 0.27, 0.8], lp: [0.15, 0.93, 0.72] }],
+    [0.83, PK(legs(J({ ...ONE_HAND, hips: [0, 0.4, 0], spine: [0.2, -0.1, 0], head: [-0.1, -0.2, 0] }), -0.5, 0.7, -0.1, 0.6, 0, 0.05), {}),
+      { hp: [0, HY - 0.15, 1.35], lp: [0.15, 0.93, 0.72], lw: 0.15 }],
+    [1.15, walkAt(0.5), { hp: [0, HY, 1.8] }],
+  ],
+  // the lazy vault: a hand on it, the right leg lifted over, astride a moment, the left leg after
+  vaultStep: () => [
+    [0, walkAt(0), { hp: [0, HY, 0] }],
+    [0.2, PK(legs(J({ ...ONE_HAND, spine: [0.3, 0, 0], head: [-0.2, 0, 0] }), -1.0, 1.2, 0.2, 0.2, -0.25, 0), {}),
+      { hp: [0, HY - 0.06, 0.35], lp: [0.13, 0.63, 0.6] }],
+    [0.45, PK(legs(J({ ...ONE_HAND, hips: [0, 0, 0.15], spine: [0.25, 0, 0] }), -0.7, 0.3, 0.3, 1.4, -0.35, 0.7), {}),
+      { hp: [0, 1.02, 0.66], lp: [0.13, 0.63, 0.6] }],
+    [0.65, PK(legs(J({ ...ONE_HAND, spine: [0.15, 0, 0] }), -0.1, 0.3, -1.1, 1.3, 0, 0.25), {}),
+      { hp: [0, HY - 0.08, 1.0] }],
+    [0.85, walkAt(0.5), { hp: [0, HY, 1.4] }],
+  ],
+  // jump climb: run in, the rifle swung onto the back, a step up the wall, both hands on the
+  // edge, pull up, the right knee onto the top, stand up and the rifle comes back round
+  climbJump: () => [
+    [0, runAt(0), { hp: [0, HY - 0.05, 0] }],
+    [0.25, PK(legs(J({ sling: 0.6, lG: 0, lH: 0, rG: 0.3, rH: 0.3, spine: [0.3, 0, 0], lT: [0.25, 1.0, -0.15], rT: [-0.25, 1.0, -0.15] }), 0.4, 0.6, -0.9, 0.9), {}),
+      { hp: [0, HY - 0.12, 0.45] }],
+    [0.45, PK(legs(J({ ...SLUNG, spine: [0.05, 0, 0], head: [-0.5, 0, 0], lPole: [1, -0.3, -0.4], rPole: [-1, -0.3, -0.4] }), 0.2, 0.8, -1.5, 1.3, 0, 0.1), {}),
+      { hp: [0, 1.25, 0.4], lp: [0.22, 2.0, 0.75], rp: [-0.22, 2.0, 0.75] }],
+    [0.65, PK(legs(J({ ...SLUNG, spine: [0.1, 0, 0], head: [-0.3, 0, 0], lPole: [1, -0.5, -0.3], rPole: [-1, -0.5, -0.3] }), -0.3, 0.8, -1.0, 1.4), {}),
+      { hp: [0, 1.35, 0.6], lp: [0.22, 1.83, 0.95], rp: [-0.22, 1.83, 0.95] }],
+    [0.95, PK(legs(J({ ...SLUNG, spine: [0.25, 0, 0], head: [-0.2, 0, 0], lPole: [1, -0.6, -0.2], rPole: [-1, -0.6, -0.2] }), -0.9, 1.3, -0.9, 1.3, -0.08, 0.08), {}),
+      { hp: [0, 1.5, 0.65], lp: [0.22, 1.83, 0.95], rp: [-0.22, 1.83, 0.95] }],
+    [1.2, PK(legs(J({ ...SLUNG, spine: [0.75, 0, 0], head: [-0.6, 0, 0], lPole: [1, -0.2, -0.6], rPole: [-1, -0.2, -0.6] }), -1.6, 1.9, -0.3, 0.8, -0.1, 0), {}),
+      { hp: [0, 1.9, 0.8], lp: [0.22, 1.83, 0.95], rp: [-0.22, 1.83, 0.95] }],
+    [1.5, PK(legs(J({ ...SLUNG, spine: [0.6, 0, 0], head: [-0.4, 0, 0] }), -1.3, 1.9, -0.6, 1.6), {}),
+      { hp: [0, 1.8 + 0.55, 1.05], lp: [0.22, 1.83, 0.95], rp: [-0.22, 1.83, 0.95], lw: 0.5, rw: 0.5 }],
+    [1.9, stance(pose0()), { hp: [0, 1.8 + HY - 0.02, 1.4] }],
+  ],
+  // mantle from a standstill: the rifle onto the back, hands on the edge, a little jump, press
+  // up over the hands, the right knee on top, stand
+  mantle: () => [
+    [0, stance(pose0()), { hp: [0, HY - 0.02, 0] }],
+    [0.3, PK(legs(J({ ...SLUNG, spine: [0.2, 0, 0], head: [-0.2, 0, 0] }), -0.35, 0.6, -0.35, 0.6), {}),
+      { hp: [0, HY - 0.12, 0.0], lp: [0.22, 1.33, 0.36], rp: [-0.22, 1.33, 0.36] }],
+    [0.55, PK(legs(J({ ...SLUNG, spine: [0.2, 0, 0], head: [-0.2, 0, 0], lPole: [1, -0.6, -0.2], rPole: [-1, -0.6, -0.2] }), -0.4, 0.9, -0.4, 0.9), {}),
+      { hp: [0, 1.35, 0.02], lp: [0.22, 1.33, 0.36], rp: [-0.22, 1.33, 0.36] }],
+    [0.85, PK(legs(J({ ...SLUNG, spine: [0.65, 0, 0], head: [-0.5, 0, 0], lPole: [1, 0, -0.6], rPole: [-1, 0, -0.6] }), -0.2, 0.6, -0.2, 0.6), {}),
+      { hp: [0, 1.65, 0.15], lp: [0.22, 1.33, 0.36], rp: [-0.22, 1.33, 0.36] }],
+    [1.1, PK(legs(J({ ...SLUNG, spine: [0.75, 0, 0], head: [-0.6, 0, 0] }), -1.6, 2.0, -0.2, 0.6, -0.1, 0), {}),
+      { hp: [0, 1.3 + 0.6, 0.4], lp: [0.22, 1.33, 0.36], rp: [-0.22, 1.33, 0.36] }],
+    [1.35, PK(legs(J({ ...SLUNG, spine: [0.4, 0, 0], head: [-0.3, 0, 0] }), -1.0, 1.6, -0.9, 1.6), {}),
+      { hp: [0, 1.3 + 0.7, 0.55], lp: [0.22, 1.33, 0.36], rp: [-0.22, 1.33, 0.36], lw: 0.3, rw: 0.3 }],
+    [1.7, stance(pose0()), { hp: [0, 1.3 + HY - 0.02, 0.8] }],
+  ],
+  // off a ledge: step off, the left arm out for balance, land on both feet and sink into it
+  dropDown: () => [
+    [0, walkAt(0), { hp: [0, HY, 0] }],
+    [0.2, PK(legs(J({ ...ONE_HAND, lT: [0.45, 1.25, 0.2], lPole: [1, -0.2, -0.6] }), -0.6, 0.5, 0.15, 0.3), {}), { hp: [0, HY - 0.05, 0.2] }],
+    [0.4, PK(J({ ...ONE_HAND, lT: [0.45, 1.5, 0.15], lPole: [1, 0, -0.6], thighR: [-0.3, 0, -0.05], thighL: [-0.3, 0, 0.05], shinR: [0.5, 0, 0], shinL: [0.5, 0, 0], footR: [0.2, 0, 0], footL: [0.2, 0, 0] }), {}),
+      { hp: [0, HY - 0.55, 0.42] }],
+    [0.56, PK(legs(J({ ...ONE_HAND, spine: [0.35, 0, 0], head: [-0.25, 0, 0], lT: [0.4, 1.3, 0.3], lPole: [1, -0.2, -0.6] }), -0.7, 1.2, -0.7, 1.2, -0.1, 0.1), {}),
+      { hp: [0, -1.4 + 0.75, 0.6] }],
+    [0.7, PK(legs(J({ ...ONE_HAND, spine: [0.45, 0, 0], head: [-0.3, 0, 0], lT: [0.3, 0.85, 0.4], lPole: [1, -0.2, -0.6] }), -1.1, 1.9, -1.1, 1.9, -0.12, 0.12), {}),
+      { hp: [0, -1.4 + 0.55, 0.68] }],
+    [0.9, stance(pose0()), { hp: [0, -1.4 + HY - 0.02, 0.8] }],
+  ],
+  // a long drop: land, dive forward into a roll over the back, come up on the feet, rifle tucked in
+  dropRoll: () => {
+    const tuck = (p, a, th = -1.9, sh = 2.2) => PK(J({ hips: [a, 0, 0], spine: [0.6, 0, 0], chest: [0.3, 0, 0], head: [0.7, 0, 0], thighR: [th, 0, -0.1], thighL: [th, 0, 0.1], shinR: [sh, 0, 0], shinL: [sh, 0, 0], footR: [-0.4, 0, 0], footL: [-0.4, 0, 0], wOff: [0, 0.05, -0.08] }), p);
+    return [
+      [0, walkAt(0), { hp: [0, HY, 0] }],
+      [0.16, PK(legs(J({ ...ONE_HAND, lT: [0.45, 1.3, 0.2] }), -0.6, 0.5, 0.15, 0.3), {}), { hp: [0, HY - 0.05, 0.2] }],
+      [0.35, PK(J({ ...ONE_HAND, lT: [0.45, 1.5, 0.15], thighR: [-0.3, 0, -0.05], thighL: [-0.3, 0, 0.05], shinR: [0.5, 0, 0], shinL: [0.5, 0, 0], footR: [0.2, 0, 0], footL: [0.2, 0, 0] }), {}), { hp: [0, HY - 0.9, 0.45] }],
+      [0.54, PK(legs(J({ hips: [0.2, 0, 0], spine: [0.6, 0, 0], head: [-0.4, 0, 0] }), -1.2, 1.9, -1.2, 1.9, -0.12, 0.12), {}), { hp: [0, -2.6 + 0.6, 0.65] }],
+      [0.7, tuck({}, 1.2, -1.6, 2.0), { hp: [0, -2.6 + 0.45, 0.95] }],
+      [0.82, tuck({}, 3.0), { hp: [0, -2.6 + 0.5, 1.3] }],
+      [0.96, tuck({}, 4.8), { hp: [0, -2.6 + 0.45, 1.6] }],
+      [1.1, tuck({ head: [0.2, 0, 0], spine: [0.5, 0, 0] }, 6.0, -1.4, 2.0), { hp: [0, -2.6 + 0.55, 1.85] }],
+      [1.3, PK(legs(J({ hips: [6.283 + 0.15, 0, 0], spine: [0.4, 0, 0], head: [-0.3, 0, 0] }), -1.0, 1.6, -1.0, 1.6, -0.1, 0.1), {}), { hp: [0, -2.6 + 0.7, 1.95] }],
+      [1.6, PK(stance(pose0()), { hips: [6.283, 0, 0] }), { hp: [0, -2.6 + HY - 0.02, 2.0] }],
+    ];
+  },
+  // a baseball slide in behind low cover: drop onto the left hip, the right leg out ahead, the left
+  // hand trailing, the rifle up in the right; come up into a crouch, aiming
+  slideCover: () => {
+    const seat = (z) => PK(J({ ...ONE_HAND, rG: 1, hips: [0, 0.08, 0], thighR: [-1.35, 0, -0.1], shinR: [0.2, 0, 0], footR: [-0.2, 0, 0], thighL: [-1.0, 0, 0.18], shinL: [1.25, 0, 0], footL: [-0.3, 0, 0],
+      spine: [-0.38, 0, 0.04], chest: [-0.05, 0.1, 0], head: [0.42, -0.08, 0], lPole: [1, -0.4, -0.6] }), {});
+    const end = CLIPS.crouchAim[1](0, 0);
+    return [
+      [0, runAt(0), { hp: [0, HY - 0.05, 0] }],
+      [0.22, PK(legs(J({ ...ONE_HAND, spine: [-0.1, 0, 0] }), -1.2, 0.4, -0.3, 1.6, -0.05, 0.1), {}), { hp: [0, HY - 0.4, 0.75], lp: [0.36, 0.35, 0.45], lw: 0.6 }],
+      [0.4, seat(1.3), { hp: [0, HY - 0.72, 1.3], lp: [0.34, 0.22, 0.92] }],
+      [0.75, seat(2.3), { hp: [0, HY - 0.72, 2.25], lp: [0.34, 0.22, 1.87] }],
+      [0.92, PK(crouchLegs(J({ ...ONE_HAND })), { spine: [0.1, 0, 0] }), { hp: [0, HY - 0.45, 2.5], lp: [0.34, 0.22, 2.1], lw: 0 }],
+      [1.1, end, { hp: [end.hipsPos[0], HY + end.hipsPos[1], 2.6 + end.hipsPos[2]] }],
+    ];
+  },
+};
+
 const CLIPS = {
   idle: [2.4, (t, u) => {
     const p = pose0(), f = TAU * u;
@@ -903,17 +1084,21 @@ const CLIPS = {
   rappelEnd: [1.4, (t) => keyed(RAPPEL_END, t)],
   peekOver: [3.0, (t, u) => peek(pose0(), TAU * u, false)],
   peekOverAim: [2.4, (t, u) => peek(pose0(), TAU * u, true)],
+  // parkour (ai/parkour.js MOVES: their durations and root paths)
+  ...Object.fromEntries(Object.keys(PK_KEYS).map((k) => [k, [PK_MOVES[k].dur, pkClip(k, PK_KEYS[k])]])),
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1 };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
 export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stairs up', stairsDown: 'Stairs down', slide: 'Slide (hill)', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
-  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim' };
+  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
+  vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover' };
+export { PARKOUR };
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
