@@ -6,7 +6,8 @@ import { lod, updateEvery } from './lod.js';
 /**
  * The dragon's level of detail (render/lod.js): its body, legs and wings are posed on the CPU
  * every frame (the tube round the spine rebuilt); small on the screen, or out of view, they are
- * posed less often (the time in between made up). Breathing fire, always every frame.
+ * posed less often (the time in between made up). Breathing fire, snatching, fighting (d.airAct:
+ * ai/dragonAir.js), always every frame.
  */
 export const DRAGON_LOD = { radius: 5, levels: [150, 50, 15], rates: [1, 1, 2, 4], out: 4 };
 
@@ -748,7 +749,7 @@ export class DragonRenderer {
       const c = d.spine[Math.floor(d.spine.length / 3)];
       const R = DRAGON_LOD.radius * (d.k ?? 1);
       const lv = lod.level((f.lod ??= {}), c[0], c[1], c[2], R, DRAGON_LOD.levels);
-      const every = d.breathT > 0 || !f.posed ? 1 : f.lod.inView ? updateEvery(lv, DRAGON_LOD.rates) : DRAGON_LOD.out;
+      const every = d.breathT > 0 || d.airAct || !f.posed ? 1 : f.lod.inView ? updateEvery(lv, DRAGON_LOD.rates) : DRAGON_LOD.out;
       f.lodDt = (f.lodDt ?? 0) + dt;
       if (every > 1 && (lod.frame + n) % every !== 0) return;
       this.pose(f, d, world, time, Math.min(0.25, f.lodDt));

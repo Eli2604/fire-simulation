@@ -36,7 +36,7 @@ test('the island has a dragon lying in its lair, its body on the ground', () => 
   sc.noFire = true;
   const sim = createSimulation(sc);
   const w = sim.world;
-  assert.equal(w.dragons.length, 1);
+  assert.equal(w.dragons.length, 2); // (and a second, younger one in the west: ai/dragonAir.js)
   const d = w.dragons[0];
   assert.equal(d.state, 'rest');
   assert.ok(d.spine.length > 35, `spine of ${d.spine.length} points`);

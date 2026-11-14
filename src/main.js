@@ -16,6 +16,7 @@ import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
 import { Editor } from './editor/editor.js';
+import { playSnatch, playFight, AIR_EVENT_TEXT } from './ai/dragonAir.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -355,6 +356,10 @@ const fSim = gui.addFolder('Simulation');
 fSim.add(state, 'running').name('Running');
 fSim.add(state, 'timeScale', 0.1, 200, 0.1).name('Time scale (×)');
 fSim.add({ step: () => sim.advance(1, 2000) }, 'step').name('Advance 1 s');
+// the dragons' acts in the air (ai/dragonAir.js): a snatch and a throw, a fight between two dragons
+const fDragon = gui.addFolder('Dragon').close();
+fDragon.add({ snatch: () => walk.say(playSnatch(sim), 3) }, 'snatch').name('🐉 Snatch target (grab, carry, throw)');
+fDragon.add({ fight: () => walk.say(playFight(sim), 3) }, 'fight').name('🐉 Dragons fight');
 
 // The weather of where you are (the scene, or the zone you are in): what Edit world sets too. Only
 // what applies there: outdoors all of it (and whether it changes by itself), indoors, underground,
@@ -670,6 +675,7 @@ function vesselRows(w) {
   });
 }
 const EVENT_TEXT = { radio: '(radio)', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', dragonWingHurt: 'is hit in the wing: it comes down', dragonFalls: 'cannot use its wing: it falls from the sky', dragonCrash: 'crashes to the ground', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys' };
+Object.assign(EVENT_TEXT, AIR_EVENT_TEXT); // (a snatch, a dragon fight)
 function eventRows(w) {
   return w.events
     .filter((e) => w.time - e.time < 30)

@@ -5,7 +5,10 @@
  * bite, stamp, roar, dead, animate and pose the island's dragon uses). Each act below only says
  * what to do next, the way its behaviours do (a goal, a speed, a target to look at, a time to
  * breathe); the AI does the moving. The air and the fire are not simulated (only the wounds:
- * bleeding, drops, stains), so the page stays fast.
+ * bleeding, drops, stains), so the page stays fast. Two acts in the air against something
+ * (ai/dragonAir.js): the air grab (a training dummy walking on the field is snatched, carried and
+ * thrown; every third one jumps aside: a miss, another pass), and the aerial fight (a second dragon
+ * on the stage); both start again once over.
  *
  *   const st = createDragonStage();
  *   st.play('fly');            // any of DRAGON_ACTS
@@ -16,6 +19,7 @@
 import { createSimulation } from '../sim/createSimulation.js';
 import { stepWounds } from '../sim/wounds.js';
 import { initDragon, pose, groundAt, PLAN, dragonZones, dragonWoundPoint, canFly, WING } from '../ai/dragon.js';
+import { startSnatch, stepSnatch, holdCarried, stepThrown, startFight, stepFight, addLoose } from '../ai/dragonAir.js';
 
 /** What the dragon really does, as buttons. */
 export const DRAGON_ACTS = {
@@ -37,6 +41,8 @@ export const DRAGON_ACTS = {
   fall: 'Shot down',
   wingHurt: 'Wing hit: lands',
   wingGone: 'Wing shot: falls',
+  snatch: 'Air grab (snatch & throw)',
+  fight: 'Aerial fight',
 };
 /** The acts that need it on the ground (in the air, it lands first). */
 const GROUND = new Set(['rest', 'walk', 'run', 'sniff', 'roar', 'breathe', 'bite', 'stamp', 'climb']);
@@ -81,6 +87,15 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
       st.cool = 0;
       st.airT = 0;
       st.spot = st.landSpot = null;
+      st.loopT = 0;
+      if (st.dragon.snatch) st.dragon.snatch = null;
+      st.dragon.airAct = null;
+      st.dragon.jawWant = null;
+      st.dragon.strike = 0;
+      if (name !== 'fight') endFight();
+      if (name === 'snatch') resetDummy();
+      else if (w.loose) w.loose.length = 0;
+      if (name === 'fight') beginFight();
       if (name === 'die') st.dragon.health = 0;
       return st;
     },
@@ -121,33 +136,12 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
     },
     step(dt) {
       w.time += dt;
-      const d = st.dragon;
-      d.time = (d.time ?? 0) + dt;
       st.t += dt;
-      ai.bleed(d, w, dt);
-      d.hurtFlash = Math.max(0, d.hurtFlash - dt);
-      if (d.health <= 0) {
-        ai.dead(d, w, dt);
-        pose(d, w, dt);
-      } else {
-        d.fuel = 1; // (an endless fire gland, for the page)
-        d.breathCool -= dt;
-        d.biteCool -= dt;
-        d.blink = Math.max(0, d.blink - dt);
-        if (Math.random() < dt * 0.25) d.blink = 0.18;
-        d.timer = 1e9; // (it never goes out on its own here)
-        d.state = st.act === 'rest' ? 'rest' : 'roam';
-        d.alert = st.act === 'rest' ? Math.max(0, (d.alert ?? 0) - dt * 0.3) : 1;
-        d.look = d.breathT > 0 || d.windT > 0 ? d.aim ?? null : null;
-        if (ai.wingTrouble(d, w, dt)) {
-          // a badly hurt wing: down first, whatever the act (and no take-off till it mends)
-        } else if (GROUND.has(st.act) && d.mode !== 'ground') landFirst(d, dt);
-        else ACTS[st.act]?.(d, dt);
-        ai.breath(d, w, dt);
-        ai.animate(d, dt);
-        ai.updateTrail(d);
-        pose(d, w, dt);
-      }
+      if (st.act === 'snatch') moveDummy(dt);
+      w.dragons.forEach((d) => tick(d, dt));
+      if (st.act === 'fight') loopFight(dt);
+      else if (st.act === 'snatch') loopSnatch(dt);
+      stepThrown(sim, dt); // what it threw, falling
       stepWounds(sim, dt); // drops falling, landing as stains
       // the jet's and the splashes' heaters run out (the air is not simulated here)
       if (w.heaters.length > 40) w.heaters = w.heaters.filter((h) => !(h.temporary && h.until < w.time));
@@ -156,6 +150,36 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
       return st;
     },
   };
+
+  /** One dragon, one step: the act says what to do, the AI moves it. */
+  function tick(d, dt) {
+    d.time = (d.time ?? 0) + dt;
+    ai.bleed(d, w, dt);
+    d.hurtFlash = Math.max(0, d.hurtFlash - dt);
+    if (d.health <= 0) {
+      ai.dead(d, w, dt);
+      pose(d, w, dt);
+    } else {
+      d.fuel = 1; // (an endless fire gland, for the page)
+      d.breathCool -= dt;
+      d.biteCool -= dt;
+      d.blink = Math.max(0, d.blink - dt);
+      if (Math.random() < dt * 0.25) d.blink = 0.18;
+      d.timer = 1e9; // (it never goes out on its own here)
+      d.state = st.act === 'rest' ? 'rest' : d.duel ? 'fight' : 'roam';
+      d.alert = st.act === 'rest' ? Math.max(0, (d.alert ?? 0) - dt * 0.3) : 1;
+      d.look = d.breathT > 0 || d.windT > 0 ? d.aim ?? null : null;
+      if (ai.wingTrouble(d, w, dt)) {
+        // a badly hurt wing: down first, whatever the act (and no take-off till it mends)
+      } else if (GROUND.has(st.act) && d.mode !== 'ground') landFirst(d, dt);
+      else ACTS[st.act]?.(d, dt);
+      ai.breath(d, w, dt);
+      ai.animate(d, dt);
+      ai.updateTrail(d);
+      pose(d, w, dt);
+      holdCarried(ai, d, w);
+    }
+  }
 
   /** Ahead of it, on the ground: [x, y, z] `a` m in front of the chest at height `y` above the ground. */
   const ahead = (d, a, y = 0) => {
@@ -184,6 +208,75 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
     ai.takeoff(d, w, dt);
     return false;
   };
+
+  // --- the air grab: a training dummy walking to and fro on the field, snatched, carried, thrown; again
+  const DUMMY = { a: [C[0] - 9, C[2] + 7], b: [C[0] + 9, C[2] + 7], speed: 1.4 };
+  function resetDummy() {
+    w.loose ??= [];
+    w.loose.length = 0;
+    w.thrown = [];
+    const x = DUMMY.a[0];
+    const z = DUMMY.a[1];
+    // (every third one jumps aside: a miss, another pass)
+    st.dummy = addLoose(w, 'dummy', [x, groundAt(w, x, z).y + 0.9, z], { canDodge: true, dodgeChance: (st.snatches ?? 0) % 3 === 2 ? 1 : 0, dir: 1 });
+    st.snatches = (st.snatches ?? 0) + 1;
+    st.loopT = 0;
+  }
+  function moveDummy(dt) {
+    const o = st.dummy;
+    if (!o || o.held || o.flying || o.dodge || o.landedT != null) return;
+    const goal = o.dir > 0 ? DUMMY.b : DUMMY.a;
+    const dx = goal[0] - o.p[0];
+    if (Math.abs(dx) < 0.2) o.dir = -o.dir;
+    o.p[0] += Math.sign(dx) * DUMMY.speed * dt;
+    o.p[2] += (goal[1] - o.p[2]) * Math.min(1, dt * 2);
+    o.p[1] = groundAt(w, o.p[0], o.p[2]).y + 0.9;
+    o.rot = [0, o.dir > 0 ? Math.PI / 2 : -Math.PI / 2, 0];
+  }
+  function loopSnatch(dt) {
+    const d = st.dragon;
+    if (d.snatch || d.health <= 0) return;
+    // a fresh dummy: after a moment it goes for it; one it has had (thrown, or given up on): a few seconds, then a fresh one
+    st.loopT += dt;
+    const o = st.dummy;
+    if (o && (o.held || o.flying)) return;
+    if (!o || (o.used && st.loopT > 3.5)) {
+      resetDummy();
+      return;
+    }
+    if (!o.used && st.loopT > 0.5) {
+      o.used = true;
+      startSnatch(ai, d, { kind: 'object', ref: o }, 17 + (st.snatches ?? 0));
+      st.loopT = 0;
+    }
+  }
+
+  // --- the aerial fight: a second dragon (koi) and the two in the air over the field; again when it is over
+  function beginFight() {
+    endFight();
+    const mk = (x, yaw, extra) => {
+      const d = { p: [x, 0, C[2]], yaw, length: 9, health: 600, startState: 'fly', ...extra };
+      initDragon(d, w);
+      d.timer = 1e9;
+      return d;
+    };
+    w.dragons[0] = mk(C[0] - 15, Math.PI / 2, { colours: st.dragon.colours });
+    w.dragons[1] = mk(C[0] + 15, -Math.PI / 2, { colours: 'koi', length: 8.6 });
+    st.fights = (st.fights ?? 0) + 1;
+    startFight(ai, w.dragons[0], w.dragons[1], 101 + st.fights);
+    st.loopT = 0;
+  }
+  function endFight() {
+    for (const d of w.dragons) {
+      d.duel = null;
+      d.foe = null;
+    }
+    if (w.dragons.length > 1) w.dragons.length = 1;
+  }
+  function loopFight(dt) {
+    if (w.dragons.some((d) => d.duel)) return;
+    if ((st.loopT += dt) > 7) beginFight();
+  }
 
   const ACTS = {
     // lying in its lair: belly and chin on the ground, looking about, the tongue flicking
@@ -303,6 +396,18 @@ export function createDragonStage({ colours = 'bronze', length = 9 } = {}) {
     },
     wingGone(d, dt) {
       wingAct(d, dt, 1.05);
+    },
+    // the air grab: up to its attack height, the dive (leading the dummy), the strike, carried off, tossed away
+    snatch(d, dt) {
+      if (d.snatch) return stepSnatch(ai, d, w, dt);
+      if (airborne(d, dt)) flyRound(d, dt, 14, 12, 11, 0.5);
+    },
+    // two dragons: circling, head-on passes with fire, blows, the grapple spinning down; the loser comes down
+    fight(d, dt) {
+      if (d.duel) return stepFight(ai, d, w, dt);
+      if (d.mode === 'ground') return ai.groundMove(d, w, dt, null, 0);
+      if (d.health < d.maxHealth * 0.6) return landFirst(d, dt); // (the loser goes down)
+      flyRound(d, dt, 14, 12, 11, 0.5);
     },
     // in the air: it takes a few beats to get up, then it is killed and falls
     fall(d, dt) {

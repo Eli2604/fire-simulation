@@ -496,7 +496,7 @@ export class EnemyRenderer {
       // seized by the dragon: held crosswise in its jaws, flailing
       g.rotation.set(-(e.heldPitch ?? 0), (e.heldYaw ?? 0) + Math.PI / 2, Math.PI / 2, 'YXZ');
       g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(g.rotation));
-      name = 'swim';
+      name = e.dead ? 'die' : 'swim'; // (struggling; limp once dead)
     } else if (e.dead) name = 'die';
     else if (sq) name = e.anim ?? 'crouchAim';
     else if (e.crawling) name = 'crawl';
@@ -563,7 +563,7 @@ export class EnemyRenderer {
       if (e.held) {
         f.g.rotation.set(-(e.heldPitch ?? 0), (e.heldYaw ?? 0) + Math.PI / 2, Math.PI / 2, 'YXZ');
         f.g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(f.g.rotation));
-        const fl = Math.sin(time * 9 + k);
+        const fl = e.dead ? 0 : Math.sin(time * 9 + k); // (struggling; limp once dead)
         f.legL.upper.rotation.set(0.6 * fl, 0, 0.2);
         f.legR.upper.rotation.set(-0.6 * fl, 0, -0.2);
         f.armL.upper.rotation.set(-1.8 + 0.7 * fl, 0, 0.5);

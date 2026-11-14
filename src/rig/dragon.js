@@ -15,6 +15,7 @@ import { DRAGON_ZONES, dragonZones, dragonRayHit, wingDamage, WING } from '../ai
 import { DragonRenderer } from '../render/dragon.js';
 import { FlameRenderer } from '../render/flames.js';
 import { BloodRenderer } from '../render/blood.js';
+import { LooseRenderer } from '../render/loose.js';
 
 const RS = 12; // sides of a zone tube
 const MAXP = 48; // points of a zone (with its end caps)
@@ -40,6 +41,7 @@ export class DragonRig {
     this.drawer = new DragonRenderer(this.group, this.flames);
     this.blood = new BloodRenderer(this.group);
     this.blood.setWorld(w);
+    this.loose = new LooseRenderer(this.group); // the snatch's training dummy
     // the wall it climbs (concrete blocks)
     const b = this.stage.wall;
     if (Number.isFinite(b[0])) {
@@ -210,6 +212,7 @@ export class DragonRig {
     this.drawer.update(w, w.time, sdt);
     this.flames.update(sdt, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.blood.update(w.time);
+    this.loose.update(w);
     this.poseZones(dt);
     this.status();
   }
@@ -230,7 +233,7 @@ export class DragonRig {
     const s = this.$('dState');
     if (s && (this.statusT = (this.statusT ?? 0) + 1) % 6 === 0) {
       const [wd] = wingDamage(d);
-      const what = d.health <= 0 ? (d.mode === 'falling' ? 'falling' : 'dead') : d.mode === 'falling' ? 'wing useless: falling' : d.forcedSpot ? 'wing hurt: coming down' : DRAGON_ACTS[this.stage.act];
+      const what = d.health <= 0 ? (d.mode === 'falling' ? 'falling' : 'dead') : d.mode === 'falling' ? 'wing useless: falling' : d.forcedSpot ? 'wing hurt: coming down' : DRAGON_ACTS[this.stage.act] + (d.snatch ? ` · ${d.snatch.phase}${d.snatch.passes ? ` (pass ${d.snatch.passes + 1})` : ''}` : '') + (d.duel ? ` · ${d.duel.phase}` : '');
       const wing = wd >= WING.hurt ? ` · wing ${Math.round(wd * 100)}% (can't fly)` : wd > 0.05 ? ` · wing ${Math.round(wd * 100)}%` : '';
       s.textContent = `${what} · ${Math.ceil(d.health)} HP${d.bleed > 0.05 ? ` · bleeding ${d.bleed.toFixed(1)}/s` : ''}${wing}`;
       this.$('dAnims').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.stage.act && d.health > 0));
