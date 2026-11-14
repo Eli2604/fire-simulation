@@ -23,6 +23,7 @@
  * data-id inside it, its CSS is scoped to .rigst), so it does not clash with the page around it.
  * URL options (opts.params, default location.search): ?anim= ?anim2= ?play=&at= ?det= ?load=
  * ?weapon= ?armour=0 ?reload= ?look= ?zones=1 ?t= ?cam= ?nopanel=1 ?lod= ?sync=1 ?tab=anim|hit|gear|dragon,
+ * ?pk=vaultSpeed|climbJump|… &pkh=<obstacle height m> (a parkour act over its prop),
  * ?obj=soldier|squad|dragon|car|jet|boat (&vact= &vzones=1 &vhits=engine,fuel for a vehicle),
  * and the dragon's (?dragon=1 ?dact= ?dzones=1 ?dhits= ?dsteps= ?dspeed= ?dfollow=1: rig/dragon.js).
  */
@@ -32,7 +33,8 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLES, rigKind } from './objects.js';
+import { RIG_OBJECTS, VEHICLES, rigKind, PARKOUR_ACTS, parkourHeight } from './objects.js';
+import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -125,6 +127,9 @@ const HTML = `
 
   <section data-pane="anim">
     <div class="grid" data-id="anims"></div>
+    <div class="lab">Parkour (over its own wall or ledge)</div>
+    <div class="grid" data-id="pkActs"></div>
+    <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
       <button data-id="tgFire" type="button" aria-pressed="false">Damage on click</button>
@@ -332,6 +337,27 @@ export function mountRig(root, opts = {}) {
     f.setClipSpeed('reload', GEAR.reload);
     f.setLook(GEAR.look);
   }
+  /** The parkour props: a brick wall to vault, a concrete ledge to climb or drop off, low cover. */
+  const PROP_MAT = {
+    wall: new THREE.MeshStandardMaterial({ color: '#a8735a', roughness: 0.9 }),
+    ledge: new THREE.MeshStandardMaterial({ color: '#9c9a94', roughness: 0.85 }),
+  };
+  function makeProp(kind, g, from, yaw) {
+    const grp = new THREE.Group();
+    const box = (w, h, d, z, mat, y0 = 0) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(0, y0 + h / 2, z + d / 2);
+      m.castShadow = m.receiveShadow = true;
+      grp.add(m);
+    };
+    if (kind === 'wall') box(2.2, g.h, g.thick, g.pre, PROP_MAT.wall);
+    else if (kind === 'ledge') box(2.6, g.h, 2.2, g.pre, PROP_MAT.ledge);
+    else if (kind === 'drop') box(2.6, g.h, 2.2, g.pre - 2.2, PROP_MAT.ledge);
+    else if (kind === 'cover') box(2.2, g.h, 0.3, g.pre + 0.35, PROP_MAT.wall);
+    grp.position.set(from[0], kind === 'drop' ? 0 : from[1], from[2]);
+    grp.rotation.y = yaw;
+    return grp;
+  }
   /** Where his grenades (and his drone) go: 9 m in front of him. */
   const aheadOf = (e) => [e.d.p[0] + Math.sin(e.d.yaw) * 9, 0, e.d.p[2] + Math.cos(e.d.yaw) * 9];
   class Soldier {
@@ -361,6 +387,8 @@ export function mountRig(root, opts = {}) {
     play(name) {
       if (this.d.dead) return this;
       this.patrol = null;
+      this.endParkour();
+      if (PARKOUR_ACTS[name]) return this.parkour(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -370,6 +398,55 @@ export function mountRig(root, opts = {}) {
       this.fig.play(name, { restart: !!ONCE[name] });
       return this;
     }
+    /**
+     * A parkour act over a prop of the slider's height (rig/objects.js PARKOUR_ACTS): the prop is
+     * built round his home (the wall straddling it, the ledge's edge on it), the root goes along
+     * the move's path (ai/parkour.js rootAt) while the clip plays, and it starts over after a pause.
+     */
+    parkour(kind, h = pkHeight) {
+      const act = PARKOUR_ACTS[kind];
+      h = parkourHeight(kind, h);
+      const n = PK_MOVES[kind].geo;
+      const geo = { ...n, h };
+      if (act.prop === 'cover') geo.pre = n.pre;
+      const yaw = this.d.yaw, dir = [Math.sin(yaw), Math.cos(yaw)];
+      // where the move starts: the obstacle about his home
+      const back = act.prop === 'wall' ? n.pre + n.thick / 2 : act.prop === 'cover' ? n.pre / 2 : n.pre;
+      const from = [this.home[0] - dir[0] * back, act.prop === 'drop' ? h : 0, this.home[2] - dir[1] * back];
+      this.pk = { kind, t: 0, dur: PK_MOVES[kind].dur, geo, from, dir, yaw, wait: 0 };
+      this.pkProp = makeProp(act.prop, geo, from, yaw);
+      scene.add(this.pkProp);
+      this.fig.play(kind, { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
+    pkStep(dt) {
+      const P = this.pk;
+      if (P.wait > 0) {
+        // the pause at the end, then again from the start
+        if ((P.wait -= dt) <= 0) {
+          P.t = 0;
+          this.fig.play(P.kind, { restart: true, fade: 0 });
+        } else return;
+      }
+      P.t += dt;
+      const u = Math.min(1, P.t / P.dur);
+      const [f, up] = rootAt(P.kind, u, P.geo);
+      this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      this.d.yaw = P.yaw;
+      if (u >= 1) P.wait = 0.9;
+    }
+    endParkour() {
+      if (!this.pk) return;
+      this.d.yaw = this.pk.yaw;
+      this.d.p = this.home.slice();
+      this.pk = null;
+      if (this.pkProp) {
+        scene.remove(this.pkProp);
+        this.pkProp.traverse((o) => o.geometry?.dispose());
+      }
+      this.pkProp = null;
+    }
     startPatrol(mode) {
       const c = this.home;
       this.patrol = { i: 0, mode, pts: [0, 1, 2, 3].map((k) => [c[0] + Math.cos((k * Math.PI) / 2 + 0.4) * 2.6, 0, c[2] + Math.sin((k * Math.PI) / 2 + 0.4) * 2.6]) };
@@ -378,6 +455,7 @@ export function mountRig(root, opts = {}) {
     }
     damage(n, zone) {
       if (this.d.dead) return this;
+      if (this.pk && this.hp - n <= 0) this.endParkour();
       this.hp = Math.max(0, Math.round(this.hp - n));
       this.fig.hitFlash();
       if (this.hp <= 0) {
@@ -404,6 +482,7 @@ export function mountRig(root, opts = {}) {
     }
     /** Back on his feet at home, whole, with this loadout. */
     reset(loadout = this.loadout) {
+      this.endParkour();
       Object.assign(this, { hp: 100, loadout, patrol: null, dropT: null });
       Object.assign(this.d, { p: this.home.slice(), dead: false });
       this.makeFigure();
@@ -414,6 +493,7 @@ export function mountRig(root, opts = {}) {
       return this;
     }
     dispose() {
+      this.endParkour();
       this.fig.dispose();
     }
     update(dt) {
@@ -432,7 +512,8 @@ export function mountRig(root, opts = {}) {
         }
       }
       f.setAim(null);
-      d.p[1] = 0;
+      if (this.pk && !d.dead) this.pkStep(dt);
+      else d.p[1] = 0;
       g.position.set(d.p[0], d.p[1], d.p[2]);
       g.rotation.y = d.yaw;
       f.update(dt);
@@ -599,7 +680,7 @@ export function mountRig(root, opts = {}) {
     const hp = $('selHp');
     hp.style.width = e.hp + '%';
     hp.style.background = e.hp > 50 ? 'var(--ok)' : e.hp > 25 ? 'var(--accent)' : 'var(--hurt)';
-    $('anims').querySelectorAll('button').forEach((b) => b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown));
+    root.querySelectorAll('[data-a]').forEach((b) => b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown));
   }
   function openTab(t) {
     $$('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
@@ -609,6 +690,7 @@ export function mountRig(root, opts = {}) {
   /** The tab as if clicked. */
   const clickTab = (t) => root.querySelector(`.tabs button[data-tab="${t}"]`)?.click();
   const animBox = $('anims');
+  let pkHeight = null; // the Obstacle slider (null: each act's own default)
   Object.keys(LABELS).forEach((k) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -624,8 +706,28 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    animBox.appendChild(b);
+    (PARKOUR_ACTS[k] ? $('pkActs') : animBox).appendChild(b);
   });
+  // the Obstacle slider: the selected act's range; moving it replays the act over the new height
+  let pkLast = null;
+  const pkSlider = $('pkH');
+  const pkShow = (k) => {
+    const a = PARKOUR_ACTS[k];
+    if (!a) return;
+    pkLast = k;
+    pkSlider.min = a.min;
+    pkSlider.max = a.max;
+    const h = parkourHeight(k, pkHeight);
+    pkSlider.value = h;
+    $('pkHo').textContent = h.toFixed(2) + ' m';
+  };
+  $('pkActs').addEventListener('click', (ev) => pkShow(ev.target.dataset?.a), true);
+  pkSlider.oninput = () => {
+    pkHeight = +pkSlider.value;
+    $('pkHo').textContent = pkHeight.toFixed(2) + ' m';
+    if (!pkLast) return;
+    for (const e of allMode ? soldiers : [selected]) if (e?.pk) e.play(pkLast);
+  };
   const tg = (id, fn) => {
     const b = $(id);
     b.onclick = () => {
@@ -864,6 +966,11 @@ export function mountRig(root, opts = {}) {
     // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });
     if (qs.get('zones') === '1') $('tgZones').click();
+    if (qs.get('pk') && PARKOUR_ACTS[qs.get('pk')]) {
+      if (qs.get('pkh')) pkHeight = +qs.get('pkh');
+      pkShow(qs.get('pk'));
+      for (const e of soldiers) e.play(qs.get('pk'));
+    }
     $('build').hidden = true;
     if (kind === 'soldier' || kind === 'squad') $('stats').textContent = soldierStats();
     if (pending) selectWhat(pending);

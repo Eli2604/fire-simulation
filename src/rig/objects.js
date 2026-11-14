@@ -52,3 +52,27 @@ export const RIG_BUTTON = {
   jet: '🦴 Rig the jet (gear, flaps, afterburner, hit parts)',
   boat: '🦴 Rig the boat (sea, cruise, hit parts)',
 };
+
+/* ---------- parkour acts (soldier and squad): each over a prop of its own, of adjustable height ---------- */
+/**
+ * The soldier's parkour acts on the rig stage (operator/rig.js clips, ai/parkour.js moves): its
+ * label, the prop it is shown with ('wall' to vault, 'ledge' to get up onto, 'drop' to come down
+ * off, 'cover' to slide in behind) and the prop's height range (m) and default (the stage's
+ * Obstacle slider stays within the range of the act).
+ */
+export const PARKOUR_ACTS = {
+  vaultSpeed: { label: 'Vault (speed)', prop: 'wall', h: 0.9, min: 0.75, max: 1.15 },
+  vaultSide: { label: 'Vault (side)', prop: 'wall', h: 0.95, min: 0.75, max: 1.15 },
+  vaultStep: { label: 'Vault (step-over)', prop: 'wall', h: 0.6, min: 0.45, max: 0.75 },
+  climbJump: { label: 'Climb up (jump)', prop: 'ledge', h: 1.8, min: 1.15, max: 2.3 },
+  mantle: { label: 'Mantle', prop: 'ledge', h: 1.3, min: 0.75, max: 1.5 },
+  dropDown: { label: 'Drop down', prop: 'drop', h: 1.4, min: 0.6, max: 2.0 },
+  dropRoll: { label: 'Drop down (roll)', prop: 'drop', h: 2.6, min: 2.0, max: 3.3 },
+  slideCover: { label: 'Slide into cover', prop: 'cover', h: 0.9, min: 0.6, max: 1.1 },
+};
+/** The obstacle height for an act: h (or its default) kept within the act's range. */
+export function parkourHeight(act, h) {
+  const a = PARKOUR_ACTS[act];
+  if (!a) return null;
+  return Math.max(a.min, Math.min(a.max, Number.isFinite(+h) && h !== null && h !== '' ? +h : a.h));
+}

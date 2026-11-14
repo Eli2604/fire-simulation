@@ -9,6 +9,7 @@ import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
+import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -20,7 +21,8 @@ const AIR_LITRES = 2040;
  * First-person walk-through as a firefighter wearing breathing apparatus.
  *
  * Controls: click to start (pointer lock), WASD / arrows to move, mouse to look,
- * Shift to hurry, C to crawl (under the smoke the view and the heat are better),
+ * Shift to hurry, C to crawl (under the smoke the view and the heat are better), Space to
+ * vault a low wall, climb onto a ledge in reach or jump down a drop ahead (ai/parkour.js),
  * 1/2/3 select the hose (fog nozzle), a fire torch or a hand grenade; the left
  * mouse button uses it (hold for hose/torch, click to throw). T for the thermal
  * imaging camera (sees through smoke), L for the helmet lamp, Esc to leave.
@@ -170,6 +172,8 @@ export class Walkthrough {
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
       if (e.code === 'KeyF') this.strike();
+      // Space by a low wall, a ledge or a drop ahead: over it, up onto it, down off it
+      if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.downed) this.parkour();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     document.getElementById('walkGo').addEventListener('click', () => this.resume());
@@ -944,6 +948,27 @@ export class Walkthrough {
     return { depth, surface, air };
   }
 
+  /**
+   * Parkour, as the soldiers do it (ai/parkour.js, the same thresholds): what is ahead within
+   * 1.4 m where you look: a low wall you vault (Shift held: a speed vault), a ledge you can reach
+   * you climb onto (a mantle up to 1.5 m walking, a jump climb up to 2.3 m), a drop you jump
+   * down (rolling when it is deep). Hurt (health under 45) you cannot climb.
+   */
+  parkour() {
+    const dir = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    const geo = probe((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], dir, { range: 1.4 });
+    if (!geo) return false;
+    const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    const ab = ability({ health: this.health });
+    const kind = moveFor(geo, ab, hurry ? 'run' : 'walk');
+    if (!kind) {
+      if (geo.type === 'wall' || geo.type === 'up') this.say(geo.type === 'wall' || geo.h > 2.3 ? 'Too high to climb' : ab.wounded ? 'Too hurt to climb that' : 'Cannot get over that', 1.5);
+      else if (geo.type === 'down') this.say('Too deep to jump down', 1.5);
+      return false;
+    }
+    this.trav = { kind, t: 0, dur: durFor(kind, ab), geo: geoFor(kind, geo), from: [this.pos.x, this.pos.y, this.pos.z], dir };
+    return true;
+  }
   /** Height of the floor under (x, z), searching down from `from`. */
   floorAt(x, z, from) {
     const w = this.hooks.getSim().world;
@@ -1017,7 +1042,21 @@ export class Walkthrough {
     const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * wade * trudge * (1 - 0.45 * this.aimK);
     const len = Math.hypot(fx, fz);
     let moving = 0;
-    if (len > 0) {
+    let dip = 0;
+    if (this.trav) {
+      // a vault, a climb or a drop under way: carried along its path (ai/parkour.js)
+      const T = this.trav;
+      T.t += dt;
+      const u = Math.min(1, T.t / T.dur);
+      const [f, up] = rootAt(T.kind, u, T.geo);
+      this.pos.set(T.from[0] + T.dir[0] * f, T.from[1] + up, T.from[2] + T.dir[1] * f);
+      dip = eyeDip(T.kind, u);
+      moving = 1;
+      if (u >= 1) {
+        this.trav = null;
+        this.pos.y = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
+      }
+    } else if (len > 0) {
       const sy = Math.sin(this.yaw);
       const cy = Math.cos(this.yaw);
       // forward is -z in camera space; yaw rotates about y
@@ -1122,10 +1161,10 @@ export class Walkthrough {
       }
     } else this.dive = 0;
     const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12) - this.dive) : floor;
-    this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
+    if (!this.trav) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
-    cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
+    cam.position.set(this.pos.x, this.pos.y + eye - dip + bob, this.pos.z);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     cam.updateMatrixWorld();
     // the eye adapts: close up to something (an altar cloth a metre off) the lamp's spot would
