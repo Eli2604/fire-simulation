@@ -7,7 +7,8 @@
  *  route       its round, waypoints in the zone's metres: "x,z action; x,z action; ..."
  *              actions: rest (lie down a while), climb (crawl up and over what is
  *              there: a wall, a roof, a steep hilltop), sniff (stop and taste the air),
- *              fly (fly there and land). Empty: it rests in its lair and now and
+ *              fly (fly there and land), fight (fly at the nearest other dragon and fight it in
+ *              the air: ai/dragonAir.js). Empty: it rests in its lair and now and
  *              then flies round and lands somewhere to crawl about.
  */
 export default {
@@ -17,10 +18,10 @@ export default {
     colours: { value: 'bronze', options: ['bronze', 'tarpon', 'koi'], label: 'Scales' },
     health: { value: 600, min: 100, max: 3000, step: 50, label: 'Health' },
     start: { value: 'rest', options: ['rest', 'fly'], label: 'At the start' },
-    route: { value: '', label: 'Route: "x,z action; ..." (rest, climb, sniff, fly)' },
+    route: { value: '', label: 'Route: "x,z action; ..." (rest, climb, sniff, fly, fight)' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Random seed' },
   },
   build(p) {
-    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route }] };
+    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed }] };
   },
 };

@@ -486,6 +486,8 @@ export const SCENARIOS = {
           // a dragon: it rests on the terrace on the hillside, crawls up to the hilltop, over to the
           // church and up its walls, over the roof, down to its north arm where it smells the catacombs under it, and flies back
           { type: 'dragon', params: { route: '30.6,20.8 rest; 51,21.6 climb; 24.1,42.2 climb; 24.2,33.4 sniff; 30.6,20.8 fly rest' }, x: 30.6, z: 20.8, rotation: 90 },
+          // a second, younger dragon (koi scales) in the west: now and then it flies out and picks a fight with the first, in the air over the island (ai/dragonAir.js)
+          { type: 'dragon', params: { length: 8, colours: 'koi', route: '12,44 rest; 34,32 fly fight; 12,44 fly rest', seed: 2 }, x: 12, z: 44, rotation: 30 },
         ],
       },
       spaceship: {

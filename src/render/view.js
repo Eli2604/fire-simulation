@@ -28,6 +28,7 @@ import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
+import { LooseRenderer } from './loose.js';
 import { PhoenixRenderer } from './phoenix.js';
 import { PatchRenderer } from './patches.js';
 import { SnowRenderer } from './snow.js';
@@ -134,6 +135,7 @@ export class View {
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
     this.enemies = new EnemyRenderer(this.root, this.flames);
     this.dragons = new DragonRenderer(this.root, this.flames);
+    this.loose = new LooseRenderer(this.root); // what a dragon can snatch and throw (ai/dragonAir.js)
     this.phoenixes = new PhoenixRenderer(this.root, this.flames);
     this.surfaceMode = 'voxels'; // or 'smooth'
     this.smokeMode = 'particles'; // or 'volumetric'
@@ -651,6 +653,7 @@ export class View {
     this.ice.update();
     this.enemies.update(this.world, this.time);
     this.dragons.update(this.world, this.time, dt);
+    this.loose.update(this.world);
     this.phoenixes.update(this.world, this.time, dt);
     this.patches.update(this.time, sim.patches, this.voxels.mode, dt, scale);
     this.flames.skip = this.patches.coarseSkip;

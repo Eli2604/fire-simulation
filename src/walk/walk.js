@@ -551,7 +551,7 @@ export class Walkthrough {
       sim.ai.lamp = null;
     }
     this.spraying = false;
-    this.health = Math.max(1, this.health - dt * 25); // its teeth
+    this.health = Math.max(1, this.health - dt * (h.carry ? 3 : 25)); // its teeth (carried off to be thrown: it only holds you)
     if (!this.el.jaws && this.el.mask) {
       const div = document.createElement('div');
       div.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;background:radial-gradient(ellipse at 50% 55%, rgba(120,0,0,0.15), rgba(40,0,0,0.75) 60%, rgba(0,0,0,0.97))';
@@ -560,7 +560,7 @@ export class Walkthrough {
     }
     if (this.el.jaws) this.el.jaws.style.opacity = String(Math.min(1, 0.35 + (h.t / 2.8) * 0.65));
     if (Math.random() < dt * 3) this.sound.crack?.();
-    if (this.el.hud) this.el.hud.innerHTML = `<div class="warn">THE DRAGON HAS YOU</div><div class="msg">Its teeth close round you, row behind row…</div>`;
+    if (this.el.hud) this.el.hud.innerHTML = h.carry ? `<div class="warn">THE DRAGON HAS YOU</div><div class="msg">It carries you off through the air…</div>` : `<div class="warn">THE DRAGON HAS YOU</div><div class="msg">Its teeth close round you, row behind row…</div>`;
   }
 
   /** Swallowed. */
@@ -984,6 +984,17 @@ export class Walkthrough {
       return;
     }
     if (this.el.jaws) this.el.jaws.style.opacity = '0';
+    // thrown by a dragon (ai/dragonAir.js): tumbling through the air until you hit the ground
+    if (w.playerThrown && !this.downed) {
+      const T = w.playerThrown;
+      const cam = this.view.camera;
+      cam.position.set(T.p[0], T.p[1] + 0.6, T.p[2]);
+      cam.rotation.set(-0.4 + T.t * 4.5, this.yaw + T.t * 1.5, Math.sin(T.t * 3) * 0.6, 'YXZ');
+      cam.updateMatrixWorld();
+      this.pos.set(T.p[0], T.p[1] - 0.9, T.p[2]);
+      if (sim.ai) sim.ai.player = null;
+      return;
+    }
     // hints when you stand at a hatch or next to the jet
     {
       const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
@@ -1352,6 +1363,10 @@ export class Walkthrough {
         this.damageMask(0.06);
         this.say('DRAGON FIRE – your gear is burning: crawl (C) to roll it out, or get water on you', 3);
       } else if (ev.type === 'devoured') this.devoured();
+      else if (ev.type === 'playerLanded' && !this.downed) {
+        this.hurt(ev.damage ?? 0);
+        this.say(ev.water ? 'Thrown into the water' : ev.damage > 40 ? 'THROWN – you hit the ground hard' : 'Thrown – you land and roll', 3);
+      }
       // the phoenix in the catacombs
       else if (PHOENIX_TEXT[ev.type] && !this.downed) this.say(typeof PHOENIX_TEXT[ev.type] === 'function' ? PHOENIX_TEXT[ev.type](ev, this) : PHOENIX_TEXT[ev.type], 5);
     }

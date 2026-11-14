@@ -2,6 +2,7 @@ import { traceVoxels } from './sight.js';
 import { crush } from '../sim/crush.js';
 import { iceBears } from '../sim/ice.js';
 import { splatter } from '../sim/wounds.js';
+import { stepSnatch, stepFight, stepThrown, startSnatch, startFight, rival, holdCarried, BLOWS } from './dragonAir.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
@@ -352,8 +353,11 @@ export function pose(d, w, dt) {
     return [Math.sin(y0), 0, Math.cos(y0)];
   };
   if (d.mode === 'air' || d.mode === 'falling') {
-    const dir = norm([F[0] + yawDir(lookYaw * 0.4)[0] * 0.3, F[1] - 0.08, F[2] + yawDir(lookYaw * 0.4)[2] * 0.3]);
-    want = dir.map((v) => v * neck * 0.95);
+    let dir = norm([F[0] + yawDir(lookYaw * 0.4)[0] * 0.3, F[1] - 0.08, F[2] + yawDir(lookYaw * 0.4)[2] * 0.3]);
+    // striking (a snatch, a bite in a fight, the toss of the head): the neck shoots out at what it looks at
+    const st = clamp(d.strike ?? 0, 0, 1);
+    if (st > 0 && look) dir = norm(lerp3(dir, norm(sub(look, C)), st));
+    want = dir.map((v) => v * neck * (0.95 + 0.05 * st));
   } else if (d.lunge > 0 && look) {
     const dir = norm(sub(look, C));
     want = dir.map((v) => v * neck);
@@ -378,7 +382,7 @@ export function pose(d, w, dt) {
     want = stand.map((v, c) => v + (lie[c] - v) * d.crouch * (1 - d.alert));
   }
   if (!d.neckOff || dt === 0) d.neckOff = want.slice();
-  else for (let c = 0; c < 3; c++) d.neckOff[c] = approach(d.neckOff[c], want[c], d.lunge > 0 ? 14 : 5, dt);
+  else for (let c = 0; c < 3; c++) d.neckOff[c] = approach(d.neckOff[c], want[c], d.lunge > 0 || d.strike > 0.2 ? 14 : 5, dt);
   // keep the neck its length
   const nl = len3(d.neckOff);
   if (nl > neck) d.neckOff = d.neckOff.map((v) => (v * neck) / nl);
@@ -453,8 +457,9 @@ export const DRAGON_ZONES = {
   hindR: { label: 'Hind leg R', mult: 0.6, bleed: 0.6, r: 1, len: 1, color: '#7cc46a' },
 };
 
-/** Base damage of one hit, before the zone's multiplier. */
+/** Base damage of one hit, before the zone's multiplier (and the blows of a dragon fight: ai/dragonAir.js BLOWS). */
 const HIT_DAMAGE = { arrow: 30, bullet: 22, rocket: 350 };
+const blowOf = (type) => BLOWS[type];
 
 /**
  * The wings: each takes the raw damage of what hits it (not the zone's small multiplier:
@@ -837,6 +842,7 @@ export class DragonAI {
     const noises = w.noises.filter((e) => e.time >= this.heardUpTo);
     this.heardUpTo = w.time;
     if (w.noises.length > 300) w.noises.splice(0, w.noises.length - 150); // its footfalls add up
+    stepThrown(this.sim, dt); // what a dragon threw, falling (ai/dragonAir.js)
     for (const d of w.dragons) {
       initDragon(d, w);
       d.time = (d.time ?? 0) + dt;
@@ -858,6 +864,7 @@ export class DragonAI {
     d.biteCool -= dt;
     d.sated = Math.max(0, d.sated - dt);
     d.anger = Math.max(0, d.anger - dt);
+    d.snatchCool = Math.max(0, (d.snatchCool ?? 0) - dt);
     d.timer -= dt;
     d.blink = Math.max(0, d.blink - dt);
     if (Math.random() < dt * 0.25) d.blink = 0.18;
@@ -902,10 +909,10 @@ export class DragonAI {
     }
 
     // --- behaviour
-    if (d.health < d.maxHealth * 0.25 && d.state !== 'devour') d.state = 'flee';
+    if (d.health < d.maxHealth * 0.25 && d.state !== 'devour' && d.state !== 'snatch') d.state = 'flee';
     else if (d.state === 'flee' && d.health > d.maxHealth * 0.6) d.state = 'rest';
     const T = d.target;
-    if (T && d.state !== 'devour' && d.state !== 'flee' && (d.sated <= 0 || d.anger > 0)) d.state = 'hunt';
+    if (T && d.state !== 'devour' && d.state !== 'flee' && d.state !== 'snatch' && d.state !== 'fight' && (d.sated <= 0 || d.anger > 0)) d.state = 'hunt';
     if (d.state === 'hunt' && (!T || (d.sated > 0 && d.anger <= 0))) {
       d.state = 'roam';
       d.roam = { phase: d.mode === 'air' ? 'home' : 'walk', until: 10 };
@@ -933,11 +940,19 @@ export class DragonAI {
       case 'route':
         this.followRoute(d, w, dt);
         break;
+      // in the air against something (ai/dragonAir.js): a snatch and a throw, a fight with another dragon
+      case 'snatch':
+        stepSnatch(this, d, w, dt);
+        break;
+      case 'fight':
+        stepFight(this, d, w, dt);
+        break;
     }
     this.breath(d, w, dt);
     this.animate(d, dt);
     this.updateTrail(d);
     pose(d, w, dt);
+    holdCarried(this, d, w); // (in its jaws as they are now)
     void k;
   }
 
@@ -1118,6 +1133,11 @@ export class DragonAI {
       this.takeoff(d, w, dt);
       return;
     }
+    if (wp.acts.has('fight') && d.mode === 'air' && dh < 25 * k && rival(w, d)) {
+      next();
+      startFight(this, d, rival(w, d));
+      return;
+    }
     if (d.mode === 'air') {
       d.legSpot ??= this.landingSpot(d, w, wp.p, 3 * k) ?? [wp.p[0], groundAt(w, wp.p[0], wp.p[2]).y, wp.p[2]];
       if (this.land(d, w, dt, d.legSpot)) d.legSpot = null;
@@ -1136,6 +1156,12 @@ export class DragonAI {
       return;
     }
     // there
+    if (wp.acts.has('fight') && rival(w, d) && canFly(d)) {
+      // the route act 'fight': it goes for the other dragon (ai/dragonAir.js)
+      next();
+      startFight(this, d, rival(w, d));
+      return;
+    }
     if (wp.acts.has('rest')) {
       d.state = 'rest';
       d.timer = 25 + Math.random() * 20;
@@ -1200,6 +1226,11 @@ export class DragonAI {
         if (h.spot && this.land(d, w, dt, h.spot)) d.hunt = null;
         if (!h.spot) h.passes = 0;
         return;
+      }
+      // now and then, instead of a pass with fire, it snatches them out of the open and throws them (ai/dragonAir.js)
+      if (h.phase === 'in' && !h.snatchRoll && !(d.snatchCool > 0) && (T.kind === 'enemy' || T.kind === 'player')) {
+        h.snatchRoll = true;
+        if (Math.random() < 0.4 && startSnatch(this, d, { kind: T.kind, ref: T.ref }, Math.floor(w.time * 1000) + 3)) return;
       }
       if (h.phase === 'in') {
         this.airMove(d, w, dt, T.p, T.p[1] + 6 * k, 11);
@@ -1474,7 +1505,7 @@ export class DragonAI {
   breath(d, w, dt) {
     if (d.windT > 0) {
       d.windT -= dt;
-      if (d.windT <= 0) d.breathT = 2.0 + Math.random() * 0.8;
+      if (d.windT <= 0) d.breathT = d.breathLen ?? 2.0 + Math.random() * 0.8;
       return;
     }
     if (d.breathT <= 0) return;
@@ -1839,6 +1870,7 @@ export class DragonAI {
     if (d.biteT > 0) jaw = d.biteT > 0.2 ? 1 : 0;
     if (d.holding) jaw = 0.22 + 0.2 * Math.abs(Math.sin(d.devourT * 6));
     if (d.state === 'devour' && !d.holding) jaw = 0;
+    if (d.jawWant != null) jaw = d.jawWant; // (a snatch, a fight: ai/dragonAir.js)
     d.jaw = approach(d.jaw, jaw, d.biteT > 0 ? 30 : 8, dt);
     d.glow = approach(d.glow, d.breathT > 0 ? 1 : d.windT > 0 ? 0.7 : 0, 6, dt);
     d.tongueT = Math.max(0, (d.tongueT ?? 0) - dt);
@@ -2001,17 +2033,17 @@ export class DragonAI {
    * The wound bleeds (d.bleed, health per second), blood sprays on along dir onto what is
    * behind, and a stain stays on the scales where it went in. Returns the damage.
    */
-  strike(d, hz, type, p, dir) {
+  strike(d, hz, type, p, dir, by = null) {
     const w = this.world;
     const k = d.k;
     const Z = hz.zone;
-    const dmg = (HIT_DAMAGE[type] ?? 60) * Z.mult;
+    const dmg = (HIT_DAMAGE[type] ?? blowOf(type)?.dmg ?? 60) * Z.mult;
     d.wounds ??= {};
     d.wounds[hz.k] = (d.wounds[hz.k] ?? 0) + 1;
     // a wing tears (its own measure: see WING)
     if (hz.k.startsWith('wing')) {
       d.wingHurt ??= {};
-      d.wingHurt[hz.k] = Math.min(WING.hp * 1.5, (d.wingHurt[hz.k] ?? 0) + (HIT_DAMAGE[type] ?? 60));
+      d.wingHurt[hz.k] = Math.min(WING.hp * 1.5, (d.wingHurt[hz.k] ?? 0) + (HIT_DAMAGE[type] ?? blowOf(type)?.tear ?? 60));
     }
     d.bleed = (d.bleed ?? 0) + Z.bleed * (type === 'rocket' ? 2.5 : type === 'bullet' ? 0.7 : 1);
     // where it went in, round the zone's axis (so the stain follows the pose from now on)
@@ -2024,7 +2056,7 @@ export class DragonAI {
     const dd = len3(dir) > 1e-6 ? dir : off;
     splatter(this.sim, p, dd, (hz.k.startsWith('wing') ? 0.8 : 2) * Math.sqrt(k));
     w.events.push({ type: 'dragonWound', pos: p.slice(), time: w.time, name: Z.label, zone: hz.k, damage: dmg });
-    this.wound(d, dmg);
+    this.wound(d, dmg, by);
     return dmg;
   }
 
@@ -2073,7 +2105,7 @@ export class DragonAI {
     }
   }
 
-  wound(d, amount) {
+  wound(d, amount, by = null) {
     const w = this.world;
     d.health -= amount;
     d.hurtFlash = 0.3;
@@ -2081,7 +2113,7 @@ export class DragonAI {
     d.sated = 0;
     // it knows who did it
     const pl = this.sim.ai?.player;
-    if (pl && d.health > 0) d.target = { kind: 'player', ref: 'player', p: pl.p.slice(), head: pl.head.slice(), seen: true, lastSeen: w.time };
+    if (pl && d.health > 0 && !by) d.target = { kind: 'player', ref: 'player', p: pl.p.slice(), head: pl.head.slice(), seen: true, lastSeen: w.time };
     if (d.health <= 0) {
       d.health = 0;
       w.events.push({ type: 'dragonHit', pos: d.chest.slice(), time: w.time, name: 'the dragon' });
