@@ -11,12 +11,18 @@
  * While one is shown the soldiers are hidden and paused (rig/stage.js skips their tick).
  */
 import * as THREE from 'three';
-import { VEHICLE_ACTS } from './objects.js';
+import { VEHICLE_ACTS, VEHICLE_GROUPS } from './objects.js';
+import { JetDamage } from '../sim/jetDamage.js';
+import { FlightAI, FORMATIONS } from '../ai/flight.js';
+import { Chute, chuteInput, ejectionEnvelope } from '../sim/ejection.js';
+import { PilotFigure } from '../render/pilotFigure.js';
 import { VEHICLE_ZONES, VEHICLE_WEAPONS, vehicleZones, rayZone, hitPart, integrity } from '../models/vehicleZones.js';
 import { buildCarMesh, buildJet, buildBoatMesh, Sea, disposeTree } from './vehicleMeshes.js';
 
-const NAMES = { car: 'Car', jet: 'Jet', boat: 'Boat' };
-const CAMS = { car: [[6.4, 3.0, 8.2], [0, 0.7, 0]], jet: [[19, 8.5, 24], [-1.5, 1.8, 1.5]], boat: [[7.5, 3.6, 9.5], [0, 0.4, 0]] };
+const NAMES = { car: 'Car', jet: 'Jet', boat: 'Boat', jetFlight: 'Jet flight', pilot: 'Pilot' };
+const CAMS = { car: [[6.4, 3.0, 8.2], [0, 0.7, 0]], jet: [[19, 8.5, 24], [-1.5, 1.8, 1.5]], boat: [[7.5, 3.6, 9.5], [0, 0.4, 0]], jetFlight: [[80, 50, 110], [0, 24, 0]], pilot: [[7, 3.5, 9], [0, 1.6, 0]] };
+/** The rig's flight: slow and tight enough to stay over the field. */
+const RIG_FLIGHT = { altitude: 28, speed: 30, orbitRadius: 75, target: [150, 0, -40], holdTime: 12 };
 const approach = (v, target, rate, dt) => v + (target - v) * Math.min(1, rate * dt);
 /** Where a circle of radius R round the middle puts you at angle a, and which way you face (+x forward). */
 const onCircle = (R, a) => ({ x: R * Math.cos(a), z: R * Math.sin(a), yaw: Math.atan2(-Math.cos(a), -Math.sin(a)) });
@@ -106,10 +112,18 @@ export class VehicleRig {
     if (kind !== this.kind || (params && key !== this.paramsKey)) {
       this.free();
       this.kind = kind;
+      /** The kind of hit parts (a flight's members: jets). */
+      this.zk = VEHICLE_GROUPS[kind] ?? kind;
       this.paramsKey = key;
-      this.v = kind === 'car' ? buildCarMesh(params ?? {}) : kind === 'jet' ? buildJet(params ?? {}) : buildBoatMesh(params ?? {});
-      this.v.group.rotation.order = 'YZX';
-      this.holder.add(this.v.group);
+      this.params = params ?? {};
+      if (VEHICLE_GROUPS[kind]) this.buildFlight();
+      else {
+        this.v = kind === 'car' ? buildCarMesh(params ?? {}) : kind === 'jet' ? buildJet(params ?? {}) : kind === 'pilot' ? buildPilotStage() : buildBoatMesh(params ?? {});
+        this.v.group.rotation.order = 'YZX';
+        this.holder.add(this.v.group);
+        if (kind === 'jet') seatPilot(this.v);
+        this.jets = null;
+      }
       if (kind === 'boat') {
         this.sea = new Sea();
         this.holder.add(this.sea.mesh);
@@ -119,6 +133,7 @@ export class VehicleRig {
       this.panel();
     }
     this.setActive(true);
+    this.controls.maxDistance = this.jets ? 600 : 120;
     const [p, t] = CAMS[kind];
     this.camera.position.set(...p);
     this.controls.target.set(...t);
@@ -127,8 +142,14 @@ export class VehicleRig {
   /** The current vehicle gone (geometry, materials, its sea, its fire). */
   free() {
     if (!this.v) return;
-    this.v.group.parent?.remove(this.v.group);
-    this.v.dispose();
+    for (const j of this.jets ?? [{ v: this.v }]) {
+      j.v.group.parent?.remove(j.v.group);
+      j.v.dispose();
+    }
+    this.jets = null;
+    this.ai = null;
+    this.clearCrash();
+    this.clearEjected();
     for (const z of this.zones ?? []) disposeTree(z.group);
     this.zones = [];
     if (this.sea) {
@@ -143,11 +164,21 @@ export class VehicleRig {
 
   /** Whole again, at rest in the middle. */
   reset() {
-    this.dmg = {};
+    if (this.jets) return this.resetFlight();
+    this.jd = this.zk === 'jet' ? new JetDamage() : null;
+    this.clearEjected();
+    if (this.v?.pilot) {
+      this.v.pilot.group.visible = true;
+      this.v.canopy.visible = true;
+    }
+    this.dmg = this.jd ? this.jd.dmg : {};
+    this.clearCrash();
+    if (this.v) this.v.group.scale.set(1, 1, 1);
+    this.v?.group.traverse((o) => o.isMesh && o.material.userData?.base && o.material.color.copy(o.material.userData.base));
     this.flat = [0, 0, 0, 0];
     this.char = 0;
     this.sunk = 0;
-    this.act = 'idle';
+    this.act = this.kind === 'pilot' ? 'seated' : 'idle';
     this.t = 0;
     this.s = { a: 0, x: 0, z: 0, yaw: Math.PI * 0.12, y: 0, roll: 0, pitch: 0, steer: 0, speed: 0, gear: 1, flaps: 0, burner: 0, doors: 0 };
     this.v?.group.traverse((o) => o.isMesh && (o.visible = true));
@@ -158,8 +189,15 @@ export class VehicleRig {
 
   play(name) {
     if (!VEHICLE_ACTS[this.kind]?.[name]) return this;
+    if (this.jets) {
+      this.order(name);
+      return this;
+    }
+    // the damage acts start from a whole jet
+    if (this.kind === 'jet' && ['hit', 'burning', 'critical', 'crash'].includes(name) && this.jd?.state !== 'ok') this.reset();
     this.act = name;
     this.t = 0;
+    this.s.hitDone = false;
     return this;
   }
 
@@ -172,7 +210,7 @@ export class VehicleRig {
       this.hidden = new Set();
       this.hideRange();
       this.cam = { p: this.camera.position.clone(), t: this.controls.target.clone(), max: this.controls.maxDistance };
-      this.controls.maxDistance = 120;
+      this.controls.maxDistance = this.jets ? 600 : 120;
       if (build) build.style.visibility = 'hidden';
     } else {
       this.hidden?.forEach((o) => (o.visible = true));
@@ -202,10 +240,21 @@ export class VehicleRig {
     const sdt = Math.min(0.05, dt) * this.speed;
     this.t += sdt;
     this.s.a ??= 0;
-    if (this.kind === 'car') this.car(sdt);
+    if (this.jets) this.flight(sdt);
+    else if (this.kind === 'pilot') this.pilotAct(sdt);
+    else if (this.kind === 'car') this.car(sdt);
     else if (this.kind === 'jet') this.jet(sdt);
     else this.boat(sdt);
-    this.effects(sdt);
+    if (this.jets) this.jets.forEach((j) => this.withJet(j, () => this.effects(sdt)));
+    else this.effects(sdt);
+    this.stepCrash(sdt);
+    // the damage and eject acts move far: the camera follows the jet (or the man under his canopy)
+    if (this.kind === 'jet' && ['eject', 'hit', 'burning', 'critical', 'crash'].includes(this.act)) {
+      const e = this.ejected?.[0];
+      const p = e && this.act === 'eject' ? new THREE.Vector3(...e.c.p) : this.v.group.position.clone();
+      this.controls.target.lerp(p.add(new THREE.Vector3(0, 1.5, 0)), Math.min(1, dt * 2));
+    }
+    if (!this.jets) this.stepEjected(sdt);
     this.fx.update(sdt);
     for (const z of this.zones) {
       z.flash = Math.max(0, z.flash - dt);
@@ -272,27 +321,51 @@ export class VehicleRig {
     const s = this.s;
     const v = this.v;
     const act = this.act;
-    const air = act === 'gearUp' || act === 'bank';
+    const jd = this.jd;
+    // the damage chain (sim/jetDamage.js): hit → burning → critical → it falls → it crashes
+    // eject: the canopy goes, the seat fires, the pilot comes down under his canopy; the jet flies on, nose down, and crashes
+    if (act === 'eject' && !s.hitDone && this.t > 2.5 && s.y > 8) {
+      s.hitDone = true;
+      this.ejectFrom(v, [Math.cos(s.yaw) * s.speed, 0, -Math.sin(s.yaw) * s.speed], s.yaw);
+      jd.state = 'falling';
+      jd.cause = 'pilot ejected';
+    }
+    if (['hit', 'burning', 'critical', 'crash'].includes(act) && !s.hitDone && this.t > (act === 'crash' ? 0.6 : 1.5)) {
+      s.hitDone = true;
+      if (act === 'hit') this.hit(this.$('vZoneSel')?.value || 'engines', VEHICLE_WEAPONS.shell);
+      if (act === 'burning') this.hit('engines', 60);
+      if (act === 'critical') this.hit('wingL', VEHICLE_WEAPONS.rocket * 2);
+      if (act === 'crash') this.hit('fuel', VEHICLE_WEAPONS.rocket);
+    }
+    jd?.step(dt);
+    // critical: the pilot ejects when he can (height for the seat, the cockpit whole)
+    if (jd?.state === 'falling' && v.pilot?.group.visible && act !== 'crash') {
+      const env = ejectionEnvelope({ height: s.y, sink: -(s.vy ?? 0), pitch: s.pitch ?? 0, roll: s.roll, cockpit: this.dmg.cockpit ?? 0 });
+      if (env.ok) this.ejectFrom(v, [Math.cos(s.yaw) * s.speed, s.vy ?? 0, -Math.sin(s.yaw) * s.speed], s.yaw);
+    }
+    if (jd?.state === 'falling' || jd?.state === 'crashed') return this.fall(dt);
+    const air = act === 'gearUp' || act === 'bank' || act === 'eject' || act === 'hit' || act === 'burning' || act === 'critical' || act === 'crash';
     const engineOut = (this.dmg.engines ?? 0) >= 1;
     // up off the ground (on a stand, as on a test rig) before the gear comes up; gear down before it settles
-    const alt = act === 'bank' ? 12 : act === 'gearUp' ? 3.5 : 0;
+    const alt = act === 'critical' || act === 'eject' ? 30 : act === 'crash' ? 22 : act === 'gearUp' ? 3.5 : air ? 12 : 0;
     if (air || s.gear > 0.97) s.y = approach(s.y, alt, act === 'bank' ? 0.8 : 1.6, dt);
     s.gear = approach(s.gear, air && s.y > 2.5 ? 0 : !air ? 1 : s.gear, 1.4, dt);
     s.flaps = approach(s.flaps, act === 'flaps' ? 0.35 * (1 - Math.cos(this.t * 1.1)) : 0, 4, dt);
-    s.burner = approach(s.burner, engineOut ? 0 : act === 'afterburner' ? 1 : act === 'bank' ? 0.55 : act === 'taxi' ? 0.15 : 0.05, 3, dt);
+    const flying = air && act !== 'gearUp';
+    s.burner = approach(s.burner, engineOut ? 0 : act === 'afterburner' ? 1 : flying ? 0.55 : act === 'taxi' ? 0.15 : 0.05, 3, dt);
     const taxi = act === 'taxi' && !engineOut;
-    s.speed = approach(s.speed, taxi ? 5 : act === 'bank' ? 26 : 0, act === 'bank' ? 0.6 : 1.2, dt);
+    s.speed = approach(s.speed, taxi ? 5 : flying ? 26 : 0, flying ? 0.6 : 1.2, dt);
     let roll = 0;
     if (s.speed > 0.05) {
-      const R = act === 'bank' ? 30 : 16;
+      const R = flying ? 30 : 16;
       this.circle(R, s.speed, dt);
-      roll = act === 'bank' ? Math.min(1.05, Math.atan((s.speed * s.speed) / (R * 9.81))) : 0;
+      roll = flying ? Math.min(1.05, Math.atan((s.speed * s.speed) / (R * 9.81))) : 0;
     }
     // a wing gone: it rolls towards it
     roll += 0.5 * ((this.dmg.wingR ?? 0) - (this.dmg.wingL ?? 0)) * (s.y > 1 ? 1 : 0);
     s.roll = approach(s.roll, roll, 1.5, dt);
     v.group.position.set(s.x, s.y, s.z);
-    v.group.rotation.set(s.roll, s.yaw, act === 'bank' ? 0.04 : 0);
+    v.group.rotation.set(s.roll, s.yaw, flying ? 0.04 : 0);
     // the gear folds up into the belly
     v.gear.scale.y = Math.max(0.02, s.gear);
     v.gear.position.y = (1 - s.gear) * 1.1;
@@ -341,9 +414,10 @@ export class VehicleRig {
 
   /* ---------------- what the damage does (and the burning car) ---------------- */
   effects(dt) {
+    if (this.kind === 'pilot') return;
     const v = this.v;
     const d = this.dmg;
-    const k = this.kind;
+    const k = this.zk; // (a flight's members: jets)
     const fires = [];
     const smokes = [];
     const L = (x, y, z) => v.group.localToWorld(new THREE.Vector3(x, y, z));
@@ -361,15 +435,20 @@ export class VehicleRig {
       const part = { wingL: [v.parts.wingL], wingR: [v.parts.wingR], tail: [v.parts.tail, v.parts.fin], engines: [v.parts.engine], cockpit: [v.canopy] };
       for (const [z, meshes] of Object.entries(part))
         for (const m of meshes) {
-          m.visible = z === 'engines' || (d[z] ?? 0) < 1; // (a wing, the tail, the canopy: gone)
+          m.visible = (z === 'engines' || (d[z] ?? 0) < 1) && !(z === 'cockpit' && v.pilot && !v.pilot.group.visible); // (a wing, the tail, the canopy: gone; the canopy jettisoned)
           m.material.userData.base ??= m.material.color.clone();
-          m.material.color.copy(m.material.userData.base).multiplyScalar(1 - 0.6 * (d[z] ?? 0));
+          m.material.color.copy(m.material.userData.base).multiplyScalar((1 - 0.6 * (d[z] ?? 0)) * (this.jd?.state === 'crashed' ? 0.25 : 1));
         }
       v.flaps[0].visible = (d.wingL ?? 0) < 1;
       v.flaps[1].visible = (d.wingR ?? 0) < 1;
       if ((d.engines ?? 0) > 0.4) for (const z of [-0.95, 0.95]) smokes.push([L(-7.4, 1.6, z), 1.4]);
       if ((d.engines ?? 0) >= 1) for (const z of [-0.95, 0.95]) fires.push([L(-6.2, 1.8, z), 1.2]);
       if ((d.fuel ?? 0) >= 1) fires.push([L(-1, 2.0, 0), 1.6]);
+      // the parts on fire (sim/jetDamage.js): flames from there, smoke trailing
+      for (const e of this.jd?.emitters() ?? []) {
+        if (e.fire > 0) fires.push([L(...e.p), 1 + e.fire * 1.5]);
+        smokes.push([L(...e.p), 1 + e.smoke]);
+      }
     } else {
       if ((d.engine ?? 0) > 0.4) smokes.push([L(-2.6, 1.1, 0), 0.9]);
       if ((d.engine ?? 0) >= 1) fires.push([L(-2.6, 0.9, 0), 0.9]);
@@ -383,12 +462,28 @@ export class VehicleRig {
 
   /* ---------------- hit parts: boxes (and cylinders) on the vehicle ---------------- */
   buildZones() {
-    for (const z of this.zones ?? []) {
-      z.group.parent?.remove(z.group);
-      disposeTree(z.group);
+    if (!this.inJet)
+      for (const z of this.zones ?? []) {
+        z.group.parent?.remove(z.group);
+        disposeTree(z.group);
+      }
+    if (this.jets && !this.inJet) {
+      // a flight: each jet its own hit parts
+      const all = [];
+      this.jets.forEach((j, i) =>
+        this.withJet(j, () => {
+          this.zones = [];
+          this.inJet = true;
+          this.buildZones();
+          this.inJet = false;
+          for (const z of this.zones) all.push(Object.assign(z, { jet: i }));
+        }),
+      );
+      this.zones = all;
+      return;
     }
-    const old = new Map((this.zones ?? []).map((z) => [z.k, z.flash]));
-    this.zones = vehicleZones(this.kind, this.v.dims).map((Z) => {
+    const old = this.inJet ? new Map() : new Map((this.zones ?? []).map((z) => [z.k, z.flash]));
+    this.zones = (this.zk === 'pilot' ? [] : vehicleZones(this.zk, this.v.dims)).map((Z) => {
       const group = new THREE.Group();
       // (seen through the body: the engine, the tanks are inside it)
       const fill = new THREE.MeshBasicMaterial({ color: Z.zone.color, transparent: true, opacity: 0.18, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
@@ -419,12 +514,18 @@ export class VehicleRig {
     const r = this.renderer.domElement.getBoundingClientRect();
     const ray = new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), this.camera);
-    this.v.group.updateMatrixWorld();
-    const inv = this.v.group.matrixWorld.clone().invert();
-    const from = ray.ray.origin.clone().applyMatrix4(inv).toArray();
-    const dir = ray.ray.direction.clone().transformDirection(inv).toArray();
-    const hit = rayZone(this.kind, from, dir, 500, this.v.dims);
+    // (a flight: the nearest jet the ray meets)
+    let hit = null;
+    for (const [i, j] of (this.jets ?? [{ v: this.v }]).entries()) {
+      j.v.group.updateMatrixWorld();
+      const inv = j.v.group.matrixWorld.clone().invert();
+      const from = ray.ray.origin.clone().applyMatrix4(inv).toArray();
+      const dir = ray.ray.direction.clone().transformDirection(inv).toArray();
+      const h = rayZone(this.zk, from, dir, 800, j.v.dims);
+      if (h && (!hit || h.t < hit.t)) hit = { ...h, jet: i };
+    }
     if (!hit) return;
+    if (this.jets) this.pick(hit.jet);
     this.$('vZoneSel').value = hit.k;
     this.zoneUI();
     this.flash(hit.k);
@@ -433,13 +534,14 @@ export class VehicleRig {
   }
 
   flash(k) {
-    const z = this.zones.find((q) => q.k === k);
+    const z = this.zones.find((q) => q.k === k && (q.jet == null || q.jet === this.sel));
     if (z) z.flash = 0.45;
   }
 
   /** A hit of `amount` on part k (at p, vehicle frame: which tyre). */
   hit(k, amount, p = null) {
-    const r = hitPart(this.dmg, this.kind, k, amount);
+    // a jet: its damage chain (fire, critical, the fall); in a flight the AI hears of it (radio, break, the lead)
+    const r = this.jets ? this.ai.hit(this.sel, k, amount) : this.jd ? this.jd.hit(k, amount) : hitPart(this.dmg, this.zk, k, amount);
     if (!r) return null;
     if (this.kind === 'car' && k === 'tyres') {
       // the tyre nearest the hit (or one at random) goes down; the part shows the worst of them
@@ -450,7 +552,9 @@ export class VehicleRig {
     }
     this.flash(k);
     const what = r.destroyed ? ` – destroyed: ${r.zone.effect}` : '';
-    this.lastHit = `Last hit: ${r.zone.label} ×${r.zone.mult.toFixed(1)} = ${Math.round(r.amount)} damage (${this.weapon}), now ${Math.round(this.dmg[k] * 100)}%${what}.`;
+    const fire = r.fire ? ' – it catches fire' : '';
+    const down = this.jd?.state === 'falling' ? ` – critical (${this.jd.cause}): out of control, it falls` : '';
+    this.lastHit = `Last hit${this.jets ? ` on ${this.ai.members[this.sel].call}` : ''}: ${r.zone.label} ×${r.zone.mult.toFixed(1)} = ${Math.round(r.amount)} damage (${this.weapon}), now ${Math.round(this.dmg[k] * 100)}%${what}${fire}${down}.`;
     this.toast(`${r.zone.label} · ${Math.round(r.amount)} dmg${r.destroyed ? ' · destroyed' : ''}`);
     this.status(true);
     return r;
@@ -459,20 +563,21 @@ export class VehicleRig {
   status(parts = false) {
     if (!this.v) return;
     const $ = this.$;
-    const hp = integrity(this.dmg, this.kind);
+    const hp = this.zk === 'pilot' ? 1 : integrity(this.dmg, this.zk);
     const bar = $('vHp');
     if (bar) {
       bar.style.width = (hp * 100).toFixed(1) + '%';
       bar.style.background = hp > 0.5 ? 'var(--ok)' : hp > 0.25 ? 'var(--accent)' : 'var(--hurt)';
     }
     const st = $('vState');
-    const extra = this.kind === 'boat' && this.sunk > 0 ? ' · sinking' : this.kind === 'car' && this.char > 0.05 ? ' · on fire' : '';
+    const jstate = this.jd && !['ok', 'damaged'].includes(this.jd.state) ? ` · ${this.jd.state}` : '';
+    const extra = (this.kind === 'boat' && this.sunk > 0 ? ' · sinking' : this.kind === 'car' && this.char > 0.05 ? ' · on fire' : '') + jstate + (this.ai ? ` · ${this.ai.mode} · lead ${this.ai.leader.call}` : '');
     if (st) st.textContent = `${VEHICLE_ACTS[this.kind][this.act]} · ${Math.round(hp * 100)}%${extra}`;
     $('vActs')?.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.act));
     if (parts || this.partsDirty !== false) {
       this.partsDirty = false;
       const pre = $('vParts');
-      if (pre) pre.textContent = VEHICLE_ZONES[this.kind].map((z) => `${z.label.padEnd(24)} ${String(Math.round((this.dmg[z.k] ?? 0) * 100)).padStart(3)}%`).join('\n');
+      if (pre) pre.textContent = (this.ai ? `${this.ai.members[this.sel].call}${this.sel === this.ai.lead ? ' (lead)' : ''}\n` : '') + (VEHICLE_ZONES[this.zk] ?? []).map((z) => `${z.label.padEnd(24)} ${String(Math.round((this.dmg[z.k] ?? 0) * 100)).padStart(3)}%`).join('\n');
       const lh = $('vLastHit');
       if (lh) lh.textContent = this.lastHit ?? 'Click a part to see it; with Damage on click, to hit it there. A destroyed part does what it would (a fire, a flat tyre, a wing gone, the boat sinking).';
     }
@@ -508,7 +613,7 @@ export class VehicleRig {
     sp.oninput();
     const zSel = $('vZoneSel');
     const [zS, zL, zM] = ['vzS', 'vzL', 'vzM'].map($);
-    const cur = () => VEHICLE_ZONES[this.kind]?.find((z) => z.k === zSel.value);
+    const cur = () => VEHICLE_ZONES[this.zk]?.find((z) => z.k === zSel.value);
     this.zoneUI = () => {
       const z = cur();
       if (!z) return;
@@ -547,21 +652,399 @@ export class VehicleRig {
       b.type = 'button';
       b.textContent = label;
       b.dataset.a = k;
-      if (k === 'burning') b.classList.add('warn');
+      if (['burning', 'critical', 'crash', 'hitLead', 'break'].includes(k)) b.classList.add('warn');
       b.onclick = () => this.play(k);
       box.appendChild(b);
     }
     const zSel = $('vZoneSel');
     zSel.replaceChildren();
-    for (const z of VEHICLE_ZONES[this.kind]) {
+    for (const z of VEHICLE_ZONES[this.zk] ?? []) {
       const o = document.createElement('option');
       o.value = z.k;
       o.textContent = z.label;
       zSel.appendChild(o);
     }
     this.zoneUI();
+    this.flightPanel();
     this.status(true);
   }
+
+  /* ---------------- falling and crashing (a jet: sim/jetDamage.js) ---------------- */
+  /** Out of control: it rolls, spins or tumbles as its damage says, and falls until it hits the ground. */
+  fall(dt) {
+    const s = this.s;
+    const v = this.v;
+    const jd = this.jd;
+    v.flame.visible = false;
+    v.glow.intensity = 0;
+    if (jd.state === 'crashed') return;
+    const c = jd.control();
+    s.vy = (s.vy ?? 0) - 9.81 * 0.7 * dt;
+    s.speed = Math.max(10, s.speed * Math.exp(-0.15 * dt));
+    s.x += Math.cos(s.yaw) * s.speed * dt;
+    s.z -= Math.sin(s.yaw) * s.speed * dt;
+    s.y += s.vy * dt;
+    s.roll += c.roll * dt;
+    s.pitch = Math.max(-1.3, (s.pitch ?? 0) + c.pitch * dt);
+    s.yaw += c.yaw * dt;
+    s.gear = 0;
+    v.gear.visible = false;
+    v.group.position.set(s.x, s.y, s.z);
+    v.group.rotation.set(s.roll, s.yaw, s.pitch);
+    if (s.y <= 0.3) {
+      jd.impact(false);
+      this.crashAt(v);
+      this.toast('Impact: the jet explodes');
+      this.status(true);
+    }
+  }
+
+  /** The explosion where jet v hit the ground: a fireball, debris, a crater, the wreck burning on. */
+  crashAt(v) {
+    const p = v.group.position.clone();
+    p.y = 0;
+    const group = new THREE.Group();
+    group.position.copy(p);
+    this.holder.add(group);
+    // the crater: a dark scorched hole with a rim of thrown-up earth
+    const crater = new THREE.Mesh(new THREE.CircleGeometry(5.5, 32).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x1d1a16, roughness: 1 }));
+    crater.position.y = 0.03;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(5.6, 0.45, 8, 32).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x5b4a36, roughness: 1 }));
+    rim.scale.y = 0.5;
+    group.add(crater, rim);
+    // pieces of the airframe flying off
+    const debris = [];
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2c2d2e, roughness: 0.8, metalness: 0.4 });
+    for (let k = 0; k < 16; k++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.3 + Math.random() * 1.2, 0.08 + Math.random() * 0.2, 0.3 + Math.random() * 0.8), mat);
+      m.position.set(0, 1, 0);
+      group.add(m);
+      const a = Math.random() * Math.PI * 2;
+      const sp = 6 + Math.random() * 14;
+      debris.push({ m, v: new THREE.Vector3(Math.cos(a) * sp, 8 + Math.random() * 14, Math.sin(a) * sp), w: new THREE.Vector3(Math.random() * 8, Math.random() * 8, Math.random() * 8) });
+    }
+    const light = new THREE.PointLight(0xffa050, 400, 60, 1.6);
+    light.position.y = 3;
+    group.add(light);
+    // the fireball
+    for (let k = 0; k < 70; k++) {
+      const q = p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 3, (Math.random() - 0.5) * 6));
+      this.fx.emit(q, k % 3 !== 0, 3 + Math.random() * 3);
+    }
+    // the wreck: flattened, charred, lying in the crater; its fuel goes on burning
+    v.group.position.set(p.x, 0.2, p.z);
+    v.group.rotation.set(0.22, v.group.rotation.y, -0.08);
+    v.group.scale.set(1, 0.55, 1);
+    v.flame.visible = false;
+    v.group.traverse((o) => {
+      if (!o.isMesh || !o.material.color) return;
+      o.material.userData.base ??= o.material.color.clone();
+      o.material.color.copy(o.material.userData.base).multiplyScalar(0.18);
+    });
+    this.crashes ??= [];
+    this.crashes.push({ group, debris, light, t: 0 });
+  }
+
+  stepCrash(dt) {
+    for (const c of this.crashes ?? []) {
+      c.t += dt;
+      c.light.intensity = 400 * Math.exp(-c.t * 2) + 30 * (0.8 + 0.2 * Math.sin(c.t * 23));
+      for (const d of c.debris) {
+        if (d.m.position.y <= 0.05 && d.v.y <= 0) continue;
+        d.v.y -= 9.81 * dt;
+        d.m.position.addScaledVector(d.v, dt);
+        d.m.rotation.x += d.w.x * dt;
+        d.m.rotation.y += d.w.y * dt;
+        if (d.m.position.y < 0.05) {
+          d.m.position.y = 0.05;
+          d.v.set(0, 0, 0);
+        }
+      }
+      // the fire in the wreck and round the crater
+      if (Math.random() < dt * 20) this.fx.emit(c.group.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 5, 0.5, (Math.random() - 0.5) * 5)), true, 1.6);
+      if (Math.random() < dt * 8) this.fx.emit(c.group.position.clone().add(new THREE.Vector3(0, 2, 0)), false, 2.4);
+    }
+  }
+
+  clearCrash() {
+    for (const c of this.crashes ?? []) {
+      c.group.parent?.remove(c.group);
+      disposeTree(c.group);
+    }
+    this.crashes = [];
+  }
+
+  /* ---------------- the pilot: seat, ejection, parachute (sim/ejection.js) ---------------- */
+  /** Out of jet v: the canopy jettisoned, the seat fired along the jet's up, the man under his canopy. */
+  ejectFrom(v, vel, heading) {
+    if (!v.pilot?.group.visible) return;
+    v.pilot.group.visible = false;
+    v.canopy.visible = false;
+    v.group.updateMatrixWorld();
+    const p = v.pilot.group.getWorldPosition(new THREE.Vector3());
+    const up = new THREE.Vector3(0, 1, 0).transformDirection(v.group.matrixWorld);
+    const fig = new PilotFigure();
+    fig.group.rotation.order = 'YXZ';
+    this.holder.add(fig.group);
+    this.ejected ??= [];
+    this.ejected.push({ c: new Chute({ p: p.toArray(), v: vel, heading, up: up.toArray() }), fig });
+    this.toast('Eject: canopy off, the seat fires');
+  }
+
+  stepEjected(dt) {
+    for (const e of this.ejected ?? []) {
+      const c = e.c;
+      const ground = () => ({ y: 0, water: !!e.water });
+      c.step(dt, e.input ?? chuteInput(c, c.p[1]), [0, 0], ground);
+      const f = e.fig;
+      f.group.position.set(...c.p);
+      f.group.rotation.y = c.heading;
+      f.seat.visible = c.phase === 'seat';
+      f.setInflate(c.open ? c.inflate : 0);
+      f.setPose(c.pose());
+      f.update(dt);
+      if (c.phase === 'seat') this.fx.emit(f.group.position.clone().add(new THREE.Vector3(0, -0.5, 0)), true, 0.8);
+    }
+  }
+
+  clearEjected() {
+    this.clearFlightPilots();
+    for (const e of this.ejected ?? []) {
+      e.fig.group.parent?.remove(e.fig.group);
+      disposeTree(e.fig.group);
+    }
+    this.ejected = [];
+  }
+
+  clearFlightPilots() {
+    for (const f of this.flightPilots?.values() ?? []) {
+      f.group.parent?.remove(f.group);
+      disposeTree(f.group);
+    }
+    this.flightPilots = new Map();
+  }
+
+  /** The Pilot object's acts: one man, his seat, his parachute. */
+  pilotAct(dt) {
+    const act = this.act;
+    const fig = this.v.fig;
+    this.v.water.visible = act === 'splashdown';
+    if (act === 'seated' || act === 'idle') {
+      if (this.ejected?.length) this.clearEjected();
+      fig.group.visible = true;
+      fig.setPose('seated');
+      fig.update(dt);
+      return;
+    }
+    fig.group.visible = false;
+    // (re)start: from the seat, or under an open canopy up high (steering), or low (the landings)
+    const start = () => {
+      this.clearEjected();
+      const f2 = new PilotFigure();
+      f2.group.rotation.order = 'YXZ';
+      this.holder.add(f2.group);
+      const seat = act === 'eject';
+      const c = new Chute({ p: [0, seat ? 1.0 : act === 'plf' || act === 'splashdown' ? 7 : 16, 0], v: [0, seat ? 0 : -5, 0], heading: 0.4 });
+      if (!seat) Object.assign(c, { phase: 'open', inflate: 1 });
+      const e = { c, fig: f2, act, water: act === 'splashdown', input: seat ? undefined : { left: act === 'steerLeft', right: act === 'steerRight', flare: act === 'flare' } };
+      this.ejected = [e];
+      this.t = 0;
+      return e;
+    };
+    let e = this.ejected?.[0];
+    if (!e || e.act !== act) e = start();
+    const c = e.c;
+    // the steering and the flare go round again from up high; the landings again after a pause
+    if (act === 'flare' && c.flareT > 2.5) c.flareT = 0;
+    if (['steerLeft', 'steerRight', 'flare'].includes(act) && c.p[1] < 6) e = start();
+    else if (c.down && this.t > (act === 'eject' ? 40 : 6)) e = start();
+    // the camera keeps him in view
+    const p = new THREE.Vector3(...e.c.p);
+    this.controls.target.lerp(p.add(new THREE.Vector3(0, 1.2, 0)), Math.min(1, dt * 3));
+  }
+
+  /* ---------------- a flight of jets (ai/flight.js) ---------------- */
+  buildFlight() {
+    const p = this.params ?? {};
+    this.flightOpts ??= { count: p.count ?? 4, formation: p.formation ?? 'fingerFour', spacing: Math.min(30, p.spacing ?? 16), auto: false };
+    this.jets = Array.from({ length: this.flightOpts.count }, () => {
+      const v = buildJet({ color: p.color ?? '#6f7b86', rockets: Math.min(8, p.rockets ?? 4) });
+      v.group.rotation.order = 'YZX';
+      seatPilot(v);
+      v.gear.visible = false;
+      this.holder.add(v.group);
+      return { v };
+    });
+    this.v = this.jets[0].v;
+    this.resetFlight();
+  }
+
+  resetFlight() {
+    const p = this.params ?? {};
+    const o = this.flightOpts;
+    this.clearCrash();
+    this.clearEjected();
+    this.radio = [];
+    this.ai = new FlightAI({
+      ...RIG_FLIGHT,
+      p: [0, 0, 0],
+      count: o.count,
+      formation: o.formation,
+      spacing: o.spacing,
+      rockets: Math.min(8, p.rockets ?? 4),
+      callsign: p.callsign ?? 'Viper',
+      auto: o.auto,
+      floor: () => 0,
+      water: () => false,
+      radio: (m, text) => this.radioLine(m, text),
+      crash: (m) => this.crashAt(this.jets[m.i].v),
+    });
+    this.jets.forEach((j, i) => {
+      j.jd = this.ai.members[i].dmg;
+      j.dmg = j.jd.dmg;
+      j.v.group.visible = true;
+      j.v.group.scale.set(1, 1, 1);
+      j.v.group.traverse((m) => m.isMesh && (m.visible = true));
+      j.v.gear.visible = false;
+      j.v.pilot.group.visible = true;
+    });
+    this.act = 'orbit';
+    this.t = 0;
+    this.s = { a: 0, x: 0, z: 0, yaw: 0, y: 0, roll: 0, pitch: 0, steer: 0, speed: 0, gear: 0, flaps: 0, burner: 0, doors: 0 };
+    this.fx.clear();
+    this.lastHit = null;
+    this.pick(this.ai.lead);
+  }
+
+  /** Run fn with jet j as "the vehicle" (its mesh, its damage). */
+  withJet(j, fn) {
+    const keep = [this.v, this.jd, this.dmg];
+    this.v = j.v;
+    this.jd = j.jd;
+    this.dmg = j.dmg ?? {};
+    try {
+      fn();
+    } finally {
+      [this.v, this.jd, this.dmg] = keep;
+    }
+  }
+
+  /** The jet worked on (hit parts, damage on click). */
+  pick(i) {
+    if (!this.jets?.[i]) return;
+    this.sel = i;
+    const j = this.jets[i];
+    this.v = j.v;
+    this.jd = j.jd;
+    this.dmg = j.dmg ?? {};
+    const sel = this.$('vMember');
+    if (sel) sel.value = String(i);
+    this.partsDirty = true;
+  }
+
+  /** The flight's acts: the leader's orders, a formation, a hit on the lead. */
+  order(name) {
+    const ai = this.ai;
+    this.act = name;
+    this.t = 0;
+    if (FORMATIONS[name]) {
+      this.flightOpts.formation = name;
+      ai.order('formation', { formation: name });
+    } else if (name === 'formUp') {
+      ai.scatter();
+      ai.order('formUp');
+    } else if (name === 'hitLead') {
+      // an engine fire: it burns, goes critical and falls; the next one takes the lead
+      this.pick(ai.lead);
+      this.hit('engines', 60);
+    } else ai.order(name);
+    this.status(true);
+  }
+
+  flight(dt) {
+    this.ai.step(dt);
+    // the ones who got out: seat, canopy, steering, landing
+    this.flightPilots ??= new Map();
+    for (const P of this.ai.pilots) {
+      let fig = this.flightPilots.get(P);
+      if (!fig) {
+        fig = new PilotFigure();
+        fig.group.rotation.order = 'YXZ';
+        this.holder.add(fig.group);
+        this.flightPilots.set(P, fig);
+      }
+      const c = P.chute;
+      fig.group.position.set(...c.p);
+      fig.group.rotation.y = c.heading;
+      fig.seat.visible = c.phase === 'seat';
+      fig.setInflate(c.open ? c.inflate : 0);
+      fig.setPose(this.ai.pilotPose(P));
+      fig.update(dt);
+    }
+    this.ai.members.forEach((m, i) => {
+      const v = this.jets[i].v;
+      if (m.gone) return;
+      v.group.position.set(m.p[0], m.p[1] - 1.6, m.p[2]);
+      v.group.rotation.set(m.bank, m.h, m.gamma);
+      const fl = m.alive ? 0.25 + 0.6 * (m.throttle ?? 0.5) : 0;
+      v.flame.visible = fl > 0.1;
+      v.flame.scale.set(0.6 + fl * 0.5, 0.3 + fl * (1.3 + 0.12 * Math.sin(this.t * 40 + i)), 0.6 + fl * 0.5);
+      v.glow.intensity = 0;
+      v.racks.forEach((r, k) => (r.visible = k < m.rockets));
+      v.pilot.group.visible = !m.pilot;
+      v.canopy.visible = !m.pilot && (m.dmg.dmg.cockpit ?? 0) < 1;
+    });
+  }
+
+  radioLine(m, text) {
+    this.radio.push(`${m.call}: ${text}`);
+    if (this.radio.length > 7) this.radio.shift();
+    const pre = this.$('vRadio');
+    if (pre) pre.textContent = this.radio.join('\n');
+  }
+
+  /** Rebuilt with the settings changed (count, spacing). */
+  rebuildFlight() {
+    const { kind, params } = this;
+    this.free();
+    Object.assign(this, { kind, params, zk: VEHICLE_GROUPS[kind] });
+    this.buildFlight();
+    this.buildZones();
+    this.panel();
+  }
+
+  /** The flight's own settings in the panel (hidden for a single vehicle). */
+  flightPanel() {
+    const $ = this.$;
+    const box = $('vFlight');
+    if (!box) return;
+    box.hidden = !this.jets;
+    if (!this.jets) return;
+    const o = this.flightOpts;
+    const mem = $('vMember');
+    mem.replaceChildren(...this.ai.members.map((m, i) => Object.assign(document.createElement('option'), { value: String(i), textContent: m.call + (i === this.ai.lead ? ' (lead)' : '') })));
+    mem.value = String(this.sel);
+    mem.onchange = () => (this.pick(+mem.value), this.status(true));
+    for (const [id, key] of [['vCount', 'count'], ['vSpacing', 'spacing']]) {
+      const el = $(id);
+      el.value = o[key];
+      $(id + 'O').textContent = String(o[key]);
+      el.onchange = () => {
+        o[key] = +el.value;
+        this.rebuildFlight();
+      };
+      el.oninput = () => ($(id + 'O').textContent = el.value);
+    }
+    const auto = $('tgVAuto');
+    auto.setAttribute('aria-pressed', String(!!o.auto));
+    auto.onclick = () => {
+      o.auto = !o.auto;
+      this.ai.on = o.auto;
+      auto.setAttribute('aria-pressed', String(o.auto));
+    };
+    $('vRadio').textContent = this.radio.join('\n');
+  }
+
 
   dispose() {
     this.free();
@@ -573,4 +1056,28 @@ export class VehicleRig {
 /** The page's own ground (a 200 m plane). */
 function isGround(o) {
   return o.isMesh && o.geometry?.type === 'PlaneGeometry' && o.geometry.parameters?.width >= 100;
+}
+
+/** A pilot in jet v's cockpit, seen through the canopy (render/pilotFigure.js). */
+function seatPilot(v) {
+  const f = new PilotFigure();
+  f.group.scale.setScalar(0.85);
+  f.group.position.set(3.15, 1.62, 0);
+  f.update(1);
+  v.group.add(f.group);
+  v.pilot = f;
+}
+
+/** The Pilot object's stage: the man in his seat, and a patch of sea for the splashdown. */
+function buildPilotStage() {
+  const group = new THREE.Group();
+  const fig = new PilotFigure();
+  fig.group.position.y = 1.0;
+  fig.update(1);
+  group.add(fig.group);
+  const water = new THREE.Mesh(new THREE.CircleGeometry(30, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x1d5470, roughness: 0.3, metalness: 0.1, transparent: true, opacity: 0.85 }));
+  water.position.y = 0.02;
+  water.visible = false;
+  group.add(water);
+  return { group, fig, water, dims: [1, 2, 1], dispose: () => disposeTree(group) };
 }

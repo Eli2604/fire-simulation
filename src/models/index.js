@@ -27,6 +27,7 @@ import torch from './torch.js';
 import wall from './wall.js';
 import crate from './crate.js';
 import squad from './squad.js';
+import jetFlight from './jetFlight.js';
 import couch from './couch.js';
 import sideTable from './sideTable.js';
 import veranda from './veranda.js';
@@ -42,7 +43,7 @@ import deck from './deck.js';
  *   }
  * See voxelizer.js for the primitive shapes.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight };
 
 export function resolveParams(model, given = {}) {
   const out = {};

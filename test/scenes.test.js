@@ -37,6 +37,10 @@ test('every model builds voxels with its default parameters', () => {
       assert.ok(world.dragons.length > 0, 'a dragon is a creature, not voxels');
       continue;
     }
+    if (type === 'jetFlight') {
+      assert.equal(world.flights.length, 1, 'a flight of jets flies (ai/flight.js), not voxels');
+      continue;
+    }
     assert.ok(countOwned(world, 0) > 0, `${type} produced voxels`);
   }
 });

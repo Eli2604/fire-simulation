@@ -32,7 +32,7 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLES, rigKind } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind } from './objects.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 
@@ -190,6 +190,14 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
       <div class="hp"><i data-id="vHp"></i></div>
     </div>
     <div class="grid" data-id="vActs"></div>
+    <div class="sel" data-id="vFlight" hidden>
+      <label class="sl"><span>Jet</span><select data-id="vMember" style="grid-column:2/4"></select></label>
+      <label class="sl"><span>Jets</span><input type="range" data-id="vCount" min="2" max="8" step="1"><output data-id="vCountO"></output></label>
+      <label class="sl"><span>Spacing</span><input type="range" data-id="vSpacing" min="10" max="40" step="1"><output data-id="vSpacingO"></output></label>
+      <div class="row"><button data-id="tgVAuto" type="button" aria-pressed="false">Leader AI (orders by himself)</button></div>
+      <div class="lab">Radio</div>
+      <pre data-id="vRadio"></pre>
+    </div>
     <label class="sl"><span>Speed</span><input type="range" data-id="vSpeed" min="0" max="2" step="0.05" value="1"><output data-id="vSpeedO"></output></label>
     <div class="lab">Hit parts</div>
     <div class="row"><button data-id="tgVZones" type="button" aria-pressed="false">Show hit areas</button><button data-id="tgVFire" type="button" aria-pressed="false">Damage on click</button><button data-id="vRepair" type="button">Repair</button></div>
@@ -775,7 +783,9 @@ export function mountRig(root, opts = {}) {
   const STATS = {
     dragon: 'The simulation’s dragon · ai/dragon.js',
     car: 'models/car.js, drawn · 4 wheels, 2 doors',
-    jet: 'render/jetMesh.js · gear, flaps, afterburner',
+    jet: 'render/jetMesh.js · gear, flaps, afterburner, damage and crash',
+    pilot: 'render/pilotFigure.js · sim/ejection.js · seat, canopy, PLF',
+    jetFlight: 'ai/flight.js · formations, the leader’s orders, hit parts per jet',
     boat: 'Motorboat on a sea · outboard, cabin',
   };
   /** What is on the stage: swaps the object and the panels (the last vehicle is freed). */
@@ -785,12 +795,13 @@ export function mountRig(root, opts = {}) {
     const man = kind === 'soldier' || kind === 'squad';
     // off first (each puts the camera back), then on
     if (kind !== 'dragon') dragonRig?.setActive(false);
-    if (!VEHICLES.includes(kind)) vehicleRig.setKind(null);
+    const vehicle = VEHICLE_STAGE.includes(kind);
+    if (!vehicle) vehicleRig.setKind(null);
     if (kind === 'dragon') {
       dragonRig ??= new DragonRig({ scene, camera, controls, renderer, toast, $, qs, root });
       dragonRig.setActive(true);
     }
-    if (VEHICLES.includes(kind)) vehicleRig.setKind(kind, what.params ?? null);
+    if (vehicle) vehicleRig.setKind(kind, what.params ?? null);
     $('tabs').hidden = !man;
     $('selBox').hidden = !man;
     $('squadBox').hidden = kind !== 'squad';

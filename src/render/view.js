@@ -18,6 +18,7 @@ import { IceRenderer } from './ice.js';
 import { TorchRenderer } from './torches.js';
 import { OssuaryRenderer } from './ossuary.js';
 import { VehicleRenderer } from './vehicles.js';
+import { FlightRenderer } from './flights.js';
 import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
@@ -106,6 +107,7 @@ export class View {
     this.torches = new TorchRenderer(this.root); // wall torches as objects
     this.ossuary = new OssuaryRenderer(this.root); // walls built of skulls and bones
     this.vehicles = new VehicleRenderer(this.root); // the parked jet
+    this.flights = new FlightRenderer(this.root); // flights of jets in formation (ai/flight.js)
     this.props = new PropsRenderer(this.root); // masts, radars, deck detail
     this.doors = new DoorRenderer(this.root); // doors drawn as doors
     this.trees = new TreeRenderer(this.root); // trees: bark and leaves
@@ -200,6 +202,7 @@ export class View {
     this.torches.setWorld(world);
     this.ossuary.setWorld(world);
     this.vehicles.setWorld(world);
+    this.flights.setWorld(world);
     this.props.sunLight = this.sun; // stained glass: where its light falls, and how bright
     this.props.sunDir = new THREE.Vector3(...(this.sunDir ?? [0.6, 1.2, 0.4])).normalize();
     this.props.setWorld(world);
@@ -654,6 +657,7 @@ export class View {
     this.updateTorchLights();
     this.torches.update(this.time);
     this.vehicles.update(this.time);
+    this.flights.update(this.time, dt);
     this.props.update(dt);
     this.doors.update(dt);
     this.trees.update(this.time, this.cameraLocal());

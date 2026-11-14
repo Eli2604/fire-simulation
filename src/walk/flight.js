@@ -4,6 +4,9 @@ import { buildJetMesh } from '../render/jetMesh.js';
 import { placeObject } from '../models/voxelizer.js';
 import { MAT } from '../sim/materials.js';
 import { deriveWeather } from '../sim/weather.js';
+import { jetImpact, JetDamage } from '../sim/jetDamage.js';
+import { ejectionEnvelope, Chute } from '../sim/ejection.js';
+import { PilotFigure } from '../render/pilotFigure.js';
 
 const G = 9.81;
 const V_LIFT = 45; // m/s: full lift (take-off speed)
@@ -26,8 +29,6 @@ const PARTS = {
 };
 const PART_NAMES = { wingL: 'left wing', wingR: 'right wing', engine: 'engine', tail: 'tail', fuel: 'fuel tank' };
 const NO_KEYS = new Set();
-const CHUTE_DELAY = 1.2; // s after ejection
-const CHUTE_SINK = 5; // m/s under the canopy
 
 /**
  * Flying the jet. While you sit in it, its voxels are taken out of the world
@@ -415,6 +416,13 @@ export class Flight {
       // banking turns the jet only where there is air to turn in
       this.heading += (yawIn * (0.35 * auth + 0.4 * (1 - Math.min(1, rho * 3))) - Math.sin(this.roll) * 0.9 * Math.min(1, this.speed / 35) * Math.min(1, rho * 3)) * dt;
     }
+    // out of control: rolling and nosing down, no thrust, until it hits
+    if (this.outOfControl && !this.onGround) {
+      this.roll += 3 * dt;
+      this.pitch = Math.max(-1.3, this.pitch - 0.6 * dt);
+      this.throttle = 0;
+      this.burning = 1;
+    }
     const { q, f, u } = this.axes();
     // fuel: burnt by the engine and the booster, and lost through a holed tank
     this.fuelLeft = Math.max(0, this.fuelLeft - (0.3 + 1.7 * this.throttle + (this.boosting ? BOOST_FUEL : 0)) * dt - D.fuel * 15 * dt);
@@ -470,15 +478,15 @@ export class Flight {
     }
     // what the shown zone does to the jet: hot gas and flames, blasts
     this.environment(dt, q);
-    // shot to pieces: it breaks up and explodes in the air
     const total = D.wingL + D.wingR + D.engine + D.tail + D.fuel;
-    if ((D.wingL >= 1 && D.wingR >= 1) || total > 4) return this.crash('The jet broke up in the air');
+    // shot to pieces: out of control, it falls (you eject) and explodes where it hits (sim/jetDamage.js)
+    if (!this.outOfControl && ((D.wingL >= 1 && D.wingR >= 1) || total > 4)) this.loseControl('The jet is breaking up');
     // a fire on board eats into everything
     if (this.burning) {
       this.hurt('engine', dt * 0.03);
       this.hurt('fuel', dt * 0.02);
       this.hurt('tail', dt * 0.01);
-      if (this.dmg.fuel > 0.8 && this.fuelLeft > 50 && Math.random() < dt * 0.15) return this.crash('The fuel tank exploded');
+      if (this.dmg.fuel > 0.8 && this.fuelLeft > 50 && !this.outOfControl && Math.random() < dt * 0.15) this.loseControl('The fuel tank exploded');
     }
     this.fireRockets(dt, q, f, f.clone().multiplyScalar(this.speed).add(new THREE.Vector3(0, this.vy, 0)));
     this.stepRockets(dt, q);
@@ -615,6 +623,26 @@ export class Flight {
     }
   }
 
+  /** A rocket at global p near a flight's jet: that jet is hit (on the part nearest). */
+  hitFlightJet(p) {
+    const flights = this.sim?.world?.flights;
+    if (!flights?.length) return false;
+    const l = this.local(p);
+    for (const fl of flights)
+      for (const m of fl.ai?.members ?? []) {
+        if (!m.alive) continue;
+        const d = [l.x - m.p[0], l.y - m.p[1], l.z - m.p[2]];
+        if (Math.hypot(...d) > 9) continue;
+        // in the jet's frame (nose +x, right +z)
+        const c = Math.cos(m.h), sn = Math.sin(m.h);
+        fl.ai.hit(m.i, JetDamage.nearest([d[0] * c - d[2] * sn, d[1] + 1.6, d[0] * sn + d[2] * c]), 350);
+        for (let k = 0; k < 40; k++) this.view.flames.spawn(l.x + (Math.random() - 0.5) * 3, l.y + (Math.random() - 0.5) * 3, l.z + (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6, Math.random() * 6, (Math.random() - 0.5) * 6, 0.6, 0.8, 0, 1);
+        this.walk.say(`Hit ${m.call}!`, 2);
+        return true;
+      }
+    return false;
+  }
+
   /** Rockets in the shared sea: motor for 3 s, then ballistic; they explode in whatever zone they hit. */
   stepRockets(dt, q) {
     const keep = [];
@@ -639,6 +667,11 @@ export class Flight {
             done = true;
             break;
           }
+        }
+        // a jet of a flight (ai/flight.js) in the zone shown: hit on the part nearest
+        if (!done && this.hitFlightJet(g.p)) {
+          done = true;
+          break;
         }
         if (g.p.y < this.seaLevel) {
           const l = this.local(g.p);
@@ -688,8 +721,12 @@ export class Flight {
     this.parts.fin.visible = D.tail < 1;
     // smoke from damage, flames from a fire on board
     for (const [k, v] of Object.entries(PARTS)) if (D[k] > 0.25 && Math.random() < dt * 30 * D[k]) this.puff(this.at(q, v), 0.6);
-    if (this.burning || D.fuel > 0.3) {
-      const l = this.local(this.at(q, this.burning ? PARTS.engine : PARTS.fuel));
+    const fires = [];
+    if (this.burning || D.fuel > 0.3) fires.push(this.burning ? PARTS.engine : PARTS.fuel);
+    if (this.outOfControl) fires.push(PARTS.fuel);
+    for (const k of ['wingL', 'wingR']) if (D[k] > 0.6 && D[k] < 1) fires.push(PARTS[k]);
+    for (const at of fires) {
+      const l = this.local(this.at(q, at));
       for (let k = 0; k < 3; k++) this.view.flames.spawn(l.x + (Math.random() - 0.5) * 0.8, l.y + (Math.random() - 0.5) * 0.5, l.z + (Math.random() - 0.5) * 0.8, -f.x * 3, 1 - f.y * 3, -f.z * 3, 0.5, 0.4, 0, 1);
     }
     this.drawTrail(dt);
@@ -761,6 +798,16 @@ export class Flight {
     this.end(null, [lp.x + side.x, lp.y, lp.z + side.z], null);
   }
 
+  /** Critical damage: the controls are gone; the seat fires and the jet falls, burning, until it hits. */
+  loseControl(msg) {
+    this.outOfControl = msg;
+    this.burning = 1;
+    if (!this.pilot && this.rho() >= 0.15) {
+      this.eject(true);
+      this.walk.say(`${msg}! Out of control – the seat fired you out; steer the parachute with W/S A/D or the mouse`, 5);
+    } else if (!this.pilot) this.walk.say(`${msg}! Out of control`, 4);
+  }
+
   crash(msg) {
     if (this.jetGone) return;
     // still aboard: the seat fires automatically as the jet goes (wherever there is air
@@ -773,13 +820,8 @@ export class Flight {
     p.y = Math.max(p.y + 1, this.seaLevel + 0.5);
     const z = this.zoneAt(p, true);
     const E = 3e6 + Math.min(1, this.fuelLeft / 2000) * 1.7e7;
-    if (z?.sim) {
-      explode(z.sim, z.local, E, { name: 'jet crash' });
-      if (this.fuelLeft > 50) {
-        z.sim.ignite(z.local, 2.5);
-        z.sim.addTorch(z.local, 4e5, 15, 1.5); // the fuel fireball
-      }
-    }
+    // the blast, the crater, the fuel left burning (on water: a short burning slick): sim/jetDamage.js
+    if (z?.sim) jetImpact(z.sim, z.local, { energy: E, fuel: this.fuelLeft > 50 ? Math.min(1, this.fuelLeft / 2000) + 0.2 : 0, water: !!this.groundAt(this.pos).sea, name: 'Your jet' });
     const l = this.local(p);
     for (let k = 0; k < 120; k++)
       this.view.flames.spawn(l.x + (Math.random() - 0.5) * 6, l.y + Math.random() * 4, l.z + (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 4, 4 + Math.random() * 4, (Math.random() - 0.5) * 4, 1.2, 1.5, 0, 1);
@@ -835,77 +877,67 @@ export class Flight {
     if (this.pilot || this.done) return;
     if (!auto && this.rho() < 0.15) return this.walk.say('Not up here – there is no air for a parachute', 2);
     const { q, f, u } = this.axes();
+    if (!auto && !this.onGround) {
+      const env = ejectionEnvelope({ height: this.pos.y - this.groundAt(this.pos).y, sink: -this.vy - f.y * this.speed, pitch: this.pitch, roll: this.roll, cockpit: this.dmg.cockpit ?? 0 });
+      if (!env.ok) return this.walk.say(`No ejection: ${env.reason} – roll level and climb`, 2.5);
+    }
     const p = this.at(q, [3, 2.8, 0]);
     const v = f.clone().multiplyScalar(this.speed).addScaledVector(u, 22);
     v.y = Math.max(v.y, 16);
     this.pilot = { p, v, age: 0, chute: false, heading: this.heading };
+    // the seat, the separation, the canopy: the same as every pilot's (sim/ejection.js)
+    this.pilot.c = new Chute({ p: p.toArray(), v: f.clone().multiplyScalar(this.speed).toArray(), heading: this.heading, up: u.toArray() });
     this.rollDrift = (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * 0.3);
     this.canopy.visible = false;
     this.pilotMesh = this.buildPilot();
     this.view.scene.add(this.pilotMesh);
     const snd = this.walk.sound;
     if (snd.running) snd.burst(snd.ctx.currentTime, 0.6, 'bandpass', 700, 0.8, 0.9);
-    if (!auto) this.walk.say('EJECT! The parachute opens in a moment – W/S A/D or the mouse steer it', 4);
+    if (!auto) this.walk.say('EJECT! The parachute opens in a moment – A/D (or the mouse) steer it, S or Space flares', 4);
   }
 
+  /** You: the pilot (render/pilotFigure.js), his seat and his parachute. */
   buildPilot() {
-    const g = new THREE.Group();
-    const suit = new THREE.MeshStandardMaterial({ color: 0x556b2f, roughness: 0.8 });
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.9, 4, 10), suit);
-    body.position.y = 0.7;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.4 }));
-    head.position.y = 1.4;
-    const chute = new THREE.Group();
-    const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(3.2, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2.6),
-      new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.7, side: THREE.DoubleSide }),
-    );
-    dome.position.y = 4.2;
-    chute.add(dome);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x222222 });
-    for (let k = 0; k < 8; k++) {
-      const a = (k / 8) * Math.PI * 2;
-      const pts = [new THREE.Vector3(0, 1.5, 0), new THREE.Vector3(Math.cos(a) * 2.6, 6, Math.sin(a) * 2.6)];
-      chute.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
-    }
-    chute.visible = false;
-    g.add(body, head, chute);
-    g.userData.chute = chute;
-    return g;
+    this.pilotFig = new PilotFigure();
+    return this.pilotFig.group;
   }
 
   stepPilot(dt, keys) {
     const pl = this.pilot;
+    const c = pl.c;
     pl.age += dt;
-    if (!pl.chute && pl.age > CHUTE_DELAY) {
+    // under the canopy: A/D pull a toggle (a turn), S or Space both (a flare, just before landing)
+    const input = {
+      left: keys.has('KeyA') || keys.has('ArrowLeft'),
+      right: keys.has('KeyD') || keys.has('ArrowRight'),
+      flare: keys.has('KeyS') || keys.has('ArrowDown') || keys.has('Space'),
+    };
+    const D = deriveWeather(this.sim.weather);
+    c.heading = pl.heading; // (the mouse steers too)
+    const ev = c.step(dt, input, [D.windX * 1, D.windZ * 1], (x, z) => {
+      const g = this.groundAt(new THREE.Vector3(x, c.p[1], z));
+      return { y: g.y, water: !!g.sea };
+    });
+    pl.heading = c.heading;
+    pl.p.set(...c.p);
+    pl.v.set(...c.v);
+    if (c.down) pl.v.y = -c.sinkAtTouch;
+    if (ev.includes('open')) {
       pl.chute = true;
-      this.pilotMesh.userData.chute.visible = true;
-      this.walk.say('Parachute open', 2);
+      this.walk.say('Parachute open – A/D steer, S or Space to flare before you land', 2.5);
     }
-    if (!pl.chute) {
-      // the seat's arc: gravity and drag
-      pl.v.y -= G * dt;
-      pl.v.multiplyScalar(1 - Math.min(0.5, 0.004 * pl.v.length()) * dt * 10);
-    } else {
-      // under the canopy: forward speed 2–6 m/s where you point it, plus the wind
-      const D = deriveWeather(this.sim.weather);
-      const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
-      pl.heading += turn * 0.9 * dt;
-      const fwd = 4 + 2 * ((keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0));
-      const tx = Math.cos(pl.heading) * fwd + D.windX * 0.8;
-      const tz = -Math.sin(pl.heading) * fwd + D.windZ * 0.8;
-      const k = Math.min(1, dt / 1.5);
-      pl.v.x += (tx - pl.v.x) * k;
-      pl.v.z += (tz - pl.v.z) * k;
-      pl.v.y += (-CHUTE_SINK - pl.v.y) * Math.min(1, dt / 0.7);
-    }
-    pl.p.addScaledVector(pl.v, dt);
+    const fig = this.pilotFig;
+    fig.seat.visible = c.phase === 'seat';
+    fig.setInflate(c.open ? c.inflate : 0);
+    fig.setPose(c.pose());
+    fig.update(dt);
     // close to the ground: make sure the zone under you exists
     if (pl.p.y - this.seaLevel < 40) this.zoneAt(pl.p, true, true);
     const g = this.groundAt(pl.p);
     const l = this.local(pl.p);
     this.pilotMesh.position.copy(l);
     this.pilotMesh.rotation.set(0, pl.heading, 0);
+    if (c.phase === 'seat') this.view.flames.spawn(l.x, l.y - 0.4, l.z, 0, -6, 0, 0.3, 0.5, 0, 1);
     // camera behind and above you
     const back = new THREE.Vector3(-Math.cos(pl.heading), 0, Math.sin(pl.heading));
     const want = l.clone().addScaledVector(back, 9).add(new THREE.Vector3(0, pl.chute ? 3 : 2, 0));
@@ -918,8 +950,8 @@ export class Flight {
     const alt = pl.p.y - g.y;
     this.hud.textContent =
       (pl.chute ? 'PARACHUTE' : 'EJECTED') + '   height ' + Math.max(0, alt).toFixed(0) + ' m   sink ' + (-pl.v.y).toFixed(1) + ' m/s   ground speed ' + Math.hypot(pl.v.x, pl.v.z).toFixed(1) + ' m/s\n' +
-      'W/S faster/slower, A/D or mouse turn' + (this.jetGone ? '' : '   – the jet flies on without you');
-    if (pl.p.y <= g.y) this.land(g);
+      'A/D or mouse: steer   S/Space: flare' + (this.jetGone ? '' : '   – the jet flies on without you');
+    if (c.down || pl.p.y <= g.y) this.land(g);
   }
 
   /** Down: in the sea you are picked up; on a deck or the island you walk on from there. */
