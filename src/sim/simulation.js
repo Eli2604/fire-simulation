@@ -21,7 +21,7 @@ import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
 import { stepLightning } from './lightning.js';
-import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
+import { stepAir, blurRadiation, farRadiation, radiationGain, FLAME_TEMP } from './air.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
 const LV = 2.26e6; // latent heat of vaporisation of water, J/kg
@@ -176,6 +176,7 @@ export class Simulation {
     stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
+    farRadiation(w); // (and from further off: a fire scorches and lights what is metres away)
     w.airG.fill(0);
     w.airGT.fill(0);
     w.airQ.fill(0);

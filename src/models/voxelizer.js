@@ -256,7 +256,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   if (built.vehicle) world.vehicles.push({ ...built.vehicle, seat: toWorld(...built.vehicle.seat), base: toWorld(0, 0, 0), heading: rot, owner: ownerIndex, obj });
   for (const sp of built.sprinklers ?? []) world.sprinklers.push({ actT: 68, rti: 50, rate: 1.0, radius: 2.0, ...sp, p: toWorld(...sp.p), bulb: world.ambient, active: false });
   if (built.vacuum) world.vacuum = true; // in space: no air outside the hull
-  if (built.tree) world.trees.push({ owner: ownerIndex, species: built.tree.species, segs: built.tree.skeleton.map((s) => ({ ...s, a: toWorld(...s.a), b: toWorld(...s.b) })) });
+  if (built.tree) world.trees.push({ owner: ownerIndex, species: built.tree.species, kind: built.tree.kind ?? built.tree.species, segs: built.tree.skeleton.map((s) => ({ ...s, a: toWorld(...s.a), b: toWorld(...s.b) })) });
   if (built.volcano) {
     const V = built.volcano;
     const sh = V.shape && { ...V.shape, base: toWorld(...V.shape.base), bowl: toWorld(...V.shape.bowl), ridges: V.shape.ridges.map((r) => ({ ...r, a: toWorld(...r.a), b: toWorld(...r.b) })) };

@@ -87,6 +87,118 @@ export function blurRadiation(w, gain) {
 const MAX_IRRADIANCE = 200e3; // W/m²
 
 /**
+ * Radiation from far off. The blurred field reaches only 2r cells (about a metre) from what
+ * radiates; a fire radiates much further (a burning car scorches, dries and in the end lights
+ * a tree a few metres off; a house fire the house next door). Here the radiating cells are
+ * gathered into blocks of 2r cells (each a source at its power-weighted centre, the strongest
+ * FAR_MAX of them) and every cell with something in it beyond the blur's reach gets
+ * RAD_VIEW·P/(4πd²) of each, shaded by what lies in between (solid cells on the line, on the
+ * scale of blocks). It is worked out every FAR_EVERY s (the fire changes slowly) and added to
+ * the blurred field every step. Absorption of it is held to what is emitted, as the blurred
+ * field's is (simulation.js, radScale).
+ */
+const FAR_EVERY = 0.25; // s
+const FAR_MAX = 32; // sources
+const FAR_MIN_P = 4000; // W: a source radiating less does not count from afar
+const FAR_MIN_E = 10; // W/m²: where the whole fire gives less than this, nothing is added
+
+export function farRadiation(w) {
+  const r = radiusCells(w);
+  const { anx, any, anz, ah } = w;
+  const K = 2 * r; // block edge (cells)
+  const bx = Math.ceil(anx / K);
+  const by = Math.ceil(any / K);
+  const bz = Math.ceil(anz / K);
+  const NB = bx * by * bz;
+  const F = w.radFar ?? (w.radFar = { t: -1e9, field: new Float32Array(anx * any * anz), on: false });
+  if (w.time - F.t >= FAR_EVERY || w.time < F.t) {
+    F.t = w.time;
+    // the sources: radiating cells by block
+    const src = w.radSrc;
+    const P = (F.P && F.P.length === NB * 4) ? F.P.fill(0) : (F.P = new Float64Array(NB * 4));
+    for (let a = 0; a < src.length; a++) {
+      const q = src[a];
+      if (q <= 0) continue;
+      const x = a % anx;
+      const yz = (a - x) / anx;
+      const y = yz % any;
+      const z = (yz - y) / any;
+      const b = 4 * (((x / K) | 0) + bx * (((y / K) | 0) + by * ((z / K) | 0)));
+      P[b] += q;
+      P[b + 1] += q * (x + 0.5);
+      P[b + 2] += q * (y + 0.5);
+      P[b + 3] += q * (z + 0.5);
+    }
+    let S = [];
+    for (let b = 0; b < NB; b++) if (P[4 * b] >= FAR_MIN_P) S.push(b);
+    if (S.length > FAR_MAX) S = S.sort((a, b) => P[4 * b] - P[4 * a]).slice(0, FAR_MAX);
+    const field = F.field;
+    if (F.on) field.fill(0);
+    F.on = S.length > 0;
+    if (F.on) {
+      const occ = w.occ;
+      const sx = S.map((b) => P[4 * b + 1] / P[4 * b]);
+      const sy = S.map((b) => P[4 * b + 2] / P[4 * b]);
+      const sz = S.map((b) => P[4 * b + 3] / P[4 * b]);
+      const sp = S.map((b) => P[4 * b]);
+      // how far it reaches (cells: all of it together), and how much of each gets through to a block (lazily)
+      const total = sp.reduce((a, b) => a + b, 0);
+      const reach = sp.map(() => Math.sqrt((RAD_VIEW * total) / (4 * Math.PI * FAR_MIN_E)) / ah);
+      const vis = new Float32Array(NB * S.length).fill(-1);
+      const seen = (s, b) => {
+        const k = b * S.length + s;
+        if (vis[k] >= 0) return vis[k];
+        // along the line from the source to the block (not through its own block: what is in it takes the heat in)
+        const tx = (b % bx) * K + K / 2;
+        const ty = (((b / bx) | 0) % by) * K + K / 2;
+        const tz = ((b / (bx * by)) | 0) * K + K / 2;
+        const dx = tx - sx[s];
+        const dy = ty - sy[s];
+        const dz = tz - sz[s];
+        const L = Math.hypot(dx, dy, dz);
+        let T = 1;
+        for (let u = r; u < L - K / 2 - 0.5 && T > 0.02; u += 1) {
+          const x = (sx[s] + (dx * u) / L) | 0;
+          const y = (sy[s] + (dy * u) / L) | 0;
+          const z = (sz[s] + (dz * u) / L) | 0;
+          if (x < 0 || y < 0 || z < 0 || x >= anx || y >= any || z >= anz) continue;
+          const o = occ[x + anx * (y + any * z)];
+          if (o > 0) T *= 1 - Math.min(1, o * 2);
+        }
+        return (vis[k] = T);
+      };
+      const c = (RAD_VIEW / (4 * Math.PI * ah * ah));
+      for (let z = 0; z < anz; z++)
+        for (let y = 0; y < any; y++)
+          for (let x = 0, a = anx * (y + any * z); x < anx; x++, a++) {
+            if (occ[a] <= 0) continue; // (nothing here to take it in)
+            let E = 0;
+            for (let s = 0; s < S.length; s++) {
+              const d = Math.hypot(x + 0.5 - sx[s], y + 0.5 - sy[s], z + 0.5 - sz[s]);
+              if (d <= r || d > reach[s]) continue;
+              // (from r cells out the blur falls short of 1/d², at 2r it is gone: this takes over)
+              const near = d >= 2 * r ? 1 : (d - r) / r;
+              const v = seen(s, ((x / K) | 0) + bx * (((y / K) | 0) + by * ((z / K) | 0)));
+              if (v > 0) E += (c * sp[s] * near * v) / (d * d);
+            }
+            field[a] = E;
+          }
+    }
+  }
+  if (!F.on) return;
+  const f = w.radField;
+  const field = F.field;
+  for (let a = 0; a < f.length; a++) {
+    const e = field[a];
+    if (e > 0) {
+      const v = f[a] + e;
+      f[a] = v > MAX_IRRADIANCE ? MAX_IRRADIANCE : v;
+    }
+  }
+  w.radFieldZero = false;
+}
+
+/**
  * A box blur of radius r along one axis, within the box B = [x0, x1, y0, y1, z0, z1] (the
  * whole grid without it); zero outside it (and outside the grid).
  */

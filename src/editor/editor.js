@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MODELS, defaultParams } from '../models/index.js';
+import { TREE_OBJECTS } from '../models/treeObjects.js';
 import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
 import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf, WATER_SETTINGS } from '../sim/weather.js';
@@ -41,6 +42,8 @@ const GROUPS = [
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
   ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
   ['Nature', ['tree', 'grass', 'volcano']],
+  // every kind of tree as an object of its own (models/treeObjects.js: oak, willow, pine, birch, ...)
+  ['Trees', Object.keys(TREE_OBJECTS)],
   ['Water & air', ['waterVortex', 'windHose', 'windJet']],
   ['Places', ['island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
 ];
@@ -517,7 +520,7 @@ export class Editor {
       for (const k of keys) {
         if (!MODELS[k] || seen.has(k)) continue;
         seen.add(k);
-        g.append(el('button', { title: MODELS[k].label, onclick: () => this.startPlacing(k) }, MODELS[k].label.replace(/ \(.*\)$/, '')));
+        g.append(el('button', { title: MODELS[k].about ?? MODELS[k].label, onclick: () => this.startPlacing(k) }, MODELS[k].label.replace(/ \(.*\)$/, '')));
       }
       if (g.children.length) p.append(el('h4', {}, title), g);
     };

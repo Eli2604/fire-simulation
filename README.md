@@ -59,15 +59,16 @@ builds the whole editor as one file.
 - **Scenario**: metal bars on burners, a wind-driven grass fire, a car fire
   next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
-  oak, willow and pine in a grass fire, catacombs of
+  catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
-  with the washing line and the barbecue, a meadow with a wind-driven grass fire), all places of
+  with the washing line and the barbecue, a meadow with a wind-driven grass fire, and beside it
+  oak, willow and pine in a grass fire), all places of
   the carrier's world, and a house fire in the rain.
   (Old links to scenes that are now places of that world, `?scenario=laundry`, `teaGarden`,
-  `winterTea` (the lake frozen), `grassFire` and `catacombs`, open it at the place.)
+  `winterTea` (the lake frozen), `grassFire`, `threeTrees` and `catacombs`, open it at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -501,11 +502,15 @@ fire scenes):
 | Lake house: tea on the veranda (the lake island) | 240, 1.8, 150 | 22 × 19 × 7 m | 10 cm | 1× |
 | Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 263, 3, 159 | 7 × 5 × 3 m | 5 cm | 15× |
 | Meadow: grass fire (on the shore south of the lake island) | 258, 2.85, 170.5 | 24 × 14 × 9 m | 20 cm | 3× |
+| Oak, willow & pine: grass fire (east of the meadow; the old Oak, willow and pine in a grass fire) | 283, 2.85, 171.5 | 22 × 12 × 11 m | 20 cm | 4× |
 
 The lake house and its garden share one weather (the garden's `weatherOf: 'lake'`): a mild
 early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the lake open), so the wash can dry and
 catch and the tea still steams; Weather › Presets › Cold snap (or `?scenario=winterTea`) freezes
-the lake over. The meadow keeps the old grass fire's hot, dry, windy spell (28 °C, 25 %, 4 m/s).
+the lake over. The meadow keeps the old grass fire's hot, dry, windy spell (28 °C, 25 %, 4 m/s);
+the field of the oak, the willow and the pine east of it the old scene's (30 °C, 25 %, 3 m/s
+towards +x, lit on its west edge): the pine goes up in a crown fire, the willow drops burning
+branches, the oak's limbs burn where they are (each tree an object of its kind, below).
 Places inside or under another have no `origin` (the jet, the boats and the stand-ins do not go
 by them) but a schematic `box` for the overview: below deck and the lower decks in the hull, the
 catacombs under the church. Zoomed out, each place is
@@ -823,7 +828,8 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 
 | Model | Parameters |
 |---|---|
-| Tree | species: **oak** (heavy forking limbs, leaf clusters), **weeping willow** (arching limbs, hanging whips), **pine** (whorls, needle clusters, dead lower branches); height, trunk and crown radius, foliage density, foliage and wood moisture, main branches, seed |
+| Tree | kind (any of the kinds below; older scenes' `deciduous` / `conifer` are oak / pine); height, trunk and crown radius, foliage density, foliage and wood moisture, main branches, seed |
+| Oak, Weeping willow, Pine, Birch, Maple, Plane tree, Lombardy poplar, Spruce, Fir, Apple, Palm (`oakTree`, `willowTree`, ...: the palette's *Trees*) | each kind of tree as an object of its own, with its kind's defaults: height, crown and trunk radius, foliage density and moisture, wood moisture, main branches, dead lower branches (age), seed. A kind (models/treeKinds.js) is a parameter set for the procedural generator (models/tree.js): a leader to the top with whorled or spiralled laterals (excurrent: conifers, birch, poplar) or a bole breaking up into limbs (decurrent: maple, plane, apple), branches per order, branching and divergence (phyllotaxis) angle, length and radius ratios, gravitropism (up or drooping), the crown's shape, leaves or needles, the wood. Oak (heavy forking limbs, leaf clusters), weeping willow (arching limbs, hanging whips) and pine (whorls, needle clusters, dead lower branches) keep their own forms; a palm has a leaning stem, arching fronds and a skirt of dead ones. The branch structure comes from the seed. Kinds share the tree woods by how they burn: oak (dense, limbs burn in place: oak, maple, plane, apple), willow (soft, burnt branches snap and fall: willow, birch, poplar), pine (resinous, needles carry a crown fire: pine, spruce, fir). `oakTree` with its defaults is exactly `tree` with `species: 'oak'` and the same parameters (and so on) |
 | Grass patch | size, height, density, moisture (dry vs green), rectangle/ellipse, bare circle in the middle |
 | Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, fire starts in engine or interior |
 | House | size, wall height and thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, windows, furnished, door open, chimney |
@@ -883,7 +889,11 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
    conductivity. Exposed faces exchange heat with the gas in front of them: natural
    convection, plus wind, plus flame contact at about 1100 °C. Radiation goes both ways:
    hot surfaces emit εσ(T⁴−T∞⁴), and flames and embers feed a blurred, inverse-square
-   calibrated radiation field. Absorption can never exceed emission, and irradiance is
+   calibrated radiation field. The blur reaches about a metre; beyond it (sim/air.js,
+   farRadiation) what radiates is gathered into blocks, each a point source P, and whatever
+   lies further off gets 0.55·P/(4πd²), shaded by the solid cells on the line between (worked
+   out four times a simulated second): a burning car warms and dries a tree a few metres off,
+   a house fire the house next door. Absorption can never exceed emission, and irradiance is
    capped at flame black-body level.
 2. **Two-node voxels.** Bulk materials have a few-millimetre **skin** that exchanges heat
    with the gas and radiation, coupled to the **core** that conducts to neighbours. Both
