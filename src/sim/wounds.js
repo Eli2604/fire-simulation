@@ -1,4 +1,5 @@
 import { MATERIALS } from './materials.js';
+import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
 
 /**
@@ -206,7 +207,8 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   const tNear = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
   const dr = sim.dragonAI?.shot?.(from, d, tNear, 'bullet');
   if (dr) best = { dragon: dr.dragon, zone: dr.k, p: dr.p };
-  w.noises.push({ p: from.slice(), loud: 70, time: w.time, kind: shooter ? 'enemy' : 'gunshot' });
+  // the report (ai/perception.js): a rifle's crack carries kilometres (who hears it goes to look only nearer)
+  emitSound(w, { pos: from, loudness_dB: LOUDNESS[weapon] ?? LOUDNESS.rifle, kind: shooter ? 'enemy' : 'gunshot', source: shooter ?? player ?? null });
   // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
   // (your rounds: they are all on the other side)
   if (!shooter) {

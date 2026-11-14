@@ -26,6 +26,13 @@ export default {
     // their weapons' recoil (ai/recoil.js: physical from the cartridge and the weapon, times this) and fire mode
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
     fireMode: { value: 'weapon', options: ['weapon', 'single', 'burst', 'auto'], label: 'Fire mode (weapon: each its own; the MG on auto)' },
+    // senses (ai/perception.js), scaled by the experience
+    sightRange: { value: 400, min: 10, max: 1000, step: 5, label: 'Sight: how far they pick up an enemy in clear sight, daylight (m)' },
+    fov: { value: 360, min: 60, max: 360, step: 5, label: 'Field of view (degrees; 360: all round, the team watching its sectors)' },
+    hearing: { value: 1, min: 0, max: 3, step: 0.05, label: 'Hearing (× how far a sound carries)' },
+    // lights (ai/flashlight.js): on the weapon, or a hand torch from the belt with a hand free
+    weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
+    flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
@@ -42,6 +49,7 @@ export default {
         armour: p.armour !== false,
         recoil: p.recoil ?? 1,
         fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
+        sightRange: p.sightRange !== 400 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false,
       })),
     };
   },

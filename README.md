@@ -1297,6 +1297,66 @@ them on their patrol (in file, through doors, on their round); once the team see
 something or notices a lamp, the squad AI has them, and gives them back afterwards. Heat, fire
 and the dragon still make them run, and one may still slip off to light a lure.
 
+### Senses: sight and hearing for every agent; peeking; flashlights
+
+**Perception** (`ai/perception.js`) is one set of rules for everyone who senses: the squads and the
+guards (`ai/squad.js`, `ai/enemies.js`), the dragons (`ai/dragon.js`), the phoenix (`ai/phoenix.js`),
+a jet's pilot (a profile, `SENSES.pilot`).
+- **Parameters per agent**: `sightRange` (m, in clear daylight), `fov` (degrees; 360: all round,
+  a team watching its sectors), `hearing` (× how far a sound carries), `nightSight`; the defaults
+  per kind keep what each did before (the squads as far as the weather lets them, up to 400 m; a
+  guard alone 22 m; the dragon 45 m, 13 m dozing; the phoenix 9 m). The models' params (squad,
+  enemies, dragon: *Sight*, *Field of view*, *Hearing*) and the rig's Gear tab (*Senses*) set them;
+  **experience** scales them (`SKILL_SENSES`: an elite man sees further and notices sooner).
+- **Sight**: from his eye (standing, crouched, prone, peeking: `eyeOf`), in his field of view
+  (slower at its edge), through the voxels (walls and roofs block it; glass and foliage dim it;
+  smoke builds up and blocks it). **Noticing builds up** (`perceive`): close and plain a fraction
+  of a second; far, in the dark, through smoke, half behind cover, still, camouflaged: seconds or
+  never. Seen a moment ago, or where the threat is known to be: at once.
+- **Light**: the world's light level if it has one (a time of day: `world.lightAt(p)`,
+  `world.light.level`, `world.lightLevel`, `world.ambient`, `world.sun.light`), else its `dark`
+  flag. Darkness shortens sight (by `nightSight`); a beam (a flashlight) lights what it falls on, so
+  the man with the light sees there; and **a light carried on gives its carrier away** from far off
+  (further for whoever looks into it).
+- **Hearing**: sounds are events `{ pos, loudness_dB, kind, source }` (`emitSound(world, ...)`, for
+  the impact and sound modules too) in `world.noises`. A sound carries to the threshold of hearing,
+  spreading and absorbed on the way (`rangeFromDb`: a rifle shot ~3 km, a walk on stone ~20 m);
+  each wall between takes 12 dB off (a low wall it goes over does not); a keen ear hears further.
+  Where it came from is uncertain (the further, the less sure): that is where they go to look, if it
+  is near enough to bother (`investigate`: soldiers 250 m, guards 120 m). Gunshots (per weapon),
+  grenades and explosions, flash-bangs, rockets, the bow, and your footsteps (by pace and ground:
+  running on stone is loud, a crawl on grass hardly) are sounds; older noises with a range in metres
+  are the same thing (`dbFromRange`).
+
+**Peeking** (`ai/peek.js`; the rig's *Peek* group): **over a low wall** (`peekWall`: from the crouch
+he rises just enough for his eyes to clear the top, looks left and right, drops back), **round a
+corner** (`leanLeft` / `leanRight`: the weight onto that leg, the spine rolled over it, the head
+level; a right-handed shooter leans out right more naturally, further to the left; with a pistol
+one-handed, the other hand on the wall) and **slicing the pie** (`sliceLeft` / `sliceRight`). A squad
+man in cover who has lost sight of the enemy (seen before, gone a few seconds) peeks to find him:
+over the wall in front of him, round its edge, or slicing where there is room. The more experienced,
+the shorter (`PEEK_T`: 2.6 s a recruit, 1.1 s elite) and the less predictable (another place or side,
+irregular waits). His eye is where the peek puts it, so the peek finds what is there, and **his
+head shows** while it lasts (others see it: `headOf`). In the walk-through: **Z / X** held lean you
+out left / right (as far as there is room), and low behind a low wall **Z and X together** raise you
+just enough to look over it.
+
+**Flashlights** (`ai/flashlight.js`): a **weapon light** is an attachment (the rifle, carbine and
+shotgun have one by default; the models' *Weapon lights*: standard, all, none; per weapon
+`m.weaponLight`), shining along the muzzle where he aims. Without one, the **hand torch** from the
+pouch on the left of his belt (the models' *A hand torch on the belt*), **only with a hand free**:
+the knife, the pistol (held one-handed; the torch under the wrist, the **Harries** hold, or out to
+the side and high, the **FBI** hold) or bare hands. With a two-handed weapon and no light on it he
+cannot, unless he switches weapons. Drawn and put back by hand (`drawTorch` / `stowTorch`); the
+left arm holds it by its own inverse kinematics over whatever clip plays, pointing it where he looks.
+The team switches lights on in the dark once in contact (not while stealthy, on patrol), and the men
+searching (a last known position, a blast, clearing a building) use theirs. The lights themselves
+are a small pool (`render/flashlights.js`: three spot lights, given each frame to the biggest on the
+screen, `render/lod.js`'s budget `flashlight`); every light has its lens's glow and a faint beam in
+the air. In the walk-through **N** is your flashlight: the rifle's light, or with a hand free (bare
+hands, the fire torch, a grenade) the torch from your belt; not with two hands on the hose, the bow
+or the extinguisher. Your light (and the helmet lamp, L) shows you to the guards in the dark.
+
 ### Soldiers: expertise, ammunition, armour, the knife
 
 Each soldier (`ai/soldier.js`) has an **expertise**: recruit, regular, veteran or elite (the

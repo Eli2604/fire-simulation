@@ -89,6 +89,9 @@ import { gaitK } from './weapons.js';
 import { stepKnocked } from './melee.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
+import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
+import { stepLight } from './flashlight.js';
+import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
@@ -1116,6 +1119,26 @@ export class SquadAI {
     }
   }
 
+  /**
+   * A peek (ai/peek.js): in cover, the enemy out of sight a while (seen before, lost since), behind
+   * a low wall (over it) or at the edge of a wall (round it, or slicing the pie): up or out for a
+   * moment, his eye where the peek puts it (ai/perception.js), so the senses find the enemy again
+   * if he is there, and he shows his head while it lasts. The experienced: shorter, irregular.
+   */
+  tryPeek(m, T) {
+    if (!this.host.solid || !T || m.crawling || m.loadout === 'torch' || !m.arrived || m.squad === 'UAV') return false;
+    if (!(this.lastSeen > -Infinity) || this.time - this.lastSeen < 2.5) return false;
+    if (this.time < (m.peekNext ?? 0)) return false;
+    const opts = peekOptions((x, y, z) => !!this.host.solid(x, y, z), m.p, T);
+    const c = choosePeek(m, opts);
+    if (!c) {
+      m.peekNext = this.time + 1.5; // (looked for a place to peek from: none; again in a while)
+      return false;
+    }
+    startPeek(m, c, this.time);
+    this.setAnim(m, c.clip, c.dur);
+    return true;
+  }
   /** How far the team can see (m), with the gear they have on. */
   sight() {
     const v = this.host.visibility?.() ?? 60;
@@ -1178,14 +1201,31 @@ export class SquadAI {
     const H = this.host;
     const al = this.members().filter((m) => !m.dead);
     if (!al.length) return;
-    // sightings
+    // sightings (ai/perception.js): each man from his eye (crouched, standing, peeking), as far as
+    // the weather and the dark let him (lights: his own beam on it, or the enemy's light on), his
+    // field of view, noticing it over a moment (sooner close and plain)
     const range = this.sight();
+    const now = this.time;
+    const dark = !!H.dark?.();
+    for (const m of al) if (m.peek) peeking(m, now);
     let seen = null, nSeen = 0;
     this.seen = [];
     for (const h of H.hostiles?.() ?? []) {
       if (h.dead) continue;
-      const spot = al.find((m) => dist2(m.p, h.p) < range && (H.lineOfSight?.(m.p, h.p) ?? true));
+      let spot = null;
+      for (const m of al) {
+        const eye = eyeOf(m, now), at = headOf(h, now);
+        let R = range;
+        if (dark && !this.gear.thermal) {
+          if (h.lightOn) R = Math.max(R, h.beam && lightAt([{ ...h.beam, range: BEAM.into, cone: (h.beam.cone ?? BEAM.cone) * 1.6 }], eye) > 0 ? BEAM.into : BEAM.glow);
+          if (m.lightOn && m.beam && lightAt([m.beam], at) > 0) R = Math.max(R, m.beam.range ?? BEAM.range);
+        }
+        const los = H.sightLine ? (a, b) => H.sightLine(a, b) : () => H.lineOfSight?.(m.p, h.p) ?? true;
+        const r = perceive(m, h, dt, { now, range: R, los, light: 1, eye, at, expect: this.threat, prof: senseProfile(m, 'soldier') });
+        if (r.seen && (!spot || r.d < spot.d)) spot = { m, d: r.d };
+      }
       if (!spot) continue;
+      spot = spot.m;
       nSeen++;
       this.seen.push(h);
       h.marked = true;
@@ -1219,12 +1259,18 @@ export class SquadAI {
     for (const n of H.noises?.() ?? []) {
       if (n.time <= this.heardT) continue;
       this.heardT = Math.max(this.heardT, n.time);
-      if (n.squad === this.unit) continue;
+      if (n.squad === this.unit || (n.source && n.source.unit === this.unit)) continue;
+      // heard (ai/perception.js): as far as it carries to the commander's ears, less through walls;
+      // where it came from only roughly; too far off to go and look: they note it and stay
       const c = centroid(al);
-      if (dist2(c, n.p) > n.loud) continue;
+      const ear = this.radioMan() ?? al[0];
+      const prof = senseProfile(ear, 'soldier');
+      const heard = hears(ear, n, { at: [c[0], n.p[1], c[2]], prof, solid: H.hearWalls === false ? null : H.solid });
+      if (!heard) continue;
       if (this.threat) continue; // busy with the threat they have
-      if (n.kind === 'explosion' && !this.inv?.urgent) this.investigate(n.p, 'explosion', { urgent: true });
-      else if (!this.inv) this.investigate(n.p, 'noise');
+      if (heard.d > prof.investigate) continue;
+      if (n.kind === 'explosion' && !this.inv?.urgent) this.investigate(heard.p, 'explosion', { urgent: true });
+      else if (!this.inv) this.investigate(heard.p, 'noise');
     }
     // the investigators: look round where they got to; nothing there, come back
     if (this.inv?.urgent && this.time < this.inv.searchUntil) {
@@ -1262,10 +1308,21 @@ export class SquadAI {
         m.thermal = wantT && m.squad !== 'UAV';
         m.light = wantL;
       }
+      this.searchLights = !!H.dark?.() && !wantT;
       if (calls.length && cmd) {
         if (this.time < this.silentUntil) this.setAnim(cmd, 'signalDown');
         else this.say(cmd, `${this.unit}, ${calls.join(', ')}`, 'order');
       }
+    }
+    // each man's light (ai/flashlight.js): the weapon's, or the hand torch from his belt if he has a
+    // hand free; on when the team has lights on, and for the men searching in the dark (a last
+    // known position, a blast) though the team keeps dark; the torch drawn and put away by hand
+    const searching = this.inv && (this.inv.urgent || this.inv.why === 'last known position' || this.inv.clearing);
+    for (const m of al) {
+      if (m.squad === 'UAV') continue;
+      const want = !!m.light || (this.searchLights && !!searching && this.inv.men.includes(m));
+      const act = stepLight(m, want, dt, 1 / Math.max(0.5, skillOf(m).reload));
+      if (act && !this.busy(m) && !m.path && !m.trav) this.setAnim(m, act, 0.7);
     }
     // backup: two men down, or more of them than of us standing
     const down = this.members().filter((m) => m.dead).length;
@@ -1500,6 +1557,8 @@ export class SquadAI {
         this.setAnim(m, m.crawling ? 'proneAim' : 'crouch');
         continue;
       }
+      // lost sight of the enemy, in cover behind a low wall or at a corner: a peek to find him again
+      if (this.tryPeek(m, T)) continue;
       const covering = teamOf(m) !== this.moving || this.phase === 'hold' || this.phase === 'strategy';
       // the flame trooper: up on his feet and flame when it is close enough; otherwise he covers
       if (m.loadout === 'torch') {

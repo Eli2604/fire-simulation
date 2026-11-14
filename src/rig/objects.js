@@ -116,6 +116,22 @@ export const CASUALTY_ACTS = {
   coverFire: { label: 'Cover fire' },
 };
 
+/* ---------- peeking and the hand torch (soldier and squad): ai/peek.js, ai/flashlight.js ---------- */
+/**
+ * The Peek group on the rig stage: over a low wall from the crouch, round a corner left or right
+ * (the weapon side leans out more naturally; a pistol one-handed), slicing the pie; and the hand
+ * torch from the belt (only with a hand free: the knife, a pistol, bare hands).
+ */
+export const PEEK_ACTS = {
+  peekWall: { label: 'Peek over (low wall)' },
+  leanLeft: { label: 'Peek round the corner (left)' },
+  leanRight: { label: 'Peek round the corner (right)' },
+  sliceLeft: { label: 'Slice the pie (left)' },
+  sliceRight: { label: 'Slice the pie (right)' },
+  drawTorch: { label: 'Torch: draw from the belt', torch: true },
+  stowTorch: { label: 'Torch: back on the belt', torch: true },
+};
+
 /* ---------- hand-to-hand acts (soldier and squad): boxing and judo (ai/melee.js) ---------- */
 /**
  * The hand-to-hand acts on the rig stage: a strike with a sparring partner d m in front of him

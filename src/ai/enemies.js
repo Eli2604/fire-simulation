@@ -1,4 +1,4 @@
-import { traceVoxels } from './sight.js';
+import { sightLine, perceive, senses, hears, eyeOf, beamsIn } from './perception.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
@@ -127,19 +127,25 @@ export class EnemyAI {
   }
 
   /** Line of sight from a to b, voxel by voxel (ai/sight.js): blocked by solids and thick smoke. */
-  sees(a, b) {
+  sees(a, b, range = 22) {
+    if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > range) return false;
+    return this.sightLine(a, b);
+  }
+
+  /** The line from an eye to a point: walls (not doors he could open, planning) and thick smoke block it (ai/perception.js). */
+  sightLine(a, b) {
     const w = this.world;
-    const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    if (d > 22) return false;
-    let tau = 0;
-    return !traceVoxels(w, a, b, (i, len, t) => {
-      if (i < 0) return false;
-      const m = w.mat[i];
-      if (m && MATERIALS[m].fluidity < 0.95 && !(this.passDoors && w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked)) return true;
-      const c = this.sim.airCellAt(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
-      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * len;
-      return tau > 2.5;
-    });
+    return sightLine(w, a, b, { airCellAt: (x, y, z) => this.sim.airCellAt(x, y, z), door: this.passDoors ? (i) => w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked : null }).clear;
+  }
+
+  /**
+   * Does guard e notice the player (ai/perception.js: his eye, his senses: 22 m by default and his
+   * experience; over a moment, sooner close; a light on shows you from further in the dark)?
+   */
+  spots(e, pl, dt) {
+    const w = this.world;
+    const r = perceive(e, pl, dt, { now: w.time, eye: eyeOf(e), at: pl.head, prof: senses(e, 'guard'), los: (a, b) => this.sightLine(a, b), world: w, darkCounts: true, beams: beamsIn(w) });
+    return r.seen;
   }
 
   /**
@@ -263,7 +269,7 @@ export class EnemyAI {
         continue;
       }
       // --- senses
-      const seesPlayer = pl && this.sees(head, pl.head);
+      const seesPlayer = pl && this.spots(e, pl, dt);
       if (seesPlayer) {
         e.lastSeen = pl.p.slice();
         if (!e.alerted) {
@@ -289,10 +295,13 @@ export class EnemyAI {
         }
       }
       for (const n of e.guard ? [] : noises) { // a guard team hears as a squad (ai/squad.js)
-        const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
-        if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy' && n.kind !== 'dragon') {
+        // heard (ai/perception.js): through walls less; where it was only roughly; far off, not worth a look
+        if (['lure', 'retreat', 'flee'].includes(e.state) || n.kind === 'enemy' || n.kind === 'dragon' || n.source === e) continue;
+        const prof = senses(e, 'guard');
+        const heard = hears(e, n, { at: [e.p[0], e.p[1] + 1.6, e.p[2]], prof, solid: (x, y, z) => this.solidAt(x, y, z) });
+        if (heard && heard.d <= prof.investigate) {
           e.state = 'investigate';
-          e.goal = n.p.slice();
+          e.goal = (this.blocked(heard.p[0], heard.p[2], e.p[1]) ? n.p : heard.p).slice();
           e.repath = 0;
           // an explosion: they run there, and search the place for a while
           if (n.kind === 'explosion') {

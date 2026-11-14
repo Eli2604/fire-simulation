@@ -29,6 +29,13 @@ export default {
     // experience (ai/soldier.js SKILL): aim, recoil control, reaction, reload / switch speed, nerve, hand-to-hand
     skill: { value: 'mixed', options: ['mixed', 'recruit', 'regular', 'veteran', 'elite'], label: 'Experience: aim, recoil control, reaction, reload / switch / pick-up speed, nerve under fire, hand-to-hand (mixed: the leader a veteran, regulars, a recruit)' },
     weapon: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Weapon (unarmed: they fight hand-to-hand)' },
+    // senses (ai/perception.js), scaled by the experience
+    sightRange: { value: 22, min: 5, max: 1000, step: 5, label: 'Sight: how far they pick you up in clear sight, daylight (m)' },
+    fov: { value: 360, min: 60, max: 360, step: 5, label: 'Field of view (degrees; 360: all round, the team watching its sectors)' },
+    hearing: { value: 1, min: 0, max: 3, step: 0.05, label: 'Hearing (× how far a sound carries)' },
+    // lights (ai/flashlight.js): on the weapon, or a hand torch from the belt with a hand free
+    weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
+    flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
   },
   build(p, { rng }) {
     const enemies = [];
@@ -40,7 +47,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false });
     }
     return { prims: [], enemies };
   },

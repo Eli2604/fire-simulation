@@ -14,6 +14,9 @@ import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/p
 import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
 import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
 import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
+import { peekOptions } from '../ai/peek.js';
+import { lightSource, TORCH_T } from '../ai/flashlight.js';
+import { emitSound, footstepDb, BEAM } from '../ai/perception.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -92,6 +95,14 @@ export class Walkthrough {
     this.lamp.position.set(0.15, 0.1, 0);
     this.lamp.target.position.set(0, 0, -1);
     this.lampOn = true;
+    // the flashlight (N, ai/flashlight.js): the rifle's light along the muzzle, or the hand torch
+    // from the belt in the left hand when a hand is free (bare hands, the fire torch, a grenade)
+    this.flashLamp = new THREE.SpotLight(0xfff3dc, 0, 32, 0.34, 0.55, 1.6);
+    this.flashLamp.target.position.set(0, 0, -1);
+    this.flashOn = false;
+    this.leanK = 0;
+    this.riseK = 0;
+    this.stride = 0;
     this.tank = { remaining: 1e9 };
     this.bind();
   }
@@ -152,6 +163,7 @@ export class Walkthrough {
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
+      if (e.code === 'KeyN') this.toggleFlashlight();
       if (e.code === 'Digit1') this.tool = 'hose';
       if (e.code === 'Digit2') this.tool = 'torch';
       if (e.code === 'Digit3') this.tool = 'grenade';
@@ -225,6 +237,8 @@ export class Walkthrough {
     if (!v.camera.parent) v.scene.add(v.camera);
     v.camera.add(this.lamp);
     v.camera.add(this.lamp.target);
+    v.camera.add(this.flashLamp);
+    v.camera.add(this.flashLamp.target);
     this.el.mask.hidden = false;
     this.el.start.hidden = false;
     this.maskOn = true;
@@ -935,6 +949,10 @@ export class Walkthrough {
     const v = this.view;
     v.camera.remove(this.lamp);
     v.camera.remove(this.lamp.target);
+    v.camera.remove(this.flashLamp);
+    v.camera.remove(this.flashLamp.target);
+    const sw = this.hooks.getSim()?.world;
+    if (sw) sw.playerBeam = null;
     v.camera.fov = this.savedFov ?? 50;
     if (this.gun) this.gun.visible = false;
     if (this.el.eyes) this.el.eyes.style.opacity = '0';
@@ -961,6 +979,88 @@ export class Walkthrough {
    * The handling of what is in your hands (ai/weapons.js HANDLING): the rifle as the soldiers carry
    * it, the fire torch held out in one hand, else nothing that changes how you move.
    */
+  /** You as the flashlight rules see you (ai/flashlight.js): what is in your hands; a torch on the belt. */
+  lightGear() {
+    return { handling: this.handling(), weaponLight: { rifle: true }, flashlight: true };
+  }
+
+  /** N: the flashlight on or off (the rifle's own light, or the hand torch from the belt if a hand is free). */
+  toggleFlashlight() {
+    const s = lightSource(this.lightGear());
+    if (!this.flashOn && !s.src) {
+      this.say(s.why || 'No light to use', 3);
+      return;
+    }
+    this.flashOn = !this.flashOn;
+    if (this.flashOn && s.src === 'hand' && !this.torchOut) {
+      this.torchDraw = TORCH_T.draw; // the torch from the belt first
+      this.say('The torch from your belt', 1.5);
+    }
+  }
+
+  /**
+   * The flashlight each frame: from where it is (the rifle's muzzle, low right; the torch in your
+   * left hand), along where you look. Swapping to something two-handed (the hose, the bow, the
+   * extinguisher) puts the torch away: no light. Published for the AIs (world.playerBeam): it lights
+   * what you look at, and gives you away in the dark.
+   */
+  stepFlashlight(dt, sim) {
+    const s = lightSource(this.lightGear());
+    if (this.flashOn && !s.src) {
+      this.flashOn = false;
+      this.say(s.why, 3);
+    }
+    if (s.src !== 'hand' && this.torchOut) this.torchOut = false;
+    if (this.torchDraw > 0) {
+      this.torchDraw -= dt;
+      if (this.torchDraw <= 0) this.torchOut = true;
+    }
+    const lit = this.flashOn && !this.downed && (s.src === 'weapon' || (s.src === 'hand' && this.torchOut));
+    this.flashLamp.intensity = lit ? 9 : 0;
+    if (lit) {
+      if (s.src === 'weapon') this.flashLamp.position.set(0.14, -0.16, -0.35);
+      else this.flashLamp.position.set(-0.26, -0.22, -0.32);
+      this.flashLamp.target.position.set(this.flashLamp.position.x * 0.2, this.flashLamp.position.y * 0.2, -6);
+    }
+    const w = sim.world;
+    if (lit) {
+      const cam = this.view.camera;
+      const cp = Math.cos(this.pitch);
+      const dir = [-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp];
+      w.playerBeam = { from: [cam.position.x, cam.position.y - 0.15, cam.position.z], dir, range: BEAM.range, cone: BEAM.cone, owner: 'player', src: s.src };
+    } else w.playerBeam = null;
+    this.flashLit = lit;
+    return lit;
+  }
+
+  /**
+   * Z / X held: lean out left / right round a corner (as far as there is room: not into a wall);
+   * low (C) behind a low wall, Z and X together: rise just enough to look over it (ai/peek.js).
+   * Your head goes with it, so the enemy may see it.
+   */
+  stepLean(dt, locked, eye) {
+    const L = locked && this.keys.has('KeyZ'), Rk = locked && this.keys.has('KeyX');
+    const both = L && Rk;
+    let side = both ? 0 : (Rk ? 1 : 0) - (L ? 1 : 0);
+    let rise = 0;
+    if (both) {
+      const o = peekOptions((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], [this.pos.x - Math.sin(this.yaw), this.pos.y, this.pos.z - Math.cos(this.yaw)]);
+      rise = Math.max(0, (o.over ? o.over.rise : this.crawl ? 1.3 : eye) - eye);
+    }
+    let out = 0.42 * side * (this.crawl ? 0.6 : 1);
+    if (side) {
+      const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+      for (let d = 0.1; d <= Math.abs(out) + 1e-6; d += 0.1)
+        if (this.solidAt(this.pos.x + rx * d * side, this.pos.y + eye, this.pos.z + rz * d * side)) {
+          out = side * Math.max(0, d - 0.15);
+          break;
+        }
+    }
+    this.leanK += (out - this.leanK) * Math.min(1, dt * 9);
+    this.riseK += (rise - this.riseK) * Math.min(1, dt * 7);
+    return { out: this.leanK, rise: this.riseK };
+  }
+
   handling() {
     return { rifle: 'rifle', torch: 'handTorch', fists: 'unarmed' }[this.tool] ?? 'none';
   }
@@ -1300,7 +1400,28 @@ export class Walkthrough {
     const cam = v.camera;
     cam.position.set(this.pos.x, this.pos.y + eye - dip + bob, this.pos.z);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // leaning round a corner, rising over a low wall (Z / X): the head goes out, the view tilts a little
+    const lean = this.stepLean(dt, locked, eye);
+    if (Math.abs(lean.out) > 1e-3 || lean.rise > 1e-3) {
+      cam.position.x += Math.cos(this.yaw) * lean.out;
+      cam.position.z += -Math.sin(this.yaw) * lean.out;
+      cam.position.y += lean.rise - Math.abs(lean.out) * 0.08;
+      cam.rotation.z = -lean.out * 0.35;
+    }
     cam.updateMatrixWorld();
+    // your footsteps (ai/perception.js): heard by the guards and soldiers, louder running, on stone or metal
+    this.stride += Math.hypot(this.pos.x - (this.lastStep?.[0] ?? this.pos.x), this.pos.z - (this.lastStep?.[1] ?? this.pos.z));
+    const stepV = this.stride / Math.max(1e-3, w.time - (this.strideT ?? w.time - 1));
+    this.lastStep = [this.pos.x, this.pos.z];
+    if (this.stride > (this.crawl ? 0.5 : 0.75) && !this.swimming) {
+      const under = w.voxelAt(this.pos.x, this.pos.y - w.h * 0.5, this.pos.z);
+      const surf = under >= 0 && w.mat[under] ? MATERIALS[w.mat[under]].name : 'soil';
+      const dB = footstepDb(this.crawl ? 0.35 : Math.min(4, stepV), surf);
+      if (dB > 0) emitSound(w, { pos: [this.pos.x, this.pos.y, this.pos.z], loudness_dB: dB, kind: 'footstep', source: 'player' });
+      this.stride = 0;
+      this.strideT = w.time;
+    }
+    this.stepFlashlight(dt, sim);
     // the eye adapts: close up to something (an altar cloth a metre off) the lamp's spot would
     // burn white at the brightness that lights a passage 5 m ahead; dimmed with the square of
     // how near what it falls on is (as far as a ~2.5 m look ahead), eased over a few frames
@@ -1457,7 +1578,7 @@ export class Walkthrough {
       this.draw = undefined;
     }
     // where you are, for the enemies (they see your head)
-    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving };
+    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving, lightOn: !!(this.lampOn || this.flashLit), beam: this.flashLit ? w.playerBeam : null, crouch: this.crawl };
     // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine and 4 spare
     // magazines (ammunition is limited, as for the soldiers), R reloads
     this.ammo ??= 30;
@@ -1498,7 +1619,7 @@ export class Walkthrough {
       this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : hit.weapon === 'fist' ? (hit.down ? 'Thrown – you hit the ground' : `Struck – ${hit.zone}!`) : `You are hit – ${hit.zone}!`, 2);
     }
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
-    if (this.lampOn && !this.downed) {
+    if ((this.lampOn || this.flashLit) && !this.downed) {
       if (!sim.ai.lamp || w.time - sim.ai.lamp.time > 0.3) {
         const spot = this.beamSpot(head, [aimFwd.x, aimFwd.y, aimFwd.z], 25);
         sim.ai.lamp = spot ? { from: head.slice(), spot, time: w.time } : null;

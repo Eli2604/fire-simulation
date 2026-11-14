@@ -7,6 +7,7 @@ import { sense as senseEvade, stepEvade, evadeRollHit } from './dragonEvade.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
+import { perceive, senses, hears, headOf, SENSES, beamsIn } from './perception.js';
 
 /**
  * A dragon: a big predator on the island, built on real animals.
@@ -879,10 +880,14 @@ export class DragonAI {
       d.senseT = 0.3;
       this.sense(d, w);
     }
-    for (const n of noises) {
-      if (n.kind === 'dragon') continue;
-      const dd = dist(n.p, d.chest);
-      if (dd > n.loud * 1.6 + 8) continue;
+    // what it hears (ai/perception.js: its hearing is keen, 1.6 times as far, and 8 m more; walls
+    // muffle; far off it does not bother); it goes to where it thinks the noise was
+    const prof = senses(d, 'dragon');
+    for (const n0 of noises) {
+      if (n0.kind === 'dragon') continue;
+      const heard = hears(d, n0, { at: d.chest, prof, solid: (x, y, z) => this.solidAt([x, y, z]) });
+      if (!heard || heard.d > prof.investigate) continue;
+      const n = { ...n0, p: heard.p };
       // the same place again (an eruption rumbling on): it is already on its way, or has had a look
       if (d.investigate && dist(n.p, d.investigate) < 10) continue;
       if (d.lastLook && dist(n.p, d.lastLook) < 10 && (d.time ?? 0) - d.lastLookT < 60) continue;
@@ -966,11 +971,19 @@ export class DragonAI {
     const eye = d.eye ?? d.chest;
     let best = null;
     let bs = Infinity;
-    const consider = (kind, ref, p, head) => {
+    // its senses (ai/perception.js): 45 m by default (d.sightRange), dozing in its lair only what
+    // comes close (13 m, as much nearer for a keener eye); noticing builds up (sooner close), and
+    // a light carried at night shows from further off
+    const prof = senses(d, 'dragon');
+    const range = d.state === 'rest' && !(d.anger > 0) ? prof.restRange * (prof.sightRange / SENSES.dragon.sightRange) : prof.sightRange;
+    const beams = beamsIn(w);
+    const dt = Math.max(0.05, (d.time ?? 0) - (d.sensedAt ?? (d.time ?? 0) - 0.3));
+    d.sensedAt = d.time ?? 0;
+    const consider = (kind, ref, p, head, tgt) => {
       const dd = dist(eye, head);
-      // dozing in its lair it only notices what comes close
-      if (dd > (d.state === 'rest' && !(d.anger > 0) ? 13 : 45)) return;
-      const seen = this.sees(eye, head);
+      if (dd > Math.max(range, tgt.lightOn ? range * 1.5 : 0)) return;
+      const r = perceive(d, tgt, dt, { now: d.time ?? 0, eye, at: head, prof: { ...prof, sightRange: range }, los: (a, b) => this.sees(a, b, Infinity), world: w, beams });
+      const seen = r.seen;
       const old = d.target && d.target.ref === ref;
       if (!seen && !old) return;
       const score = dd * (kind === 'player' ? 0.8 : 1) * (seen ? 1 : 2.5) * (old ? 0.7 : 1);
@@ -979,8 +992,8 @@ export class DragonAI {
         best = { kind, ref, p: p.slice(), head: head.slice(), seen, lastSeen: seen ? w.time : d.target?.lastSeen ?? w.time };
       }
     };
-    if (pl && !w.playerHeld) consider('player', 'player', pl.p, pl.head);
-    for (const e of w.enemies) if (!e.dead && !e.held) consider('enemy', e, e.p, [e.p[0], e.p[1] + 1.6, e.p[2]]);
+    if (pl && !w.playerHeld) consider('player', 'player', pl.p, pl.head, pl);
+    for (const e of w.enemies) if (!e.dead && !e.held) consider('enemy', e, e.p, headOf(e), e);
     // a hungry dragon goes for anyone it sees; a sated one only for whoever hurt it
     if (best && d.sated > 0 && !(d.anger > 0 && best.kind === 'player')) best = null;
     if (best) {
