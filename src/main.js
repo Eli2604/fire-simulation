@@ -204,10 +204,10 @@ function updateProxies(now = false) {
     const offset = z.origin.map((v, k) => v - here[k]);
     // (a place in the open not built yet, big enough on the screen: built ahead, the biggest first)
     const ahead = s ? null : prebuild.world(name);
-    if (!s && !ahead && lod.cam && !z.indoor && exposureOf(z) === 'outdoor') {
+    if (!s && lod.cam && !z.indoor && exposureOf(z) === 'outdoor') {
       const [sx, sy, sz] = z.world.size;
       const px = lod.size(offset[0] + sx / 2, offset[1] + sy / 2, offset[2] + sz / 2, 0.5 * Math.hypot(sx, sz));
-      if (px > 24) prebuild.want(name, zoneDesc(name), px);
+      if (px > 36) prebuild.want(name, zoneDesc(name), px); // (as it comes up to its coarse level: render/scenery.js)
       else prebuild.drop(name);
     }
     list.push({

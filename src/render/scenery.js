@@ -24,6 +24,8 @@ import { F_HIDDEN } from '../sim/world.js';
  *    once), its torches and candles and doors too. At most `lod.budgets.place` places at once
  *    (one: a full voxel world is tens of MB on the GPU); the others stay at level 1.
  *
+ * None of it casts shadows (the sun's shadow map is fitted to the place you are in).
+ *
  * The boundaries have hysteresis (lod.js), and what is built for a level is kept a while after
  * leaving it (no rebuilding on a camera going back and forth). Building is spread over frames
  * (a few ms each), the coarse surface in slices; until it is ready the level below is shown.
@@ -133,8 +135,21 @@ export class PlaceScenery {
         const snow = view.snowCover ?? 0;
         if (ob.trees.season.name !== season || ob.trees.season.snow !== snow) ob.trees.setSeason(season, snow);
         ob.trees.update(view.time ?? t, cam);
+        // (the grass only in full: thousands of tufts, ~2 M triangles on the island, that are a
+        // green blur at the coarse level, which its voxels' colour already gives)
+        for (const g of ob.trees.items) if (g.grass) for (const m of g.meshes) m.visible = !!full;
         ob.vehicles.update(t);
         ob.volcanoes.update(t);
+        // (no shadows from a place you are not in: the sun's shadow map is fitted to where you are,
+        // and drawing the church into it again doubles its cost; now and then: the jets come later)
+        if ((ob.unshadowed = (ob.unshadowed ?? 0) - 1) < 0) {
+          ob.unshadowed = 120;
+          ob.group.traverse((m) => {
+            if (!m.isMesh) return;
+            m.castShadow = false;
+            if (m.userData.lodShadow !== undefined) m.userData.lodShadow = false; // (props.js: what its level of detail restores)
+          });
+        }
       }
       if (full) {
         const f = it.full;

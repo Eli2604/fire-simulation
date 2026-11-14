@@ -9,6 +9,11 @@ import { buildWorld } from './createSimulation.js';
  * the screen first; never simulated. Going there later takes the same world (`take`): entering
  * is quicker too, and what you saw is what you find.
  *
+ * A world is its simulation's arrays (the island ~170 MB, the lake house's ~340 MB): at most
+ * `maxBytes` are kept built ahead; the one not asked for the longest goes first (asked for: big
+ * enough on the screen, main.js: updateProxies). Places too small on the screen for more than
+ * their stand-in are not built at all.
+ *
  * Without workers (tests, a page that cannot start one) it builds on the main thread, one place
  * per idle moment.
  */
@@ -23,7 +28,9 @@ export class Prebuild {
     this.since = now();
     this.worker = undefined; // (made on first use; null: none to be had)
     this.onReady = null; // (name) => …: a place's world has arrived
-    this.stats = { builds: 0, ms: 0, last: null };
+    this.stats = { builds: 0, ms: 0, last: null, bytes: 0, evicted: 0 };
+    this.maxBytes = 600e6;
+    this.keep = 20; // s a built world asked for is safe from eviction
   }
 
   /** A new scene, or a restart: forget what was built (a build under way is dropped when it comes). */
@@ -44,11 +51,35 @@ export class Prebuild {
     return this.built.has(name) || this.busy?.name === name;
   }
 
+  /** Bytes of the worlds kept built ahead. */
+  bytes() {
+    let b = 0;
+    for (const e of this.built.values()) b += e.bytes;
+    return b;
+  }
+
+  /**
+   * Make room for `need` more bytes: the worlds not asked for the longest go first (none asked
+   * for in the last `keep` s). Whether there is room now.
+   */
+  makeRoom(need) {
+    const t = now();
+    const old = [...this.built].filter(([, e]) => t - e.seen > this.keep).sort((a, b) => a[1].seen - b[1].seen);
+    while (this.bytes() + need > this.maxBytes && old.length) {
+      this.built.delete(old.shift()[0]);
+      this.stats.evicted++;
+    }
+    this.stats.bytes = this.bytes();
+    return this.bytes() + need <= this.maxBytes;
+  }
+
   /**
    * Ask for place `name` to be built from `desc` (what createSimulation is given for it), the
    * biggest `priority` (its size on the screen) first. Asking again updates the priority.
    */
   want(name, desc, priority = 0) {
+    const b = this.built.get(name);
+    if (b) b.seen = now(); // (still wanted: kept)
     if (this.has(name)) return;
     const sig = signature(desc);
     this.wanted.set(name, { desc, sig, priority });
@@ -78,6 +109,10 @@ export class Prebuild {
     let best = null;
     for (const [name, q] of this.wanted) if (!best || q.priority > best[1].priority) best = [name, q];
     const [name, q] = best;
+    // (room for it: about as big as its grid: ~120 bytes a voxel)
+    const [sx, sy, sz] = q.desc.world?.size ?? [0, 0, 0];
+    const h = q.desc.world?.h ?? 1;
+    if (!this.makeRoom(120 * (sx / h) * (sy / h) * (sz / h))) return;
     this.wanted.delete(name);
     const job = { name, sig: q.sig, gen: this.gen, t0: now() };
     this.busy = job;
@@ -135,7 +170,11 @@ export class Prebuild {
   done(job, built) {
     this.busy = null;
     if (job.gen === this.gen) {
-      this.built.set(job.name, { sig: job.sig, built });
+      let bytes = 0;
+      const bufs = new Set();
+      for (const v of Object.values(built.world)) if (ArrayBuffer.isView(v) && !bufs.has(v.buffer)) bufs.add(v.buffer) && (bytes += v.buffer.byteLength);
+      this.built.set(job.name, { sig: job.sig, built, bytes, seen: now() });
+      this.stats.bytes = this.bytes();
       this.stats.builds++;
       this.stats.last = { name: job.name, ms: Math.round(now() - job.t0) };
       this.stats.ms += now() - job.t0;

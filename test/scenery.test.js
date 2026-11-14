@@ -112,3 +112,29 @@ test('scenery levels: stand-in far off, coarse closer, full close by (one place 
   frame([0, 0, 0]);
   assert.equal(sc.items.size, 0);
 });
+
+test('prebuild: a memory budget; the world not asked for the longest goes first', async () => {
+  const pb = new Prebuild({ makeWorker: () => null, delay: 0 });
+  pb.since = -1e9;
+  const built = (n) => new Promise((resolve) => (pb.onReady = (m) => m === n && resolve()));
+  let p = built('meadow');
+  pb.want('meadow', desc('meadow'), 10);
+  await p;
+  const one = pb.bytes();
+  assert.ok(one > 1e6);
+  pb.maxBytes = 120 * 140 * 60 * 100 + 1; // (room for the garden, as it is reckoned before: not for both)
+  pb.keep = 0;
+  pb.built.get('meadow').seen -= 10; // (not asked for since)
+  p = built('garden');
+  pb.want('garden', desc('garden'), 5);
+  await p;
+  assert.equal(pb.world('meadow'), null, 'evicted');
+  assert.ok(pb.world('garden'));
+  assert.equal(pb.stats.evicted, 1);
+  // asked for just now, and no room: kept, the other waits
+  pb.keep = 60;
+  pb.want('garden', desc('garden'), 5);
+  pb.want('meadow', desc('meadow'), 10);
+  assert.ok(pb.world('garden'));
+  assert.equal(pb.busy, null, 'no room: not built');
+});
