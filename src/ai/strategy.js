@@ -14,9 +14,11 @@
  *      defend         too weak to attack (men down, wounded to look after): hold in cover and fire
  *      withdraw       outmatched (or out of ammunition): break contact, one team covering the
  *                     other back to a rally point away from the threat
- *      retreat        ordered, or men down / pinned down by as many as they have standing: man by
- *                     man back to a rally point under covering fire, the wounded carried or left
- *                     to cover them, a wire on the last door they pass (ai/retreat.js)
+ *      retreat        ordered, or the leader's own call (the commander down, heavy casualties,
+ *                     outgunned, flanked, pinned down, low on ammunition: ai/retreatRadio.js): the
+ *                     word passed round, then man by man back to a rally point under covering
+ *                     fire, the wounded carried or left to cover them, a wire on the last door
+ *                     they pass (ai/retreat.js); called in to the friendly teams
  *  - It is called on the radio ("Alpha, team B base of fire, team A flank left with me"), the planned
  *    route is kept on the men for the paths view (m.planRoute), and it is looked at again every few
  *    seconds: a flank route that turns out exposed (the flankers being hit, the enemy moved to see

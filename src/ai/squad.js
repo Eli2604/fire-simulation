@@ -69,6 +69,9 @@
  *   flame(m, target)   a flame trooper's burst of flame at target (optional)
  *   radio(m, text, kind)  m speaks on the radio (kind: contact, threat, manDown, reply, none)
  *   unit, peers()      this squad's name and the other squads' AIs (optional)
+ *   side               the side it fights on (optional; else its men's m.side, else all one side):
+ *                      a retreat is called in only to the teams on its side (ai/retreatRadio.js)
+ *   din(p)             the noise level there (dB) a shout has to carry over (optional)
  *   ownMove(m)         true while m is not this AI's to move: a guard on his patrol, or
  *                      running from fire (optional; ai/enemies.js)
  *   hostiles(), lineOfSight(a, b), visibility(), dark(), noises()  what they can sense
@@ -90,6 +93,7 @@ import { stepKnocked } from './melee.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
 import { stepTraps } from './retreat.js';
+import { friendliesOf, sideOf } from './retreatRadio.js';
 import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
@@ -99,7 +103,7 @@ const SCOUT_R = [10, 16];
 // a plain step between grid cells: up a stair, down a steep slope; more is a parkour move
 const PLAIN_UP = 0.6, PLAIN_DOWN = 0.8;
 const FIT = ability({});
-const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
+const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, signalFallBack: 2.0, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
 export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
@@ -157,7 +161,7 @@ export class SquadAI {
     const moved = this.lastIntel && Math.hypot(T[0] - this.lastIntel[0], T[2] - this.lastIntel[2]) > 1;
     const dir = (a, b) => BEARING[((Math.round(Math.atan2(b[0] - a[0], -(b[2] - a[2])) / (Math.PI / 4)) % 8) + 8) % 8];
     let text = `${this.unit}, drone, eyes on the threat, ${this.bearing()}, ${moved ? 'it has moved ' + dir(this.lastIntel, T) : 'no movement'}`;
-    const peers = (this.host.peers?.() ?? []).filter((p) => p !== this && p.alive());
+    const peers = friendliesOf(this);
     for (const p of peers) {
       const c = centroid(p.members().filter((m) => !m.dead));
       text += `, ${p.unit} is ${Math.round(dist2(c, T))} metres ${dir(T, c)} of it`;
@@ -187,7 +191,8 @@ export class SquadAI {
   }
   /** The leading squad gives the orders. */
   get isLead() {
-    const peers = this.host.peers?.() ?? [];
+    // (the first of its own side: an enemy team on the net gives it no orders)
+    const peers = (this.host.peers?.() ?? []).filter((p) => sideOf(p) === sideOf(this));
     return !peers.length || peers.find((p) => p.alive()) === this;
   }
   /** An order from the lead, carried out once acknowledged. */
@@ -216,7 +221,7 @@ export class SquadAI {
   }
   /** The lead's view of the battle: flanks, hold off, continue. */
   command() {
-    const peers = (this.host.peers?.() ?? []).filter((p) => p !== this && p.alive());
+    const peers = friendliesOf(this);
     const T = this.threat, me = centroid(this.members().filter((m) => !m.dead));
     const dMe = dist2(me, T);
     peers.forEach((p, i) => {
@@ -262,7 +267,7 @@ export class SquadAI {
         const U = this.unit;
         this.say(this.radioMan(), `${U}, threat is moving away, ${this.bearing()}, going into pursuit, all teams follow`, 'order');
         this.startPursuit();
-        (this.host.peers?.() ?? []).filter((x) => x !== this && x.alive()).forEach((x, i) =>
+        friendliesOf(this).forEach((x, i) =>
           x.radioQueue.push({ at: x.time + 2.8 + i * 2.6, text: `${x.unit}, copy, in pursuit`, kind: 'reply', order: { kind: 'pursue' } }));
       } else if (!away) this.report('threat');
     }
@@ -305,7 +310,7 @@ export class SquadAI {
       manDown: U + ', man down, ' + (who ?? 'one of ours') + ' is down, continuing',
     }[kind];
     this.say(m, text, kind);
-    const peers = (this.host.peers?.() ?? []).filter((p) => p !== this && p.alive());
+    const peers = friendliesOf(this);
     if (!peers.length) this.radioQueue.push({ at: this.time + 3.2, self: true, text: U + ', no response', kind: 'none' });
     peers.forEach((p, i) => p.radioQueue.push({ at: p.time + 2.8 + i * 2.6, text: p.unit + ', copy ' + U + ', ' + (kind === 'manDown' ? 'understood, out' : 'we have it, out'), kind: 'reply' }));
   }
@@ -1339,7 +1344,7 @@ export class SquadAI {
     // backup: two men down, or more of them than of us standing
     const down = this.members().filter((m) => m.dead).length;
     if (!this.backupCalled && (down >= 2 || nSeen >= 3 || nSeen > al.length)) {
-      const peers = (H.peers?.() ?? []).filter((p) => p !== this && p.alive());
+      const peers = friendliesOf(this);
       const cmd = this.radioMan();
       if (cmd) {
         this.backupCalled = true;
@@ -1398,6 +1403,13 @@ export class SquadAI {
         const last = m.track[m.track.length - 1];
         if (!last || Math.hypot(last[0] - m.p[0], last[1] - m.p[2]) > 0.25) m.track.push([m.p[0], m.p[2]]);
       }
+      // (a friendly team's retreat called in: answered and acted on with no contact of their own,
+      // ai/retreatRadio.js)
+      for (const r of this.radioQueue.filter((q) => q.fn && this.time >= q.at)) {
+        this.radioQueue.splice(this.radioQueue.indexOf(r), 1);
+        const m = this.radioMan(), t = m ? r.fn(this, m, r) : null;
+        if (typeof t === 'string') this.say(m, t, r.kind);
+      }
       this.flushRadio();
       return;
     }
@@ -1450,6 +1462,12 @@ export class SquadAI {
       this.radioQueue.splice(i, 1);
       const m = r.uav ? this.uav() : this.radioMan();
       if (!m) continue;
+      // (a call worked out when it is made: ai/retreatRadio.js; null: nothing to say)
+      if (r.fn) {
+        const t = r.fn(this, m, r);
+        if (t === null) continue;
+        if (typeof t === 'string') r.text = t;
+      }
       if (r.scout) {
         m.scouting = true;
         m.scoutI = 0;
@@ -1472,7 +1490,7 @@ export class SquadAI {
     this.t += dt;
     this.grenadeCd -= dt;
     this.orderT -= dt;
-    if (this.contacted && this.isLead && this.orderT <= 0) {
+    if (this.contacted && this.isLead && !this.retreating && this.orderT <= 0) {
       this.orderT = 3;
       this.command();
     }
@@ -1608,7 +1626,8 @@ export class SquadAI {
         if (m.fireT <= 0) {
           this.setAnim(m, AIM);
           // the base of fire suppressing (ai/strategy.js): hardly a pause between bursts
-          const suppress = this.phase === 'strategy' && ['suppressFlank', 'withdraw', 'retreat'].includes(this.strategy?.kind) && teamOf(m) !== this.moving;
+          // (and a team covering a friendly team's retreat: ai/retreatRadio.js)
+          const suppress = (this.phase === 'strategy' && ['suppressFlank', 'withdraw', 'retreat'].includes(this.strategy?.kind) && teamOf(m) !== this.moving) || this.time < (this.supporting?.until ?? 0);
           m.fireT = suppress ? 0.5 + Math.random() * 0.5 : m.squad === 'MG' ? 1.4 + Math.random() : 3 + Math.random() * 2.5;
         }
       } else {

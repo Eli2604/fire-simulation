@@ -34,8 +34,8 @@ export default {
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
     force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
-    // the retreat (ai/retreat.js): ordered from the start, or left to the leader (men down, pinned down)
-    strategy: { value: 'auto', options: ['auto', 'retreat', 'no retreat'], label: 'Strategy on contact (auto: the leader decides, retreating when pinned down or with men down; retreat: ordered back at once)' },
+    // the retreat (ai/retreat.js, ai/retreatRadio.js): no button, the squad decides; this forces it or rules it out
+    strategy: { value: 'auto', options: ['auto', 'retreat', 'no retreat'], label: 'Strategy on contact (auto: the squad decides by itself: the commander down, heavy casualties, outgunned, flanked, pinned down, low on ammunition; signals it, calls it in to friendly teams; retreat: forced, back at once; no retreat: never)' },
     rallyX: { value: 0, min: -60, max: 60, step: 0.5, label: "Rally point offset X (m; 0, 0: where they started if that is behind them, else back out of the enemy's sight)" },
     rallyZ: { value: 0, min: -60, max: 60, step: 0.5, label: 'Rally point offset Z (m)' },
     casualties: { value: 'auto', options: ['auto', 'carry', 'leave'], label: "A man down in a retreat (auto: by experience, the enemy's distance, his wounds, the men left; carry: fireman's carry; leave: he stays and covers them)" },

@@ -1771,9 +1771,36 @@ on ropes (the simulation's step, after the squads).
 ### The retreat: peeling back, the wounded, a wire on the door
 
 `ai/retreat.js` is one of the leader's strategies (`ai/strategy.js`: suppress and flank,
-envelop, bound, defend, withdraw, **retreat**). He picks it when ordered, or by himself when men
-are down and the enemies are as many as the men standing ("heavy casualties"), or when two of
-them were hit in the last seconds by as many ("pinned down"); once begun it is seen through.
+envelop, bound, defend, withdraw, **retreat**). There is no button for it: the squad decides,
+signals and reports by itself (`ai/retreatRadio.js`); once begun it is seen through.
+- **Deciding**: the leader weighs, in order, and logs the first reason that holds with its facts
+  (`sq.retreatWhy`, `sq.retreatLog`: `retreat:decide:<why> · <men standing, enemy strength,
+  under fire, ammunition>`): *ordered*; *the commander is down*; *heavy casualties* (men down and
+  an enemy as strong as the men standing); *outgunned* (enemy strength, a man 1, a vehicle 4, a
+  helicopter 6, the dragon 8, twice theirs with heavy weapons among them, or three times theirs);
+  *flanked* (enemies seen well off the line to the threat); *pinned down* (two or more men hit or
+  with rounds cracking past, `m.shotAt`); *low on ammunition*. Plain numbers, two to one, still
+  mean the older team-by-team withdraw.
+- **The word in the squad**: the leader shouts "Fall back! Fall back to the rally point!" and
+  gives the hand signal (clip *signalFallBack*: arm up, circling, swept to the rear; repeated while
+  anyone lacks the word). A man **hears** the shout if it carries over the din (~40 dB quiet, ~65
+  dB in the fight: some 10 m) less the walls between (`perception.js wallLoss`); he **sees** the
+  signal when he looks over (every second or two) and has the leader in sight, within what the
+  weather and the dark allow; otherwise the next man who has it **relays** it ("Rifleman two, fall
+  back, pass it on!", or the signal), a second or so later. Under radio silence there is no shout,
+  only signals. A man who has nothing but sees his mates pull back follows; one alone goes after a
+  while. Each man **acknowledges** ("Falling back!", or a thumbs-up under silence) after his
+  reaction time, and **no man peels back before he has the word**
+  (`sq.strategy.word.men`: how, from whom, when, acknowledged).
+- **Calling it in**: once the squad has it, the radio man calls all friendly stations (the retreat
+  breaks radio silence): position (grid), why, the enemy's strength and kind and where, the rally
+  point. Only teams on the same side hear it (`host.side`, else the men's `m.side`, else all one
+  side; the lead's orders, reports and backup calls also go to friendly teams only). Each answers in
+  turn and acts: a team **within 50 m** moves up to an overwatch beside them, towards the threat,
+  and puts suppressive fire on it (`sq.supporting`); one **in contact beside them, facing the same
+  way**, its flank open now, falls back too ("our flank is exposed"); one **already falling back**
+  says so; one **further off** acknowledges, holds and notes the rally point. Voices go out as
+  radio events (`audio/radio.js` speaks them), the lines over the men's heads (`m.signal`).
 - **Rally point**: a param, else where they started (if that is behind them), else ~20 m back
   out of the enemy's sight; each man has a slot there.
 - **Peeling back** (bounding overwatch backwards): one man at a time, the one nearest the enemy
@@ -1794,10 +1821,11 @@ them were hit in the last seconds by as many ("pinned down"); once begun it is s
   (`sim/explosions.js`), its shockwave (`sim/impact.js`), fragments into you. The squad's own men
   step over it. It is drawn (the charge, the wire) until it goes off.
 
-Squad model params: *Strategy on contact* (auto, retreat: ordered back at once, no retreat),
+Squad model params: *Strategy on contact* (auto: the squad decides; retreat: forced, back at once;
+no retreat: never),
 *Rally point offset X/Z*, *A man down in a retreat* (auto, carry, leave), *tripwire*. In code:
 `host.retreat = { order, auto, rally, casualties, tripwire, wires, dropPack }`, or
-`orderRetreat(sq, rally)` at any time. The rig's *Casualty* acts show the carry (both men) and
+`orderRetreat(sq, rally, why)` at any time; `host.din(p)` (dB) for the noise a shout must carry over. The rig's *Casualty* acts show the carry (both men) and
 the wire.
 
 **Hosted**: `scripts/build-rig-artifact.mjs` builds the editor as one file (the rig and the camp

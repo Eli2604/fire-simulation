@@ -3,10 +3,14 @@
  * it cannot win, man by man, under its own covering fire. Pure logic, no three.js.
  *
  *  - When: ordered (the squad model's strategy param 'retreat', host.retreat.order, or
- *    orderRetreat(sq) at any time), or chosen by the leader (retreatWanted, unless auto is off):
- *    men down and as many enemies as he has men standing ("heavy casualties"), or pinned down
- *    (two or more of them hit in the last seconds) by as many enemies as he has men. Outnumbered
- *    without either, the older 'withdraw' (team by team) still breaks contact.
+ *    orderRetreat(sq) at any time), or chosen by the leader (retreatWanted, unless auto is off:
+ *    ai/retreatRadio.js retreatCase weighs it and logs why): the commander down, heavy casualties,
+ *    outgunned (vehicles, a helicopter, the dragon count for several men), flanked, pinned down,
+ *    low on ammunition. Plain numbers, two to one: the older 'withdraw' (team by team) still
+ *    breaks contact. There is no button for it: the squad decides by itself.
+ *  - The word (ai/retreatRadio.js): the leader shouts it and gives the hand signal; men who hear
+ *    or see it, or get it passed on by the next man, acknowledge; no man peels back before he has
+ *    it. Then the radio man calls it in to the other friendly teams, who cover them or adjust.
  *  - Where to: the rally point. A param (host.retreat.rally / the model's rally offset from where
  *    they started), else the squad's deploy point (sq.home) if that lies behind them, else a
  *    point ~20 m back from the threat, out of its sight if there is one. Each man has his slot
@@ -50,11 +54,12 @@
  * carried, left behind, wiring) have m.rescueRole 'retreat' so the squad's own per-man step leaves
  * them to this; the coverers have none and fight as the squad does.
  */
-import { badlyHit, roundsLeft, aimPoint, spend, weaponKind, skillOf, canShoot, TIMES } from './soldier.js';
+import { roundsLeft, aimPoint, spend, weaponKind, skillOf, canShoot, TIMES } from './soldier.js';
 import { exposedTo, srand } from './strategy.js';
+import { retreatCase, startWord, stepWord, hasWord } from './retreatRadio.js';
 
 /** Durations of the retreat's clips (operator/rig.js RETREAT_CLIPS bakes them at these). */
-export const RT_T = { lift: 2.6, putDown: 2.2, wire: 5.2, stow: 0.8, pack: 4.2 };
+export const RT_T = { lift: 2.6, putDown: 2.2, wire: 5.2, stow: 0.8, pack: 4.2, signal: 2.0 };
 /** Ground speeds (m/s): backing off aiming, running, the fireman's carry. */
 export const RT_SPEED = { back: 1.0, run: 3.4, carry: 0.85 };
 const LEG_MAX = 11, LEG_MIN = 3; // m: a bound
@@ -75,9 +80,9 @@ export function retreatOpts(sq) {
   return { ...RETREAT_DEFAULTS, ...(m0.retreat ?? {}), ...(sq.host.retreat ?? {}), ...(sq.retreatOrder ?? {}) };
 }
 
-/** Order the squad back (to rally, or the rally point it would pick): looked at again at once. */
-export function orderRetreat(sq, rally = null) {
-  sq.retreatOrder = { order: true, ...(rally ? { rally } : {}) };
+/** Order the squad back (to rally, or the rally point it would pick; why: what is said): looked at again at once. */
+export function orderRetreat(sq, rally = null, why = null) {
+  sq.retreatOrder = { order: true, ...(rally ? { rally } : {}), ...(why ? { why } : {}) };
   if (sq.strategy) sq.strategy.dirty = true;
   sq.stratT = 0;
 }
@@ -89,15 +94,14 @@ export function canStillFight(m) {
   return roundsLeft(m) > 0;
 }
 
-/** Should the leader pull them out (ai/strategy.js choose)? { why } or null. */
+/**
+ * Should the leader pull them out (ai/strategy.js choose)? { why } or null. The case for it (every
+ * reason that holds, the facts) is kept on sq.retreatWhy (ai/retreatRadio.js retreatCase).
+ */
 export function retreatWanted(sq, a) {
-  const o = retreatOpts(sq);
-  if (o.order) return { why: 'ordered' };
-  if (!o.auto || !a.T) return null;
-  const wounded = sq.members().filter((m) => !m.dead && m.squad !== 'UAV' && (m.down || badlyHit(m))).length;
-  if (wounded >= 1 && a.enemies >= 2 && a.enemies >= a.fit) return { why: 'heavy casualties' };
-  if (a.hits >= 2 && a.enemies >= 2 && a.enemies >= a.fit) return { why: 'pinned down' };
-  return null;
+  const r = retreatCase(sq, a, retreatOpts(sq));
+  sq.retreatWhy = r;
+  return r ? { why: r.why } : null;
 }
 
 /* ------------------------------------------------------------------ the ground */
@@ -241,6 +245,8 @@ export function startRetreat(sq, P) {
   const R = rallyPoint(sq, T);
   P.rally = R;
   P.rt = { rally: R, slots: slotsAt(sq, R, T, men), mover: null, setT: sq.time + 1.2, jobs: [], wires: 0, t0: sq.time };
+  // the word: the leader shouts it and signals it, his men pick it up (ai/retreatRadio.js)
+  startWord(sq, P);
   for (const m of men) {
     m.planRoute = null;
     m.path = null;
@@ -326,6 +332,8 @@ export function stepRetreat(sq, dt) {
   const ms = sq.members().filter((m) => m.squad !== 'UAV');
   const al = ms.filter((m) => !m.dead);
   const o = retreatOpts(sq);
+  // the word going round (no man moves before he has it), then the call to the other teams
+  stepWord(sq, P, dt);
   // men lost on the way: the man moving, a carrier, the man carried
   for (const J of R.jobs.slice()) if (J.carrier.dead || J.carrier.down || J.cas.dead) dropJob(sq, R, J);
   if (R.mover && (R.mover.dead || R.mover.down)) R.mover = null;
@@ -333,9 +341,12 @@ export function stepRetreat(sq, dt) {
   for (const m of al) if (m.down && !['carried', 'left', 'safe'].includes(m.rt?.role)) m.rt = null;
   // men down: carry or leave (the leader's call)
   const fit = al.filter((m) => !m.down && m.rt && m.rt.role !== 'carried' && m.rt.role !== 'left');
-  for (const cas of al.filter((m) => m.down && !m.rt?.role)) {
+  const told = fit.filter((m) => hasWord(sq, m)); // (the men who have the word)
+  // (the word still going round: the leader decides about them once his men have it)
+  const asking = told.length < fit.length && sq.time - R.t0 < 6;
+  for (const cas of asking ? [] : al.filter((m) => m.down && !m.rt?.role)) {
     const busy = new Set(R.jobs.map((J) => J.carrier));
-    const D = decideCasualty(sq, cas, fit.filter((m) => !busy.has(m) && m !== R.mover && m.rt?.role !== 'wire'), P.a);
+    const D = decideCasualty(sq, cas, told.filter((m) => !busy.has(m) && m !== R.mover && m.rt?.role !== 'wire'), P.a);
     const lead = sq.radioMan();
     sq.log?.push(`retreat:${D.how}`);
     if (D.how === 'carry') {
@@ -363,7 +374,7 @@ export function stepRetreat(sq, dt) {
   else if (M) stepMover(sq, P, M, dt, al, o);
   // the next to go: set a moment, someone covering, the man furthest forward
   if (!R.mover && sq.time >= R.setT) {
-    const peel = fit.filter((m) => m.rt.role === 'cover' && !R.jobs.some((J) => J.carrier === m));
+    const peel = told.filter((m) => m.rt.role === 'cover' && !R.jobs.some((J) => J.carrier === m));
     if (peel.length) {
       const m = peel.reduce((x, y) => (d2(y.p, R.rally) > d2(x.p, R.rally) ? y : x));
       const cov = al.filter((x) => x !== m && covers(x));

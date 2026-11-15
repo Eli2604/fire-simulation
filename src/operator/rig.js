@@ -605,11 +605,24 @@ const RETREAT_CLIPS = {
   putDownCasualty: [RT_T.putDown, (t) => keyed(LIFT_K(), RT_T.lift * (1 - t / RT_T.putDown))],
   setDown: [RT_T.putDown, (t) => keyed(LIFTED_K(), RT_T.lift * (1 - t / RT_T.putDown))],
   setTripwire: [RT_T.wire, (t) => wirePose(t)],
+  // the hand signal to fall back (ai/retreatRadio.js): the left arm straight up, the hand circling
+  // over the helmet (rally), then swept back over the shoulder to the rear, the weapon in the right
+  signalFallBack: [RT_T.signal, (t) => {
+    const p = stance(pose0());
+    const g = env(t, 0.05, 0.3, RT_T.signal - 0.3, RT_T.signal - 0.02);
+    const a = TAU * 2 * Math.min(1, Math.max(0, (t - 0.3) / 1.0)); // two circles
+    const back = env(t, 1.25, 1.5, RT_T.signal - 0.3, RT_T.signal + 1);
+    p.lG = 1 - g; p.lH = 0; p.lPole = [1, 0.2, -0.2];
+    const up = [0.12 + 0.1 * cos(a), 2.02, 0.04 + 0.1 * sin(a)], rear = [0.36, 1.55, -0.32];
+    p.lT = up.map((v, i) => v + (rear[i] - v) * back);
+    p.head = [0, 0.4 * g, 0]; p.chest = [0, 0.12 * g, 0]; p.wOff = [0, -0.04 * g, 0];
+    return p;
+  }],
 };
 /** The retreat's clips that place the weapons themselves (slung) or hold none. */
 export const RETREAT = { fireCarry: 1, carried: 1, liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
-const RETREAT_ONCE = { liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
-const RETREAT_LABELS = { aimWalkBack: 'Aim-walk backwards', fireCarry: "Fireman's carry (carrier + casualty)", carried: 'Carried (casualty)', liftCasualty: 'Lift casualty (into the carry)', lifted: 'Lifted (casualty)', putDownCasualty: 'Put casualty down', setDown: 'Set down (casualty)', setTripwire: 'Set a tripwire (kneel, fix, string)' };
+const RETREAT_ONCE = { signalFallBack: 1, liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
+const RETREAT_LABELS = { signalFallBack: 'Sig: fall back (rally, to the rear)', aimWalkBack: 'Aim-walk backwards', fireCarry: "Fireman's carry (carrier + casualty)", carried: 'Carried (casualty)', liftCasualty: 'Lift casualty (into the carry)', lifted: 'Lifted (casualty)', putDownCasualty: 'Put casualty down', setDown: 'Set down (casualty)', setTripwire: 'Set a tripwire (kneel, fix, string)' };
 
 const SHOOT_CACHE = new Map();
 export function shootClips(R = recoilSpec('rifle'), control = 1) {
