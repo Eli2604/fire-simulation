@@ -1,9 +1,11 @@
 import { islandFall } from './islandFall.js';
+import { placeRowBoat } from './rowBoat.js';
 
 /**
  * An island in the sea: sandy shores, grassy slopes, two hills (rocky tops),
  * a flat plateau for buildings, a canal winding from the hills to the sea,
- * a pond on the hillside, a wooden pier with a boat (back to the ship) and the
+ * a pond on the hillside, a wooden pier with a boat (back to the ship; a second one to
+ * another island: rowing boats, models/rowBoat.js, afloat at the pier) and the
  * stone entrance down to the catacombs at the shore. Optionally a waterfall: a
  * stream on a rocky height falling over a cliff into a pool, a walkway behind the
  * falling water, and a river from the pool down to the sea (models/islandFall.js).
@@ -137,9 +139,6 @@ export default {
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz - 0.7], b: [px + k + 0.3, ph, pz - 0.7], r: 0.1, material: 'wood' },
         { shape: 'cylinder', a: [px + k + 0.3, 0, pz + 0.7], b: [px + k + 0.3, ph, pz + 0.7], r: 0.1, material: 'wood' },
       ]),
-      // the boat alongside
-      { shape: 'ellipsoid', c: [px + 1.5, sea, pz + 2.2], r: [2.4, 0.6, 0.9], material: 'wood', density: 0.15, color: [0.7, 0.2, 0.15] },
-      { shape: 'ellipsoid', c: [px + 1.5, sea + 0.15, pz + 2.2], r: [2.2, 0.5, 0.75], mode: 'carve' },
     );
     // the catacomb entrance on the north shore: a stone hut over a stair going down
     const ex = -W * 0.05;
@@ -156,15 +155,20 @@ export default {
     );
     const portals = [];
     if (p.catacombs) portals.push({ p: [ex, ey, ez - 0.3], r: 1.0, to: p.catacombs, label: 'Stairs: down into the catacombs', arrive: { p: [ex, ey, ez - 2.6], yaw: -Math.PI / 2 } });
-    if (p.boatTo) portals.push({ p: [px + 1.5, ph, pz], r: 1.6, to: p.boatTo, label: p.boatLabel, arrive: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 } });
-    // a second boat on the other side of the pier (to another island)
-    if (p.ferryTo) {
-      prims.push(
-        { shape: 'ellipsoid', c: [px + 1.5, sea, pz - 2.2], r: [2.0, 0.5, 0.8], material: 'wood', density: 0.15, color: [0.2, 0.35, 0.6] },
-        { shape: 'ellipsoid', c: [px + 1.5, sea + 0.12, pz - 2.2], r: [1.8, 0.42, 0.65], mode: 'carve' },
-      );
-      portals.push({ p: [px + 1.5, ph, pz - 1.4], r: 1.0, to: p.ferryTo, label: p.ferryLabel, arrive: { p: [px + p.pierLength - 2, ph, pz - 0.3], yaw: 0 } });
-    }
+    // the boats at the pier: rowing boats (models/rowBoat.js) afloat on the sea alongside it, the
+    // red one north of it, the blue one south (they used to be painted half-ellipsoids of
+    // voxels). Walk up to one and press E: it takes you there; coming back you step ashore on
+    // the pier, at its landward end
+    const floats = [];
+    const moor = (params, dz) => {
+      const b = placeRowBoat({ ...params, arriveX: p.pierLength - 3.5, arriveY: ph - sea, arriveZ: -dz + (dz < 0 ? -0.3 : 0) }, [px + 1.5, sea, pz + dz], h, floats.length);
+      prims.push(...b.prims);
+      floats.push(...b.floats);
+      portals.push(...b.portals);
+    };
+    if (p.boatTo) moor({ goesTo: p.boatTo, label: p.boatLabel, hullColor: '#b3332a', seed: p.seed }, 2.2);
+    // a second boat on the other side of the pier (to another island): a little smaller, blue
+    if (p.ferryTo) moor({ goesTo: p.ferryTo, label: p.ferryLabel, length: 3.7, beam: 1.3, depth: 0.56, hullColor: '#33598f', stripeColor: '#e8c547', seed: p.seed + 1 }, -2.2);
     return {
       prims,
       ...(fall ? { rivers: [fall.river], loose: fall.loose } : {}),
@@ -176,6 +180,7 @@ export default {
           ]
         : [],
       portals,
+      floats,
       spawn: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 },
     };
   },

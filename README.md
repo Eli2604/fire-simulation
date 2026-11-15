@@ -55,10 +55,11 @@ at the top switches between:
   flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), the *phoenix* (acts,
   flame wings, hit zones, rebirth), a *car* (idle, drive,
   steer, doors open, burning), a *jet* (idle, taxi, gear up / down, flaps, afterburner, banking)
-  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's, dragon's and phoenix's zone tables are the
+  a *boat* (idle bob, cruise, turn, rough sea) and a *row boat* (moored, row, four aboard,
+  rough sea, holed: it floats by Archimedes, `sim/buoyancy.js`, see *Floating: Archimedes* below). The soldier's, dragon's and phoenix's zone tables are the
   ones the world's hit tests use, so what you adjust there applies when you play. The vehicles'
   hit parts (car: engine, fuel tank, tyres, cabin; jet: cockpit, fuel tanks, engines, tail, wings;
-  boat: hull, engine, fuel tank, cabin) are `models/vehicleZones.js`, shown, resized and hit on
+  boat: hull, engine, fuel tank, cabin; row boat: oars, rowers, hull, a hole in it letting the water in) are `models/vehicleZones.js`, shown, resized and hit on
   click in the rig; the simulation does not use that table yet. A squad, an enemy, the dragon, a
   car or the jet selected in Edit world opens with *Rig the …*; the catacombs (with their phoenix)
   with *Rig the phoenix*.
@@ -677,7 +678,9 @@ burning (in this scene they are drawn, each a small flame that lights the vault)
 candles on stands either side. The ship's **lower decks**, below the waterline, are the
 carrier's too: a ladder down from the corridor below deck. The **campfire** burns on an islet
 out on the reef (a second boat at the island's pier): a log-cabin fire lit from the kindling
-in a stone ring on dry grass, its logs charring into embers, then ash.
+in a stone ring on dry grass, its logs charring into embers, then ash. The **boats** at the
+piers (the red one back, the blue one on: islet, island, lake island) are rowing boats
+(`models/rowBoat.js`) afloat on the sea: walk up to one and press E.
 
 **Scanned objects that burn and break** (models/statue.js, models/candelabra.js,
 render/statue.js): photo-scanned models (CC0, Poly Haven) are simulated as voxels of their
@@ -1009,7 +1012,8 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Group | nothing of its own: the objects in it, moved and turned as one |
 | Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
-| Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed |
+| Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed. Its boats at the pier are rowing boats (below) |
+| Rowing boat | length, beam, depth, hull of wood planks / aluminium / GRP, hull, inside and stripe colours, thwarts, oars, people aboard (80 kg each on the thwarts), load on the floorboards, buoyancy tanks, the water (auto: the sea, or fresh on a pond), the place it takes you to and where you step ashore coming back. Floats by Archimedes (`sim/buoyancy.js`): put its origin at the water's level; its hidden voxels burn as their material does, and are drawn afloat in their pose (`render/floats.js`) |
 | Water mill | house size, wall height, wheel radius, width, paddles and their depth, axle height, race wall, millstones grinding (a load) |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Terrain | width, depth, base ground thickness, base surface, grass moisture, tall grass, water / lava level and snow depth (for a base of those), border slope, ground under the surface (the rest hollow), seed, and its **areas** (see *Terrain* below) |
@@ -1392,6 +1396,50 @@ source (`audio/physics.js`, used by `audio/sound.js`):
   (a far crash comes late and dull), muffled through walls (line of sight) and under water.
 - **CPU**: at most 28 one-shots at a time (a quiet one is dropped for a louder), three fire voices
   (the loudest regions, the rest merged), less detail with distance.
+
+### Floating: Archimedes (boats, the carrier)
+
+`sim/buoyancy.js` floats a rigid hull. The hull is a shape (keel line, sheer line, the
+half-breadth at every height of every station: a box, a rowing boat with a transom and a fine
+stem, a big ship), sampled once into ~1500 cells (the carrier ~11 000), each holding the volume
+of the envelope there and how much of it is the open inside of the boat. The planking's volume
+comes out at its surface × thickness × density (× a factor for frames, thwarts, gunwale): a
+4.3 m clinker boat of larch weighs ~125 kg, an aluminium one ~95 kg, GRP ~135 kg.
+
+Each step, in its pose on the water as it is there (still, or the waves of the weather: the
+same spectrum `render/ocean.js` draws, `waveSpectrum`; in the app the very waves drawn):
+
+- **buoyancy** ρ_w·g·V_submerged, each cell's share where the cell is (their sum acts at the
+  centre of buoyancy); ρ_w 1025 kg/m³ on the sea, 1000 on a pond or a lake;
+- **weight** m·g of the hull, the load and the people at the centre of mass, and of the water
+  aboard where it lies (it runs to the low side);
+- heave, roll and pitch as a rigid body with the water's **added mass** (heave ≈ ½·ρ·π/8·B²·L)
+  and **damping** (making waves: ζ 0.25 heave, 0.08 roll, 0.3 pitch; quadratic drag), the wind
+  heeling it (½·ρ_a·C_d·A·U²).
+
+So the **draft** emerges where buoyancy carries the weight: an empty wooden rowing boat sits
+~8 cm deep, ~12 cm with one aboard, ~15 cm with two, ~19 cm with four (2.5 % deeper in fresh
+water). Pushed down it bobs back (heave period ~1.2 s) and settles. Heeled, the centre of
+buoyancy moves to the low side, outside G while the metacentre is above it (GM = KB + BM − KG,
+BM = I_waterplane/V): GM ~0.4 m, it rights itself in a few rolls. Water comes in through
+**holes** below the waterline (Torricelli, Q = 0.62·A·√(2gΔh)) and **over the gunwale**
+where it dips under (a weir, 1.77·d^1.5 per metre): it settles, the freeboard shrinks, the
+inflow grows. Overloaded (2.5 t in a 4.3 m boat) it swamps and sinks; holed, an aluminium boat
+goes down while a wooden one fills to the outside level and floats waterlogged on its planking,
+as does an aluminium one with buoyancy tanks. In the world the boats' planking is voxels
+(hidden, drawn by `render/floats.js` in their pose): where fire or a blast takes it away below
+the waterline, that is a hole.
+
+The **aircraft carrier** floats by the same law (`carrierBody`): a Nimitz hull, 317 m on the
+waterline and 40.8 m wide there, 100 000 t with its centre of mass 15 m over the keel, floats
+~10.3 m deep with GM ~1.7 m, rolling (period ~20 s) and pitching only a fraction of a degree
+in a fresh breeze. Water flooding a compartment below deck is added at its place: it settles
+(~0.1 m per 1000 t), lists and trims. The flight deck and the decks below are built in the
+ship's frame, and walking, the jets landing, the hatches and every voxel depend on them: so the
+ship stays still there and the **sea moves instead** (`sim/water.js stepBuoyancy`): the sea
+level against the hull rises by how much deeper the hull floats than at rest, and its surface
+tilts by the heel and trim (the ocean, the flooding through the holes and the HUD go by it).
+The hull drawn round the deck (`render/hull.js`) keeps its draft line; the sea comes up it.
 
 ### Limitations
 

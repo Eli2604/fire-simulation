@@ -28,6 +28,7 @@ import { Ocean } from './ocean.js';
 import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
 import { WaterworksRenderer } from './waterworks.js';
+import { FloatRenderer } from './floats.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
 import { LooseRenderer } from './loose.js';
@@ -131,6 +132,7 @@ export class View {
     this.trees = new TreeRenderer(this.root); // trees: bark and leaves
     this.volcanoes = new VolcanoRenderer(this.root); // volcanoes: basalt cones, glowing craters
     this.waterworks = new WaterworksRenderer(this.root); // waterfalls, rivers, water wheels (sim/river.js)
+    this.floats = new FloatRenderer(this.root); // rowing boats afloat (sim/buoyancy.js)
     this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
@@ -234,6 +236,7 @@ export class View {
     this.trees.setWorld(world);
     this.volcanoes.setWorld(world);
     this.waterworks.setWorld(world);
+    this.floats.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.patches.clear();
@@ -272,6 +275,8 @@ export class View {
     this.archipelago ??= new ArchipelagoRenderer(this.root);
     this.ocean.setBathy(this.archipelago.set(world.sea && !world.vacuum ? this.archSpec : null, this.zoneOrigin, world));
     setWaterSea(world, this.sea ? this.ocean : null); // the floors under the sea see it (render/waterSurface.js)
+    // what floats on it rides the waves drawn (sim/buoyancy.js stepFloats: their height over the still sea)
+    world.waveAt = this.sea ? (x, z) => this.ocean.heightAt(x, z) : null;
     this.ground.scale.set(diag * 12, diag * 12, 1);
     // (a zone's view may say what lies round it: open water at its level, by a place of a world)
     this.ground.position.set(sx / 2, this.groundAround?.y ?? world.h * 0.9, sz / 2);
@@ -811,6 +816,7 @@ export class View {
     this.trees.update(this.time, this.cameraLocal());
     this.volcanoes.update(this.time);
     this.waterworks.update(dt, this.world.time ?? this.time);
+    this.floats.update(dt);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);

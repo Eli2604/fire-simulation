@@ -17,10 +17,11 @@ export const RIG_OBJECTS = [
   { kind: 'pilot', label: 'Pilot (ejection seat, parachute)' },
   { kind: 'boat', label: 'Boat' },
   { kind: 'helicopter', label: 'Helicopter (crew, door guns, fast-rope)' },
+  { kind: 'rowBoat', label: 'Row boat (oars; floats by Archimedes)' },
 ];
 export const RIG_KINDS = RIG_OBJECTS.map((o) => o.kind);
 /** The vehicles (rig/vehicles.js draws and moves them). */
-export const VEHICLES = ['car', 'jet', 'boat'];
+export const VEHICLES = ['car', 'jet', 'boat', 'rowBoat'];
 /** Groups of vehicles (rig/vehicles.js too: several of them, an AI flying them), and what each member is. */
 export const VEHICLE_GROUPS = { jetFlight: 'jet' };
 /** What the vehicle stage (rig/vehicles.js) shows: the vehicles, their groups, and the jet's pilot. */
@@ -36,6 +37,9 @@ export const VEHICLE_ACTS = {
   // the jet's pilot (sim/ejection.js, render/pilotFigure.js): in his seat, out on it, under the canopy, down
   pilot: { seated: 'Seated (pilot)', eject: 'Eject', steerLeft: 'Parachute: steer left', steerRight: 'Parachute: steer right', flare: 'Parachute: flare', plf: 'Land (PLF)', splashdown: 'Splashdown' },
   boat: { idle: 'Idle bob', cruise: 'Cruise', turn: 'Turn', rough: 'Rough sea' },
+  // the rowing boat (models/rowBoat.js) afloat by Archimedes (sim/buoyancy.js): moored, rowed by one,
+  // four aboard (deeper), a rough sea, holed below the waterline (it fills, settles and swamps)
+  rowBoat: { idle: 'Moored (bobbing)', row: 'Row', loaded: 'Four aboard', rough: 'Rough sea', holed: 'Holed: takes water' },
 };
 
 /** The kind asked for, or 'soldier' (what the rig shows when it does not know the kind). */
@@ -44,7 +48,7 @@ export function rigKind(what) {
 }
 
 /** Scene object types (models/index.js) the rig can open, and as what. */
-export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight', catacombs: 'phoenix', helicopter: 'helicopter' };
+export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight', catacombs: 'phoenix', helicopter: 'helicopter', rowBoat: 'rowBoat' };
 
 /** What the rig should show for a scene object ({ type, params }), or null if it has no rig. */
 export function rigTargetFor(o) {
@@ -72,6 +76,7 @@ export const RIG_BUTTON = {
   pilot: '🦴 Rig the pilot (seat, ejection, parachute, landing)',
   boat: '🦴 Rig the boat (sea, cruise, hit parts)',
   helicopter: '🦴 Rig the helicopter (flight, crew, door guns, fast-rope, hit parts, crashes)',
+  rowBoat: '🦴 Rig the row boat (afloat: load, waves, holed, hit parts)',
 };
 
 /* ---------- parkour acts (soldier and squad): each over a prop of its own, of adjustable height ---------- */
@@ -173,7 +178,7 @@ export function parkourHeight(act, h) {
  * What each object weighs (kg): the body mass its parts' striking masses are fractions of
  * (sim/impact.js PART_MASS).
  */
-export const BODY_MASS = { soldier: 85, squad: 85, dragon: 3000, phoenix: 12, jet: 10000, jetFlight: 10000, car: 1300, pilot: 95, boat: 1500, helicopter: 7000 };
+export const BODY_MASS = { soldier: 85, squad: 85, dragon: 3000, phoenix: 12, jet: 10000, jetFlight: 10000, car: 1300, pilot: 95, boat: 1500, helicopter: 7000, rowBoat: 130 };
 /**
  * The contacts of each act, as impact keyframes: { t, part, material, target, targetMaterial, v,
  * mass?, contactTime?, zone?, kind?, label?, fromHeight?, sim?, trigger? }.

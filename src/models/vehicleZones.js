@@ -22,6 +22,7 @@ export const VEHICLE_DIMS = {
   car: [4.2, 1.45, 1.8], // models/car.js defaults
   jet: [17.4, 4.5, 11.2], // render/jetMesh.js
   boat: [4.8, 1.4, 1.84], // rig/vehicleMeshes.js (the size of the island's boat)
+  rowBoat: [4.3, 0.76, 1.45], // models/rowBoat.js defaults: its waterline (at rest, empty) at y = 0, the keel 8 cm under it
   helicopter: [19.6, 4.6, 16], // render/heliMesh.js: nose to tail rotor, skids to rotor head, rotor disc (ai/helicopter.js)
 };
 
@@ -50,6 +51,13 @@ export const VEHICLE_ZONES = {
     { k: 'engine', label: 'Engine (outboard)', boxes: [{ c: [-2.6, 0.35, 0], h: [0.25, 0.55, 0.2] }], mult: 1.5, hp: 60, color: '#ffcc33', effect: 'stops, smokes; destroyed it burns' },
     { k: 'cabin', label: 'Cabin (crew)', boxes: [{ c: [0.45, 0.95, 0], h: [0.7, 0.42, 0.66] }], mult: 1, hp: 80, color: '#8fe36a', effect: 'windows shatter, the crew is hit' },
     { k: 'hull', label: 'Hull', boxes: [{ c: [0, 0.05, 0], h: [2.45, 0.5, 0.92] }], mult: 1, hp: 200, color: '#5ad1ff', effect: 'holed: it settles lower; destroyed it sinks' },
+  ],
+  // the rowing boat (models/rowBoat.js, sim/buoyancy.js): a hole in its planking below the waterline
+  // lets the water in (Torricelli) and it settles and swamps; the oars inside the hull come first
+  rowBoat: [
+    { k: 'oars', label: 'Oars', boxes: [-1, 1].map((s) => ({ c: [0.15, 0.33, s * 0.3], h: [1.3, 0.03, 0.08] })), mult: 0.5, hp: 40, color: '#ffcc33', effect: 'broken: it cannot be rowed' },
+    { k: 'crew', label: 'Rowers (on the thwarts)', boxes: [{ c: [0, 0.68, 0], h: [1.1, 0.4, 0.5] }], mult: 1, hp: 100, color: '#8fe36a', effect: 'a rower is hit' },
+    { k: 'hull', label: 'Hull (planking)', boxes: [{ c: [0, 0.15, 0], h: [2.15, 0.36, 0.72] }], mult: 1, hp: 160, color: '#5ad1ff', effect: 'holed below the waterline: it takes water, settles and swamps' },
   ],
   // the helicopter (ai/helicopter.js flies it and takes these up: `sim` is what each part does when
   // it goes). Its frame: skids on y = 0, the mast at x = 0, nose +x, the tail rotor on the right of

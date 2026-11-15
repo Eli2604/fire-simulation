@@ -1328,6 +1328,7 @@ export function mountRig(root, opts = {}) {
     pilot: 'render/pilotFigure.js · sim/ejection.js · seat, canopy, PLF',
     jetFlight: 'ai/flight.js · formations, the leader’s orders, hit parts per jet',
     boat: 'Motorboat on a sea · outboard, cabin',
+    rowBoat: 'models/rowBoat.js · sim/buoyancy.js · Archimedes: draft, heave, roll, swamping',
     helicopter: 'ai/helicopter.js · render/heliMesh.js · crew, door guns, fast-rope, hit parts, crashes',
   };
   /** What is on the stage: swaps the object and the panels (the last vehicle is freed). */

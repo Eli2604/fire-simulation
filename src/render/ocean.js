@@ -3,6 +3,7 @@ import { carrierHullEnds } from './hull.js';
 import { WATER_GLSL } from './waterOptics.js';
 import { WATER_UNIFORMS } from './waterSurface.js';
 import { funnelDepth } from '../sim/stirrers.js';
+import { waveSpectrum } from '../sim/buoyancy.js';
 
 /**
  * The open sea around a ship or an island.
@@ -259,27 +260,12 @@ export class Ocean {
   /** Waves from the wind: their height, length, direction and spread. */
   setWeather(weather, sky, grey) {
     this.weather = weather;
-    const U = weather.windSpeed ?? 0;
-    const dir = ((weather.windDir ?? 0) * Math.PI) / 180;
-    // significant wave height of a fully developed sea, capped for the scale of the scenes;
-    // a low swell from far away even when it is calm here
-    // (in a storm, above ~10 m/s, it keeps growing more slowly: up to 4.5 m)
-    const Hs = Math.min(U <= 9.5 ? 2.2 : 2.2 + (U - 9.5) * 0.16, 4.5, 0.15 + 0.0246 * U * U);
-    // the peak wavelength: grows with the wind (deep water, L = g·T²/2π, T ≈ 0.73·U)
-    const Lp = Math.min(110, Math.max(7, 0.83 * U * U));
-    const f = [1, 0.63, 0.41, 0.27, 0.18, 0.12, 0.08, 0.055];
-    const spread = [0, 0.45, -0.38, 0.8, -0.7, 1.05, -0.95, 0.25];
+    // (the spectrum: sim/buoyancy.js waveSpectrum, the same waves the boats ride in the simulation)
+    const sp = waveSpectrum(weather);
+    const { U, dir, Hs } = sp;
     const turb = Math.max(0, Math.min(1, weather.waterTurbulence ?? 0));
     const u = this.uniforms;
-    let sum = 0;
-    for (let k = 0; k < MAX_WAVES; k++) sum += f[k];
-    for (let k = 0; k < MAX_WAVES; k++) {
-      const L = Lp * f[k];
-      const a = dir + spread[k] * (0.5 + 0.5 * Math.min(1, U / 8)); // a short-crested sea in a wind
-      // (turbulent water: the short waves choppier)
-      const amp = (Hs / 2) * (f[k] / sum) * 1.6 * (k >= 3 ? 1 + 1.5 * turb : 1);
-      u.uWaves.value[k].set(Math.cos(a), Math.sin(a), (2 * Math.PI) / L, amp);
-    }
+    sp.waves.forEach((wv, k) => k < MAX_WAVES && u.uWaves.value[k].set(wv.dx, wv.dz, wv.k, wv.amp));
     u.uHs.value = Hs;
     u.uWind.value = U;
     u.uSteep.value = 0.35 + 0.45 * Math.min(1, U / 12) + 0.3 * turb; // choppier in a strong wind

@@ -5,7 +5,7 @@ import { RIG_OBJECTS, RIG_KINDS, VEHICLES, VEHICLE_ACTS, rigKind, rigTargetFor, 
 import { MODELS } from '../src/models/index.js';
 
 test('the Object drop-down: soldier, squad, dragon, phoenix, car, jet, boat; every vehicle has its acts', () => {
-  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'phoenix', 'car', 'jet', 'jetFlight', 'pilot', 'boat', 'helicopter']);
+  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'phoenix', 'car', 'jet', 'jetFlight', 'pilot', 'boat', 'helicopter', 'rowBoat']);
   assert.ok(RIG_OBJECTS.every((o) => o.label && RIG_BUTTON[o.kind]));
   for (const k of ['squad', 'car', 'jet', 'boat', 'dragon', 'phoenix', 'soldier']) assert.equal(rigKind({ kind: k }), k);
   assert.equal(rigKind({ kind: 'tank' }), 'soldier', 'an unknown kind: the soldier');
@@ -13,6 +13,9 @@ test('the Object drop-down: soldier, squad, dragon, phoenix, car, jet, boat; eve
   assert.deepEqual(Object.keys(VEHICLE_ACTS.car), ['idle', 'drive', 'steer', 'doors', 'burning']);
   assert.deepEqual(Object.keys(VEHICLE_ACTS.jet), ['idle', 'taxi', 'gearUp', 'gearDown', 'flaps', 'afterburner', 'bank', 'eject', 'hit', 'burning', 'critical', 'crash', 'evadeBreak', 'evadeRoll']);
   assert.deepEqual(Object.keys(VEHICLE_ACTS.boat), ['idle', 'cruise', 'turn', 'rough']);
+  // the row boat (models/rowBoat.js): afloat by Archimedes (sim/buoyancy.js)
+  assert.deepEqual(Object.keys(VEHICLE_ACTS.rowBoat), ['idle', 'row', 'loaded', 'rough', 'holed']);
+  assert.deepEqual(rigTargetFor({ type: 'rowBoat', params: { crew: 2 } }), { kind: 'rowBoat', params: { crew: 2 } });
   for (const v of VEHICLES) assert.ok(VEHICLE_ZONES[v] && VEHICLE_DIMS[v], v);
 });
 
