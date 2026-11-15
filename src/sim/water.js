@@ -1,4 +1,4 @@
-import { MATERIALS, MAT } from './materials.js';
+import { MATERIALS, MAT, enthalpyAt } from './materials.js';
 import { F_LIQUID, F_ANCHOR } from './world.js';
 import { carrierBody, makeBody, placeAt, stepBody, updateMass, framePose, waveSpectrum, RHO_SEA } from './buoyancy.js';
 
@@ -73,17 +73,63 @@ export function stepSprinklers(sim, dt) {
   }
 }
 
-/** Water voxels: boil off, soak neighbours, drain into soil; run-off becomes new water voxels. */
+/**
+ * kg of water solid voxel j can still take up in this step of dt s: what its material can hold
+ * more (maxMoisture over its dry mass, less what it holds and what is already on its way to it),
+ * soaking in over its moisture time lag (wood standing in water takes up ~10 % of what it can hold
+ * in an hour: timeLag 10 h; fine fuels in minutes; materials without one: SOAK_TIME), and, if its
+ * surface is over 100 °C, what its heat above 100 °C can boil off. Nothing for a sealed part (a
+ * battery pack: waterReach). Water beyond that does not go into it: it stays where it is.
+ */
+const SOAK_TIME = 600; // s
+export function soakRoom(w, j, dt) {
+  const m = w.mat[j];
+  const M = MATERIALS[m];
+  if ((M.waterReach ?? 1) < 1 || M.name === 'water') return 0;
+  const V = w.h ** 3;
+  const massFrac = M.combustible ? M.residue + (1 - M.residue) * w.fuel[j] : 1;
+  const dry = M.density * w.dens[j] * V * (massFrac > 0.05 ? massFrac : 0.05);
+  let room = (M.maxMoisture - w.moist[j]) * dry * Math.min(1, dt / (M.timeLag ?? SOAK_TIME));
+  if (room < 0) room = 0;
+  const Ts = w.skin[j];
+  if (Ts > 100) room += (dry * (enthalpyAt(m, Ts) - enthalpyAt(m, 100))) / (LV + CW * 80);
+  room -= w.waterIn[j];
+  return room > 0 ? room : 0;
+}
+
+/**
+ * m kg of water running off at cell (x, y, z) collects as a puddle on the floor of its column:
+ * the first solid at or under y (it drips down through the air). Out of the world under the
+ * bottom it is gone.
+ */
+function toPuddle(w, x, y, z, m) {
+  const { nx, ny, mat } = w;
+  for (; y >= 0; y--) if (mat[x + nx * (y + ny * z)]) break;
+  if (y < 0) return;
+  const c = x + nx * z;
+  w.runoff[c] += m;
+  (w.runoffY ??= new Int16Array(nx * w.nz))[c] = y;
+}
+
+/**
+ * Water voxels: boil off, soak neighbours, drain into soil; run-off becomes new water voxels.
+ * Water is conserved: a solid takes up only what it can hold (soakRoom), taken out of the water
+ * voxel that touches it; a puddle gives its floor and what stands in it only what they can take;
+ * a voxel's worth of puddle becomes a water voxel only in a free cell on top of its floor (or of
+ * the water already standing there), or, run off the side of a wall, in a free cell beside it.
+ */
 export function stepWater(sim, dt) {
   const w = sim.world;
   const id = MAT.water;
-  const { nx, ny, nz, mat, temp, fuel, flags, solids, h, steam } = w;
+  const { nx, ny, nz, mat, temp, fuel, solids, h, steam } = w;
   const V = h ** 3;
   const voxelMass = 1000 * V;
   const remove = [];
+  const wetRate = 0.5 * h * h * dt; // at most ~0.5 kg/(m²·s) through a face
   for (let k = 0; k < w.solidCount; k++) {
     const i = solids[k];
     if (mat[i] !== id) continue;
+    const fuel0 = fuel[i];
     // boiling
     if (temp[i] > 100) {
       const m = fuel[i] * voxelMass;
@@ -91,19 +137,22 @@ export function stepWater(sim, dt) {
       fuel[i] -= ev / voxelMass;
       temp[i] = 100;
       steam[w.faceAir[i]] += ev;
-      if (fuel[i] < 0.05) remove.push(i);
     }
-    // soak what it touches: cools it, wets it, puts fires out
+    // soak what it touches: cools it, wets it, puts fires out (as much as it can take up)
     const x = i % nx;
     const r = (i - x) / nx;
     const y = r % ny;
     const z = (r - y) / ny;
     const nb = [x > 0 ? i - 1 : -1, x + 1 < nx ? i + 1 : -1, y > 0 ? i - nx : -1, y + 1 < ny ? i + nx : -1, z > 0 ? i - nx * ny : -1, z + 1 < nz ? i + nx * ny : -1];
     for (const j of nb) {
-      if (j < 0) continue;
+      if (j < 0 || fuel[i] <= 0) continue;
       const mj = mat[j];
       if (!mj || mj === id) continue;
-      sim.addWater(j, 0.05 * h * h * dt * 10); // ~0.5 kg/(m²·s) of contact wetting
+      const take = Math.min(wetRate, soakRoom(w, j, dt), fuel[i] * voxelMass);
+      if (take > 0) {
+        sim.addWater(j, take);
+        fuel[i] -= take / voxelMass;
+      }
       // drain into the ground
       // it seeps into the soil under it (~4 mm an hour) as far as that is not wet through: a
       // pond's or a canal's bed holds its water, a puddle on dry ground soaks away
@@ -115,15 +164,29 @@ export function stepWater(sim, dt) {
           const take = Math.min(room, fuel[i] * voxelMass, 1e-3 * h * h * dt * (1 + 20 * Math.min(1, room / soilMass)));
           w.moist[j] += take / soilMass;
           fuel[i] -= take / voxelMass;
-          if (fuel[i] < 0.05) remove.push(i);
         }
       }
     }
+    if (fuel[i] < 0.05 && fuel[i] < fuel0) remove.push(i); // (emptied this step: not water set up without its mass)
   }
-  for (const i of remove) if (mat[i] === id) w.clearVoxel(i);
+  for (const i of remove) {
+    if (mat[i] !== id) continue;
+    // the last of it (a film): runs down onto what is under it
+    const rest = Math.max(0, fuel[i]) * voxelMass;
+    const x = i % nx;
+    const r = (i - x) / nx;
+    const y = r % ny;
+    const z = (r - y) / ny;
+    w.clearVoxel(i);
+    if (rest > 0) {
+      const below = y > 0 ? i - nx : -1;
+      if (below >= 0 && mat[below] === id) fuel[below] += rest / voxelMass;
+      else toPuddle(w, x, y - 1, z, rest);
+    }
+  }
 
   // shallow water on the floor: spreads to neighbouring columns of the same floor height,
-  // evaporates on a hot floor, soaks the base of what stands in it
+  // evaporates on a hot floor, soaks the floor and the base of what stands in it (what they can take)
   const runoffY = (w.runoffY ??= new Int16Array(nx * nz));
   const spread = Math.min(0.25, dt * 1.5);
   for (let c = 0; c < w.runoff.length; c++) {
@@ -134,7 +197,9 @@ export function stepWater(sim, dt) {
     const y = runoffY[c];
     const floor = x + nx * (y + ny * z);
     if (!mat[floor]) {
-      w.runoff[c] = 0; // the floor under it is gone: it drains away
+      // the floor under it is gone: it drains down to whatever is under it now
+      w.runoff[c] = 0;
+      toPuddle(w, x, y - 1, z, r0);
       continue;
     }
     if (temp[floor] > 100) {
@@ -142,8 +207,20 @@ export function stepWater(sim, dt) {
       w.runoff[c] -= ev;
       steam[w.faceAir[floor]] += ev;
     }
-    if (y + 1 < ny && mat[floor + nx]) sim.addWater(floor + nx, Math.min(r0, 0.002) * dt);
-    sim.addWater(floor, Math.min(r0, 0.001) * dt);
+    if (y + 1 < ny && mat[floor + nx] && mat[floor + nx] !== id) {
+      const take = Math.min(w.runoff[c], 0.002 * dt, soakRoom(w, floor + nx, dt));
+      if (take > 0) {
+        sim.addWater(floor + nx, take);
+        w.runoff[c] -= take;
+      }
+    }
+    if (mat[floor] !== id) {
+      const take = Math.min(w.runoff[c], 0.001 * dt, soakRoom(w, floor, dt));
+      if (take > 0) {
+        sim.addWater(floor, take);
+        w.runoff[c] -= take;
+      }
+    }
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const xx = x + dx;
       const zz = z + dz;
@@ -160,23 +237,40 @@ export function stepWater(sim, dt) {
     }
   }
 
-  // run-off: a voxel's worth of water collected in a column becomes a water voxel
+  // run-off: a voxel's worth of water collected in a column becomes a water voxel, in the free
+  // cell on its floor (on top of any water already standing there); off the side of a wall (no
+  // room on top), in a free cell beside it, from where it flows. With no room at all it waits.
   const runoff = w.runoff;
   for (let c = 0; c < runoff.length; c++) {
     if (runoff[c] < voxelMass) continue;
     const x = c % nx;
     const z = (c - x) / nx;
-    const y0 = w.runoffY?.[c] ?? 1;
-    let placed = false;
-    for (let y = Math.max(1, y0 + 1); y < Math.min(ny, y0 + 6); y++) {
+    const y0 = runoffY[c];
+    if (!mat[x + nx * (y0 + ny * z)]) continue; // (no floor: the pass above moves it down)
+    let j = -1;
+    for (let y = y0 + 1; y < ny; y++) {
       const i = x + nx * (y + ny * z);
       if (!mat[i]) {
-        w.setVoxel(i, id, { temp: w.ambient + 2, variation: 0.03 });
-        placed = true;
+        j = i;
         break;
       }
+      if (mat[i] !== id) break;
     }
-    runoff[c] = placed ? runoff[c] - voxelMass : Math.min(runoff[c], voxelMass);
+    if (j < 0)
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const xx = x + dx;
+        const zz = z + dz;
+        if (xx < 0 || zz < 0 || xx >= nx || zz >= nz) continue;
+        const i = xx + nx * (y0 + ny * zz);
+        if (!mat[i]) {
+          j = i;
+          break;
+        }
+      }
+    if (j < 0) continue;
+    w.setVoxel(j, id, { temp: w.ambient + 2, variation: 0.03 });
+    fuel[j] = 1;
+    runoff[c] -= voxelMass;
   }
 }
 

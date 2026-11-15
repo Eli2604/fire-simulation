@@ -60,7 +60,7 @@
  * The bellows can be worked by anyone standing at the lever (E in the walk-through: useSmithy()).
  */
 import { O2_AIR, F_ANCHOR, F_HIDDEN, F_BURNING } from './world.js';
-import { MAT, MATERIALS } from './materials.js';
+import { MAT, MATERIALS, cpAt, heatTo } from './materials.js';
 import { makeMovingBody, restamp, needsRestamp } from './movingBody.js';
 
 const LV = 2.257e6; // J/kg, water
@@ -153,8 +153,8 @@ const HEAT_BLOWS = 9.5;
 const STROKE = 1.1; // s a stroke of the bellows
 const SHOP_SLOTS = 14;
 
-/** Specific heat of steel (J/(kg·K)), rising with temperature (a mean over the magnetic peak). */
-export const steelCp = (T) => Math.min(760, 450 + 0.3 * Math.max(0, T));
+/** Specific heat of steel (J/(kg·K)) at T °C: the steel's own c(T) (materials.js CP: rising, the magnetic peak at ~750 °C). */
+export const steelCp = (T) => cpAt(MAT.steel, T);
 
 /** Martensite fraction from the time (s) it took to cool from 800 to 500 °C. */
 export const martensite = (t85) => 1 / (1 + (Math.max(0, t85) / 4) ** 4);
@@ -661,7 +661,7 @@ function quench(w, S, b, dt) {
       const Cb = 7850 * w.dens[c] * V * steelCp(Tb);
       const Cw = 1000 * Math.max(0.05, w.fuel[j]) * V * CW;
       const E = ((Tb - Tw) * G * dt) / (1 + G * dt * (1 / Cb + 1 / Cw));
-      w.temp[c] -= E / Cb;
+      w.temp[c] = heatTo(MAT.steel, Tb, -E / (7850 * w.dens[c] * V)); // (through its enthalpy: c(T))
       w.skin[c] = w.temp[c];
       // boiling at the steel: in cold water most bubbles condense again (that heat stays in the
       // water), near the boil they reach the surface as steam
@@ -719,7 +719,7 @@ function bedRadiation(w, b, dt) {
       const Cb = 7850 * w.dens[c] * V * steelCp(Tb);
       const Cj = Cc * Math.max(0.05, w.dens[j]);
       const E = (q * dt) / (1 + G * dt * (1 / Cb + 1 / Cj));
-      w.temp[c] += E / Cb;
+      w.temp[c] = heatTo(MAT.steel, Tb, E / (7850 * w.dens[c] * V));
       w.skin[c] = w.temp[c];
       w.skin[j] -= E / Cj;
       w.temp[j] -= (0.3 * E) / Cj;
@@ -727,21 +727,6 @@ function bedRadiation(w, b, dt) {
     }
   }
   return P;
-}
-
-/**
- * The slack tub is tight: what its water wets of its soaked staves stays in them. (sim/water.js
- * wets every solid a water voxel touches, and what a voxel cannot soak up runs off into puddles
- * on the floor: from a tub standing full for minutes that grew into a flood that reached the
- * hearth and the fire pot. The run-off from the tub's columns is dropped.)
- */
-function keepTubTight(w, S) {
-  if (!w.runoff) return;
-  const h = w.h;
-  const { min, max } = S.trough;
-  const x0 = Math.max(0, Math.floor(min[0] / h) - 2), x1 = Math.min(w.nx - 1, Math.floor(max[0] / h) + 2);
-  const z0 = Math.max(0, Math.floor(min[2] / h) - 2), z1 = Math.min(w.nz - 1, Math.floor(max[2] / h) + 2);
-  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) w.runoff[x + w.nx * z] = 0;
 }
 
 /** The trough's water mixing (natural convection; faster while the blade is worked in it). */
@@ -1141,7 +1126,6 @@ export function stepSmithies(sim, dt) {
     // the blade: made, moved with the tongs, quenched, its steel's structure
     if (b && !b.body) makeBlade(w, S, b);
     const water = troughWater(w, S);
-    keepTubTight(w, S);
     let q = { J: 0, kg: 0 };
     if (b?.body) {
       placeBody(w, S, b);

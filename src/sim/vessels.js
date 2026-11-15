@@ -1,4 +1,4 @@
-import { MATERIALS, MAT } from './materials.js';
+import { MATERIALS, MAT, cpAt, heatTo } from './materials.js';
 import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { airStirAt } from './stirrers.js';
 import { breachFlowAt } from './breach.js';
@@ -128,10 +128,13 @@ export function stepVessels(sim, dt) {
         const Ts = Math.max(temp[i], skin[i]);
         if (Ts <= Tf) continue;
         const M = MATERIALS[mat[i]];
-        const mC = M.density * dens[i] * V * M.specificHeat;
+        const mass = M.density * dens[i] * V;
+        const mC = mass * cpAt(mat[i], Ts);
         const dQ = Math.min(U_WET * A * (Ts - Tf) * dt, mC * (Ts - Tf) * 0.8);
-        const dT = dQ / mC;
-        temp[i] -= dT;
+        // (through the steel's enthalpy: its c(T), materials.js)
+        const T1 = heatTo(mat[i], temp[i], -dQ / mass);
+        const dT = temp[i] - T1;
+        temp[i] = T1;
         skin[i] = Math.max(Tf, skin[i] - dT);
         q += dQ;
       }
@@ -317,7 +320,7 @@ function stepLumped(sim, v, a, k, dt) {
       const was = v.lastSet.get(i);
       if (was === undefined) continue;
       const M = MATERIALS[mat[i]];
-      const q = (SENSOR * M.density * M.specificHeat * dens[i] * h * (0.5 * (temp[i] + skin[i]) - was)) / dt;
+      const q = (SENSOR * M.density * cpAt(mat[i], was) * dens[i] * h * (0.5 * (temp[i] + skin[i]) - was)) / dt;
       if (zoneOf(i) === 'wet') {
         qWet += q;
         nWet++;
