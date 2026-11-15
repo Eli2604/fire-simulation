@@ -147,8 +147,10 @@ export class Walkthrough {
         if (this.tool === 'rifle') this.sound.aim?.(true);
       }
       if (this.active && document.pointerLockElement === canvas && e.button === 0) {
-        if (this.flight) this.flight.fireRequested = true;
-        else if (this.tool === 'grenade') this.throwRequested = true;
+        if (this.flight) {
+          this.flight.fireRequested = true;
+          this.flight.clickRequested = true; // (a helicopter: a click is its rockets, Space its gun)
+        } else if (this.tool === 'grenade') this.throwRequested = true;
         else if (this.tool === 'bow') this.draw = 0;
         else if (this.tool === 'rifle') this.trigger = true;
         else this.spraying = true;
@@ -178,6 +180,7 @@ export class Walkthrough {
         if (e.code === 'KeyG' && !e.repeat) this.flight.ropes?.(); // (a helicopter: the troops down the ropes)
         if (e.code === 'KeyG' && !e.repeat) this.flight.radioGate?.(); // (a car: radio the base to raise the gate)
         if (e.code === 'KeyV' && !e.repeat) this.flight.toggleView?.(); // (a boat: your eyes / from outside)
+        if (e.code === 'KeyT' && !e.repeat) this.flight.missile?.(); // (an armed helicopter: a missile at what it has locked)
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
