@@ -1023,7 +1023,8 @@ export class View {
   /**
    * Raycast the voxels under a screen point, through whatever draws them (render/pick.js: the
    * voxel cubes or smooth surface, and the meshes drawn over hidden voxels – the wash on the
-   * line, scans, trees, grass). Returns { voxel, point, normal, cloth? } or null.
+   * line, scans, trees, grass, the church, torches, doors, the volcano, the camp's turbine; the
+   * carrier's hull). Returns { voxel (-1: a thing drawn only), point, normal, cloth?, thing? } or null.
    */
   pick(clientX, clientY) {
     const el = this.renderer.domElement;
@@ -1031,6 +1032,7 @@ export class View {
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const smooth = this.surfaceMode === 'smooth';
-    return pickScene(this.raycaster, { world: this.world, root: this.root, voxels: this.voxels, surface: smooth ? this.surface : null, drawings: this.props.drawings, trees: this.trees });
+    const drawings = [...(this.props.drawings ?? []), this.torches, this.doors, this.volcanoes];
+    return pickScene(this.raycaster, { world: this.world, root: this.root, voxels: this.voxels, surface: smooth ? this.surface : null, drawings, trees: this.trees });
   }
 }

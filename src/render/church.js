@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { F_HIDDEN } from '../sim/world.js';
+import { MATERIALS } from '../sim/materials.js';
+import { raycastDrawn, nearestVoxel, nearestOf, toSim } from './pickThings.js';
 
 /**
  * The gothic church (models/church.js) drawn over its voxels:
@@ -812,6 +814,29 @@ export class ChurchDrawing {
     const curve = new THREE.CatmullRomCurve3(points.map((p) => (p.isVector3 ? p : new THREE.Vector3(...p))), closed);
     return new THREE.TubeGeometry(curve, Math.max(8, points.length * 2), r, seg, closed);
   }
+  /**
+   * A click on the church (render/pick.js): its timber, boards, pews, altar and stained glass are
+   * hidden voxels under these meshes. The nearest drawn part that still stands (the stone detail,
+   * light patches and shafts left out), mapped to the hidden voxel there (or the part's own
+   * nearest): { distance, point, normal, voxel, thing: { kind: 'churchPart', part } } or null.
+   */
+  pick(ray, root) {
+    let best = null;
+    for (const p of this.parts.values()) {
+      if (!p.n0 || p.name === 'static') continue;
+      const h = raycastDrawn(ray, p.group);
+      if (!h || (best && h.distance >= best.distance)) continue;
+      best = { ...h, part: p };
+    }
+    if (!best) return null;
+    const w = this.world;
+    const P = toSim(root, best.point);
+    const p = best.part;
+    let voxel = nearestVoxel(w, P, Math.max(0.3, w.h * 2.5), (i) => w.mat[i] && w.flags[i] & F_HIDDEN && (p.isGlass ? MATERIALS[w.mat[i]]?.name === 'glass' : true));
+    if (voxel < 0) voxel = nearestOf(w, p.voxels, P);
+    return { distance: best.distance, point: best.point, normal: best.normal, voxel, thing: { kind: 'churchPart', name: p.name, glass: !!p.isGlass, voxels: p.voxels, n0: p.n0, gone: !p.group.visible } };
+  }
+
   /** World voxel index of a local point (the church's own frame). */
   voxelOf(p) {
     const v = new THREE.Vector3(...p).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.heading).add(this.origin);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { lod, updateEvery } from './lod.js';
+import { raycastDrawn, nearestVoxel, toSim } from './pickThings.js';
 
 /**
  * The camp island's objects as they are drawn (props of models/windTurbine.js, solarPark.js and
@@ -78,6 +79,22 @@ class Drawing {
     }
     this.frame++;
     return this.frame % updateEvery(lv, [1, 2, 4, 8]) === 0;
+  }
+  /**
+   * A click on it (render/pick.js): the hidden voxel under the mesh there if there is one (the
+   * turbine's tower and nacelle, the park's container), else none (the rotor, the panels, the
+   * camp's screens are drawn only); and what it is (sim/inspectThings.js describes it from
+   * sim/power.js): { distance, point, normal, voxel, thing } or null.
+   */
+  pick(ray, root) {
+    this.group.updateMatrixWorld(true);
+    const h = raycastDrawn(ray, this.group);
+    if (!h) return null;
+    const w = this.world;
+    const voxel = nearestVoxel(w, toSim(root, h.point), Math.max(0.15, (w?.h ?? 0.1) * 1.5));
+    const kind = { windTurbine: 'wind', solarPark: 'solar' }[this.pr.type];
+    const thing = kind ? { kind: 'generator', gen: kind, owner: this.pr.owner } : { kind: 'grid', grid: this.pr.grid ?? 'camp' };
+    return { ...h, voxel, thing };
   }
 }
 

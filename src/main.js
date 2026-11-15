@@ -16,6 +16,7 @@ import { dayOfDate } from './sim/sky.js';
 import { PATCH } from './sim/patches.js';
 import { lod } from './render/lod.js';
 import { describeCloth, clothRows } from './sim/cloth.js';
+import { describeThing } from './sim/inspectThings.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
@@ -69,6 +70,7 @@ let weather = defaultWeather(); // the scene's (outdoor) weather settings; a zon
 const drift = new WeatherDrift(7); // the weather changing by itself (when it is set to)
 let inspected = -1;
 let inspectedCloth = null; // a garment on a washing line clicked: { prop, piece } (sim/cloth.js)
+let inspectedThing = null; // more than a voxel clicked (render/pick.js hit.thing: a door, a torch, the turbine, the carrier...): sim/inspectThings.js
 let speed = 0;
 const tank = { remaining: AGENTS.water.capacity }; // the extinguisher in your hand
 let spraying = false;
@@ -383,6 +385,7 @@ function load(desc, fresh = true) {
   view.voxels.mode = state.mode;
   inspected = -1;
   inspectedCloth = null;
+  inspectedThing = null;
   $('inspect').hidden = true;
   $('title').textContent = (scene.name ?? 'Custom scene') + (scene.zones ? ` – ${scene.zones[scene.zone].name}` : '');
   $('desc').textContent = scene.description ?? '';
@@ -765,7 +768,7 @@ function updateHud(dt) {
     ['FPS', fps.toFixed(0)],
   ];
   $('stats').innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
-  if (inspected >= 0 || inspectedCloth) showInspect();
+  if (inspected >= 0 || inspectedCloth || inspectedThing) showInspect();
 }
 
 const VESSEL_STATE = { sealed: 'sealed', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
@@ -787,8 +790,15 @@ function eventRows(w) {
 }
 
 function showInspect() {
-  const d = sim.describe(inspected);
+  const d = inspected >= 0 ? sim.describe(inspected) : null;
   const el = $('inspect');
+  // more than a voxel (a door, a torch, the turbine, the ship, the volcano...): the whole of it, then the voxel clicked
+  const th = inspectedThing && describeThing(sim, inspectedThing);
+  if (th) {
+    el.hidden = false;
+    el.innerHTML = [`<b>${th.title}</b> <span style="color:var(--muted)">(${th.sub})</span>`, ...th.rows, d ? `<span style="color:var(--muted)">This voxel: ${d.material}, ${d.temperature.toFixed(0)} °C, ${d.state}${d.fuel !== null ? `, fuel ${(d.fuel * 100).toFixed(0)} %` : ''}</span>` : ''].filter(Boolean).join('<br>');
+    return;
+  }
   // a garment on the line: the whole of it (its voxels summed), then the voxel clicked
   const cloth = inspectedCloth && describeCloth(sim.world, inspectedCloth.prop, inspectedCloth.piece);
   if (cloth) {
@@ -909,7 +919,20 @@ canvas.addEventListener('pointerup', (e) => {
     if (pl) return goToPlace(pl);
   }
   const hit = view.pick(e.clientX, e.clientY);
-  if (!hit || hit.voxel < 0) return;
+  if (!hit) return;
+  // (a thing drawn only, with no voxel: the inspector and the door tool know it; the rest want a voxel)
+  if (state.tool === 'inspect' && hit.thing) {
+    inspected = hit.voxel;
+    inspectedCloth = null;
+    inspectedThing = hit.thing;
+    showInspect();
+    return;
+  }
+  if (state.tool === 'door' && hit.thing?.kind === 'door') {
+    toggleDoor(sim, hit.thing.k);
+    return;
+  }
+  if (hit.voxel < 0) return;
   const w = sim.world;
   const [x, y, z] = w.coords(hit.voxel);
   const c = w.center(x, y, z);
@@ -917,6 +940,7 @@ canvas.addEventListener('pointerup', (e) => {
     case 'inspect':
       inspected = hit.voxel;
       inspectedCloth = hit.cloth ?? null; // (the wash on a line: its garment, as a whole)
+      inspectedThing = null;
       showInspect();
       break;
     case 'ignite':
@@ -1091,6 +1115,7 @@ document.getElementById('walkRespawn').addEventListener('click', () => {
 function startWalk() {
   inspected = -1;
   inspectedCloth = null;
+  inspectedThing = null;
   $('inspect').hidden = true;
   walk.enter();
 }

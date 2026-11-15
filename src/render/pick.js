@@ -12,18 +12,30 @@ import { clothPieces } from '../sim/cloth.js';
  *  - the wash on the line, the scanned statues, candelabra and props (render/statue.js): their
  *    drawn triangles are raycast as drawn (cloth where the wind has it), each tied to its voxel;
  *  - trees and grass (render/trees.js): a bark segment is the voxels along it, a leaf card or a
- *    tuft of blades the voxel it stands in.
+ *    tuft of blades the voxel it stands in;
+ *  - the church's timber, boards, pews and stained glass (render/church.js), wall torches and
+ *    candles (render/torches.js), doors (render/doors.js), the volcano's cone
+ *    (render/volcano.js), the camp's wind turbine, solar park and camp (render/campPower.js):
+ *    the click is mapped to the hidden voxel there (render/pickThings.js) and names the thing
+ *    it is part of;
+ *  - what is drawn only or simulated apart (a turbine's rotor, an open door, the carrier's hull
+ *    that floats by sim/buoyancy.js): a hit with no voxel (-1) but a `thing`, which the
+ *    inspector describes from its own state (sim/inspectThings.js). Such a hit has to be a
+ *    centimetre nearer than a voxel to win over it (a mesh drawn flush with voxels lets them be).
  * The nearest of them all wins. A hit on the laundry also names its garment (sim/cloth.js),
  * which the inspector describes as a whole.
  *
- * `raycaster`: set from the camera; `root`: the scene's root (the sim's frame);
- * returns { voxel, point (sim frame), normal, distance, cloth?: { prop, piece } } or null.
+ * `raycaster`: set from the camera; `root`: the scene's root (the sim's frame); `drawings`:
+ * anything with pick(ray, root) -> { distance, point, normal (world), voxel, thing? } | null;
+ * returns { voxel (-1: a thing only), point (sim frame), normal, distance, cloth?: { prop, piece },
+ * thing? } or null.
  */
 export function pickScene(raycaster, { world, root, voxels, surface = null, drawings = [], trees = null }) {
   const ray = raycaster.ray;
   let best = null;
+  const key = (h) => h.distance + (h.voxel >= 0 ? 0 : 0.01);
   const take = (h) => {
-    if (h && h.voxel >= 0 && (!best || h.distance < best.distance)) best = h;
+    if (h && (h.voxel >= 0 || h.thing) && (!best || key(h) < key(best))) best = h;
   };
   // the voxels drawn as themselves
   if (surface) {
@@ -36,14 +48,15 @@ export function pickScene(raycaster, { world, root, voxels, surface = null, draw
       take({ voxel: voxels.voxelOfInstance(hit.instanceId), point: [p.x, p.y, p.z], normal: hit.face ? [hit.face.normal.x, hit.face.normal.y, hit.face.normal.z] : [0, 1, 0], distance: hit.distance });
     }
   }
-  // objects drawn over their hidden voxels (laundry, scans)
+  // objects drawn over their hidden voxels (laundry, scans, the church, torches, doors...), or by themselves
   for (const d of drawings) {
-    if (typeof d.pick !== 'function') continue;
-    const h = d.pick(ray);
+    if (typeof d?.pick !== 'function') continue;
+    const h = d.pick(ray, root);
     if (!h) continue;
     const p = root.worldToLocal(h.point.clone());
     const n = h.normal.clone().transformDirection(new THREE.Matrix4().copy(root.matrixWorld).invert());
-    const out = { voxel: h.voxel, point: [p.x, p.y, p.z], normal: [n.x, n.y, n.z], distance: h.distance };
+    const out = { voxel: h.voxel ?? -1, point: [p.x, p.y, p.z], normal: [n.x, n.y, n.z], distance: h.distance };
+    if (h.thing) out.thing = h.thing;
     if (d.pr?.procedural === 'laundry' && world) {
       const piece = clothPieces(world, d.pr, d.own).of.get(h.voxel);
       if (piece !== undefined) out.cloth = { prop: d.pr, piece };

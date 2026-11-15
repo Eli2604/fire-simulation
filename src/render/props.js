@@ -6,6 +6,7 @@ import { loadPolyHavenModel } from './assets.js';
 import { ChurchDrawing } from './church.js';
 import { lod } from './lod.js';
 import { campPowerDrawing } from './campPower.js';
+import { pickObject } from './pickThings.js';
 
 /** Props' level of detail: the sizes on the screen (px) where they drop their shadow, and drop out. */
 export const PROP_LOD = [24, 1];
@@ -262,9 +263,13 @@ export class PropsRenderer {
       case 'cryptVault':
         // the smooth vault of the underground church (render/cryptVault.js)
         return buildCryptVault(pr);
-      case 'carrierHull':
-        // the whole ship around the simulated slice of its deck (render/hull.js)
-        return buildCarrierHull(pr);
+      case 'carrierHull': {
+        // the whole ship around the simulated slice of its deck (render/hull.js); drawn only, it
+        // floats by sim/buoyancy.js: a click on it is the ship (draft, list, flooding)
+        const o = buildCarrierHull(pr);
+        this.drawings.push({ group: o, update() {}, pick: (ray) => pickObject(ray, o, null, null, { kind: 'carrier' }) });
+        return o;
+      }
       case 'church': {
         // the gothic church: everything that is more than its voxels (render/church.js)
         const d = new ChurchDrawing(pr.spec, this.world, pr, this.sunDir, this.sunLight);
