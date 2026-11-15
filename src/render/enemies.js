@@ -24,6 +24,21 @@ import { FlashlightPool } from './flashlights.js';
 export const FIGURE_LOD = { radius: 0.9, levels: [120, 40, 12], rates: [1, 2, 4, 8], small: 0.08 };
 
 /** What the level of detail switches on a figure: its small parts and its shadow casters. */
+/**
+ * A man aboard a helicopter (ai/helicopter.js placeCrew: e.frame its axes, e.seatYaw his heading in
+ * it): the figure tilted with it. Its basis maps the helicopter's +x (forward) to f; a figure's yaw 0
+ * looks along +z, so his turn in its frame is seatYaw + π/2 about its up axis.
+ */
+const _tiltM = new THREE.Matrix4();
+const _tiltQ = new THREE.Quaternion();
+const _tiltF = new THREE.Vector3(), _tiltU = new THREE.Vector3(), _tiltR = new THREE.Vector3();
+const _Y = new THREE.Vector3(0, 1, 0);
+function tiltAboard(g, e) {
+  if (!e.frame || e.aboard == null || e.held) return;
+  _tiltM.makeBasis(_tiltF.set(...e.frame.f), _tiltU.set(...e.frame.u), _tiltR.set(...e.frame.r));
+  g.quaternion.setFromRotationMatrix(_tiltM).multiply(_tiltQ.setFromAxisAngle(_Y, (e.seatYaw ?? 0) + Math.PI / 2));
+}
+
 function prepareLod(f) {
   f.autoDetail = false; // (the level of detail below decides, not the distance in onBeforeRender)
   f.lodState = {};
@@ -487,6 +502,7 @@ export class EnemyRenderer {
     if (e.devoured) return;
     g.position.set(e.p[0], e.p[1], e.p[2]);
     g.rotation.set(0, e.yaw ?? 0, 0);
+    tiltAboard(g, e); // (aboard a helicopter: with its pitch and roll)
     if ((e.stains?.length ?? 0) > (f.stainsSeen ?? 0)) {
       f.stainsSeen = e.stains.length;
       f.hitFlash();
@@ -509,7 +525,11 @@ export class EnemyRenderer {
       g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(g.rotation));
       name = e.dead ? 'die' : 'swim'; // (struggling; limp once dead)
     } else if (e.dead) name = 'die';
-    else if (e.heliCrew != null && e.guardCtl && e.anim) name = e.anim; // aboard a helicopter or on its cable (ai/helicopter.js): seated, at the door gun, in the door, roping
+    else if (e.heliCrew != null && e.guardCtl && e.anim) {
+      // aboard a helicopter or on its cable (ai/helicopter.js): seated, at the door gun, kneeling in the door, roping
+      name = e.anim;
+      if (!f.A?.clips?.[name]) name = { kneelAim: 'crouchAim', kneelShoot: 'crouchShoot' }[name] ?? name; // (a figure without the kneeling clips)
+    }
     else if (sq) name = e.anim ?? 'crouchAim';
     else if (e.trav?.roll) name = e.trav.kind; // a combat roll (ai/evade.js), the guard AI's or the dragon's snatch's
     else if (e.crawling) name = 'crawl';
@@ -586,6 +606,7 @@ export class EnemyRenderer {
       f.flash.visible = (e.flashUntil ?? -1) > (world.time ?? 0);
       f.g.position.set(e.p[0], e.p[1], e.p[2]);
       f.g.rotation.set(0, e.yaw ?? 0, 0);
+      tiltAboard(f.g, e);
       // seized by the dragon: held crosswise in its jaws, limbs flailing; gone once swallowed
       if (e.devoured) {
         f.g.visible = false;

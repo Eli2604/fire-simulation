@@ -7,7 +7,9 @@
  * troops jump out), the doors, the fast-rope (the troops down two cables: ai/rope.js), the door
  * gunners firing at the targets, the troops firing their own weapons out of the doors, and the ways
  * of coming down (the tail rotor, the main rotor, the engine shot away; the fuel tank alight).
- * The rounds are only drawn (tracers); the men are hurt only by the helicopter's own hits and crashes.
+ * The crew identify the targets as they would anyone (ai/perception.js: a moment to notice each) and
+ * the rounds hit them: each target takes the round's damage (TARGET_HP), and falls over when it has
+ * had enough (no longer a target). The men are hurt only by the helicopter's own hits and crashes.
  *
  *   const st = createHeliStage();
  *   st.play('fastRope');            // any of HELI_ACTS
@@ -40,6 +42,9 @@ export const HELI_ACTS = {
 const GUN_ACTS = new Set(['doorGun', 'troopsFire', 'hover', 'approach']);
 /** The targets on the ground (the guns' and the troops'). */
 export const STAGE_TARGETS = [[34, 0.9, 30], [-30, 0.9, 34], [28, 0.9, -32], [-36, 0.9, -26], [6, 0.9, 42], [4, 0.9, -44]];
+/** How much a stage target takes before it falls; what a round does to it (by weapon). */
+export const TARGET_HP = 100;
+const ROUND_DMG = { mg: 34, rifle: 25 };
 /** Crash acts: which part, when (s into the act), with what. */
 const CRASH = { crashTail: ['tailRotor', 2], crashMain: ['rotor', 2.5], crashEngine: ['engine', 2.5], fuelFire: ['fuel', 2.5] };
 
@@ -54,6 +59,8 @@ export function createHeliStage() {
     t: 0,
     params: { soldiers: 6, doorGuns: 'both' },
     targets: STAGE_TARGETS,
+    targetHp: STAGE_TARGETS.map(() => TARGET_HP),
+    targetHitT: STAGE_TARGETS.map(() => -1),
     h: null,
     lastHit: null,
   };
@@ -62,13 +69,28 @@ export function createHeliStage() {
     world,
     ground: () => 0,
     addCrew: (e) => world.enemies.push(e),
-    targets: () => (GUN_ACTS.has(st.act) ? st.targets : []),
-    // a round: drawn as a tracer to where it meets the ground (or 200 m out)
-    fire: (e, from, dir) => {
-      const t = dir[1] < -1e-3 ? Math.min(200, -from[1] / dir[1]) : 200;
+    // the targets still standing, as contacts (ai/helicopter.js: on the 'target' side, hostile to the crew)
+    contacts: () => (GUN_ACTS.has(st.act) ? st.targets.map((T, i) => ({ key: `target${i}`, ref: i, kind: 'target', side: 'target', p: T, at: T, size: 1 })).filter((c) => st.targetHp[c.ref] > 0) : []),
+    // a round: to where it meets a standing target (a post 0.35 m round, 1.8 m tall: damaged) or
+    // the ground (or 200 m out), drawn as a tracer
+    fire: (e, from, dir, weapon) => {
+      let t = dir[1] < -1e-3 ? Math.min(200, -from[1] / dir[1]) : 200;
+      let hit = null;
+      st.targets.forEach((T, i) => {
+        if (st.targetHp[i] <= 0) return;
+        const s = targetRay(from, dir, T);
+        if (s != null && s < t) {
+          t = s;
+          hit = i;
+        }
+      });
       world.tracers.push({ a: from.slice(), b: from.map((v, i) => v + dir[i] * t), t: world.time });
       if (world.tracers.length > 60) world.tracers.shift();
-      return null;
+      if (hit == null) return null;
+      st.targetHp[hit] = Math.max(0, st.targetHp[hit] - (ROUND_DMG[weapon] ?? 25));
+      st.targetHitT[hit] = world.time;
+      world.events.push({ type: st.targetHp[hit] > 0 ? 'targetHit' : 'targetDown', pos: from.map((v, i) => v + dir[i] * t), time: world.time, name: `target ${hit + 1}`, hp: st.targetHp[hit] });
+      return { target: hit, hp: st.targetHp[hit] };
     },
     radio: (h, text) => world.events.push({ type: 'heliRadio', pos: h.p.slice(), time: world.time, name: `${h.call}: ${text}` }),
   };
@@ -106,6 +128,8 @@ export function createHeliStage() {
     world.ropes.length = 0;
     world.tracers.length = 0;
     world.events.length = 0;
+    st.targetHp = st.targets.map(() => TARGET_HP);
+    st.targetHitT = st.targets.map(() => -1);
     st.h = setup(act);
     if (act === 'transit') st.h.doorsHold = { L: 0, R: 0 };
     return true;
@@ -136,4 +160,20 @@ export function createHeliStage() {
   st.revive = () => st.play(st.act);
   st.play('hover');
   return st;
+}
+
+/** Where a ray (from, dir) first meets a stage target at T (a post 0.35 m round, from the ground to 1.8 m): its distance, or null. */
+function targetRay(from, dir, T) {
+  const L = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const d = dir.map((v) => v / L);
+  const ox = from[0] - T[0], oz = from[2] - T[2];
+  const a = d[0] * d[0] + d[2] * d[2];
+  if (a < 1e-9) return null;
+  const b = 2 * (ox * d[0] + oz * d[2]), c = ox * ox + oz * oz - 0.35 * 0.35;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const s = (-b - Math.sqrt(disc)) / (2 * a);
+  if (s < 0) return null;
+  const y = from[1] + d[1] * s;
+  return y >= 0 && y <= 1.8 ? s : null;
 }

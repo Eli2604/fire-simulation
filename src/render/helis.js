@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildHeliMesh, poseHeli, buildBladeMesh } from './heliMesh.js';
+import { buildHeliMesh, poseHeli, buildBladeMesh, buildTailMesh, poseTail } from './heliMesh.js';
 import { Puffs } from './flights.js';
 
 /**
@@ -27,8 +27,10 @@ export class HeliRenderer {
     it.mesh.dispose();
     for (const b of it.debris) {
       this.scene.remove(b);
-      b.geometry.dispose();
-      b.material.dispose();
+      b.traverse((o) => {
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
     }
   }
   update(time, dt) {
@@ -51,12 +53,15 @@ export class HeliRenderer {
       poseHeli(it.mesh, h);
       // what flew off
       while (it.debris.length < h.debris.length) {
-        const b = buildBladeMesh(h.debris[it.debris.length].kind);
+        // (the tail boom broken off: the boom, the fin and the tail rotor as one piece)
+        const kind = h.debris[it.debris.length].kind;
+        const b = kind === 'tailBoom' ? buildTailMesh(h.color ?? '#4a5240') : buildBladeMesh(kind);
         this.scene.add(b);
         it.debris.push(b);
       }
       h.debris.forEach((d, k) => {
         const b = it.debris[k];
+        if (d.kind === 'tailBoom') return poseTail(b, d);
         b.position.set(...d.p);
         b.rotation.set(d.kind === 'blade' ? 0.3 * Math.sin(d.a) : d.a, d.a, 0);
       });

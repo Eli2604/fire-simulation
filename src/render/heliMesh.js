@@ -15,9 +15,75 @@
  *   m.dispose();
  */
 import * as THREE from 'three';
-import { heliAxes, DOOR, HELI } from '../ai/helicopter.js';
+import { heliAxes, DOOR, HELI, BOOM_ROOT } from '../ai/helicopter.js';
 
 const shadow = (m) => ((m.castShadow = m.receiveShadow = true), m);
+
+/**
+ * The tail: the boom from x0 aft (tapering), the fin, the stabiliser and the tail rotor (on the
+ * right of the fin, turning about z), into `parent`, everything shifted by -off (the detached
+ * piece has its origin at the break, BOOM_ROOT). Returns { tailRotor }.
+ */
+function tailParts(parent, mats, x0, off = [0, 0, 0]) {
+  const at = (x, y, z) => [x - off[0], y - off[1], z - off[2]];
+  const mesh = (geo, mat, p) => {
+    const m = shadow(new THREE.Mesh(geo, mat));
+    m.position.set(...p);
+    parent.add(m);
+    return m;
+  };
+  // the boom: 0.48 m round at the cabin (x -1.9), 0.24 m at the fin (x -9.3)
+  const x1 = -9.3;
+  const rAt = (x) => 0.48 + ((x + 1.9) / (x1 + 1.9)) * (0.24 - 0.48);
+  const boom = mesh(new THREE.CylinderGeometry(rAt(x1), rAt(x0), x0 - x1, 14), mats.paint, at((x0 + x1) / 2, 2.05, 0));
+  boom.rotation.z = Math.PI / 2; // (the narrow end aft: rotation.z +π/2 puts the cylinder's top at -x)
+  const fin = mesh(new THREE.BoxGeometry(1.1, 1.9, 0.14), mats.paint, at(-9.1, 2.95, 0));
+  fin.rotation.z = 0.25;
+  mesh(new THREE.BoxGeometry(0.9, 0.06, 2.9), mats.paint, at(-8.6, 1.95, 0));
+  const tailRotor = new THREE.Group();
+  tailRotor.position.set(...at(-9.3, 3.0, 0.38));
+  parent.add(tailRotor);
+  const hub = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.18, 10), mats.metal));
+  hub.rotation.x = Math.PI / 2;
+  tailRotor.add(hub);
+  for (let i = 0; i < 4; i++) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.55, 0.03), mats.blade);
+    b.position.set(0, 0.8, 0.05);
+    const piv = new THREE.Group();
+    piv.rotation.z = (i * Math.PI) / 2;
+    piv.add(b);
+    tailRotor.add(piv);
+  }
+  return { tailRotor };
+}
+
+/**
+ * The tail boom broken off (ai/helicopter.js shed('tailBoom')): the boom aft of BOOM_ROOT, the fin,
+ * the stabiliser and the tail rotor, as one group whose origin is the break. Posed by poseTail from
+ * its debris entry ({ p, yaw, pitch, roll, tailAngle }: the helicopter's frame, at the break).
+ */
+export function buildTailMesh(color = '#4a5240') {
+  const mats = {
+    paint: new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.2 }),
+    metal: new THREE.MeshStandardMaterial({ color: 0x7c8186, roughness: 0.4, metalness: 0.8 }),
+    blade: new THREE.MeshStandardMaterial({ color: 0x1b1d1f, roughness: 0.6, metalness: 0.3 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.8, metalness: 0.3 }),
+  };
+  const g = new THREE.Group();
+  g.matrixAutoUpdate = false;
+  const { tailRotor } = tailParts(g, mats, BOOM_ROOT[0], BOOM_ROOT);
+  const torn = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.85, 0.85), mats.dark); // the torn end
+  g.add(torn);
+  g.userData.tailRotor = tailRotor;
+  return g;
+}
+/** The detached tail where its debris entry says. */
+export function poseTail(g, d) {
+  const A = heliAxes(d.yaw, d.pitch, d.roll);
+  g.matrix.makeBasis(_f.set(...A.f), _u.set(...A.u), _r.set(...A.r)).setPosition(d.p[0], d.p[1], d.p[2]);
+  g.matrixWorldNeedsUpdate = true;
+  if (g.userData.tailRotor) g.userData.tailRotor.rotation.z = d.tailAngle ?? 0;
+}
 
 export function buildHeliMesh({ color = '#4a5240' } = {}) {
   const group = new THREE.Group();
@@ -83,28 +149,15 @@ export function buildHeliMesh({ color = '#4a5240' } = {}) {
   box(2.8, 0.5, 1.5, -0.5, 2.65, 0);
   for (const s of [-1, 1]) cyl(0.2, 0.22, 0.5, -1.85, 2.75, s * 0.62, 'x', mats.exhaust);
   cyl(0.17, 0.2, 0.75, 0, 3.15, 0, 'y', mats.metal);
-  // --- tail boom, fin, stabiliser
+  // --- tail boom, fin, stabiliser, the tail rotor (tailParts); and the stub left at the boom's
+  // root when it is shot through (the rest falls away: buildTailMesh, render/helis.js)
   const tail = new THREE.Group();
   body.add(tail);
-  const boom = cyl(0.24, 0.48, 7.4, -5.6, 2.05, 0, 'x', mats.paint, tail);
-  boom.rotation.z = Math.PI / 2;
-  boom.geometry.rotateY(0); // (the narrow end aft: rotation.z +π/2 puts the cylinder's top at -x)
-  const fin = box(1.1, 1.9, 0.14, -9.1, 2.95, 0, mats.paint, tail);
-  fin.rotation.z = 0.25;
-  box(0.9, 0.06, 2.9, -8.6, 1.95, 0, mats.paint, tail);
-  // --- the tail rotor, on the right of the fin, turning about z
-  const tailRotor = new THREE.Group();
-  tailRotor.position.set(-9.3, 3.0, 0.38);
-  tail.add(tailRotor);
-  cyl(0.1, 0.1, 0.18, 0, 0, 0, 'z', mats.metal, tailRotor);
-  for (let i = 0; i < 4; i++) {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.55, 0.03), mats.blade);
-    b.position.set(0, 0.8, 0.05);
-    const piv = new THREE.Group();
-    piv.rotation.z = (i * Math.PI) / 2;
-    piv.add(b);
-    tailRotor.add(piv);
-  }
+  const { tailRotor } = tailParts(tail, mats, -1.9);
+  const stub = cyl(0.42, 0.48, -1.9 - BOOM_ROOT[0] + 0.1, (BOOM_ROOT[0] - 1.9) / 2, BOOM_ROOT[1], 0, 'x', mats.paint);
+  stub.visible = false;
+  const ragged = box(0.12, 0.9, 0.9, BOOM_ROOT[0], BOOM_ROOT[1], 0, mats.dark); // the torn end
+  ragged.visible = false;
   // --- the main rotor: hub, four blades (and a faint disc when it turns fast)
   const rotor = new THREE.Group();
   rotor.position.set(0, 3.62, 0);
@@ -165,7 +218,7 @@ export function buildHeliMesh({ color = '#4a5240' } = {}) {
     g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -0.15, s).normalize());
     guns[k] = { g, flash, side: s };
   }
-  const m = { group, body, rotor, blades, disc, tail, tailRotor, doors, guns, glass, mats };
+  const m = { group, body, rotor, blades, disc, tail, tailRotor, stub, ragged, doors, guns, glass, mats };
   m.dispose = () => {
     const ms = new Set();
     group.traverse((o) => {
@@ -197,7 +250,10 @@ export function poseHeli(m, h, time = h.time) {
   m.disc.material.opacity = 0.14 * h.omega;
   m.tailRotor.rotation.z = h.tailAngle;
   m.tailRotor.visible = !h.gone?.has('tailRotor');
-  m.tail.scale.x = h.gone?.has('tailBoom') ? 0.55 : 1; // (shot through: the end of it hangs off; drawn shorter)
+  // the boom shot through: gone from here (it falls on its own: a debris entry, buildTailMesh), a torn stub left
+  const boomGone = !!h.gone?.has('tailBoom');
+  m.tail.visible = !boomGone;
+  m.stub.visible = m.ragged.visible = boomGone;
   for (const [k, d] of Object.entries(m.doors)) d.position.x = d.userData.x0 - (h.doors[k] ?? 0) * 1.75;
   for (const [k, G] of Object.entries(m.guns)) {
     const g = h.guns?.[k];

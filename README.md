@@ -483,8 +483,9 @@ comes from an offset (in the air, or on the ground with the rotor still: it spin
 its **mission**: *insert* (approach and flare to a hover over the zone, cables out of both doors, the
 troops fast-rope down, cut, climb away and circle), *land* (touch down, the troops jump out, off
 again), *overwatch* (circle the zone, doors open, guns), *hover*. Parameters: soldiers in the back
-(0–8), door guns (both / left / right / none), altitude, cruise speed, hover height, rope length,
-orbit radius, call sign, paint.
+(0–8), door guns (both / left / right / none), **side** (*enemy*: red, it brings their soldiers;
+*friendly*: blue, yours), altitude, cruise speed, hover height, rope length, orbit radius, call sign,
+paint.
 
 - **Flight**: a pilot model, not blade aerodynamics: the velocity he wants (to a point, slowing to
   stop at it; round a circle; up or down) within the accelerations a helicopter has (less with a hurt
@@ -493,9 +494,24 @@ orbit radius, call sign, paint.
 - **Crew**: pilot (right seat), co-pilot, then the men in the back: one door gunner per gun, then
   troops on the benches. They are the simulation's soldiers (`world.enemies`, drawn by
   `render/enemies.js`: seated, at the gun, crouched in the door, on the rope) held in their seats
-  (`guardCtl`, `aboard`). With a door open the **gunner** fires the pintle machine gun at what he sees
-  on his side (bursts, spread by the helicopter's speed and vibration) and the **troop by the door**
-  fires his own weapon out of it, both through `sim/wounds.js shoot` (real rounds, tracers, reports).
+  (`guardCtl`, `aboard`), posed in the helicopter's frame: each man (and his weapon) tilts with its
+  pitch and roll (`e.frame`, `e.seatYaw`), and his eye (`e.eye`) and his gun's muzzle are where they
+  really are when he looks and shoots.
+- **Who they shoot at**: an *identified threat*, not just you. The crew look out of the doors (the men
+  in the back) and through the glass (the pilots) and notice what they see as the soldiers do
+  (`ai/perception.js perceive`: distance, light, smoke, a moment to notice, sooner where rounds came
+  from or where a friendly squad has its threat); what one man identifies the whole crew knows
+  (`h.known`). The contacts are you on foot, the soldiers, the dragons and the other helicopters, each on
+  a **side** (`ai/sides.js`: you and friendly helicopters *blue*, the simulation's soldiers *red* unless
+  they say otherwise, a dragon everybody's enemy). Of the hostile ones identified and in sight out of
+  his door the gunner picks the most dangerous (`threatScore`: shooting at them ×4, a dragon or a
+  helicopter over a man, nearer and more exposed first); a friendly in the line of fire holds it; an
+  unidentified or friendly contact is never fired at. With a door open the **gunner** fires the pintle
+  machine gun (bursts, spread by the helicopter's speed and vibration) and the **troop by the door**
+  (on one knee in it, weapon ready, covering below and outward; during a fast-rope he is the next man
+  down, waiting his turn there) his own weapon, both through `sim/wounds.js shoot`: real rounds that wound a soldier, strike a dragon,
+  hit another helicopter's parts, or you. Fire teams of the two sides see each other as hostiles too
+  (`squadHostiles`), so troops roped down from a friendly helicopter fight the red ones, not you.
 - **Fast-rope**: the cables are `world.ropes` entries (`{ kind: 'fastrope', top, bottom, owner,
   attached }`): the helicopter writes `bottom` once and moves `top` with the door every step; each
   trooper is handed to `ai/rope.js startRope` (retried each step: one man every 3.2 m), off the rope
@@ -506,6 +522,8 @@ orbit radius, call sign, paint.
   skids. Bullets (`shoot`), arrows and rockets (`sim.hitEnemy`) and blasts (`explode`) find them.
 - **Coming down** depends on what went: *tail rotor / boom*: no yaw control, the fuselage spins round
   the mast faster and faster while it sinks at ~5–6 m/s, a spinning hard landing the crew survive;
+  a boom shot through breaks off at its root and falls as one piece (boom, fin and tail rotor, tumbling,
+  lying where it lands, hurting whoever it lands on), the nose dropping without its weight aft;
   *main rotor / mast*: no lift, it drops and tumbles, the blades fly off (and hurt whoever they land
   on); *engine*: autorotation, a ~9 m/s glide with forward speed and a flare to a hard landing; *fuel
   tank*: it burns, the pilot puts it down at once (too long in the air: it blows up). Every touchdown
@@ -515,8 +533,28 @@ orbit radius, call sign, paint.
 - **Rig** (*Helicopter* in the Object drop-down, `rig/heli.js`, `rig/heliStage.js`): parked, start-up,
   hover, transit, approach & flare, land, doors, fast-rope, door gunners fire, troops fire from the
   doors, and the four ways of being shot down; soldiers and door guns, the hit parts shown and resized,
-  damage on click (bullet, shell, rocket), the crew's state and the radio. `?mode=rig&obj=helicopter
+  damage on click (bullet, shell, rocket), the crew's state and the radio. The stage's targets are
+  identified like anyone else and the rounds hit them (100 HP each: lit up when hit, knocked over when
+  down). `?mode=rig&obj=helicopter
   &hact=fastRope&hzones=1&hsteps=n&hfollow=1&hhits=tailRotor`.
+
+### Flying the helicopter
+
+Walk up to a helicopter that is on the ground (parked, landed, or started on the ground) and press
+**E** by its cockpit (`walk/heliFlight.js`): you take the pilot's seat. An enemy crew climb out and
+fight; a friendly pilot moves to the back, a friendly crew stay at the guns and on the benches. The
+rotor runs up first (9 s) before it will lift. **W/S** collective (let go: it holds its height),
+**mouse** (or the **arrow keys**) cyclic: nose down to fly forward, bank to turn (mouse up: nose up, as
+in the jet; the stick centres itself), **A/D** pedals (at speed a bank turns you too). **G** at a steady
+hover low enough for the ropes: the troops in the back fast-rope down, the ropes are cut when all are
+down (G again with nobody on them: cut now). **E** climbs out once it is on the ground and still. The
+crew in the back fight from the open doors on their own (identified threats, above). The hit parts and
+the ways of coming down are the same as for its own pilot: a tail rotor shot away spins you round the
+mast (the pedals do nothing; more collective, faster), a dead engine autorotates (the collective can
+only spend the rotor's spin: save it for the flare), no rotor drops you, a burning tank gives you 14 s
+to put it down; rounds through your side of the cockpit hit you. A crash puts you out of the wreck,
+hurt by how hard it was. Chase camera; the instruments show the collective, rotor speed, height,
+speed, attitude, troops, contacts and damage.
 
 ### Flying the jet (carrier scenario)
 
@@ -1058,7 +1096,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Terrain | width, depth, base ground thickness, base surface, grass moisture, tall grass, water / lava level and snow depth (for a base of those), border slope, ground under the surface (the rest hollow), seed, and its **areas** (see *Terrain* below) |
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
-| Helicopter | mission (insert / land / overwatch / hover), soldiers in the back, door guns, start in the air or on the ground, where it comes from, altitude, cruise speed, fast-rope hover height, rope length, orbit radius, call sign, paint. Flies there with its crew (`ai/helicopter.js`) |
+| Helicopter | side (enemy / friendly), mission (insert / land / overwatch / hover), soldiers in the back, door guns, start in the air or on the ground, where it comes from, altitude, cruise speed, fast-rope hover height, rope length, orbit radius, call sign, paint. Flies there with its crew (`ai/helicopter.js`) |
 | Rope / zipline | kind (fast rope from a steel gantry, zipline cable between a tall and a short pole, rappel anchor at a roof edge), height, rope length, zipline span and drop, whether it builds what holds it (gantry, poles, a rappel tower). Gives the world a rope (`world.ropes`) that soldiers and the player go down or along (`ai/rope.js`) |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed; a drawn patrol path and area (order, sweep, leash: see *Patrols* in the editor) |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |

@@ -9,6 +9,7 @@ import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
 import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
+import { HeliFlight } from './heliFlight.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
@@ -161,6 +162,7 @@ export class Walkthrough {
         if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
         if (e.code === 'KeyF') this.flight.flaresRequested = true;
+        if (e.code === 'KeyG' && !e.repeat) this.flight.ropes?.(); // (a helicopter: the troops down the ropes)
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
@@ -307,6 +309,9 @@ export class Walkthrough {
     // the jet: climb in
     const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
     if (veh) return this.board(veh);
+    // a helicopter on the ground: into the pilot's seat (walk/heliFlight.js)
+    const heli = this.heliNear(w);
+    if (heli) return this.boardHeli(heli);
     let best = null;
     let bd = 1.7;
     w.pickups.forEach((pk) => {
@@ -377,6 +382,32 @@ export class Walkthrough {
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
     this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, F flares, X eject', 6);
+  }
+
+  /** A helicopter (w.helis, ai/helicopter.js) on the ground within reach of its cockpit, not a wreck: its spec, or null. */
+  heliNear(w) {
+    return (w.helis ?? []).find((s) => {
+      const h = s.ai;
+      if (!h || h.crashed || !h.landed) return false;
+      const c = h.toWorld([2.4, 0, 0]);
+      return Math.hypot(c[0] - this.pos.x, c[2] - this.pos.z) < 4.5 && Math.abs(h.p[1] - this.pos.y) < 2;
+    }) ?? null;
+  }
+
+  /** Into the helicopter's pilot seat and fly it (see heliFlight.js). */
+  boardHeli(spec) {
+    const sim = this.hooks.getSim();
+    this.spraying = false;
+    this.arm = null;
+    this.flight = new HeliFlight(this, sim, spec);
+    if (this.gun) this.gun.visible = false;
+    this.aiming = false;
+    this.aimK = 0;
+    this.view.camera.fov = 72;
+    this.view.camera.updateProjectionMatrix();
+    this.el.mask.hidden = true;
+    this.lamp.intensity = 0;
+    this.say('W/S collective, mouse (or arrows) cyclic, A/D pedals, G fast-rope the troops at a low hover, E climb out once landed', 6);
   }
 
   /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
@@ -1245,7 +1276,7 @@ export class Walkthrough {
     {
       const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
       const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
-      const near = pt ? `E: ${pt.label}` : veh ? 'E: climb into the jet' : null;
+      const near = pt ? `E: ${pt.label}` : veh ? 'E: climb into the jet' : this.heliNear(w) ? 'E: fly the helicopter' : null;
       if (near && near !== this.near) this.say(near, 3);
       this.near = near;
     }
