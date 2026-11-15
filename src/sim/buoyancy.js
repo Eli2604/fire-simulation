@@ -400,7 +400,7 @@ export function waveHeight(spec, x, z, t) {
 }
 
 /** The water surface an env gives: its level, plus its waves (a function, or a spectrum). */
-function surfaceOf(env) {
+export function surfaceOf(env) {
   const lvl = env.level ?? 0;
   if (env.surface) return env.surface;
   if (env.waves?.waves?.length && env.waves.Hs > 0) {

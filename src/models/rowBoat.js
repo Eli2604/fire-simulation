@@ -36,6 +36,11 @@ export const ROW_BOAT_PARAMS = {
   water: { value: 'auto', options: ['auto', 'sea', 'fresh'], label: 'Water (auto: the sea, or fresh on a pond)' },
   moored: { value: true, label: 'Moored (its painter made fast ahead of its bow; off: it drifts with the current and the wind)' },
   mooring: { value: 2, min: 0.5, max: 12, step: 0.1, label: 'Mooring line (m)' },
+  kind: { value: 'row', options: ['row', 'motor', 'sail', 'canoe'], label: 'Kind (rowing boat, outboard dinghy, sailing dinghy, canoe)' },
+  transom: { value: 0.62, min: 0, max: 0.9, step: 0.02, label: 'Transom width (of the beam; 0: pointed, a canoe)' },
+  motor: { value: 'none', options: ['none', 'outboard'], label: 'Motor (an outboard on the transom)' },
+  sailArea: { value: 7, min: 2, max: 20, step: 0.5, label: 'Sail area (m², a sailing dinghy)' },
+  motorPower: { value: 7.5, min: 1.5, max: 30, step: 0.5, label: 'Motor power (kW)' },
   goesTo: { value: '', label: 'Place it takes you to (empty: none)' },
   label: { value: 'Boat', label: 'What it is (its hint)' },
   arriveX: { value: 0, min: -12, max: 12, step: 0.1, label: 'Ashore here, along it (m)' },
@@ -77,6 +82,13 @@ export function loadsOf(p, hull = rowBoatHull(p)) {
     loads.push({ m: PERSON, p: [t && !onFloor ? t.x : -0.05 * p.length, onFloor ? 0.3 : t.y + 0.22, z], label: 'person' });
   }
   if (p.load > 0) loads.push({ m: p.load, p: [-0.05 * p.length, 0.16, 0], label: 'load' });
+  // the rig of a sailing dinghy (mast, boom, sail ~3 kg a m²: its weight high up) and its centreboard
+  if (p.kind === 'sail') {
+    const r = sailRigOf(p, hull);
+    loads.push({ m: 3 * r.area, p: [r.mastX, hull.D + 0.35 * r.mast, 0], label: 'rig' }, { m: 14, p: [r.board.x, -0.25, 0], label: 'centreboard' });
+  }
+  // an outboard on the transom (~4 kg a kW and its clamp, over the stern)
+  if (hasMotor(p)) loads.push({ m: 12 + 3.2 * (p.motorPower ?? 7.5), p: [hull.x0 - 0.1, hull.sheer(hull.x0) + 0.05, 0], label: 'motor' });
   return loads;
 }
 
@@ -87,12 +99,33 @@ export function loadsOf(p, hull = rowBoatHull(p)) {
  */
 export function seatsOf(p, hull = rowBoatHull(p)) {
   const th = thwartsOf(p, hull);
+  const kind = p.kind ?? 'row';
+  if (kind !== 'row' && th.length) {
+    // the helmsman (the motor's tiller, the rudder) or the stern paddler on the stern thwart; the
+    // bow paddler, the sailing crew (amidships: he hikes out), the passengers on the others
+    const by = [...th].sort((a, b) => a.x - b.x);
+    const helm = kind === 'canoe' ? 'paddler' : 'helm';
+    const seats = [{ x: by[0].x, y: by[0].y, z: 0, role: helm, drive: true }];
+    by.slice(1).forEach((t, k) => {
+      if (kind === 'canoe' || t.half < 0.3) seats.push({ x: t.x, y: t.y, z: 0, role: kind === 'canoe' && k === by.length - 2 ? 'paddler' : 'passenger' });
+      else for (const s of [-1, 1]) seats.push({ x: t.x, y: t.y, z: s * Math.min(0.25, t.half * 0.5), role: kind === 'sail' && k === 0 ? 'crew' : 'passenger' });
+    });
+    if (kind !== 'canoe') seats.push(floorSeat(p, hull));
+    const mid = th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a));
+    return { seats, rowlocks: kind === 'motor' && p.oars ? rowlocksAt(hull, mid.x) : null };
+  }
   if (!th.length) return { seats: [{ x: 0, y: hull.keel(0) + 0.3, z: 0, role: 'rower' }], rowlocks: rowlocksAt(hull, 0) };
   const mid = th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a));
-  const seats = [{ x: mid.x, y: mid.y, z: 0, role: 'rower' }];
+  const seats = [{ x: mid.x, y: mid.y, z: 0, role: 'rower', drive: true }];
   // (the stern thwart first: the helmsman's place, then forward)
   for (const t of [...th].sort((a, b) => a.x - b.x)) if (t !== mid) for (const s of [-1, 1]) seats.push({ x: t.x, y: t.y, z: s * Math.min(0.25, t.half * 0.5), role: 'passenger' });
+  seats.push(floorSeat(p, hull));
   return { seats, rowlocks: rowlocksAt(hull, mid.x) };
+}
+/** A place on the floorboards in the stern sheets (a wounded man lies there). */
+function floorSeat(p, hull) {
+  const x = -0.36 * p.length;
+  return { x, y: hull.keel(x) + 0.12, z: 0, role: 'floor' };
 }
 function rowlocksAt(hull, x0) {
   const x = x0 + 0.32;
@@ -100,9 +133,26 @@ function rowlocksAt(hull, x0) {
   return [-1, 1].map((sd) => [x, s + 0.01, sd * hull.half(x, s - 0.01)]);
 }
 
+/** An outboard on it (a motor boat has one). */
+export function hasMotor(p) {
+  return p.motor === 'outboard' || p.kind === 'motor';
+}
+
+/**
+ * A sailing dinghy's rig (hull frame): a una rig, its mast stepped ~a quarter of the way aft of
+ * the stem, a boom ~half the boat long; the sail's centre of effort over the keel (ceH).
+ */
+export function sailRigOf(p, hull = rowBoatHull(p)) {
+  const area = p.sailArea ?? 7;
+  const boom = Math.min(0.62 * p.length, Math.sqrt(area) * 1.05);
+  const mast = (2 * area) / boom + 0.6; // (a triangle: luff = 2·A / foot, the boom 0.6 m up)
+  const mastX = hull.x1 - 0.27 * p.length;
+  return { area, boom, mast, mastX, boomY: hull.D + 0.6, ceX: mastX - boom / 3, ceH: hull.D + 0.6 + mast / 3, board: { area: 0.25 + 0.03 * area, depth: 0.7, x: mastX - boom / 3 - 0.05 }, rudder: { area: 0.1 + 0.01 * area } };
+}
+
 /** The float spec (sim/buoyancy.js bodyFromSpec) of a row boat with these params. */
 export function rowBoatSpec(p) {
-  const hull = { kind: 'rowBoat', length: p.length, beam: p.beam, depth: p.depth };
+  const hull = { kind: 'rowBoat', length: p.length, beam: p.beam, depth: p.depth, ...(p.transom !== undefined && p.transom !== 0.62 ? { transom: p.transom } : {}) };
   const h = rowBoatHull(hull);
   return {
     hull,
@@ -125,6 +175,26 @@ export default {
   params: ROW_BOAT_PARAMS,
   build: (p, ctx) => rowBoatBuild(p, ctx),
 };
+
+/**
+ * The other kinds of boat: the rowing boat's model with other defaults (models/index.js registers
+ * them: motorBoat, sailBoat, canoe). An outboard dinghy; a una-rigged sailing dinghy with a
+ * centreboard; an open canoe (pointed both ends, paddled, low seats).
+ */
+export const BOAT_PRESETS = {
+  row: {},
+  motor: { kind: 'motor', motor: 'outboard', length: 4.0, beam: 1.6, depth: 0.6, material: 'aluminium', hullColor: '#8a9298', insideColor: '#a8adb0', stripeColor: '#22313f', label: 'Motor boat' },
+  sail: { kind: 'sail', length: 4.2, beam: 1.55, depth: 0.55, material: 'grp', hullColor: '#f2f0ea', insideColor: '#d9d6cc', stripeColor: '#1f4e8c', oars: false, label: 'Sailing dinghy' },
+  canoe: { kind: 'canoe', length: 4.8, beam: 0.88, depth: 0.38, transom: 0, thwarts: 2, oars: false, material: 'grp', hullColor: '#2f6b3a', insideColor: '#c8b88e', stripeColor: '#d8c27a', label: 'Canoe' },
+};
+const presetModel = (kind, label) => {
+  const pr = BOAT_PRESETS[kind];
+  const params = Object.fromEntries(Object.entries(ROW_BOAT_PARAMS).map(([k, s]) => [k, k in pr ? { ...s, value: pr[k] } : s]));
+  return { label, params, build: (p, ctx) => rowBoatBuild(p, ctx) };
+};
+export const motorBoat = presetModel('motor', 'Motor boat (an outboard dinghy: throttle, tiller)');
+export const sailBoat = presetModel('sail', 'Sailing dinghy (sail, centreboard, rudder: the wind drives it)');
+export const canoe = presetModel('canoe', 'Canoe (paddled)');
 
 function rowBoatBuild(p, { h }) {
     const spec = rowBoatSpec(p);
@@ -184,7 +254,7 @@ function rowBoatBuild(p, { h }) {
     for (const q of prims) q.anchored = true;
     return {
       prims,
-      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, ...seatsOf(p, hull), moor: { moored: p.moored !== false, length: p.mooring ?? 2 }, params: { length: p.length, beam: p.beam, depth: p.depth, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load } }],
+      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, ...seatsOf(p, hull), moor: { moored: p.moored !== false, length: p.mooring ?? 2 }, boatKind: p.kind ?? 'row', ...(hasMotor(p) ? { outboard: { power: p.motorPower ?? 7.5 } } : {}), ...(p.kind === 'sail' ? { sail: sailRigOf(p, hull) } : {}), params: { kind: p.kind ?? 'row', length: p.length, beam: p.beam, depth: p.depth, transom: p.transom, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load, motor: hasMotor(p) ? 'outboard' : 'none', sailArea: p.sailArea } }],
       portals,
     };
 }
@@ -196,7 +266,7 @@ function rowBoatBuild(p, { h }) {
  * → { prims, floats, portals } to add to that model's.
  */
 export function placeRowBoat(params, at, h, index = 0) {
-  const p = { ...Object.fromEntries(Object.entries(ROW_BOAT_PARAMS).map(([k, s]) => [k, s.value])), ...params };
+  const p = { ...Object.fromEntries(Object.entries(ROW_BOAT_PARAMS).map(([k, s]) => [k, s.value])), ...(BOAT_PRESETS[params.kind] ?? {}), ...params };
   const built = rowBoatBuild(p, { h });
   const [dx, dy, dz] = at;
   const mv = (v) => [v[0] + dx, v[1] + dy, v[2] + dz];

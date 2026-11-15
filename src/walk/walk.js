@@ -161,7 +161,8 @@ export class Walkthrough {
       this.keys.add(e.code);
       if (this.flight) {
         if (e.code === 'KeyE') this.flight.tryExit(this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
-        if (e.code === 'KeyC' && !e.repeat) this.flight.castOff?.(); // (a rowing boat: cast off / make fast)
+        if (e.code === 'KeyC' && !e.repeat) this.flight.castOff?.(); // (a boat: cast off / make fast)
+        if (e.code === 'KeyR' && !e.repeat) this.flight.engine?.(); // (a motor boat: pull the cord / switch off)
         if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
         if (e.code === 'KeyF') this.flight.flaresRequested = true;
@@ -421,7 +422,8 @@ export class Walkthrough {
     this.aimK = 0;
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
-    this.say('W/S pull / back water, A/D port / starboard, mouse to look, C cast off / make fast, E step ashore (Shift+E: over the side)', 6);
+    const how = f.kind === 'sail' ? 'W/S sheet in / out, Q trim it for me, A/D tiller' : f.motor ? 'R start the motor, W/S throttle, A/D tiller' : f.kind === 'canoe' ? 'W/S paddle, A/D turn' : 'W/S pull / back water, A/D port / starboard';
+    this.say(`${how}, mouse to look, C cast off / make fast, E step ashore (Shift+E: over the side)`, 6);
   }
 
   /** Into the helicopter's pilot seat and fly it (see heliFlight.js). */
@@ -834,6 +836,8 @@ export class Walkthrough {
       rain: sim.weather?.rain ?? 0,
       events: w.events,
       helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
+      // the boats: motor, hull, oars, sail from each one's state (audio/boatSound.js)
+      boats: (w.floats ?? []).filter((f) => f.row),
       effort: 0,
       heat: 0,
       airFraction: 1,
@@ -1328,6 +1332,11 @@ export class Walkthrough {
         this.takeHits(w, true);
         if (this.downed) this.flight.pilotDown();
         // and you hear it (and the others): audio/heliSound.js
+        this.flightSound(sim);
+      } else if (this.flight instanceof BoatRow) {
+        // in a boat: you hear it (and the others) from your thwart
+        this.takeHits(w);
+        if (this.downed) this.flight.tryExit(true);
         this.flightSound(sim);
       }
       return;
@@ -1888,6 +1897,8 @@ export class Walkthrough {
       phoenixes: w.phoenixes,
       // the helicopters: rotor, tail rotor, turbine from each one's state (audio/heliSound.js)
       helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
+      // the boats: motor, hull, oars, sail from each one's state (audio/boatSound.js)
+      boats: (w.floats ?? []).filter((f) => f.row),
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });
