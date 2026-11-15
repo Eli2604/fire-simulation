@@ -452,7 +452,7 @@ export const SCENARIOS = {
         name: 'Oak, willow and pine in a grass fire',
         label: 'Oak, willow & pine: grass fire',
         group: 'lake',
-        origin: [283, 2.85, 171.5], // (east of the meadow, its ground level with the meadow's)
+        origin: [283, 2.85, 185], // (east of the meadow, south of the street's car fire; its ground level with the meadow's)
         world: { size: [22, 11, 12], h: 0.2 },
         view: { camera: [-6, 8, 18], around: { y: -0.05, color: '#2c5d78' } },
         proxy: { sea: 0, color: '#a99a52', height: 0.6, fill: 1, cell: 0.2 },

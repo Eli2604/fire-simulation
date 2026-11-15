@@ -552,7 +552,7 @@ fire scenes):
 | Meadow: grass fire (on the shore south of the lake island) | 258, 2.85, 170.5 | 24 × 14 × 9 m | 20 cm | 3× |
 | Car fire by a house (the street, east of the meadow; the old Car fire next to a house) | 284, 2.9, 172 | 14 × 11 × 8 m | 15 cm | 10× |
 | Garden on a dry day (the street, east of the garden; the old scene of that name) | 272, 2.85, 150 | 22 × 18 × 9 m | 20 cm | 10× |
-| Oak, willow & pine: grass fire (east of the meadow; the old Oak, willow and pine in a grass fire) | 283, 2.85, 171.5 | 22 × 12 × 11 m | 20 cm | 4× |
+| Oak, willow & pine: grass fire (east of the meadow; the old Oak, willow and pine in a grass fire) | 283, 2.85, 185 | 22 × 12 × 11 m | 20 cm | 4× |
 
 The lake house and its garden share one weather (the garden's `weatherOf: 'lake'`): a mild
 early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the lake open), so the wash can dry and

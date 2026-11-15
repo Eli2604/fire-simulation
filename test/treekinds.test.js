@@ -168,7 +168,7 @@ test('radiation reaches beyond the blur: a fire warms what stands metres off, an
       weather: { windSpeed: 0, ambient: 15 },
       noFire: true,
       objects: [
-        { type: 'burner', params: { power: 100000, flameRadius: 0.5, flameHeight: 2, nozzleHeight: 0.2 }, x: 1.5, z: 2 },
+        { type: 'burner', params: { power: 400000, flameRadius: 0.5, flameHeight: 2, nozzleHeight: 0.2 }, x: 1.5, z: 2 },
         ...(withWall ? [{ type: 'wall', params: { length: 3.6, height: 3.5, thickness: 0.4, material: 'concrete' }, x: 3.4, z: 2, rotation: 90 }] : []),
         { type: 'wall', params: { length: 3, height: 3, thickness: 0.2 }, x: 5.5, z: 2, rotation: 90 },
       ],
@@ -181,14 +181,15 @@ test('radiation reaches beyond the blur: a fire warms what stands metres off, an
       const i = w.solids[k];
       if (w.owner[i] !== target) continue;
       const [x, y, z] = w.coords(i);
-      E = Math.max(E, w.radField[w.airIdx(x >> 1, y >> 1, z >> 1)]);
+      E = Math.max(E, w.radField[w.airIdx(x >> 1, y >> 1, z >> 1)] + (w.radFar?.[i] ?? 0)); // (the blurred field and the far field, sim/farRadiation.js)
     }
     return E;
   };
   const open = at(false);
   const shaded = at(true);
-  // 30 % of 100 kW radiated, 0.55 of it out of the flame, 4 m off: some tens of W/m² (the blur alone reaches 1.6 m)
-  assert.ok(open > 15 && open < 400, `in the open: ${open.toFixed(0)} W/m²`);
+  // 30 % of 400 kW radiated, 4 m off: some hundreds of W/m² (sim/farRadiation.js; the blur alone reaches 1.6 m,
+  // and the far field leaves out a fire too small to matter, or less than 150 W/m²)
+  assert.ok(open > 150 && open < 3000, `in the open: ${open.toFixed(0)} W/m²`);
   assert.ok(shaded < open * 0.3, `behind a wall: ${shaded.toFixed(0)} W/m²`);
 });
 

@@ -91,7 +91,9 @@ test('the water flows: Q over the fall, v = Q/A down the river; what floats drif
   const mouth = r.stations.find((q) => q.kind === 'sea');
   const d0 = Math.hypot(start.p[0] - mouth.p[0], start.p[2] - mouth.p[2]);
   const d1 = Math.hypot(crate.p[0] - mouth.p[0], crate.p[2] - mouth.p[2]);
-  assert.ok(d1 < Math.min(2, d0 * 0.3), `the crate went down the river (${d0.toFixed(1)} m → ${d1.toFixed(1)} m from the mouth)`);
+  // (out past the mouth it drifts on along the river's run into the sea and comes to rest there)
+  const atSea = Math.min(...r.stations.filter((q) => q.kind === 'sea').map((q) => Math.hypot(crate.p[0] - q.p[0], crate.p[2] - q.p[2])));
+  assert.ok(atSea < 1 && d0 > 5, `the crate went down the river and out to sea (${d0.toFixed(1)} m from the mouth → ${d1.toFixed(1)} m, ${atSea.toFixed(1)} m off its run into the sea)`);
 });
 
 test('the mill wheel turns with the river (slower than the water), and stops when the river is dammed', () => {
