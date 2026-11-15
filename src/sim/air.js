@@ -8,6 +8,7 @@
 import { O2_AIR } from './world.js';
 import { conserveO2 } from './oxygen.js';
 import { stirAir } from './stirrers.js';
+import { applyDrag } from './bodyAir.js';
 
 const CP_AIR = 1005;
 const MAX_AIR_T = 1250;
@@ -131,7 +132,7 @@ function box1D(src, dst, nx, ny, nz, r, axis, B = [0, nx - 1, 0, ny - 1, 0, nz -
  * (indoors only what comes in through doors and windows moves the air), nothing
  * in a closed room. Recomputed when walls, roofs, doors or windows change.
  */
-function windShelter(w) {
+export function windShelter(w) {
   if (w.shelter && w.shelterHash === w.regionHash) return w.shelter;
   w.shelterHash = w.regionHash;
   const { anx, any, anz, passY, occ } = w;
@@ -250,6 +251,8 @@ export function stepAir(w, W, D, dt, sim) {
       }
     }
 
+  // moving bodies (a car, a boat: sim/bodyAir.js dragAir) drag the air round them along
+  applyDrag(w);
   // wind hoses and jets (sim/stirrers.js): their own air on top
   stirAir(w, dt);
   const stirM = w.stirList?.length ? w.stirM : null;

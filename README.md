@@ -1591,6 +1591,125 @@ Big scenes are split twice over:
 voxel faces; ossuary bones are drawn only in the chunks near you. The resolution is the same
 everywhere in a zone: a coarser grid far from you is not done.
 
+### Grid solvers on the GPU (WebGPU)
+
+The air model (`sim/air.js` stepAir: buoyancy, entrainment, the ceiling jet, wind and
+turbulence through open faces, semi-Lagrangian advection of gas temperature, smoke and its
+colour, steam, burning gas, powder and oxygen, mixing, rain and humidity decay, the implicit
+heat exchange with the solids, flames) and the radiation blur (`blurRadiation`) can run as
+WebGPU compute shaders. Everything else (solids, combustion, water, snow, the AI, rendering)
+stays on the CPU.
+
+**Where the time went** (scratch profiler mirroring `Simulation.thermoStep`, ms per 0.2 s
+thermal step, node, before this change):
+
+| Scene | Air cells | Air step | Radiation blur | Solid pass A (conduction, convection, radiation) | Solid pass B (combustion, phase) | Activity | Rest | Total |
+|---|---|---|---|---|---|---|---|---|
+| Carrier deck | 275 600 | 87 (43 %) | 0.8 | 7.9 | 4.3 | 26 | 76 | 202 |
+| Camp island | 368 640 | 95 (22 %) | 2.1 | 1.6 | 0.8 | 35 | 300¹ | 434 |
+| Lake house (teaGarden) | 365 750 | 86 (27 %) | 4.9 | 20 | 15 | 28 | 160¹ | 315 |
+| Hallway, fire burning | 67 830 | 24 (39 %) | 3.6 | 8.9 | 12 | 7.3 | 5 | 61 |
+| Car by a house, fire | 46 953 | 12 (44 %) | 3.9 | 3.0 | 2.4 | 2.9 | 2.3 | 26 |
+
+¹ mostly `updateDerived` (the air's view of the solids after debris moves; the profiler ran it
+every step, the simulation at most 5 times a second) and the motion step (AI, structure).
+The air step is the largest single grid solver everywhere; the solid passes only touch the
+awake solids and are small in comparison, so they stayed on the CPU (see *Limitations*).
+
+**How it is built** (`src/sim/solverBackend.js`, `src/sim/gpu/`):
+
+- `AirSolver` (one per `Simulation`, `sim.airSolver`) is the backend interface. The CPU backend
+  is `stepAir` + `blurRadiation` as they are: the reference, unchanged, and what headless runs
+  and the tests use. `configure('auto' | 'cpu' | 'gpu', ctx)` opts a simulation in (the app does
+  for the scene being played). Each thermal step `chooseAirBackend` picks: the GPU when asked
+  for, the device is ready and the world has nothing the kernels do not model (wind hoses /
+  jets, `sim/stirrers.js`, run on the CPU), else the CPU. A failed step or a lost device falls
+  back to the CPU for good (reload the page to try the GPU again), with the reason shown.
+- `gpu/airLayout.js`: the buffer layout. Six structure-of-arrays f32 storage buffers (the
+  fields carried from step to step, the advected scratch copies, geometry, sources, the
+  radiation field, per-row tables) and one uniform block, all shared with the emulation.
+- `gpu/airKernels.js`: the WGSL kernels, line for line the CPU's math (same discretisation,
+  constants, boundaries): `velocity`, `advect`, `mixHeat` (mixing + heat exchange + flames,
+  fused: each only touches its own cell), `radiation` (the separable box blur, 8 dispatches).
+- `gpu/gpuAir.js`: the data stays resident on the GPU. Before a step only what the CPU changed
+  since the GPU last saw it goes up: each mirrored array is compared in 4096-cell blocks with a
+  shadow of the GPU's copy (the sources the solids put in, the cells heaters, water and
+  combustion touched; the geometry when walls change). The velocities are never uploaded (the
+  step recomputes them). After the step the fields the CPU logic reads come back with one
+  asynchronous `mapAsync`; what the CPU changed while the step was in flight is added on top of
+  the GPU's result. Velocities can be read back at a reduced rate (`velocityEvery`).
+- **One step late**: `Simulation.step` lets the next thermal step wait (up to 0.2 s of
+  simulated time, `MAX_GPU_WAIT`; `advance` ends the frame early) until the previous GPU step
+  is back, so the CPU and GPU never own the air at once. The solids see the air as the CPU
+  path would; what moves (projectiles, the AI, the renderer) sees it up to one air step later.
+  If the GPU is later than that, the CPU takes that step and the GPU's result is dropped.
+- `gpu/gpuContext.js`: feature detection (`navigator.gpu`, an adapter, a device with the
+  adapter's largest storage buffers); device loss sets the context to lost.
+- `gpu/airEmulation.js`: each kernel's math in JS on the same buffers and uniform block;
+  `gpu/emulatedDevice.js` a stand-in WebGPU device that runs it, so the whole host side
+  (offsets, uploads, dispatch order, blur passes, readback, merge) runs in node.
+
+**In the app**: *Simulation › Grid solvers (air)*: Auto (GPU when available, the default),
+CPU, GPU (WebGPU); *Air runs on* shows which runs it and why (e.g. `CPU (no WebGPU here)`,
+`GPU (intel gen-12lp …)`), the HUD the GPU round trip and what went up. `?solver=cpu|gpu|auto`
+sets it from the link. *Voxel size › Scene voxels* has a *Fine (0.5×)* entry for the GPU (8×
+the air cells); the default stays 1×.
+
+**Measured** (node with Dawn, the `webgpu` package, on an Intel UHD (gen-12lp) laptop GPU,
+D3D12; the machine was also running other test suites, so absolute times are inflated: compare
+within a row). CPU-side cost per air step (submit + merge back), against the CPU solver on the
+same state:
+
+| Scene | Air cells | CPU solver | GPU path, CPU-side cost | GPU round trip |
+|---|---|---|---|---|
+| Camp island | 368 640 | 420 ms | 58 ms (20 submit + 38 merge) | 74 ms |
+| Lake house | 365 750 | 684 ms | 82 ms | 113 ms |
+| Carrier deck | 275 600 | 331 ms | 79 ms | 88 ms |
+| Hallway | 67 830 | 83 ms | 26 ms | 32 ms |
+| Hallway, voxels 0.5× | 542 640 | 648 ms | 219 ms | 267 ms |
+
+So the air step's CPU cost drops 3–8×; what is left is scanning the
+mirrored arrays for changes and copying the results back, which scales with the grid, not
+the fire. On an unloaded machine that is roughly 10–20 ms for a 370 000-cell grid, against
+~90 ms for the CPU solver. Whole-step speed-up is smaller (the air was 22–44 % of a step).
+
+**Tests** (`test/gpuAir.test.js`): each kernel's emulation against the CPU step on a burning
+hallway and on randomised grids that take every branch (sleeping cells, ceilings, closed
+faces, a vacuum's suction, rain, fog, open boundaries); the layout and uniform block
+round-trip (and the WGSL struct matches the JS one); the host side end to end on the emulated
+device (only changed blocks uploaded, edits made while a step is in flight kept); a whole
+simulation with the air on the emulated GPU; backend choice, no WebGPU, failure, device loss,
+the wait. With WebGPU in node they also run the real WGSL against the CPU (to f32 tolerance):
+`npm i --no-save webgpu` (or `WEBGPU_MODULE=<path to the package>`), then `npm test`;
+otherwise those two are skipped.
+
+**Checking it in a browser** (Chrome / Edge 113+ on Windows, macOS, ChromeOS; Firefox 141+ on
+Windows; Safari 26):
+
+1. `npm run dev`, open the printed URL with `?scenario=campIsland` (or any scene).
+2. Open *Simulation*: *Grid solvers (air)* is *Auto*; *Air runs on* should read `GPU (…)`.
+   `CPU (no WebGPU here)` means the browser has no `navigator.gpu` (check
+   `chrome://gpu`, *WebGPU: Hardware accelerated*).
+3. Light a fire (Tools › Ignite); the smoke and hot gas should rise and spread as on the CPU.
+   Switch *Grid solvers* to *CPU* and back: the scene continues without a jump.
+4. Compare the FPS / *x real time* figures in the HUD with *CPU* and *GPU* at a high time
+   scale (e.g. 20×), and the *Air solver* row (round trip, KB up).
+5. *Voxel size › Scene voxels › Fine (0.5×)* rebuilds with 8× the air cells.
+6. Opening `chrome://gpucrash` in another tab (it crashes Chrome's GPU process) loses the
+   device: *Air runs on*
+   turns to `CPU (GPU device lost …)` and the simulation goes on.
+
+**Limitations**: the solid passes (conduction, convection, radiation exchange, combustion,
+melting, the state machine of every voxel) stay on the CPU: they walk a sparse list of awake
+solids, scatter into the air's sources and drive events, and uploading the voxel temperatures
+(millions of voxels) each step would cost more than conduction itself; moving them means
+moving pass B with them. Wind hoses and jets (`sim/stirrers.js`) run their steps on the CPU.
+The renderer is WebGL (three.js), which can not read WebGPU buffers, so it reads the CPU copy.
+The fine-detail patches (`sim/patches.js`) are small and stay on the CPU. The GPU computes
+every cell, awake or not (the sleeping-block mask is honoured, so results match); the totals
+of smoke and steam count every cell. Finer voxels still cost on the CPU (the solid passes,
+activity, `updateDerived`, the change scan grow with the grid).
+
 ### Impacts: force, damage, shockwaves
 
 `sim/impact.js` is one model for every collision: a kick, a punch, a judo throw, a soldier
@@ -2013,6 +2132,7 @@ one world: each with a `label` (its box's name in the overview) and optionally i
 ```
 src/sim/        simulation (no dependencies): materials, world grid, solid + air physics, weather
 src/physics/    rigid bodies (no three.js): shapes, contacts, solver, joints, CCD, sleeping, ragdolls, vehicle adapters
+src/sim/gpu/    the air model as WebGPU compute (kernels, layout, emulation); sim/solverBackend.js picks CPU / GPU
 src/models/     parameterised models and the voxeliser
 src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, particle or
                 volumetric smoke/steam, rain, extinguisher spray, debris, view

@@ -141,7 +141,7 @@ export class CarRenderer {
         const B = c.body;
         let ch = 0, n = 0;
         for (let i = 0; i < B.n; i += 3)
-          if (B.alive[i]) {
+          if (B.s.mat[i]) {
             ch += B.state.char[i];
             n++;
           }

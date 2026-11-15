@@ -246,7 +246,8 @@ function rowBoatBuild(p, { h }) {
       for (const sd of [-1, 1]) {
         const z = sd * Math.min(0.32, p.beam * 0.22);
         prims.push(
-          { shape: 'cylinder', a: [-p.length * 0.27, oy, z], b: [p.length * 0.24, oy, z], r: 0.022, material: wood, color: [0.78, 0.66, 0.46], hidden },
+          // (a loom 44 mm thick: its share of a voxel's cross-section, not a voxel of solid wood)
+          { shape: 'cylinder', a: [-p.length * 0.27, oy, z], b: [p.length * 0.24, oy, z], r: 0.022, material: wood, density: Math.min(1, (Math.PI * 0.022 * 0.022) / (h * h)), color: [0.78, 0.66, 0.46], hidden },
           { shape: 'box', min: [p.length * 0.24, oy - 0.006, z - 0.075], max: [p.length * 0.24 + 0.55, oy + 0.006, z + 0.075], material: wood, density: thin(0.012), color: [0.78, 0.66, 0.46], hidden },
         );
       }

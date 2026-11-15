@@ -2,6 +2,7 @@ import { MAT, MATERIALS } from './materials.js';
 import { waterStirAt } from './stirrers.js';
 import { initBoat, stepDrift, updateHoles } from './boats.js';
 import { makeMovingBody, needsRestamp, restamp, syncBody, ownsCell, displaceLiquid } from './movingBody.js';
+import { dragAir } from './bodyAir.js';
 import { F_BURNING, F_SMOLDER } from './world.js';
 import { placeCrew } from './boatCrew.js';
 import { boatGround, rutAt } from './groundContact.js';
@@ -53,8 +54,9 @@ import { boatGround, rutAt } from './groundContact.js';
  * it) float on the sea or a pond of their world; their voxels (hidden: render/floats.js draws
  * the hull in its pose) burn as their material does, and go with it wherever it goes (a moving
  * body, sim/movingBody.js: stampFloat restamps them at its pose when it has moved half a voxel,
- * with their heat, fire and char; the pond's water is pushed out of the hull and closes in where
- * it was). Where planking has burnt away below the waterline the water comes in, and with less
+ * with their heat, fire and char, its planking kept tight at any heel; the pond's water is pushed
+ * out of the hull and closes in where it was; the air in its hull goes with it and the air round
+ * it is dragged along: sim/bodyAir.js). Where planking has burnt away below the waterline the water comes in, and with less
  * planking it has less shell to float on (shellLoss); what is under the water does not burn. The carrier (sim/water.js stepBuoyancy) floats by the same
  * law, see carrierBody.
  */
@@ -852,12 +854,18 @@ export function stepFloats(sim, dt) {
       }
     }
     stepBody(f.body, dt, env);
+    f.surf = surfaceOf(env); // (the water's surface round it now, its waves too: quenchBelow)
     if (f.row) moveBoat(sim, f, dt, env);
-    // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js)
-    if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i), toWorld, level: f.water.level });
+    // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js). Its own
+    // voxels and what they left in it (ash and char in the bilge) are not the bed it rests on.
+    if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i) || (f.mb?.owner >= 0 && w.owner[i] === f.mb.owner), toWorld, level: f.water.level });
     // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
     f.stampT = (f.stampT ?? 0) - dt;
     if (f.mb && f.stampT <= 0) stampFloat(w, f);
+    // (on a pond: what ran in through the joints between its voxels since, out again, every step)
+    else if (f.mb && f.water && !f.water.sea && f.mb.stamps > 0) displaceLiquid(w, f.mb, hullOpts(f.body.hull));
+    // the air round it dragged along as it goes (its plume trails behind it: sim/bodyAir.js)
+    if (f.mb && f.body.pose && Math.hypot(f.body.vx ?? 0, f.body.vz ?? 0) > 0.3) dragAir(w, f.mb, f.body.pose, [f.body.vx, 0, f.body.vz], [0, f.body.wy ?? 0, 0]);
     if (f.seats) placeCrew(f);
     if (f.body.sunk && !f.sunkNoted) {
       f.sunkNoted = true;
@@ -916,7 +924,7 @@ export function initFloat(sim, f) {
     };
     const cells = f.own?.length ? f.own : f.voxels;
     const hullSet = new Set(f.voxels ?? []);
-    f.mb = makeMovingBody(w, cells, local, { pose: { p: keel, R: R0 }, tags: (k) => (hullSet.has(cells[k]) ? 1 : 0) });
+    f.mb = makeMovingBody(w, cells, local, { pose: { p: keel, R: R0 }, owner: w.owner[cells[0]], tags: (k, i) => (hullSet.has(i) ? 1 : 0), seal: (k, i) => hullSet.has(i) });
     f.n0 = hullSet.size;
   }
   b.pose = framePose(b);
@@ -976,12 +984,15 @@ function moveBoat(sim, f, dt, env) {
     f.look = 0.25;
     const k = toWorld(b, [0, 0, 0]);
     if (!f.water.sea) {
-      // (beside the hull, not under it: under its keel the water's top is the keel's bottom, and
-      // the level found there would sink it a voxel at a time)
+      // (round it: in its own column its hull keeps the water out, and the
+      // first water under its keel is not the surface: the level read there sank with every look)
+      // (the most of four round it: the top layer of a pond's voxels has holes for a moment where
+      // its water flows into the room its hull leaves)
+      const hb = b.hull.B / 2 + 0.3, hl = b.hull.L / 2 + 0.3;
       let top = null;
-      for (const sd of [1, -1]) {
-        const p = toWorld(b, [0, 0, sd * (b.hull.B / 2 + 0.3)]);
-        const t = surfaceUnder(w, p[0], p[2], f.water.level + 0.6);
+      for (const [lx, lz] of [[0, hb], [0, -hb], [hl, 0], [-hl, 0]]) {
+        const q = toWorld(b, [lx, 0, lz]);
+        const t = surfaceUnder(w, q[0], q[2], f.water.level + 0.6);
         if (t !== null && (top === null || t > top)) top = t;
       }
       top ??= surfaceUnder(w, k[0], k[2], f.water.level + 0.6);
@@ -1039,6 +1050,7 @@ export function floatOwns(f, i) {
 
 /** Its envelope (hull frame): the planking and the open inside it encloses. */
 const inHullEnvelope = (hull) => (x, y, z) => x > hull.x0 && x < hull.x1 && Math.abs(z) < hull.half(x, y);
+const hullOpts = (hull) => (hull._env ??= { inside: inHullEnvelope(hull), bounds: [[hull.x0, -0.02, -hull.B / 2], [hull.x1, hull.D + 0.02, hull.B / 2]], liquid: MAT.water });
 
 /**
  * Its voxels where it is now (sim/movingBody.js restamp), once it has moved half a voxel or more
@@ -1056,6 +1068,9 @@ export function stampFloat(w, f, force = false) {
     bounds: [[hull.x0, -0.02, -hull.B / 2], [hull.x1, hull.D + 0.02, hull.B / 2]],
     liquid: MAT.water,
     refill: pond ? { mat: MAT.water, below: f.water.level } : null,
+    // (what falls off it drifts with it; the air in its hull goes with it: sim/bodyAir.js)
+    vel: { v: [b.vx ?? 0, b.vy ?? 0, b.vz ?? 0], w: [0, b.wy ?? 0, 0] },
+    air: { inside: inHullEnvelope(hull) },
   };
   if (!force && !needsRestamp(mb, b.pose, w.h, 0.5)) {
     // (lying still off its berth: the pond's water that ran in through the gaps between its voxels, out again)
@@ -1113,15 +1128,25 @@ function checkPlanking(w, f) {
   if (f.water) quenchBelow(w, f, f.water.level);
 }
 
-/** Its voxels under the water's surface: wet through, no hotter than boiling, not burning. */
+/**
+ * Its voxels under the water's surface: wet through, no hotter than boiling, not burning. The
+ * surface where each is (on the sea its waves: it heaves with them, so what is under the still
+ * level in a trough is not under the water there).
+ */
 function quenchBelow(w, f, level) {
   const mb = f.mb;
   const { nx, ny, h } = w;
-  for (let k = 0; k < mb.n; k++) {
-    const c = mb.at[k];
-    if (c < 0) continue;
+  const surf = f.surf;
+  for (let j = 0; j < mb.nCells; j++) {
+    const c = mb.cellList[j];
     const y = ((Math.floor(c / nx) % ny) + 0.5) * h;
-    if (y > level - 0.25 * h) continue;
+    if (y > level + 0.6) continue;
+    let lv = level;
+    if (surf) {
+      const x = c % nx, z = Math.floor(c / (nx * ny));
+      lv = surf((x + 0.5) * h, (z + 0.5) * h);
+    }
+    if (y > lv - 0.25 * h) continue;
     const m = w.mat[c];
     if (!m) continue;
     w.flags[c] &= ~(F_BURNING | F_SMOLDER);
