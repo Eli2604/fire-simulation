@@ -182,7 +182,9 @@ builds the whole editor as one file.
   puts you and which way you face. *Set the walk-in start* moves it: click a spot, and you
   will face the way the camera looks.
 - **Tools** (click on a model; dragging still orbits the camera):
-  - *Inspect*: material, core and surface temperature, fuel left, moisture, state.
+  - *Inspect*: material, core and surface temperature, fuel left, moisture, state (also of
+    what is drawn over hidden voxels: scans, trees, grass; a garment on a washing line as a
+    whole – see *Laundry on the line*).
   - *Set fire start* / *Set walk-in start* / *Place new object*: see above and below.
   - *Ignite*: a lighter.
   - *Fire torch*: hold the left mouse button to play a flame on a spot.
@@ -710,6 +712,23 @@ place's 15× time). Then the fire runs along the line; the shirts
 shrink, melt and drip before they burn; garments burnt through at the top fall; the lawn
 scorches under them. The cloth is drawn as cloth (folds, weave, stripes, seams, pegs),
 swaying in the breeze, and tied to its voxels: it chars, glows and burns through to holes.
+
+*What the cloth is, and what Inspect shows of it* (sim/cloth.js, render/pick.js): every
+garment is real voxels – boxes of cotton or polyester one voxel thick whose density factor
+makes them half a millimetre of cloth (thicker for towels and jeans), the pegged top row
+anchored, all of them *hidden*. They carry the physics (water, heat, char, flames, falling
+when the top burns through); the drawn cloth is only their picture, folded and swaying up
+to ~0.2 m out of their plane at the hem. A click used to be tested against the voxel cubes
+alone, and hidden voxels are not among them: the ray went through the sheet to the lawn, and
+the inspector showed the grass, or nothing. Now the pick (the same one for every tool and the
+editor) also raycasts the drawn cloth as it is drawn – sway, folds and holes – maps the
+triangle hit to its voxel and that voxel to its garment. Inspect then shows the garment as a
+whole (one voxel of a sheet says little): which garment and its cloth, its size and dry
+mass, its water, mean / hottest / surface temperature, how much has burnt (charred, ash,
+fallen off), the cloth left, whether it still hangs from its pegs, its heat release, its
+voxels and the air cells round it, and the clicked voxel's own state. The same pick finds
+the other things drawn over hidden voxels by a mesh of their own: the scanned statues,
+candelabra and props, and trees (bark, leaves) and grass blades.
 
 **More ready-made objects** (models/scannedProp.js: any CC0 Poly Haven model over voxels of
 its material, holding its real weight): in the underground church a brass vase on the

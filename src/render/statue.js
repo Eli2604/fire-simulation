@@ -86,6 +86,7 @@ export class StatueDrawing {
     };
     this.uniforms = { uState: { value: null }, uSlots: { value: 1 }, uRows: { value: 1 }, uTime: { value: 0 }, uLineY: { value: pr.line?.H ?? 0 } };
     this.src = [];
+    this.drawn = []; // its meshes as drawn (render/pick.js raycasts them: the inspector, the tools)
     this.pieces = new Map(); // slot -> the mesh of its piece, once it has broken off
     const v = new THREE.Vector3();
     for (const m of meshes) {
@@ -120,6 +121,7 @@ export class StatueDrawing {
       m.material = this.patched(m.material, true);
       m.castShadow = false; // (its shadow would not lose the parts that are gone)
       m.receiveShadow = true;
+      this.drawn.push(m);
     }
     this.slots = this.own;
     // (in rows of 1024: some graphics cards take no textures wider than 4096)
@@ -157,7 +159,7 @@ export class StatueDrawing {
           whole
             ? `#include <begin_vertex>
 vState = texture2D(uState, vec2((mod(aSlot, uSlots) + 0.5) / uSlots, (floor(aSlot / uSlots) + 0.5) / uRows));
-${this.pr.sway ? '// hanging cloth sways in the breeze, more lower down\nfloat hang = clamp(uLineY - transformed.y, 0.0, 1.5);\ntransformed.z += hang * hang * (0.06 * sin(uTime * 1.6 + transformed.x * 1.3) + 0.025 * sin(uTime * 4.1 + transformed.x * 5.0));' : ''}
+${this.pr.sway ? '// hanging cloth sways in the breeze, more lower down (swayZ: the same in JS)\nfloat hang = clamp(uLineY - transformed.y, 0.0, 1.5);\ntransformed.z += hang * hang * (0.06 * sin(uTime * 1.6 + transformed.x * 1.3) + 0.025 * sin(uTime * 4.1 + transformed.x * 5.0));' : ''}
 // its voxel gone (blown off, fallen, molten): this part is not drawn here
 if (vState.r < 0.5) transformed = vec3(0.0);`
             : '#include <begin_vertex>\nvState = vec4(1.0, uPiece.x, uPiece.y, 0.0);',
@@ -261,6 +263,59 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
     for (const f of this.flames) if (f.on !== false && f.statueSlot >= 0 && !this.inPlace(this.slots[f.statueSlot])) f.on = false;
   }
 
+  /**
+   * Raycast the object as it is drawn (`ray`: a THREE.Ray in world space): its parts that are
+   * gone left out, hanging cloth where the wind has swung it now (the shader's sway, swayZ).
+   * Its voxels are hidden (not among the voxel instances the view picks from), so this is how a
+   * click finds them. The nearest hit: { distance, point (world), normal (world, towards the
+   * ray), slot, voxel: the voxel that part of the object is (as built: slots[slot]) } or null.
+   */
+  pick(ray) {
+    if (!this.ready) return null;
+    const sway = this.pr.sway ? this.uniforms.uLineY.value : null;
+    const t = this.uniforms.uTime.value;
+    const inv = new THREE.Matrix4();
+    const lr = new THREE.Ray();
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const q = new THREE.Vector3();
+    const sph = new THREE.Sphere();
+    const vert = (v, pos, k) => {
+      v.fromBufferAttribute(pos, k);
+      if (sway !== null) v.z += swayZ(sway, v.x, v.y, t);
+      return v;
+    };
+    let best = null;
+    for (const m of this.drawn) {
+      // (not drawn: a level of detail dropped it)
+      let shown = true;
+      for (let o = m; o; o = o.parent) if (!o.visible) shown = false;
+      if (!shown) continue;
+      const geo = m.geometry;
+      inv.copy(m.matrixWorld).invert();
+      lr.copy(ray).applyMatrix4(inv);
+      if (!geo.boundingSphere) geo.computeBoundingSphere();
+      sph.copy(geo.boundingSphere);
+      if (sway !== null) sph.radius += 0.25; // (the sway reaches ~0.2 m at the hem)
+      if (!lr.intersectsSphere(sph)) continue;
+      const pos = geo.getAttribute('position');
+      const slot = geo.getAttribute('aSlot');
+      for (let k = 0; k + 2 < pos.count; k += 3) {
+        const s = slot.getX(k);
+        if (this.data[s * 4] < 0.5) continue; // (its voxel gone: this part is not drawn)
+        if (!lr.intersectTriangle(vert(a, pos, k), vert(b, pos, k + 1), vert(c, pos, k + 2), false, q)) continue;
+        const p = q.clone().applyMatrix4(m.matrixWorld);
+        const d = p.distanceTo(ray.origin);
+        if (best && d >= best.distance) continue;
+        const n = b.clone().sub(a).cross(c.clone().sub(a)).transformDirection(m.matrixWorld);
+        if (n.dot(ray.direction) > 0) n.negate(); // (the side facing the eye: cloth has two)
+        best = { distance: d, point: p, normal: n, slot: s, voxel: this.slots[s], drawing: this };
+      }
+    }
+    return best;
+  }
+
   update(dt) {
     if (!this.ready) return;
     this.uniforms.uTime.value += dt;
@@ -270,6 +325,15 @@ if (vState.r < 0.5) transformed = vec3(0.0);`
     this.t = 0;
     this.refresh();
   }
+}
+
+/**
+ * How far hanging cloth has swung out of its plane (along its own z) at (x, y) of its own
+ * frame, at time t, under a line at height lineY: the shader's sway in JS (keep them alike).
+ */
+export function swayZ(lineY, x, y, t) {
+  const hang = Math.min(1.5, Math.max(0, lineY - y));
+  return hang * hang * (0.06 * Math.sin(t * 1.6 + x * 1.3) + 0.025 * Math.sin(t * 4.1 + x * 5.0));
 }
 
 /**
