@@ -156,7 +156,8 @@ test('a boat set alight at its berth then rowed away keeps burning, its fire wit
       }
   assert.equal(wet, 0, 'no pond water inside the hull');
   // and its berth is pond again
-  const old = w.voxelAt(home[0], f.water.level - 0.05, home[1]);
+  // (a layer under the level: the pond's water that filled the hollow it was built in leaves its top layer lower)
+  const old = w.voxelAt(home[0], f.water.level - 0.15, home[1]);
   assert.equal(w.mat[old], MAT.water, 'the water closed in over its old berth');
   // the fire burns where it is: the air over the boat is hot, not over its berth
   syncBody(w, f.mb);
