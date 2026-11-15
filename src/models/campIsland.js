@@ -49,7 +49,7 @@ export function campIslandLayout(p) {
 export default {
   label: 'Camp island (camp pad, ridge, landing ground, pier)',
   params: {
-    width: { value: 92, min: 40, max: 120, step: 1, label: 'Size along X (m)' },
+    width: { value: 92, min: 40, max: 140, step: 1, label: 'Size along X (m)' },
     depth: { value: 72, min: 30, max: 120, step: 1, label: 'Size along Z (m)' },
     seaLevel: { value: 2.5, min: 0.5, max: 6, step: 0.1, label: 'Sea level (m)' },
     ground: { value: 1.0, min: 0.3, max: 3, step: 0.1, label: 'Ground above the sea (m)' },

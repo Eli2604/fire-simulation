@@ -15,7 +15,9 @@ import { hexToRgb } from './util.js';
  *    the tile joints, spreads under the ceiling and fills the corridor from the
  *    top down.
  *
- * Local frame: the corridor runs along x, the entrance is at -x.
+ * Local frame: the corridor runs along x, the entrance is at -x. With `exitTo` (the corridor as a
+ * place inside a building: the headquarters of the camp island, models/militaryBase.js) a step
+ * out of the entrance (E) leads there.
  */
 const WALLS = { concrete: 'concrete', brick: 'brick', plasterboard: 'plaster' };
 
@@ -48,6 +50,8 @@ export default {
     boxes: { value: true, label: 'Cardboard boxes stored' },
     noticeBoard: { value: true, label: 'Notice board' },
     carpet: { value: true, label: 'Carpet runner' },
+    exitTo: { value: '', label: 'Zone the entrance leads out to (a place inside a building: ..)' },
+    exitLabel: { value: 'Door: outside', label: 'What the way out is (its hint)' },
   },
   build(p, { h }) {
     const L = p.length;
@@ -237,6 +241,9 @@ export default {
       ],
       // where a firefighter starts: outside the entrance, looking in
       spawn: { p: [-hx - wt - 1.5, 0, 0], yaw: 0 },
+      // the way out: just outside the entrance (clear of the extinguisher by it); coming in you stand
+      // a step inside, facing down the corridor
+      portals: p.exitTo ? [{ p: [-hx - wt - 0.7, t, 0], r: 0.5, to: p.exitTo, label: p.exitLabel, arrive: { p: [-hx + 0.6, t, 0], yaw: 0 } }] : [],
       pickups: [
         { id: 'extinguisher', type: 'extinguisher', agent: p.extinguisher, p: [extinguisherAt[0], t + 0.6, extinguisherAt[2]] },
         ...(p.hoseReel ? [{ id: 'reel', type: 'hoseReel', length: 30, p: reelAt }] : []),

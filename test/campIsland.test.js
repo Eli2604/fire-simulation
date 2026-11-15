@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SCENARIOS, SCENARIO_ALIASES, cloneScene, placeBoxes, openScenario } from '../src/scenarios.js';
-import { CAMP_AT, PAD_TOP, campDeployPoint, CAMP_ISLAND_SEA } from '../src/campIsland.js';
+import { CAMP_AT, PAD_TOP, campDeployPoint, CAMP_ISLAND_SEA, HQ_AT, HQ_PLACE, HELIPAD_AT, GATE_AT } from '../src/campIsland.js';
 import { buildWorld, createSimulation, spawnFloor } from '../src/sim/createSimulation.js';
 import { traceVoxels } from '../src/ai/sight.js';
 import { MATERIALS } from '../src/sim/materials.js';
@@ -16,7 +16,9 @@ test('the camp island: a place of its own in the carrier world, with the camp, i
   assert.ok(zone, 'a camp zone');
   assert.ok(zone.origin && zone.label && !zone.group && !zone.indoor, 'outdoors, in the world by its origin');
   const types = zone.objects.map((o) => o.type);
-  for (const t of ['campIsland', 'droneCamp', 'solarPark', 'windTurbine', 'campPatrol']) assert.equal(types.filter((x) => x === t).length, 1, t);
+  for (const t of ['campIsland', 'droneCamp', 'solarPark', 'windTurbine']) assert.equal(types.filter((x) => x === t).length, 1, t);
+  // (the squad's round; and the sentries at the gate of the base round it)
+  assert.equal(zone.objects.filter((o) => o.type === 'campPatrol' && o.params.unit === 'Kilo').length, 1, 'campPatrol');
   for (const t of ['campIsland', 'droneCamp', 'solarPark', 'windTurbine', 'campPatrol']) assert.ok(MODELS[t]?.params && MODELS[t].label, `${t}: a model with parameters (the editor's)`);
   // its own box, clear of every other place in the open
   const boxes = placeBoxes(sc).filter((b) => !b.schematic);
@@ -51,9 +53,11 @@ test('the camp island built: generators and a load on one grid, a squad of soldi
     const i = w.voxelAt(...g.check);
     assert.ok(i >= 0 && w.mat[i], `${g.kind}: its ${g.kind === 'wind' ? 'nacelle' : 'inverter'}`);
   }
-  // the squad: four soldiers of one team on a round of 8 corners about the camp's middle
-  const E = w.enemies;
+  // the squad: four soldiers of one team on a round of 8 corners about the camp's middle (the two
+  // sentries at the gate, Lima, are a team of their own)
+  const E = w.enemies.filter((e) => e.unit === 'Kilo');
   assert.equal(E.length, 4);
+  assert.equal(w.enemies.filter((e) => e.unit === 'Lima').length, 2, 'two sentries at the gate');
   assert.ok(E.every((e) => e.soldier && e.unit === 'Kilo' && e.armour && e.lureCooldown === Infinity));
   const corners = E[0].area.corners;
   assert.equal(E[0].area.mode, 'route');
@@ -101,6 +105,49 @@ test('the landing ground behind the ridge: the walk-in start, out of sight of th
   assert.ok(crest[1] > PAD_TOP + 5, `a ridge between (${crest[1].toFixed(1)} m)`);
   assert.ok(!blocked(top, eye), 'the landing seen from the crest');
   assert.ok(!blocked(top, [CAMP_AT[0] + 12.5, PAD_TOP + 1.6, CAMP_AT[1]]), 'the round seen from the crest');
+});
+
+test('the military base round the camp: blast walls with a gate, the headquarters (its corridor a place inside), barracks, a helipad, a vehicle park', LONG, () => {
+  const count = (t) => zone.objects.filter((o) => o.type === t).length;
+  for (const [t, n] of [['hqBuilding', 1], ['guardPost', 1], ['barracks', 2], ['helipad', 1], ['helicopter', 1]]) assert.equal(count(t), n, t);
+  assert.ok(count('blastWall') >= 5 && count('road') >= 3 && count('car') >= 3);
+  for (const t of ['hqBuilding', 'guardPost', 'barracks', 'helipad', 'blastWall', 'road']) assert.ok(MODELS[t]?.params && MODELS[t].label, `${t}: a model with parameters`);
+  // the headquarters holds its corridor: a place of the world inside it (built when you go in)
+  const hq = zone.objects.find((o) => o.type === 'hqBuilding');
+  assert.equal(hq.params.doorTo, HQ_PLACE);
+  const place = hq.children.find((c) => c.type === 'place');
+  assert.ok(place && place.key === HQ_PLACE && sc.zones[HQ_PLACE] === place, 'a place of the world');
+  assert.equal(place.within, 'camp');
+  assert.ok(place.indoor && !place.origin && place.box, 'indoors, a schematic box');
+  const box = placeBoxes(sc).find((b) => b.name === HQ_PLACE);
+  const [cx, cz] = [(box.min[0] + box.max[0]) / 2 - zone.origin[0], (box.min[2] + box.max[2]) / 2 - zone.origin[2]];
+  assert.ok(Math.hypot(cx - HQ_AT[0], cz - HQ_AT[1]) < 0.5, 'its box where the headquarters stands');
+  // built: the door (E) into it, where you come out again standing on the pad, free to walk
+  const w = world();
+  const door = w.portals.find((p) => p.to === HQ_PLACE);
+  assert.ok(door && door.arrive, 'the door in');
+  assert.ok(Math.abs(door.p[0] - HQ_AT[0]) < 7 && door.p[2] > HQ_AT[1] && door.p[2] - HQ_AT[1] < 6, 'on its south side');
+  assert.ok(Math.abs(spawnFloor(w, [door.arrive.p[0], PAD_TOP + 0.3, door.arrive.p[2]]) - PAD_TOP) < 1e-6, 'out on the pad');
+  const clearAt = (x, z, y0 = PAD_TOP + 0.25, y1 = PAD_TOP + 1.8, ok = () => false) => {
+    for (let y = y0; y < y1; y += w.h) {
+      const i = w.voxelAt(x, y, z);
+      if (i >= 0 && w.mat[i] && !ok(i)) return false;
+    }
+    return true;
+  };
+  assert.ok(clearAt(door.arrive.p[0], door.arrive.p[2]), 'nothing in the way there');
+  // the perimeter: a wall all round but at the gate; the road through the gate only barred by the barrier (a door: E)
+  assert.ok(!clearAt(GATE_AT[0], GATE_AT[1] - 10) && !clearAt(GATE_AT[0], GATE_AT[1] + 10), 'the east wall either side of the gate');
+  const barrier = w.doors.findIndex((d) => d.name === 'gate barrier');
+  assert.ok(barrier >= 0);
+  for (let x = GATE_AT[0] + 3; x > CAMP_AT[0] + 10; x -= 0.5) {
+    assert.ok(clearAt(x, GATE_AT[1] + 1, undefined, undefined, (i) => w.doorTag[i] === barrier + 1), `the road clear at x ${x}`);
+    if (clearAt(x, GATE_AT[1] + 1)) assert.ok(Math.abs(spawnFloor(w, [x, PAD_TOP + 0.3, GATE_AT[1] + 1]) - PAD_TOP) < 1e-6, `level at x ${x}`);
+  }
+  // the barracks' doors open; the helicopter parked on its pad, its rotor still
+  assert.equal(w.doors.filter((d) => d.name.startsWith('barracks door')).length, 4);
+  assert.equal(w.helis.length, 1);
+  assert.ok(Math.hypot(w.helis[0].p[0] - HELIPAD_AT[0], w.helis[0].p[2] - HELIPAD_AT[1]) < 0.6 && w.helis[0].airborne === false && w.helis[0].autoStart === false);
 });
 
 test('a wind turbine: its power curve, turning with the wind, yawing into it, stopped above cut-out', () => {
