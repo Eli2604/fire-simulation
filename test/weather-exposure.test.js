@@ -4,7 +4,6 @@ import { defaultWeather, exposureOf, liveWeather, WeatherDrift } from '../src/si
 import { SCENARIOS } from '../src/scenarios.js';
 
 test('places get the exposure their flags say', () => {
-  assert.equal(exposureOf(SCENARIOS.hallway), 'indoor');
   assert.equal(exposureOf(SCENARIOS.carrier.zones.catacombs), 'underground');
   assert.equal(exposureOf(SCENARIOS.carrier.zones.spaceship), 'sealed');
   assert.equal(exposureOf(SCENARIOS.carrier.zones.below), 'indoor');

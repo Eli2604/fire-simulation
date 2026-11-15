@@ -101,7 +101,7 @@ test('a heated propane cylinder with a blocked relief valve bursts: fireball and
   const sim = cylinder('blocked');
   const v = sim.world.vessels[0];
   assert.ok(v.pressure > 5e5 && v.pressure < 1e6, `≈8 bar at 20 °C (${(v.pressure / 1e5).toFixed(1)})`);
-  heatContents(sim, 110); // liquid-full: the pressure climbs ~5 bar per K
+  v.Tl = 80; // (the cylinder's liquid, sim/vessels.js: liquid-full, the pressure shoots up)
   sim.step(sim.dt);
   assert.equal(v.state, 'ruptured');
   assert.ok(sim.world.events.some((e) => e.type === 'explosion'));
@@ -112,11 +112,11 @@ test('a heated propane cylinder with a blocked relief valve bursts: fireball and
 test('with a working relief valve the cylinder vents a jet flame instead', () => {
   const sim = cylinder('working');
   const v = sim.world.vessels[0];
-  heatContents(sim, 65);
+  v.Tl = 60;
   for (let k = 0; k < 5; k++) sim.step(sim.dt);
   assert.equal(v.state, 'sealed');
   assert.ok(v.venting, 'relief valve open');
-  assert.ok(sim.stats.ventHrr > 1000, `jet flame ${(sim.stats.ventHrr / 1000).toFixed(0)} kW`);
+  assert.ok(v.jetPower > 1e5 && v.jet.on, `jet flame ${(v.jetPower / 1000).toFixed(0)} kW`);
 });
 
 test('a plastic fuel tank softens and leaks instead of exploding', () => {

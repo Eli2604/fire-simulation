@@ -7,6 +7,18 @@ import { SCENARIOS, cloneScene } from '../src/scenarios.js';
 import { explode, burstPipeAt } from '../src/sim/explosions.js';
 import { defaultWeather } from '../src/sim/weather.js';
 
+// the office corridor with its suspended ceiling, its gas and water pipes (the old Hallway: gas
+// pipe burst scene; its gas line burst is now in the carrier's main passageway below deck)
+const HALLWAY = {
+  name: 'Hallway',
+  world: { size: [17, 4.2, 7.6], h: 0.1 },
+  weather: { ...defaultWeather(), ambient: 18, humidity: 0.5 },
+  exposure: 'indoor',
+  timeScale: 1,
+  view: { camera: [1.2, 3.8, -1.5], walk: true },
+  objects: [{ type: 'hallway', params: {}, x: 9.5, z: 2 }],
+};
+
 // a small furnished house in steady rain (the old House fire in the rain scene: now the lake house in Weather › Presets › Rain)
 const RAINY_HOUSE = {
   name: 'House fire in the rain',
@@ -154,7 +166,7 @@ test('rain stays outside a house, and so does the wind', () => {
 });
 
 test('a burst water pipe floods the hallway', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.hallway));
+  const sim = createSimulation(cloneScene(HALLWAY));
   const w = sim.world;
   const gp = w.gasPipes.find((g) => g.water);
   assert.ok(gp && gp.voxels.length > 20, 'a water pipe made of voxels');
@@ -203,7 +215,7 @@ test('ship: the fuel line bursts as an explosion that holes the hull; the sea fi
 test('walk-through: water is no floor; deep water with air above it floats you, full to the ceiling it does not', async () => {
   globalThis.document ??= { createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {} }, getElementById: () => null, querySelector: () => null };
   const { Walkthrough } = await import('../src/walk/walk.js');
-  const sim = createSimulation(cloneScene(SCENARIOS.hallway));
+  const sim = createSimulation(cloneScene(HALLWAY));
   const w = sim.world;
   const P = Walkthrough.prototype;
   const me = { hooks: { getSim: () => sim } };

@@ -1,4 +1,5 @@
-import { MATERIALS } from './materials.js';
+import { MATERIALS, MAT } from './materials.js';
+import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { airStirAt } from './stirrers.js';
 import { breachFlowAt } from './breach.js';
 import { inHull } from './vacuum.js';
@@ -100,6 +101,7 @@ export function stepVessels(sim, dt) {
   }
 
   w.vessels.forEach((v, k) => {
+    if (v.lumped) return stepLumped(sim, v, acc[k], k, dt);
     if (v.state === 'ruptured' || v.state === 'leaking') return;
     const a = acc[k];
     v.shellCount0 ??= a.shell.length;
@@ -198,6 +200,427 @@ export function stepVessels(sim, dt) {
       } else rupture(sim, v, a, gauge, Tf);
     }
   });
+}
+
+// ------------------------------------------------------------------ liquefied gas cylinders
+
+const SIGMA = 5.67e-8;
+const STEEL_RHO_C = 7850 * 500; // J/(m³·K)
+const U_BOIL = 3000; // W/(m²·K): wetted wall to the boiling liquid
+const H_VAPOUR = 10; // W/(m²·K): dry wall to the vapour behind it (natural convection, poor)
+// a shell voxel takes the flames' heat in through every face it has open: outside, and into the
+// hollow inside the shell (the air grid, coarser than the voxels, has the flames in there too); the
+// real wall only through its outside
+const SENSOR = 0.5;
+const PHI_MAX = 2e5;
+const HOLE_RATE = 0.4; // kg/s through a hole torn in the shell (per 11 kg cylinder)
+
+/** Density of a liquefied gas at T °C (kg/m³): it swells as it warms (materials.js vapor.expansion). */
+export function liquidDensity(fluid, T) {
+  const e = fluid.vapor?.expansion;
+  const d = T - 15;
+  if (!e) return fluid.density * (1 - (fluid.vapor?.beta ?? 0.001) * d);
+  return fluid.density * Math.exp(-(e.a * d + (d > 0 ? e.b * d * d : 0)));
+}
+
+/**
+ * Peak side-on overpressure (kPa) at r m of a burst of energy E J at the ground (Sadovsky's
+ * fit in Hopkinson-scaled distance Z = r / W^(1/3), W the TNT equivalent: 4.6 MJ/kg; half
+ * the energy goes into the blast, the ground doubles it).
+ */
+export function blastOverpressure(E, r) {
+  const W = E / 4.6e6;
+  const Z = Math.max(0.5, r / Math.cbrt(Math.max(W, 1e-9)));
+  return 100 * (0.85 / Z + 3 / Z ** 2 + 8 / Z ** 3);
+}
+
+/**
+ * A liquefied-gas cylinder as the real one (models/gasCylinder.js: its mass, volume, radius,
+ * height, wall), whatever the voxel size (an 11 kg cylinder is one voxel at 0.4 m, ~1 kg of
+ * voxel liquid at 8 cm). Its voxels are its sensors and its look:
+ *
+ *  - the heat the scene's flames put into its shell voxels (each a thin sheet of the wall's
+ *    thickness, so their temperature rise is the real wall's) is the flux on the wall, W/m²,
+ *    for the part wetted by the liquid and the part above it; the voxels are then set back to
+ *    the model's wall temperatures (they glow where the real wall would);
+ *  - the wetted wall passes its heat to the boiling liquid (it stays a few tens of degrees above
+ *    it); the dry wall only warms the vapour, and heats up: that is the wall that weakens;
+ *  - the pressure is the liquid's vapour pressure (Clausius–Clapeyron); the liquid swells as it
+ *    warms, and once it fills the cylinder (> 97 %) the pressure shoots up (hydraulic);
+ *  - the relief valve pops open at its set pressure and closes at 90 % of it (blowdown); its
+ *    flow is choked vapour (∝ absolute pressure), liquid if it is full: a burning jet whose boil-
+ *    off cools the liquid, and the level falls, drying out more of the wall;
+ *  - it bursts when the pressure exceeds what the hot wall holds (BLEVE), or tears open at low
+ *    pressure (a burning jet from the hole until it is empty).
+ *
+ * Why it did or did not burst: v.why (the inspector: sim/inspectThings.js 'vessel').
+ */
+function stepLumped(sim, v, a, k, dt) {
+  const w = sim.world;
+  const { temp, skin, dens, mat, nx, ny } = w;
+  const h = w.h;
+  if (v.state === 'ruptured' || v.state === 'empty') return setJet(w, v, 0);
+  const fluid = (v.fluid ??= MATERIALS[MAT[v.gas ?? 'propane']]);
+  const vap = fluid.vapor;
+  const cp = fluid.specificHeat;
+  // first step: the liquid at the temperature it was placed at, the mass from the fill
+  if (v.Tl === undefined) {
+    let T = w.ambient ?? 15;
+    if (a.contents.length) T = a.contents.reduce((s, i) => s + temp[i], 0) / a.contents.length;
+    v.Tl = v.T0 = v.Tv = T;
+    v.Tw = T;
+    v.mass0 = v.mass = v.volume * (v.fill0 ?? 0.8) * liquidDensity(fluid, T);
+    v.shellCount0 = a.shell.length;
+    v.lastSet = new Map();
+    v.prvOpen = false;
+    v.vented = 0;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const i of a.shell) {
+      const y = ((i / nx) | 0) % ny;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    v.rows = [y0, y1];
+    if (!v.base && a.shell.length) {
+      const c = w.center(...w.coords(a.shell[0]));
+      v.base = [c[0], (y0 + 0.5) * h, c[2]];
+      v.top = [c[0], (y1 + 1) * h, c[2]];
+    }
+  }
+  if (!v.base) return;
+  // a hole in the shell (a fragment, a bullet, burnt through): the gas jets out of it, burning
+  if (v.state === 'sealed' && v.shellCount0 > 0 && (a.broken || a.shell.length < v.shellCount0 * 0.97)) {
+    v.state = 'holed';
+    v.why = 'holed: the shell was broken open – the gas jets out of the hole, burning, until the cylinder is empty (no pressure left to burst it)';
+    w.events.push({ type: 'leak', pos: v.top.slice(), time: w.time, name: v.name });
+  }
+
+  const r = v.radius;
+  const H = v.height;
+  const fill = v.mass / (v.volume * liquidDensity(fluid, v.Tl));
+  const level = Math.max(0, Math.min(1, fill));
+  const Aend = Math.PI * r * r;
+  const Aside = 2 * Math.PI * r * H;
+  const Awet = Aend + Aside * level;
+  const Adry = Aend + Aside * (1 - level);
+
+  // the flux on the wall from the scene: what its voxels took in since they were last set
+  let qWet = 0;
+  let nWet = 0;
+  let qDry = 0;
+  let nDry = 0;
+  const [ry0, ry1] = v.rows;
+  const zoneOf = (i) => (((((i / nx) | 0) % ny) - ry0 + 0.5) / (ry1 - ry0 + 1) <= level ? 'wet' : 'dry');
+  if (dt > 0)
+    for (const i of a.shell) {
+      const was = v.lastSet.get(i);
+      if (was === undefined) continue;
+      const M = MATERIALS[mat[i]];
+      const q = (SENSOR * M.density * M.specificHeat * dens[i] * h * (0.5 * (temp[i] + skin[i]) - was)) / dt;
+      if (zoneOf(i) === 'wet') {
+        qWet += q;
+        nWet++;
+      } else {
+        qDry += q;
+        nDry++;
+      }
+    }
+  let phiWet = nWet ? qWet / nWet : null;
+  let phiDry = nDry ? qDry / nDry : null;
+  // (a cylinder smaller than its voxels: the air round it, the flames in it)
+  if (phiWet === null && phiDry === null) {
+    // (the open air cells it stands in)
+    const cells = [];
+    for (let y = v.base[1]; y < v.top[1] + w.ah; y += w.ah / 2) {
+      const ac = sim.airCellAt(v.base[0], y, v.base[2]);
+      if (ac >= 0 && w.occ[ac] < 0.75 && !cells.includes(ac)) cells.push(ac);
+    }
+    phiWet = airFlux(sim, v, cells, v.Tw);
+    phiDry = airFlux(sim, v, cells, v.Tv);
+  }
+  phiWet ??= phiDry;
+  phiDry ??= phiWet;
+  // (no fire puts much more than ~200 kW/m² on a wall, a jet flame playing on it; a coarse voxel can say more)
+  phiWet = Math.max(-PHI_MAX, Math.min(PHI_MAX, phiWet));
+  phiDry = Math.max(-PHI_MAX, Math.min(PHI_MAX, phiDry));
+
+  // the dry wall: heated from outside, it loses a little to the vapour and radiates to the liquid
+  const wallC = STEEL_RHO_C * (v.wall ?? 0.003);
+  const TvK = v.Tv + 273.15;
+  const TlK = v.Tl + 273.15;
+  const qIn = (H_VAPOUR + (v.venting ? 15 : 0)) * (v.Tv - v.Tl) + 0.25 * SIGMA * (TvK ** 4 - TlK ** 4);
+  v.Tv += ((phiDry - qIn) * dt) / wallC;
+  // (the wall a falling level leaves dry starts at the wetted wall's temperature)
+  if (v.Tv < v.Tw) v.Tv = v.Tw;
+  // the wetted wall: as hot as it must be to pass the flux to the boiling liquid
+  v.Tw = v.Tl + Math.max(-30, phiWet / U_BOIL);
+  v.phiWet = phiWet;
+  v.phiDry = phiDry;
+
+  // the liquid: what the wall gives it, less the latent heat of what boils off through a valve
+  const Q = phiWet * Awet + qIn * Adry;
+  const mC = Math.max(0.05, v.mass) * cp;
+  v.Tl += (Q * dt) / mC;
+
+  // the pressure: vapour pressure, and hydraulic once the swelling liquid fills the cylinder
+  const fillNow = v.mass / (v.volume * liquidDensity(fluid, v.Tl));
+  v.fill = fillNow;
+  let pAbs = vaporPressure(fluid, v.Tl);
+  const full = fillNow > 0.97;
+  if (full) pAbs += 2e8 * (fillNow - 0.97);
+  const gauge = v.state === 'holed' ? Math.max(0, pAbs - P_ATM) * 0.3 : pAbs - P_ATM; // (holed: what is left in it, venting freely)
+  v.pressure = gauge;
+  v.hydraulic = full;
+  v.strengthFactor = strengthFactor(MATERIALS[MAT.steel], v.Tv);
+  v.strength = v.burstPressure * v.strengthFactor;
+
+  // what leaves it: the relief valve, the open cylinder valve, a hole
+  let mdot = 0;
+  let liquidOut = false;
+  if (v.state === 'holed') {
+    mdot = HOLE_RATE * (v.ventCapacity / 0.08) * Math.min(1, Math.max(0.1, gauge / 8e5));
+  } else {
+    if (v.ventPressure != null) {
+      const set = v.ventPressure;
+      if (!v.prvOpen && gauge > set) {
+        v.prvOpen = true;
+        if (v.prvOpened === undefined) {
+          v.prvOpened = w.time;
+          w.events.push({ type: 'reliefValve', pos: v.top.slice(), time: w.time, name: v.name, pressure: gauge });
+        }
+      } else if (v.prvOpen && gauge < 0.9 * set) v.prvOpen = false;
+      if (v.prvOpen) {
+        const lift = Math.max(0.1, Math.min(1, (gauge - 0.9 * set) / (0.15 * set)));
+        mdot += v.ventCapacity * lift * (pAbs / (set + P_ATM));
+        // a cylinder full of liquid relieves liquid: far more mass through the same seat
+        if (full) {
+          mdot *= 5;
+          liquidOut = true;
+        }
+      }
+    }
+    if (v.drawRate > 0 && gauge > 0) mdot += v.drawRate * Math.min(2, pAbs / 9e5);
+  }
+  mdot = Math.min(mdot, v.mass / Math.max(dt, 1e-3));
+  v.venting = mdot > 0 && v.state === 'sealed' && v.prvOpen;
+  v.mdot = mdot;
+  if (mdot > 0) {
+    const m = mdot * dt;
+    v.mass -= m;
+    v.vented += m;
+    if (!liquidOut) v.Tl -= (m * vap.Lv) / mC; // (boiling off: the latent heat comes from the liquid)
+  }
+  setJet(w, v, mdot);
+
+  // the voxels: the wall as the model has it, the liquid's temperature, how much is left
+  const left = v.mass0 > 0 ? v.mass / v.mass0 : 0;
+  for (const i of a.shell) {
+    const T = zoneOf(i) === 'wet' ? v.Tw : v.Tv;
+    temp[i] = skin[i] = T;
+    v.lastSet.set(i, T);
+  }
+  for (const i of a.contents) {
+    temp[i] = skin[i] = v.Tl;
+    w.fuel[i] = Math.max(0.02, left);
+  }
+
+  if (v.mass <= v.mass0 * 0.01) {
+    const through = v.state === 'holed' ? 'hole' : v.prvOpened ? 'relief valve' : 'valve';
+    v.state = 'empty';
+    v.pressure = 0;
+    setJet(w, v, 0);
+    v.why = `empty: ${v.vented.toFixed(1)} kg burnt off through the ${through} – nothing left to burst it`;
+    return;
+  }
+  if (v.state === 'sealed' && gauge > v.strength) {
+    if (gauge < SPLIT_PRESSURE) {
+      v.state = 'holed';
+      v.why = `the softened wall (${v.Tv.toFixed(0)} °C) tore open at ${(gauge / 1e5).toFixed(1)} bar: a burning jet from the tear, no blast`;
+      w.events.push({ type: 'split', pos: v.top.slice(), time: w.time, name: v.name, pressure: gauge });
+      return;
+    }
+    v.why =
+      `BURST (BLEVE) at ${(gauge / 1e5).toFixed(1)} bar: ` +
+      (full
+        ? `liquid-full (${(fillNow * 100).toFixed(0)} % at ${v.Tl.toFixed(0)} °C) with the relief valve ${v.ventPressure == null ? 'blocked' : 'unable to keep up'}: hydraulic rupture (the wall, ${v.Tv.toFixed(0)} °C at its hottest, held ${(v.strength / 1e5).toFixed(0)} bar)`
+        : `the dry wall above the liquid at ${v.Tv.toFixed(0)} °C held only ${(v.strength / 1e5).toFixed(0)} bar (${(v.strengthFactor * 100).toFixed(0)} % of its strength)`);
+    ruptureLumped(sim, v, a, k, gauge);
+    return;
+  }
+  // why not (yet)
+  const p = (gauge / 1e5).toFixed(1);
+  const hold = `the wall (dry part ${v.Tv.toFixed(0)} °C) holds ${(v.strength / 1e5).toFixed(0)} bar`;
+  if (v.state === 'holed') v.why = `holed: jetting out burning, ${v.mass.toFixed(1)} kg left`;
+  else if (v.prvOpen) v.why = `relief valve venting at ${p} bar (a jet flame): ${hold}; level ${(level * 100).toFixed(0)} %`;
+  else if (v.ventPressure == null) v.why = `relief valve blocked: ${p} bar and rising with the liquid's temperature; ${hold}; ${(fillNow * 100).toFixed(0)} % full of liquid (hydraulic at 97 %)`;
+  else v.why = `${p} bar, below the relief valve's ${(v.ventPressure / 1e5).toFixed(1)} bar; ${hold}`;
+}
+
+/**
+ * Heat flux (W/m²) onto a wall at Tw from the air round it (a cylinder smaller than its voxels:
+ * the air cells are coarser still, and a flame fills only part of one). f: how much of it the
+ * flames engulf, from the flame field of the cells about it and the heaters (a burner, a jet)
+ * whose flame it is in; engulfed, a sooty flame at ~900 °C radiates ~100 kW/m² onto it.
+ */
+function airFlux(sim, v, cells, Tw) {
+  const w = sim.world;
+  if (!cells.length) return 0;
+  let f = 0;
+  let Tg = -Infinity;
+  let G = 0;
+  for (const c of cells) {
+    f = Math.max(f, Math.min(1, 1.5 * (w.flame[c] ?? 0)));
+    Tg = Math.max(Tg, w.airT[c]);
+    G = Math.max(G, w.radField[c] ?? 0);
+  }
+  const mid = [v.base[0], (v.base[1] + v.top[1]) / 2, v.base[2]];
+  for (const ht of w.heaters) {
+    if (!ht.on || ht.power <= 0 || ht === v.jet || (ht.start !== undefined && w.time < ht.start)) continue;
+    const d = ht.dir ?? [0, 1, 0];
+    const dl = Math.hypot(...d) || 1;
+    const q = [mid[0] - ht.pos[0], mid[1] - ht.pos[1], mid[2] - ht.pos[2]];
+    const t = (q[0] * d[0] + q[1] * d[1] + q[2] * d[2]) / dl;
+    if (t < -v.height / 2 || t > (ht.height ?? 1)) continue;
+    const off = Math.sqrt(Math.max(0, q[0] ** 2 + q[1] ** 2 + q[2] ** 2 - t * t));
+    if (off < (ht.radius ?? 0.2) + v.radius) f = 1;
+  }
+  const TwK = Tw + 273.15;
+  const TaK = (w.ambient ?? 15) + 273.15;
+  const flameT = 850; // °C: a sooty pool-fire flame (its emissive power ~80 kW/m²)
+  const engulfed = 0.9 * SIGMA * (flameT + 273.15) ** 4 + 20 * (flameT - Tw);
+  const open = 15 * (Tg - Tw) + 0.85 * (G + SIGMA * TaK ** 4);
+  return f * engulfed + (1 - f) * open - 0.85 * SIGMA * TwK ** 4;
+}
+
+/** The burning jet from the valve (or a hole): a heater of its own, as long as gas comes out. */
+function setJet(w, v, mdot) {
+  if (!v.jet) {
+    if (mdot <= 0) return;
+    v.jet = { pos: v.top.slice(), power: 0, radius: 0.1, height: 0.5, on: false, jet: true, label: 'gas jet', smokeYield: 0.001 };
+    w.heaters.push(v.jet);
+  }
+  const Q = mdot * (v.fluid?.heatOfCombustion ?? 46e6);
+  v.jetPower = Q;
+  v.jet.on = Q > 0;
+  v.jet.power = Q;
+  // a jet flame's length: L ≈ 0.12·Q^0.4 (Q in kW): ~3 m at 3 MW, ~0.7 m for a 70 kW torch
+  const L = Q > 0 ? Math.max(0.3, 0.12 * (Q / 1000) ** 0.4) : 0;
+  v.jetLength = L;
+  v.jet.height = L;
+  v.jet.radius = 0.06 + 0.08 * L;
+  if (v.state === 'holed' && !v.jet.dir) v.jet.dir = [0.7, 0.3, 0.2]; // (out of the side of the shell)
+}
+
+/**
+ * The cylinder bursts: the flashing liquid (the share that boils at once on the drop to 1 atm)
+ * and the vapour expand: a blast; what flashes and the spray it carries burn as a fireball
+ * (mass m: D = 5.8·m^(1/3), t = 0.45·m^(1/3)); the shell flies apart, its top (the valve end)
+ * rocketing off; the rest of the liquid spills, burning.
+ */
+function ruptureLumped(sim, v, a, k, gauge) {
+  const w = sim.world;
+  const h = w.h;
+  const fluid = v.fluid;
+  const vap = fluid.vapor;
+  v.state = 'ruptured';
+  setJet(w, v, 0);
+  const center = [v.base[0], (v.base[1] + v.top[1]) / 2, v.base[2]];
+  const m = v.mass;
+  const pAbs = gauge + P_ATM;
+  // flash fraction: cp·(T - Tb)/Lv
+  const flash = Math.max(0, Math.min(1, (fluid.specificHeat * (v.Tl - vap.Tb)) / vap.Lv));
+  // the expanding vapour (ullage + the flashing liquid at the burst pressure; Brode: p·V/(γ-1))
+  const R = 8.314 / (fluid.name === 'butane' ? 0.0581 : 0.0441);
+  const rhoV = pAbs / (R * (v.Tl + 273.15));
+  const Vgas = Math.max(0, v.volume * (1 - Math.min(1, v.fill))) + (m * flash) / rhoV;
+  const E = (gauge * Vgas) / 0.3;
+  v.burstEnergy = E;
+  v.burstAt = w.time;
+  v.burstPressure0 = gauge;
+  v.flash = flash;
+  // fireball: the flashing liquid and the spray it drags along (3x the flash fraction, all of it at ~35 %)
+  const mFb = m * Math.min(1, 3 * flash);
+  v.fireballMass = mFb;
+  if (mFb > 0.01) {
+    const s = Math.cbrt(mFb);
+    const radius = Math.min(Math.max(...w.size) * 0.45, 2.9 * s);
+    const duration = Math.max(0.8, 0.45 * s);
+    v.fireball = { diameter: 5.8 * s, duration };
+    w.heaters.push({ pos: [center[0], Math.max(h, center[1] + radius * 0.3), center[2]], power: (mFb * fluid.heatOfCombustion) / duration, radius, height: radius * 1.8, on: true, until: w.time + duration, temporary: true, fireball: true });
+    sim.ignite?.(center, Math.min(radius, 3));
+  }
+  const left = Math.max(0, (m - mFb) / Math.max(1e-6, v.mass0));
+  v.mass = 0;
+  v.pressure = 0;
+  v.overpressure = [2, 5, 10, 20].map((r) => ({ r, kPa: blastOverpressure(E, r) }));
+
+  // fragments: the shell's voxels; the top (the valve end) rockets off upward
+  const V = h ** 3;
+  const mShell = 7850 * (v.wall ?? 0.003) * (2 * Math.PI * v.radius * v.height + 2 * Math.PI * v.radius ** 2);
+  // (a tenth of the energy goes into the fragments: tens of m/s, as BLEVE fragments fly; Baum)
+  const v0 = Math.max(8, Math.min(45, Math.sqrt((2 * 0.1 * E) / Math.max(1, mShell))));
+  const blastR = Math.max(3 * h, 0.4 * Math.cbrt(E / 1000));
+  v.blastRadius = blastR;
+  v.fragmentSpeed = v0;
+  const launch = (i, speed, up = 0) => {
+    const p = w.center(...w.coords(i));
+    let dx = p[0] - center[0];
+    let dy = p[1] - center[1] + 0.3 * Math.hypot(p[0] - center[0], p[2] - center[2]) + 0.05 + up;
+    let dz = p[2] - center[2];
+    const len = Math.hypot(dx, dy, dz) || 1;
+    dx = dx / len + (sim.rand() - 0.5) * 0.35;
+    dy = Math.abs(dy / len) + 0.2 + (sim.rand() - 0.5) * 0.35;
+    dz = dz / len + (sim.rand() - 0.5) * 0.35;
+    const l2 = Math.hypot(dx, dy, dz);
+    launchVoxel(w, i, [(dx / l2) * speed, (dy / l2) * speed, (dz / l2) * speed]);
+  };
+  const topRow = v.rows?.[1] ?? Infinity;
+  for (const i of a.shell) {
+    const y = ((i / w.nx) | 0) % w.ny;
+    if (y >= topRow) launch(i, v0 * (1.2 + 0.4 * sim.rand()), 3);
+    else launch(i, v0 * (0.5 + sim.rand() * 0.7));
+  }
+  // the rest of the liquid: burning droplets, the rest spills
+  for (const i of a.contents) {
+    w.vesselTag[i] = 0;
+    w.flags[i] |= F_LIQUID;
+    w.melt[i] = 1;
+    w.fuel[i] = left;
+    if (left <= 1e-3) {
+      w.clearVoxel(i);
+      continue;
+    }
+    w.temp[i] = w.skin[i] = Math.max(w.temp[i], fluid.ignitionTemp + 100);
+    w.flags[i] |= F_BURNING;
+    if (sim.rand() < 0.5) launch(i, v0 * 0.3 * (0.4 + sim.rand()));
+  }
+  // the blast: light things nearby fly, windows break further out (other cylinders stand: knocked, not torn apart)
+  const r2 = blastR * blastR;
+  const glassR2 = (3 * blastR) ** 2;
+  for (let n = 0; n < w.solidCount; n++) {
+    const i = w.solids[n];
+    if (!w.mat[i] || w.vesselTag[i]) continue;
+    const [x, y, z] = w.coords(i);
+    if (y === 0) continue;
+    const p = w.center(x, y, z);
+    const d2 = (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2 + (p[2] - center[2]) ** 2;
+    const M = MATERIALS[w.mat[i]];
+    if (M.shatterTemp !== Infinity && d2 < glassR2) w.flags[i] |= F_FALLING;
+    if (d2 > r2 || w.flags[i] & F_ANCHOR) continue;
+    const mv = M.density * w.dens[i] * V;
+    const d = Math.sqrt(d2);
+    const speed = v0 * 0.5 * (1 - d / blastR) ** 2 * Math.min(1, Math.sqrt(2 / Math.max(mv, 1e-3)));
+    if (speed > 3) launch(i, speed);
+  }
+  w.structureDirty = true;
+  w.listDirty = true;
+  w.events.push({ type: 'explosion', pos: center, time: w.time, energy: E, radius: blastR, name: v.name, pressure: gauge, bleve: true, fireball: v.fireball?.diameter });
+  emitSound(w, { pos: center, loudness_dB: LOUDNESS.explosion, kind: 'explosion' });
+  sim.ai?.blast?.(center, blastR);
+  sim.dragonAI?.blast?.(center, blastR);
+  sim.phoenixAI?.blast?.(center, blastR);
+  sim.heliAI?.blast?.(center, blastR);
 }
 
 /** Contents that are no longer contained: become ordinary (free flowing) liquid. */

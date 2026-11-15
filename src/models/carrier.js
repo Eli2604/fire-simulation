@@ -218,13 +218,26 @@ export const jet = {
   },
 };
 
+/** Positions every `step` m from x0 to x1 that include x (a row of sprinkler heads). */
+function sprinklerRow(x0, x1, x, step) {
+  const out = [];
+  for (let k = Math.ceil((x0 + 0.3 - x) / step); x + k * step <= x1 - 0.3; k++) out.push(x + k * step);
+  return out;
+}
+
 export const carrierBelow = {
-  label: 'Carrier below deck (corridors, server room)',
+  label: 'Carrier below deck (passageways, gas line, sprinklers, server room)',
   params: {
     length: { value: 30, min: 16, max: 50, step: 1, label: 'Length (m)' },
     width: { value: 15, min: 10, max: 24, step: 0.5, label: 'Width (m)' },
     height: { value: 2.8, min: 2.4, max: 4, step: 0.1, label: 'Deck height (m)' },
     rackFireAfter: { value: 25, min: 0, max: 600, step: 1, label: 'Server rack fire after (s)' },
+    gasPipe: { value: true, label: 'Gas line along the main passageway overhead' },
+    gasPipeBurst: { value: 'after delay', options: ['after delay', 'only by fire or blast'], label: 'Gas line burst' },
+    gasPipeBurstAfter: { value: 150, min: 0, max: 900, step: 1, label: 'Gas line bursts after (s)' },
+    gasPipeBurstAt: { value: 0.3, min: 0.05, max: 0.95, step: 0.01, label: 'Burst position along the passageway (aft to fore)' },
+    gasPipePower: { value: 150000, min: 10000, max: 1000000, step: 5000, label: 'Burning gas jet (W)' },
+    sprinklers: { value: true, label: 'Sprinklers in the main passageway' },
     inertSystem: { value: true, label: 'Server room inert-gas system' },
     downTo: { value: '', label: 'Zone the ladder at the forward end leads down to (empty: none)' },
     upTo: { value: 'deck', label: "Place the ladder up leads to ('..': the place this one is in)" },
@@ -258,6 +271,16 @@ export const carrierBelow = {
     prims.push({ shape: 'box', min: [-hx + 1, H - 0.25, -cw + 0.1], max: [hx - 1, H - 0.15, -cw + 0.45], material: 'cable', density: 0.4 });
     // the sea-water main (fire fighting, cooling) along the other side of the overhead
     prims.push({ shape: 'cylinder', a: [-hx + 1, H - 0.3, cw - 0.2], b: [hx - 1, H - 0.3, cw - 0.2], r: Math.max(0.04, h * 0.6), material: 'steel', color: [0.2, 0.45, 0.25], density: thin(0.004), anchored: true, waterPipe: { rate: 20, label: 'sea-water main' } });
+    // the gas line (galley gas) under the deckhead of the main passageway, between the cable tray
+    // and the sea-water main: it bursts on its timer (or only when a fire heats a joint or a blast
+    // hits it, sim/explosions.js), and the burning jet plays across the passageway onto the cables
+    // and the bulkhead opposite (the old office hallway's gas pipe burst, models/hallway.js)
+    // (from forward of the ladder's hatch at the aft end: the line comes down through the deck there)
+    const gasY = H - 0.15;
+    const gasZ = 0.2;
+    const gasJet = { height: 2 * cw * 0.9, dir: [0.3, -0.75, -0.6] }; // (across and down: it stays in the passageway)
+    if (p.gasPipe) prims.push({ shape: 'cylinder', a: [-hx + 2.4, gasY, gasZ], b: [hx - 1, gasY, gasZ], r: Math.max(0.03, h * 0.6), material: 'steel', color: [0.85, 0.7, 0.1], density: thin(0.003), anchored: true, gasPipe: { power: p.gasPipePower, jetHeight: gasJet.height, dir: gasJet.dir } });
+    const gasBurstX = -hx + 2.4 + p.gasPipeBurstAt * (L - 3.4);
     const doors = [];
     const room = (x0, x1, z0, z1, name, fill) => {
       prims.push({ shape: 'box', min: [x0 + t, h * 1.01, z0 + t], max: [x1 - t, H - 0.01, z1 - t], mode: 'carve' });
@@ -338,7 +361,18 @@ export const carrierBelow = {
     prims.push({ shape: 'box', min: [lx - 0.4, H - 0.01, -0.5], max: [lx + 0.4, H + h + 0.01, 0.5], mode: 'carve' });
     return {
       prims,
-      heaters: [{ pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 }],
+      heaters: [
+        { pos: rackFire, power: 15000, radius: 0.2, height: 0.6, igniteRadius: 0.5, start: p.rackFireAfter, label: 'server rack', event: 'rackFire', until: p.rackFireAfter + 120 },
+        // the gas line bursting in the main passageway (by default after the rack fire has burnt out, 25-145 s)
+        ...(p.gasPipe && p.gasPipeBurst === 'after delay'
+          ? [{ pos: [gasBurstX, gasY, gasZ - 0.08], power: p.gasPipePower, radius: 0.2, ...gasJet, start: p.gasPipeBurstAfter, label: 'gas pipe', event: 'pipeBurst', jet: true, smokeYield: 0.004 }]
+          : []),
+      ],
+      // glass-bulb sprinklers under the deckhead of the main passageway, every ~3 m (68 °C bulbs), their
+      // heads hung below the cable tray and the pipes (in the hot layer, not in the deckhead's cells)
+      // (laid out from the burst position, on the side the jet plays on: the head over it is in the
+      // plume, as a real head over a fire; the coarse air below deck spreads little along the deckhead)
+      sprinklers: p.sprinklers ? sprinklerRow(-hx + 1, hx - 1, gasBurstX + 0.4, 3).map((x) => ({ p: [x, H - 0.3, -0.5] })) : [],
       spawn: { p: [lx + 1.2, h, 0], yaw: 0 },
       portals: [
         ...(p.upTo ? [{ p: [lx, h, 0], r: 0.9, to: p.upTo, label: 'Ladder: flight deck' }] : []),
@@ -410,6 +444,11 @@ export function carrierChildren(p = {}, keys = { below: 'below', lower: 'lower' 
         { type: 'carrierBelow', params: { downTo: keys.lower, upTo: '..' }, x: 16, z: 8.5 },
         { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
         { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
+        // a rack of gas cylinders against the aft bulkhead of the store room (welding and cutting
+        // gas for the ship's workshop, galley spares), on the deck plating: models/gasCylinder.js
+        { type: 'gasCylinder', params: { capacity: 33, fill: 0.8, color: '#2f6b3a' }, x: 2.75, z: 10.5, y: 0 },
+        { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 2.7, z: 11.2, y: 0 },
+        { type: 'gasCylinder', params: { capacity: 11, fill: 0.5 }, x: 2.7, z: 11.75, y: 0 },
         // the lower decks, below the waterline: corridors, cabins, watertight doors; the fuel line
         // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
         {
