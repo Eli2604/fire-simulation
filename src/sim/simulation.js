@@ -51,6 +51,19 @@ export function oxygenFactor(o) {
 }
 
 const SKIN_DEPTH = 0.004; // m, thickness of the surface layer of bulk materials
+/** Density factor (thickness / voxel) under which a voxel is a plank or board: two broad faces. */
+const PLANK_DENS = 0.5;
+/**
+ * The share of a voxel's heat capacity in its skin (the two-node model of solidPassB), or 0: one
+ * node (thin sheets, liquids, fine fuels). A plank (dens < PLANK_DENS) counts its two broad faces
+ * only and keeps a skin as long as it is under 60 % of its thickness (a 16 mm plank: 2 × 4 mm).
+ */
+export function skinShare(M, flags, ex, dens, h) {
+  if (ex <= 0 || flags & F_LIQUID || M.burnTime !== 0) return 0;
+  const plank = dens < PLANK_DENS;
+  const s = ((plank && ex > 2 ? 2 : ex) * SKIN_DEPTH) / (h * dens);
+  return s < (plank ? 0.6 : 0.45) ? s : 0;
+}
 const LIQUID_MIXING = 10; // effective conductivity boost for convecting melts
 const POOL_FEEDBACK = 0.2; // share of a candle flame heating its melt pool
 const CONTACT_SHARE = 0.5; // max share of the total heat release reaching surfaces by flame contact
@@ -186,8 +199,10 @@ export class Simulation {
     this.stats.ventHrr = 0;
     // the solids changed: the air's faces, occupancy and roofs (in real time at most 5 times a
     // second; with steps of 1/THERMO_HZ s or longer every step)
-    if (w.derivedDirty && (this.frameDt >= 1 / THERMO_HZ || w.time - (this.lastDerived ?? -Infinity) >= 0.2)) {
-      w.updateDerived();
+    if ((w.derivedDirty || w.derivedPatch?.size) && (this.frameDt >= 1 / THERMO_HZ || w.time - (this.lastDerived ?? -Infinity) >= 0.2)) {
+      // (only the cells a moving body changed, if nothing else did: sim/movingBody.js)
+      if (w.derivedDirty) w.updateDerived();
+      else w.applyDerivedPatch();
       this.lastDerived = w.time;
     }
     updateRegions(w); // only does work when walls / doors / windows changed
@@ -867,13 +882,18 @@ export class Simulation {
       let Ts;
       let Cs = 0;
       let C = Ctot;
-      // (thin sheets are all "skin": single node)
-      const skinFrac = ex > 0 && !(f & F_LIQUID) && M.burnTime === 0 ? (ex * SKIN_DEPTH) / (h * w.dens[i]) : 0;
-      const twoNode = skinFrac > 0 && skinFrac < 0.45;
+      // (thin sheets are all "skin": single node. A plank, a board thinner than half a voxel (a
+      // boat's planking: 16 mm) has two broad faces, whatever the voxel's staircase leaves open (its
+      // other open faces are its edges); its skin is a skin on each, over its own thickness: a
+      // 16 mm plank is thermally thick for a flame (wood heats ~3 mm deep in a minute), its surface
+      // reaches ignition long before its core: skinShare)
+      const skinFrac = skinShare(M, f, ex, w.dens[i], h);
+      const twoNode = skinFrac > 0;
       if (twoNode) {
         Cs = Ctot * skinFrac;
         C = Ctot - Cs;
-        const g = ((M.conductivity * A * ex) / (0.5 * h)) * dt;
+        const plank = w.dens[i] < PLANK_DENS;
+        const g = ((M.conductivity * A * (plank && ex > 2 ? 2 : ex)) / (0.5 * h * (plank ? w.dens[i] : 1))) * dt;
         const a1 = Cs + dt * gext[i];
         const b1 = C + dt * w.gsum[i];
         const R1 = a1 * skin[i] + dEs[i];
@@ -1769,6 +1789,9 @@ export class Simulation {
       // a flame heats the surface; the core only warms (and must not melt)
       w.temp[i] = M.burnTime > 0 ? Math.max(w.temp[i], M.ignitionTemp + 150) : Math.max(w.temp[i], Math.min(M.ignitionTemp, M.meltingPoint - 10) * 0.6);
       w.skin[i] = Math.max(w.skin[i], M.ignitionTemp + 150);
+      // (a thin sheet: all skin, one temperature (solidPassB: skinShare 0), the flame heats it through;
+      // lit only on its surface it would cool back to its core's 180 °C at once and go out)
+      if (M.burnTime === 0 && !skinShare(M, w.flags[i], Math.max(1, w.expo[i]), w.dens[i], w.h)) w.temp[i] = Math.max(w.temp[i], Math.min(w.skin[i], M.meltingPoint - 10));
       w.flags[i] |= F_BURNING;
       count++;
     });

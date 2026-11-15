@@ -334,6 +334,7 @@ export class World {
   /** Occupancy of the air cells and the top-most solid per column (for rain). */
   updateDerived() {
     this.derivedDirty = false;
+    this.derivedPatch?.clear();
     const { nx, ny, nz, anx, any, mat, occ, colTop } = this;
     occ.fill(0);
     colTop.fill(-1);
@@ -409,6 +410,119 @@ export class World {
       }
     void ny;
     void nz;
+  }
+
+  /**
+   * The air's view of the solids (occupancy, open faces, roofs, the top solid per column) brought up
+   * to date for a few changed voxel cells only (a moving body restamped: sim/movingBody.js), not
+   * over the whole grid (updateDerived).
+   */
+  patchDerived(cells) {
+    if (this.lazyDerived) {
+      // (in a running simulation: at its next heat step, at most five times a second, as updateDerived)
+      if (this.derivedDirty) return;
+      const q = (this.derivedPatch ??= new Set());
+      for (const i of cells) q.add(i);
+      return;
+    }
+    this.applyDerivedPatch(cells);
+  }
+
+  /** patchDerived's work, now (the cells changed, or those queued). */
+  applyDerivedPatch(cells = this.derivedPatch) {
+    if (!cells?.size && !cells?.length) return;
+    const { nx, ny, nz, anx, any, anz, mat, occ, colTop, passX, passY, passZ, capped } = this;
+    const nxy = nx * ny;
+    const airs = new Set();
+    const cols = new Set();
+    for (const i of cells) {
+      const x = i % nx;
+      const r = (i - x) / nx;
+      const y = r % ny;
+      const z = (r - y) / ny;
+      airs.add((x >> 1) + anx * ((y >> 1) + any * (z >> 1)));
+      cols.add(x + nx * z);
+    }
+    // the top solid of each column touched
+    for (const c of cols) {
+      const x = c % nx, z = (c - x) / nx;
+      let top = -1;
+      for (let y = ny - 1; y >= 0; y--)
+        if (mat[x + nx * (y + ny * z)]) {
+          top = y;
+          break;
+        }
+      colTop[c] = top;
+    }
+    const blocks = (i) => mat[i] !== 0 && OCC_WEIGHT[mat[i]] >= 1;
+    const faces = new Set();
+    for (const a of airs) {
+      const ax = a % anx;
+      const ay = ((a - ax) / anx) % any;
+      const az = (a - ax - anx * ay) / (anx * any);
+      // occupancy of its 8 voxels (the ground layer is not an obstacle)
+      let o = 0;
+      for (let dz = 0; dz < 2; dz++)
+        for (let dy = 0; dy < 2; dy++)
+          for (let dx = 0; dx < 2; dx++) {
+            const y = 2 * ay + dy;
+            if (y === 0) continue;
+            const i = 2 * ax + dx + nx * y + nxy * (2 * az + dz);
+            if (mat[i]) o += 0.125 * OCC_WEIGHT[mat[i]];
+          }
+      occ[a] = o;
+      faces.add(a);
+      if (ax > 0) faces.add(a - 1);
+      if (ay > 0) faces.add(a - anx);
+      if (az > 0) faces.add(a - anx * any);
+    }
+    const capCols = new Set();
+    for (const a of faces) {
+      const ax = a % anx;
+      const ay = ((a - ax) / anx) % any;
+      const az = (a - ax - anx * ay) / (anx * any);
+      capCols.add(ax + anx * az);
+      let open = 0;
+      if (ax + 1 < anx) {
+        const x1 = 2 * ax + 1;
+        for (let dy = 0; dy < 2; dy++)
+          for (let dz = 0; dz < 2; dz++) {
+            const i = x1 + nx * (2 * ay + dy) + nxy * (2 * az + dz);
+            if (!blocks(i) && !blocks(i + 1)) open++;
+          }
+        passX[a] = open / 4;
+      } else passX[a] = 1;
+      open = 0;
+      if (ay + 1 < any) {
+        const y1 = 2 * ay + 1;
+        for (let dx = 0; dx < 2; dx++)
+          for (let dz = 0; dz < 2; dz++) {
+            const i = 2 * ax + dx + nx * y1 + nxy * (2 * az + dz);
+            if (!blocks(i) && !blocks(i + nx)) open++;
+          }
+        passY[a] = open / 4;
+      } else passY[a] = 1;
+      open = 0;
+      if (az + 1 < anz) {
+        const z1 = 2 * az + 1;
+        for (let dx = 0; dx < 2; dx++)
+          for (let dy = 0; dy < 2; dy++) {
+            const i = 2 * ax + dx + nx * (2 * ay + dy) + nxy * z1;
+            if (!blocks(i) && !blocks(i + nxy)) open++;
+          }
+        passZ[a] = open / 4;
+      } else passZ[a] = 1;
+    }
+    for (const c of capCols) {
+      const ax = c % anx, az = (c - ax) / anx;
+      let cap = 0;
+      for (let ay = any - 1; ay >= 0; ay--) {
+        const a = ax + anx * (ay + any * az);
+        if (passY[a] < 0.3 && ay + 1 < any) cap = 1;
+        capped[a] = cap;
+      }
+    }
+    if (cells === this.derivedPatch) cells.clear();
   }
 
   totalSolidCount() {

@@ -8,6 +8,7 @@
 import { O2_AIR } from './world.js';
 import { conserveO2 } from './oxygen.js';
 import { stirAir } from './stirrers.js';
+import { applyDrag } from './bodyAir.js';
 
 const CP_AIR = 1005;
 const MAX_AIR_T = 1250;
@@ -250,6 +251,8 @@ export function stepAir(w, W, D, dt, sim) {
       }
     }
 
+  // moving bodies (a car, a boat: sim/bodyAir.js dragAir) drag the air round them along
+  applyDrag(w);
   // wind hoses and jets (sim/stirrers.js): their own air on top
   stirAir(w, dt);
   const stirM = w.stirList?.length ? w.stirM : null;
