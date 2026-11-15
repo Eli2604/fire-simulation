@@ -18,6 +18,9 @@ import { heliToWorld, HELI } from '../ai/helicopter.js';
  *   G            at a steady hover low enough: the troops in the back fast-rope down (again: cut the ropes)
  *   E            climb out, once it is on the ground and still
  * The crew in the back fight from the open doors on their own (what they identify: ai/helicopter.js).
+ * You are in it: the rounds through your side of the cockpit reach you in your seat (ai/helicopter.js
+ * heliOccupantHit; walk.js takes them at once); down, you let go of the controls (pilotDown). You
+ * hear it (and every other helicopter) from its rotor, tail rotor and turbine: audio/heliSound.js.
  */
 const clamp = (v, a = -1, b = 1) => (v < a ? a : v > b ? b : v);
 
@@ -118,6 +121,18 @@ export class HeliFlight {
   ropes() {
     const why = this.h.playerRopes();
     this.walk.say(why ? `No ropes: ${why}` : this.h.ropeOrder ? 'Ropes out: hold the hover, the troops go down' : 'Ropes cut', 3);
+  }
+
+  /**
+   * You are down at the controls (the rounds through the cockpit: walk.js takeHits): you let go
+   * of them (Helicopter.unboard: in the air its own pilot, if one is left, takes it; nobody: it
+   * goes in), and the flight ends where it is (walk.js shows you down).
+   */
+  pilotDown() {
+    if (this.done) return;
+    const h = this.h;
+    h.unboard();
+    this.end(null, heliToWorld(h, [2.9, 0, 0.5]));
   }
 
   /** X: no ejection seat in a helicopter. */

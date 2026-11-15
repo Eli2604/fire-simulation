@@ -43,7 +43,10 @@
  *    A bullet (sim/wounds.js shoot), an arrow or rocket (sim.hitEnemy) or a blast (explode) at a
  *    part damages it (hitPart): the cockpit hits a pilot, the cabin the men in the back, the fuel
  *    tank leaks and then burns, the engine smokes and then quits, the tail rotor or its boom goes:
- *    no yaw control, the mast or the blades go: no lift.
+ *    no yaw control, the mast or the blades go: no lift. A round into the cockpit (or on through
+ *    the cabin) goes on along its line to the men in the seats (heliOccupantHit: head, torso,
+ *    legs; the armoured seat stops it from behind and below): its pilot and co-pilot, or you when
+ *    you fly it (host.playerHit: walk.js takes it at once, at the controls).
  *  - How it comes down depends on what went (`failure`):
  *      'tail'    no tail rotor: the main rotor's torque spins the fuselage round the mast (faster and
  *                faster, HELI.tailSpin), the pilot lowers the collective (a steep but survivable
@@ -76,6 +79,8 @@
  *   h.hit('tailRotor', 400);         // damage a part (VEHICLE_WEAPONS: bullet 25, rocket 350)
  *   heliHitZone(h, p)                // the part at world point p: { k, zone, local } or null
  *   heliRayHit(h, from, dir, max)    // the part a ray meets first: { k, zone, t, p } or null
+ *   heliOccupantHit(h, from, dir)    // a round on into the cockpit: the man in a seat (you flying it,
+ *                                    // its pilot, co-pilot) and where, or the seat's armour, or null
  *   heliSeats(n, doorGuns)           // the seats: pilot, co-pilot, door gunners, troops
  *   h.board(); h.controls = { collective, pitch, roll, pedal };  h.unboard();   // you fly it
  *   h.playerRopes()                  // (flown by you) cables out at the hover, the troops down; again: cut
@@ -277,6 +282,76 @@ export function heliRayHit(h, from, dir, max = 1000, chance = null) {
   return null;
 }
 
+/**
+ * A man in a cockpit seat as a target, in the helicopter's frame, from his seat's place `at` (his
+ * feet on the floor): his legs (forward, on the pedals), torso, head, and the seat's armour (an
+ * armoured bucket seat: the back plate and the pan under him stop a rifle round from behind or below).
+ */
+export function seatBoxes(at) {
+  const [x, y, z] = at;
+  return [
+    { zone: 'head', c: [x - 0.12, y + 1.12, z], h: [0.12, 0.13, 0.11] },
+    { zone: 'torso', c: [x - 0.15, y + 0.72, z], h: [0.16, 0.27, 0.22] },
+    { zone: 'legs', c: [x + 0.3, y + 0.35, z], h: [0.32, 0.18, 0.2] },
+    { zone: 'seat', c: [x - 0.36, y + 0.75, z], h: [0.04, 0.42, 0.27] },
+    { zone: 'seat', c: [x - 0.1, y + 0.33, z], h: [0.3, 0.04, 0.27] },
+  ];
+}
+
+/** Who sits in the cockpit (pilot's seat: you when you fly it; the co-pilot's): [{ who: crew man | 'player', seat, boxes }]. */
+export function cockpitOccupants(h) {
+  const out = [];
+  PILOTS.forEach((s, i) => {
+    let who = null;
+    if (i === 0 && h.player) who = 'player';
+    else who = (h.crew ?? []).find((e) => e.role === s.role && e.aboard === h.id && !e.dead && !e.relieved && !e.atDoor) ?? null;
+    if (who) out.push({ who, seat: s, boxes: seatBoxes(s.at) });
+  });
+  return out;
+}
+
+/** Ray (local from, unit dir) against an axis-aligned box: the entry distance, or null. */
+function rayBox(o, d, b, max) {
+  let t0 = 0, t1 = max;
+  for (let i = 0; i < 3; i++) {
+    const lo = b.c[i] - b.h[i], hi = b.c[i] + b.h[i];
+    if (Math.abs(d[i]) < 1e-9) {
+      if (o[i] < lo || o[i] > hi) return null;
+      continue;
+    }
+    let a = (lo - o[i]) / d[i], c = (hi - o[i]) / d[i];
+    if (a > c) [a, c] = [c, a];
+    t0 = Math.max(t0, a);
+    t1 = Math.min(t1, c);
+    if (t0 > t1) return null;
+  }
+  return t0;
+}
+
+/**
+ * A round along a ray (world from, dir, up to max m) into the cockpit: the man in a seat it meets
+ * first and where ({ who: crew man | 'player', zone: 'head' | 'torso' | 'legs', t, p }), or the
+ * seat's armour that stops it ({ who, zone: 'seat', stopped: true, ... }), or null: through the
+ * glass past them. The same for the helicopter's own pilot and for you at its controls.
+ */
+export function heliOccupantHit(h, from, dir, max = 6) {
+  const D = norm(dir);
+  const A = heliAxes(h.yaw, h.pitch, h.roll);
+  const lf = heliToLocal(h, from, false, A);
+  const ld = heliToLocal(h, D, true, A);
+  let best = null;
+  for (const o of cockpitOccupants(h)) {
+    for (const b of o.boxes) {
+      const t = rayBox(lf, ld, b, max);
+      if (t != null && (!best || t < best.t)) best = { who: o.who, zone: b.zone, t };
+    }
+  }
+  if (!best) return null;
+  best.p = [from[0] + D[0] * best.t, from[1] + D[1] * best.t, from[2] + D[2] * best.t];
+  if (best.zone === 'seat') best.stopped = true;
+  return best;
+}
+
 
 let NEXT = 0;
 
@@ -467,9 +542,27 @@ export class Helicopter {
     const r = hitPart(this.dmg, 'helicopter', k, amount);
     if (!r) return null;
     const zone = VEHICLE_ZONES.helicopter.find((z) => z.k === k);
-    this.event('heliHit', { zone: k, label: zone.label, damage: r.amount, value: r.value, destroyed: r.destroyed });
     const big = amount >= VEHICLE_WEAPONS.shell;
     const q = p ?? this.toWorld(zone.boxes[0].c);
+    const ev = this.event('heliHit', { zone: k, label: zone.label, damage: r.amount, value: r.value, destroyed: r.destroyed, at: q.slice(), weapon });
+    // a round (not a blast) into the cockpit or the cabin, its way known: on along its line, the
+    // man in a seat it meets (you, flying it; its pilot, co-pilot), or the seat's armour, or past
+    // them (heliOccupantHit). Without a direction (a part hit as such): the old odds below.
+    if ((k === 'cockpit' || k === 'cabin') && p && dir && !big) {
+      if (k === 'cockpit' && (r.value > 0.25 || this.rand() < 0.3)) this.glass = true;
+      const D = norm(dir);
+      const o = heliOccupantHit(this, [p[0] - D[0] * 0.6, p[1] - D[1] * 0.6, p[2] - D[2] * 0.6], D, 6.6);
+      if (o) {
+        ev.occupant = o.who === 'player' ? 'player' : o.who.name;
+        ev.occupantZone = o.zone;
+        if (o.stopped) return r; // (the seat's armour)
+        if (o.who === 'player') this.host.playerHit?.(o.zone, weapon, o.p);
+        else this.hurtMan(o.who, o.zone, weapon, o.p, dir);
+        return r;
+      }
+      if (k === 'cockpit') return r; // through the glass, past them
+      // (the cabin: on to the men in the back, below)
+    }
     if (k === 'cockpit') {
       if (r.value > 0.25 || big) this.glass = true;
       // the man on the side it came in on (the pilot sits right)
@@ -1073,7 +1166,7 @@ export class Helicopter {
     this.impactSpeed = vy;
     this.crashEnergy = r.energy;
     this.setMode('wreck');
-    this.event('heliCrash', { severity: sev, cause: this.failure ?? (this.fire > 0 ? 'fire' : 'hard landing'), speed: vy, energy: r.energy });
+    this.event('heliCrash', { severity: sev, cause: this.failure ?? (this.fire > 0 ? 'fire' : 'hard landing'), speed: vy, energy: r.energy, omega: this.omega, blades: this.blades });
     // the men in it: by how hard (the seats take some of a hard landing; a spin flings them about)
     const base = sev === 'hard' ? 6 + vy * 3 : sev === 'crash' ? 25 + vy * 5 : 260;
     for (const e of this.aboard()) this.hurt(e, base * (0.7 + 0.6 * this.rand()) + (this.failure === 'tail' ? 8 : 0));
