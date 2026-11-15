@@ -49,6 +49,28 @@ at the top switches between:
   own frame), where, size, turn, height (+ raises, − digs), raise / dig or level (flatten at the
   height), edge slope width and profile (smooth, linear, dome; 0: a cliff), roughness, surface,
   and per surface its grass moisture and tall grass, its water / lava level, its snow depth.
+  **Patrols** (`editor/patrolPanel.js`, `ai/patrol.js`): with a squad, an enemy group or a soldier
+  squad on patrol selected, its properties have a **Patrol** folder and the view shows its drawn
+  **path** (a blue line over the ground through its waypoints, the first white, an arrow on each
+  leg the way they walk it, both ways for *back and forth*, the leg back to the start dashed for a
+  *loop*, a ring where they stop) and **area** (a yellow outline, a box on each corner).
+  *✎ Draw path*: each click on the ground adds a waypoint at the end; a click on a leg puts one in
+  there. *✎ Draw area*: each click adds a corner (into the nearest edge); *▭ Rect* / *◯ Circle* make
+  a 16 × 16 m or 8 m round area round the squad. Drag a handle to move the point; click it to pick
+  it: Del deletes it, Esc lets go of it, Enter or Esc ends drawing. A picked waypoint's options:
+  pause there (s), look round while waiting, stance (stand / crouch), the pace of the leg to it
+  (walk, patrol: weapon at the ready, run). *Clear path* / *Clear area*, *⇄ Reverse*; the order
+  (*loop*, *back and forth*, *one way*: they stay at the end), the area's *random* spots or
+  *sweep* (rows across it) and the **leash** (m) are in the Parameters. Path and area are text
+  params in the object's frame (`patrolPath` "x,z 4s look crouch run; …", `patrolArea` "x,z; …"),
+  so they move and turn with it, can be typed too, and are saved, undone and redone with the
+  scene. A drawn path takes the place of the model's own patrol (the enemy rectangle, the camp
+  patrol's circle); a squad with one patrols it in file as guards of its own team until contact
+  (its threat offset unused), then fights as a fire team. On the leash: a man further than the
+  leash outside the area (or the path, with no area) breaks off and runs back in, and they do
+  not go after a threat that far out. **◇ Patrols** in the mode bar shows every squad's path and
+  area (Edit: all of the scene's, dim; Play: a debug overlay of the guards' patrols as the
+  world has them).
 - **🦴 Rig** (R from a selected character or vehicle): a stage of its own (`rig/stage.js`) with an
   **Object** drop-down: the *soldier* (every clip, loadouts, weapons, gear, hit zones), a *squad*
   (the fire team of `models/squad.js` in formation, playing clips together; pick a member, add a
@@ -285,7 +307,9 @@ other and you. They:
 
 - **patrol**: around where they start, at random spots inside a **patrol area**, or along a
   **guard round** (the corners of the area, in turn). Areas are set per enemy group (Patrol,
-  area width and depth, offset) and shown as red outlines with the markers. After
+  area width and depth, offset) and shown as red outlines with the markers, or drawn in the
+  editor (a path of waypoints with stops and paces, an area of any shape, a leash: *Patrols*
+  in the editor section; `ai/patrol.js`). After
   investigating or luring they go back to their area.
 - **hear noises**: breaking glass, doors, explosions, arrows hitting, rockets.
   They go to look where a noise came from. Loud noises carry further. An explosion brings
@@ -1017,14 +1041,14 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Helicopter | mission (insert / land / overwatch / hover), soldiers in the back, door guns, start in the air or on the ground, where it comes from, altitude, cruise speed, fast-rope hover height, rope length, orbit radius, call sign, paint. Flies there with its crew (`ai/helicopter.js`) |
 | Rope / zipline | kind (fast rope from a steel gantry, zipline cable between a tall and a short pole, rappel anchor at a roof edge), height, rope length, zipline span and drop, whether it builds what holds it (gantry, poles, a rappel tower). Gives the world a rope (`world.ropes`) that soldiers and the player go down or along (`ai/rope.js`) |
-| Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
+| Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed; a drawn patrol path and area (order, sweep, leash: see *Patrols* in the editor) |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
 | Camp island | size, sea level, ground and pad heights, how far east the pad reaches, ridge height, place and width, where the landing ground is, pier length, the zone the boat goes to, seed. A height field like the island: the level camp pad in the west, the ridge across the middle, the landing ground (its walk-in start) and a pier with a boat in the east |
 | Drone camp | bastion ring radius, which way the gate faces, drones on launch pads, monitors on the desk, jammers, operations and floodlight loads (kW), the grid it runs on, tent canvas moisture. HESCO bastions, the command tent with the operations desk (a monitor per drone, the tactical map), crew tents, launch pads with quadcopters, a radio mast, jammers, floodlights, the power panel |
 | Solar panel park | rows, panels in a row, tilt, facing (compass), row spacing, panel peak power, battery (kWh) and its charge at the start, the grid it feeds, where its cable runs. Panels on steel frames, an inverter/battery container |
 | Wind turbine (windmill) | hub height, rotor radius, rated power, cut-in, rated and cut-out wind, restart speed after a cut-out, yaw rate, the grid it feeds, where its cable runs. Tower, nacelle, three blades turning with the weather's wind |
-| Soldier squad on patrol | soldiers, the round's radius and corners, clockwise, call sign, expertise, body armour, ground height, recoil |
+| Soldier squad on patrol | soldiers, the round's radius and corners, clockwise, call sign, expertise, body armour, ground height, recoil; a drawn patrol path (in place of the round) and area |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.

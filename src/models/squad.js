@@ -3,7 +3,11 @@
  * the threat by bounding overwatch, from cover to cover. The threat is a point (offset from the
  * squad's position); set it in the scene or with the "Squad: set the threat" tool.
  * Drawn as the sculpted operator (operator/rig.js).
+ * With a patrol drawn for them (in the editor's view, ai/patrol.js: a path, an area) they patrol
+ * that instead, in file, as guards of their own team, until contact (then the squad AI as ever,
+ * on the leash); the threat offset is then not used.
  */
+import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
 /** A member's primary from the Riflemen option (undefined: a rifle; the gunner keeps his MG). */
 function loadoutOf(opt, squad) {
   if (squad === 'MG' || squad === 'UAV' || !opt || opt === 'rifle') return undefined;
@@ -40,10 +44,12 @@ export default {
     rallyZ: { value: 0, min: -60, max: 60, step: 0.5, label: 'Rally point offset Z (m)' },
     casualties: { value: 'auto', options: ['auto', 'carry', 'leave'], label: "A man down in a retreat (auto: by experience, the enemy's distance, his wounds, the men left; carry: fireman's carry; leave: he stays and covers them)" },
     tripwire: { value: true, label: 'The last man back through a door strings a tripwire with a charge across it' },
+    ...PATROL_PARAMS,
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
     if (p.droneOperator) roles.push(['UAV', 0, 3.2]);
+    const area = drawnPatrol(p);
     return {
       prims: [],
       enemies: roles.map(([squad, x, z]) => ({
@@ -51,7 +57,8 @@ export default {
         squad,
         unit: p.unit,
         loadout: p.flameTrooper && squad === 'R2' ? 'torch' : loadoutOf(p.riflemen, squad),
-        threat: [p.threatX, p.level, p.threatZ],
+        threat: area ? undefined : [p.threatX, p.level, p.threatZ],
+        ...(area ? { area, routeStart: -1, guard: true } : {}),
         skill: p.skill !== 'mixed' ? p.skill : { CMD: 'veteran', MG: 'regular', R1: 'regular', R2: 'recruit', UAV: 'regular' }[squad],
         armour: p.armour !== false,
         recoil: p.recoil ?? 1,

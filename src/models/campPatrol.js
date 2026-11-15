@@ -6,7 +6,10 @@
  * overwatch, parkour only once alerted): once the team sees you, hears something or is sent to
  * look, the squad AI has them, and they go back to their round when it is over. Soldiers, not
  * guards: they do not slip off to light fires.
+ * A path drawn in the editor's view (ai/patrol.js) takes the place of the round; an area drawn
+ * as well is where they keep to (the leash).
  */
+import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
 export default {
   label: 'Soldier squad on patrol (a round)',
   params: {
@@ -19,12 +22,15 @@ export default {
     armour: { value: true, label: 'Body armour (plates) and helmets' },
     level: { value: 0, min: 0, max: 20, step: 0.1, label: 'Ground height (m)' },
     recoil: { value: 1, min: 0, max: 3, step: 0.05, label: 'Weapon recoil (× the physical)' },
+    ...PATROL_PARAMS,
   },
   build(p) {
     const n = Math.max(3, Math.round(p.corners));
     const s = p.clockwise ? 1 : -1;
     // (x east, z south: seen from above, clockwise is +angle in x-z)
-    const corners = Array.from({ length: n }, (_, k) => {
+    const drawn = drawnPatrol(p);
+    // (a drawn path: its waypoints are the round; a drawn area only: random spots in it, from its first corner)
+    const corners = drawn?.corners ?? Array.from({ length: n }, (_, k) => {
       const t = s * (k / n) * Math.PI * 2;
       return [Math.cos(t) * p.radius, p.level, Math.sin(t) * p.radius];
     });
@@ -32,13 +38,13 @@ export default {
     // they start in file at the first corner, the leader at the front, the others behind him
     // along the leg they came by
     const t0 = corners[0];
-    const t1 = corners[n - 1];
+    const t1 = corners[corners.length - 1];
     const dl = Math.hypot(t1[0] - t0[0], t1[2] - t0[2]) || 1;
     return {
       prims: [],
       enemies: Array.from({ length: p.count }, (_, k) => ({
         p: [t0[0] + ((t1[0] - t0[0]) / dl) * 3.5 * k, p.level, t0[2] + ((t1[2] - t0[2]) / dl) * 3.5 * k],
-        area: { mode: 'route', corners },
+        area: drawn ?? { mode: 'route', corners },
         routeStart: 0,
         soldier: true,
         unit: p.unit,

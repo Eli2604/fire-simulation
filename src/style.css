@@ -703,3 +703,12 @@ body[data-mode='edit'] #toolhint {
   cursor: pointer;
   font: inherit;
 }
+/* drawn patrols (editor/patrolPanel.js): the mode bar's toggle, the drawing buttons when on */
+#modebar button.patrols.on,
+#props .patrolPanel .add button.on {
+  background: rgba(79, 195, 255, 0.28);
+  border-color: rgba(79, 195, 255, 0.7);
+}
+#props .patrolPanel .muted {
+  margin: 4px 0 2px;
+}

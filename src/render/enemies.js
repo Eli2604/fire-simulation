@@ -5,6 +5,7 @@ import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 import { driveFromAI } from '../operator/drive.js';
 import { ropeEnds } from '../ai/rope.js';
+import { PACE } from '../ai/patrol.js';
 import { lod, updateEvery } from './lod.js';
 import { FlashlightPool } from './flashlights.js';
 
@@ -517,8 +518,8 @@ export class EnemyRenderer {
     else if (e.moving && f.slope > 0.3) name = 'stairsUp';
     else if (e.moving && f.slope < -1.0) name = 'slide';
     else if (e.moving && f.slope < -0.3) name = 'stairsDown';
-    else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
-    else name = e.state === 'investigate' ? 'aim' : 'idle';
+    else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : PACE[e.pace]?.anim ?? 'walk';
+    else name = e.state === 'investigate' ? 'aim' : e.holdStance ?? 'idle'; // (a drawn patrol's pace and stops: ai/patrol.js)
     // on a rope (ai/rope.js): the figure's rope runs from its anchor to its end (rappelling, fast-roping)
     if (e.rope && e.rope.kind !== 'zipline') [f.ropeTop, f.ropeTail] = ropeEnds(e.rope.rope);
     else f.ropeTop = f.ropeTail = null;
