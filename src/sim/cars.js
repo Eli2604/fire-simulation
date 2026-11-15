@@ -1,5 +1,6 @@
-import { MATERIALS } from './materials.js';
-import { carSpec, makeCar, subStep, carRot, carToWorld, setMode, startEngine, stopEngine, sfx, massOf, CAR_SUBSTEP } from './carPhysics.js';
+import { MATERIALS, MAT } from './materials.js';
+import { carSpec, makeCar, subStep, carRot, carToWorld, setMode, startEngine, stopEngine, sfx, massOf, hasEnergy, wheelPhase, CAR_SUBSTEP } from './carPhysics.js';
+import { FRESH, crushCells } from './batteries.js';
 import { captureBody, stampBody, bodyLeft, regionState, bodyBurning } from './carBody.js';
 import { impact } from './impact.js';
 import { F_LIQUID } from './world.js';
@@ -33,6 +34,14 @@ import { wheelContact, groundDrag, groundWork } from './groundContact.js';
  * cars (boxes: momentum along the normal), people (knocked down and hurt at speed: impact;
  * slowly: it stops for them). The engine dies when its bay has burnt (its voxels gone, charred or
  * hot) or the car is wrecked; the fuel left is what its tank's petrol voxels still hold.
+ *
+ * An EV's or a hybrid's battery pack (sim/batteries.js): its cells are its 'battery' region; the
+ * charge it has is no more than its cells not yet gone (thermal runaway); an EV whose pack has
+ * mostly gone is dead. A crash crushes the cells near where it hits (crushCells: hard enough,
+ * they short and go into runaway).
+ *
+ * The people in it (placeAboard): the driver at the wheel (the clip 'carDrive', its phase the
+ * steering wheel's angle: operator/rig.js carClipPose), the others seated ('carSit').
  */
 
 const TAU = Math.PI * 2;
@@ -95,7 +104,7 @@ export function ensureBody(w, c) {
   if (c.body || !w || c.owner < 0 || !w.mat) return c.body;
   const S = c.spec, h = w.h;
   c.body = captureBody(w, c.owner, [c.x, c.y, c.z], c.yaw, {
-    region: (l, k, B) => (B.state.vesselTag[k] < 0 ? 'fuel' : l[0] > 0.2 * S.L + h * 0.5 && l[1] < 0.95 && Math.abs(l[2]) < S.W / 2 - h * 0.6 ? 'engine' : 'body'),
+    region: (l, k, B) => (B.state.vesselTag[k] < 0 ? 'fuel' : B.state.mat[k] === MAT.liion ? 'battery' : l[0] > 0.2 * S.L + h * 0.5 && l[1] < 0.95 && Math.abs(l[2]) < S.W / 2 - h * 0.6 ? 'engine' : 'body'),
   });
   c.body.pose = { x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: 0, roll: 0 };
   c.fuel0 = regionState(c.body, 'fuel').n;
@@ -122,9 +131,27 @@ export function checkState(w, c) {
     const tank = regionState(B, 'fuel');
     c.fuel = Math.min(c.fuel, c.spec.tank * (tank.alive / c.fuel0));
   }
+  // the pack: its charge no more than its cells still fresh (not gone in runaway, not lost)
+  if (c.spec.battery) {
+    let n = 0, fresh = 0;
+    for (let k = 0; k < B.n; k++) {
+      if (B.region?.[k] !== 'battery') continue;
+      n++;
+      if (B.alive[k] && B.state.fuel[k] >= FRESH) fresh++;
+    }
+    if (n) {
+      c.packLeft = fresh / n;
+      c.soc = Math.min(c.soc, c.packLeft);
+      if (c.spec.powertrain === 'electric' && c.packLeft < 0.5 && !c.dead) {
+        c.dead = true;
+        stopEngine(c, 'the battery has burnt');
+        c.why = 'the battery has burnt';
+      }
+    }
+  }
 }
 
-export const carUsable = (c) => !c.dead && !c.wrecked && c.damage < 1 && !c.burning && c.fuel > 0.05;
+export const carUsable = (c) => !c.dead && !c.wrecked && c.damage < 1 && !c.burning && hasEnergy(c) && (c.spec.battery || c.fuel > 0.05);
 export const driverOf = (c) => c.seats.find((s) => s.drive)?.who ?? null;
 
 /** Into seat i (or the first free one; the drive seat first for i = 'drive'): the seat index, or -1. */
@@ -142,6 +169,7 @@ export function leaveCar(c, m) {
   if (!s) return;
   s.who = null;
   c.load = Math.max(0, c.load - (m.mass ?? 85));
+  if (m.anim === 'carDrive' || m.anim === 'carSit') m.animPhase = null; // (his clip no longer held at the wheel's angle)
 }
 
 /** The car whose driver's door is within r of p (and at its height): or null. */
@@ -310,6 +338,7 @@ function hitSomething(c, ctx, p, v, n, material) {
   const m = massOf(c);
   c.damage = Math.min(1, c.damage + (v / 26) ** 2);
   sfx(c, 'crash', { v, p, material });
+  if (c.spec.battery && ctx.world?.mat) crushCells(ctx.world, p, 0.6 + v * 0.05, clamp((v - 8) / 12, 0, 1.2));
   if (ctx.sim) impact(ctx.sim, { pos: p, mass: m, velocity: n.map((x) => x * v), materials: ['steel', material ?? 'concrete'], kind: 'vehicle', name: c.label, radius: 0.4, size: 1.5, from: [c.x, c.y + 1, c.z] });
   if (c.damage >= 1 && !c.dead) {
     c.dead = true;
@@ -368,6 +397,7 @@ function collideCars(cars, ctx) {
         c._hitT = c.t;
         c.damage = Math.min(1, c.damage + (-vn / 30) ** 2);
         sfx(c, 'crash', { v: -vn, p, material: 'steel' });
+        if (c.spec.battery && ctx.world?.mat) crushCells(ctx.world, p, 0.6 - vn * 0.05, clamp((-vn - 8) / 12, 0, 1.2));
       }
       if (-vn >= 2 && ctx.sim) impact(ctx.sim, { pos: p, mass: (ma * mb) / (ma + mb), velocity: [-vn * nx, 0, -vn * nz], materials: ['steel', 'steel'], kind: 'vehicle', name: 'cars', radius: 0.4, size: 1.5, effects: { crush: false } });
     }
@@ -512,16 +542,24 @@ function syncVessels(w, c) {
 }
 const angle = (a) => Math.abs(((a + Math.PI) % TAU + TAU) % TAU - Math.PI);
 
-/** The men in its seats put there (not you: walk/carDrive.js puts you). */
+/** A seat's figure root (his feet: the seat's top less SEAT_DROP) in the car's frame. */
+export const SEAT_DROP = 0.45;
+/**
+ * The men in its seats put there (not you: walk/carDrive.js puts you): the driver's hands on the
+ * steering wheel at its angle (the clip 'carDrive' held at wheelPhase), the others seated ('carSit').
+ */
 export function placeAboard(c) {
   for (const s of c.seats) {
     const m = s.who;
     if (!m || m.player) continue;
-    m.p = carToWorld(c, [s.at[0], s.at[1] - 0.45, s.at[2]]);
+    m.p = carToWorld(c, [s.at[0], s.at[1] - SEAT_DROP, s.at[2]]);
     m.yaw = c.yaw + Math.PI / 2;
     m.moving = false;
     m.speed = 0;
-    if (!m.dead && !m.vehFiring) m.anim = m.down ? 'woundedDown' : 'deskSit';
+    if (!m.dead && !m.vehFiring) {
+      m.anim = m.down ? 'woundedDown' : s.drive ? 'carDrive' : 'carSit';
+      m.animPhase = m.anim === 'carDrive' ? wheelPhase(c.wheelAngle ?? 0) : null;
+    }
   }
 }
 

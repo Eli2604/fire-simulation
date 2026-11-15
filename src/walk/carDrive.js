@@ -22,7 +22,10 @@ import { gateNear, gatePassable, requestGate, callsignOf } from '../sim/gates.js
  *   mouse        look round it (the camera comes back behind it)
  *   E            get out (once it is slow); you are put down by the driver's door
  * You hear it (and every other car) from its engine, tyres and wind: audio/carSound.js. Rounds
- * hit you in it as on foot.
+ * hit you in it as on foot. An EV shows its charge and range (the motor's rpm, regenerating when
+ * you brake or lift off); a hybrid its charge and whether its engine is running (EV / series /
+ * parallel). The steering wheel in the cab turns with A / D (the steering ratio: sim/carPhysics.js)
+ * and you are drawn at it, your hands on its rim (render/cars.js).
  */
 const clamp = (v, a = -1, b = 1) => (v < a ? a : v > b ? b : v);
 
@@ -80,9 +83,9 @@ export class CarDrive {
     const c = this.c;
     if (c.running) {
       stopEngine(c, 'off');
-      return this.walk.say('Engine off', 1.5);
+      return this.walk.say(c.spec.single ? 'Power off' : 'Engine off', 1.5);
     }
-    if (!startEngine(c)) this.walk.say(c.dead ? `It will not start: ${c.why ?? 'the engine is wrecked'}` : 'It is turning over', 2);
+    if (!startEngine(c)) this.walk.say(c.dead ? `It will not start: ${c.why ?? 'the engine is wrecked'}` : c.spec.single ? 'Starting up' : 'It is turning over', 2);
   }
 
   update(dt, keys) {
@@ -132,19 +135,28 @@ export class CarDrive {
     cam.lookAt(target.clone().add(new THREE.Vector3(Math.cos(c.yaw), 0, -Math.sin(c.yaw)).multiplyScalar(2)));
     cam.updateMatrixWorld();
     const kmh = Math.round(Math.abs(c.u) * 3.6);
-    const gear = c.mode === 'D' ? `D${c.gear > 0 ? c.gear : ''}` : c.mode;
+    const ev = S.powertrain === 'electric', hyb = S.powertrain === 'hybrid';
+    const gear = c.mode === 'D' ? `D${c.gear > 0 && !S.single ? c.gear : ''}` : c.mode;
     const E = S.engine;
-    const bar = '█'.repeat(Math.round((10 * Math.min(c.rpm, E.redline)) / E.redline)).padEnd(10, '·');
+    const top = ev ? S.motor.rpmMax : E.redline;
+    const bar = '█'.repeat(Math.round((10 * Math.min(c.rpm, top)) / top)).padEnd(10, '·');
     const warn = [];
     if (c.burning) warn.push('🔥 ON FIRE');
-    if (c.dead) warn.push(`⚠ ENGINE DEAD (${c.why ?? 'wrecked'})`);
-    else if (!c.running && c.crank <= 0) warn.push(c.why === 'out of fuel' || c.fuel <= 0.05 ? '⚠ NO FUEL' : `engine off${c.why && c.why !== 'off' ? ` (${c.why})` : ''}: R to start`);
-    if (c.crank > 0) warn.push('cranking…');
+    if (c.dead) warn.push(`⚠ ${ev ? 'DRIVE' : 'ENGINE'} DEAD (${c.why ?? 'wrecked'})`);
+    else if (!c.running && c.crank <= 0) warn.push(ev && c.soc <= 0.01 ? '⚠ BATTERY FLAT' : !ev && !hyb && (c.why === 'out of fuel' || c.fuel <= 0.05) ? '⚠ NO FUEL' : `${ev || hyb ? 'off' : 'engine off'}${c.why && c.why !== 'off' ? ` (${c.why})` : ''}: R to start`);
+    if (c.crank > 0) warn.push(S.single ? 'starting…' : 'cranking…');
     if (c.damage > 0.05) warn.push(`damage ${Math.round(c.damage * 100)}%`);
     if (c.skid > 0.4) warn.push('SKIDDING');
+    if ((c.regenF ?? 0) > 50 && c.running) warn.push('regen');
+    const drive = { fwd: 'FWD', rwd: 'RWD', awd: '4×4', '4x4': '4×4 LOCK' }[S.drive.kind];
+    const energy = ev
+      ? `charge ${Math.round(c.soc * 100)}%  range ${Math.round(c.range)} km`
+      : hyb
+      ? `charge ${Math.round(c.soc * 100)}%  fuel ${c.fuel.toFixed(1)} l  engine ${c.ice.on ? c.ice.mode : 'off'}`
+      : `fuel ${c.fuel.toFixed(1)} l`;
     this.hud.textContent =
-      `${c.label.toUpperCase()}  ${String(kmh).padStart(3)} km/h   ${gear.padEnd(3)}  ${String(Math.round(c.rpm)).padStart(4)} rpm ${bar}   fuel ${c.fuel.toFixed(1)} l\n` +
-      `W/S on / brake (S at rest: reverse)  A/D steer  Space handbrake  H horn  R engine  E get out` +
+      `${c.label.toUpperCase()} ${drive}  ${String(kmh).padStart(3)} km/h   ${gear.padEnd(3)}  ${String(Math.round(c.rpm)).padStart(5)} rpm ${bar}   ${energy}\n` +
+      `W/S on / brake (S at rest: reverse)  A/D steer  Space handbrake  H horn  R ${S.single ? 'power' : 'engine'}  E get out` +
       (this.gateHint() ? `
 ${this.gateHint()}` : '') +
       (warn.length ? `\n${warn.join('   ')}` : '');

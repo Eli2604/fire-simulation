@@ -430,6 +430,20 @@ const DEFS = {
     emissivity: 0.95, meltingPoint: 1120, latentHeat: 400e3, fluidity: 0.3, maxMoisture: 0.3, moisture: 0.02,
     charColor: [0.16, 0.15, 0.14], liquidColor: [0.95, 0.42, 0.08], crust: true, photo: 'ash',
   },
+  liion: {
+    // lithium-ion cells in their modules (an electric car's floor pack, a hybrid's small one). They
+    // do not burn like a fuel (combustible: false): sim/batteries.js runs them. Above ~170 °C, or
+    // damaged (a round through them, a crash: crack), a cell goes into thermal runaway: its
+    // chemistry heats it by itself (no air needed: the cathode gives the oxygen) and it vents a
+    // jet of flammable, toxic gas (electrolyte vapour, H2, CO, HF). The pack is sealed: little of
+    // the water played on it reaches the cells (waterReach). Bulk values of a module (cells,
+    // cooling plates, busbars): ~2.4 t/m³, ~1 kJ/(kg·K), conducting ~2.5 W/(m·K) on the whole.
+    label: 'Lithium-ion cells', color: [0.17, 0.19, 0.23], density: 2400, specificHeat: 1000, conductivity: 2.5,
+    emissivity: 0.9, charColor: [0.07, 0.07, 0.08], oxidizeTemp: 250, waterReach: 0.08,
+    // onset °C (less when damaged); energy: J of stored charge per m³ of cells (~250 Wh/l); the
+    // heat of the runaway inside the cells and of the vented gas burning, × that energy
+    runaway: { onset: 170, energy: 9e8, internal: 1.5, vent: 2.2 },
+  },
 };
 
 /** id -> material definition. id 0 is air/empty. */
@@ -555,6 +569,7 @@ const MECH = {
   gasoline: { E: 1.3e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
   propane: { E: 1e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
   water: { E: 2.2e9, nu: 0.5, eta: 1, hardness: 0.03, strength: 0, radiation: 0.004, shape: 'liquid', pop: 0 },
+  liion: { E: 10e9, nu: 0.3, eta: 0.03, hardness: 0.55, strength: 30e6, radiation: 0.008, shape: 'block', pop: 0.4, grain: 0.02, burnSound: 'whoosh' },
   bone: { E: 15e9, nu: 0.3, eta: 0.03, hardness: 0.7, strength: 150e6, radiation: 0.008, shape: 'bar', brittle: true, pop: 0.1 },
   ossuary: { E: 15e9, nu: 0.3, eta: 0.03, hardness: 0.7, strength: 100e6, radiation: 0.008, shape: 'block', brittle: true, pop: 0.1 },
   // (not voxels: people and creatures, their armour; ice: sim/ice.js)

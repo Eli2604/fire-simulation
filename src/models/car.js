@@ -1,4 +1,5 @@
 import { hexToRgb } from './util.js';
+import { powertrainOf, packKWh, tankLiters } from '../sim/carPhysics.js';
 
 export default {
   label: 'Car',
@@ -11,10 +12,17 @@ export default {
     fuelLiters: { value: 40, min: 0, max: 90, step: 1, label: 'Fuel (litres)' },
     tankMaterial: { value: 'plastic', options: ['plastic', 'steel'], label: 'Fuel tank' },
     tankVent: { value: 'working', options: ['working', 'blocked'], label: 'Tank vent valve' },
-    igniteAt: { value: 'engine', options: ['engine', 'interior'], label: 'Fire starts in' },
+    powertrain: { value: 'auto', options: ['auto', 'petrol', 'diesel', 'electric', 'hybrid'], label: 'Powertrain (auto: diesel jeep / truck, petrol car)' },
+    drivetrain: { value: 'auto', options: ['auto', 'fwd', 'rwd', 'awd', '4x4'], label: 'Drive (awd: 4×4 with a centre diff; 4x4: locked; auto: awd jeep / truck, rwd car)' },
+    batteryKWh: { value: 0, min: 0, max: 150, step: 1, label: 'Battery pack (kWh; 0: EV 60, hybrid 1.5)' },
+    charge: { value: 0.8, min: 0, max: 1, step: 0.05, label: 'Battery charge (share)' },
+    igniteAt: { value: 'engine', options: ['engine', 'interior', 'battery'], label: 'Fire starts in' },
   },
   build(p, { h }) {
     const t = h;
+    const fuelL = tankLiters(p);
+    const pt = powertrainOf(p);
+    const kWh = packKWh(p);
     const L = p.length;
     const W = p.width;
     const H = p.height;
@@ -78,8 +86,8 @@ export default {
       { shape: 'box', min: [cx1 - 0.02, 0.6, -0.3], max: [cx1 + t + 0.02, 0.85, 0.3], material: 'plastic', density: 0.3 },
     );
     // fuel tank under the rear seat
-    if (p.fuelLiters > 0) {
-      const vol = p.fuelLiters / 1000;
+    if (fuelL > 0) {
+      const vol = fuelL / 1000;
       const lx = 0.5;
       const lz = Math.min(W * 0.7, 1.0);
       const ly = Math.max(t, vol / (lx * lz));
@@ -89,6 +97,23 @@ export default {
         { shape: 'box', min: [x0 - t, y0, -lz / 2 - t], max: [x0 + lx + t, y0 + ly + t, lz / 2 + t], material: p.tankMaterial === 'steel' ? 'steel' : 'plastic', density: thin(p.tankMaterial === 'steel' ? 0.0012 : 0.005), vessel: 'fuelTank' },
         { shape: 'box', min: [x0, y0 + t, -lz / 2], max: [x0 + lx, y0 + ly, lz / 2], material: 'gasoline', vessel: 'fuelTank', vesselRole: 'contents' },
       );
+    }
+    // the battery pack (sim/batteries.js: lithium-ion cells, thermal runaway): an EV's in the floor
+    // under the cabin, a thin steel tray round it; a hybrid's small one under the boot floor. Its
+    // cells' density factor sizes it to its kWh (~250 Wh per litre of cells)
+    let pack = null;
+    if (kWh > 0) {
+      const ev = pt === 'electric';
+      const x0 = ev ? cx0 + 0.1 : -L / 2 + 0.25, x1 = ev ? cx1 - 0.1 : cx0 - 0.05;
+      const zw = ev ? W / 2 - 0.25 : Math.min(0.45, W / 2 - 0.3);
+      const y0 = ev ? floor - t : floor + t, y1 = ev ? floor : floor + t + Math.max(t, 0.18);
+      const vol = (x1 - x0) * 2 * zw * (y1 - y0);
+      const dens = Math.min(1, (kWh * 3.6e6) / 9e8 / vol);
+      prims.push(
+        { shape: 'box', min: [x0 - t, y0, -zw - t], max: [x1 + t, y1, zw + t], material: 'steel', color: [0.25, 0.26, 0.28], density: thin(0.003) },
+        { shape: 'box', min: [x0, y0, -zw], max: [x1, y1, zw], material: 'liion', density: dens },
+      );
+      pack = { p: [(x0 + x1) / 2, (y0 + y1) / 2, 0] };
     }
     // bumpers
     prims.push(
@@ -107,18 +132,20 @@ export default {
         );
       }
     const ignite =
-      p.igniteAt === 'engine'
+      p.igniteAt === 'battery' && pack
+        ? { p: pack.p, radius: Math.max(0.2, t), materials: ['liion'], power: 0 } // (a fault in a cell: it goes into thermal runaway)
+        : p.igniteAt === 'engine'
         ? { p: [cx1 + 0.9, 0.7, 0], radius: 0.35, materials: ['plastic', 'rubber', 'foam'], power: 15000 }
         : { p: [cx1 - 0.75, 0.6, -0.4], radius: 0.3, materials: ['foam', 'fabric', 'plastic'], power: 8000 };
     // The tank is a pressure vessel: a plastic tank softens and leaks long before it
     // bursts; a steel tank with a blocked vent can rupture.
-    const vessels = p.fuelLiters > 0 ? {
+    const vessels = fuelL > 0 ? {
       fuelTank: {
         burstPressure: p.tankMaterial === 'steel' ? 4e5 : 1.5e5,
         ventPressure: p.tankVent === 'working' ? 1.5e4 : null,
         ventRate: 0.003,
         ullage: 0.15,
-        volume: p.fuelLiters / 1000 / 0.85,
+        volume: fuelL / 1000 / 0.85,
       },
     } : {};
     return { prims, ignite, vessels };

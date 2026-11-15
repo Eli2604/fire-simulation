@@ -17,6 +17,16 @@
  *    with the spin (spin: its share, 0..1), over the engine racing.
  *  - the wind over the body ∝ v^2.5, its hiss rising with the speed.
  *  - the horn (c.horn): two tones a third apart (~420 / 500 Hz, a car's twin horn).
+ *  - an electric car (sim/carPhysics.js powertrain 'electric'): no engine firing at all; its motor's
+ *    whine: the electrical frequency (motor rpm / 60 × its pole pairs) and its 6th order (the
+ *    torque ripple of a three-phase machine: ~400 Hz at 1000 rpm, ~4 kHz at 10 000), louder with
+ *    its current (its torque, driving or regenerating); the inverter's switching tone (its PWM
+ *    carrier: ~2.5 kHz at a standstill rising to ~8 kHz); so the tyres and the wind are what is
+ *    heard of it at speed. Below 30 km/h, ready to go, the pedestrian warning (AVAS: two soft tones
+ *    rising with the speed, fading out by 30 km/h).
+ *  - a hybrid: the motor as an EV's, the AVAS; its engine heard only while it runs (c.ice: it
+ *    starts and stops by itself: c.sfx 'iceStart' (the generator spinning it up, its first
+ *    firings) and 'iceStop' (a shudder as it stops), no starter's whine.
  *  - crashes: sim/impact.js's events (the two bodies struck: audio/sound.js impact); this adds the
  *    body's crunch and the glass (c.sfx 'crash'), a man struck ('thud'), a landing ('land').
  *  - to the listener: inverse-square spreading and the air's absorption (audio/physics.js
@@ -36,31 +46,71 @@ export function carDoppler(vs, vl, u, c = C_AIR) {
 /** Firing frequency (Hz) of a four-stroke (or two-stroke) of `cyl` cylinders at rpm. */
 export const firingHz = (rpm, cyl = 4, strokes = 4) => (rpm / 60) * (strokes === 2 ? cyl : cyl / 2);
 
-/** The engine heard at the source (see the top): { on, rpm, fire, crank, gain, cutoff, rumble, intake, rattle, starter }. */
+const SILENT = { on: false, running: false, rpm: 0, load: 0, thr: 0, fire: 0, crank: 0, gain: 0, cutoff: 200, rumble: 0, intake: 0, rattle: 0, starter: 0, starterHz: 140 };
+
+/** The engine heard at the source (see the top): { on, rpm, fire, crank, gain, cutoff, rumble, intake, rattle, starter }. An EV: silent. */
 export function engineSound(c) {
   const E = c.spec.engine;
-  const cranking = (c.crank ?? 0) > 0;
-  const on = !!c.running || cranking;
-  const rpm = c.rpm ?? 0;
+  if (!E) return { ...SILENT };
+  const hyb = c.spec.powertrain === 'hybrid';
+  const ice = c.ice;
+  const cranking = hyb ? !!ice?.on && (ice.crank ?? 0) > 0 : (c.crank ?? 0) > 0;
+  const running = hyb ? !!ice?.on && !cranking : !!c.running;
+  const on = running || cranking;
+  const rpm = hyb ? ice?.rpm ?? 0 : c.rpm ?? 0;
   const n = clamp(rpm / E.redline, 0, 1.15);
-  const load = clamp(c.loadK ?? 0, 0, 1);
-  const thr = clamp(c.thr ?? c.input?.throttle ?? 0, 0, 1);
+  // (a hybrid's engine: its load the power it makes, of its most)
+  const load = hyb ? clamp((ice?.power ?? 0) / ((E.tmax * 0.65 * E.redline) / 9.55), 0, 1) : clamp(c.loadK ?? 0, 0, 1);
+  const thr = hyb ? load : clamp(c.thr ?? c.input?.throttle ?? 0, 0, 1);
   // its power out as a share of the most it has (the level follows it, a floor for the idle)
-  const pw = c.running ? clamp(0.05 + n * (0.25 + 0.75 * load), 0.04, 1.2) : cranking ? 0.03 : 0;
+  const pw = running ? clamp(0.05 + n * (0.25 + 0.75 * load), 0.04, 1.2) : cranking ? (hyb ? 0.05 : 0.03) : 0;
   const size = (E.tmax * E.redline) / (212 * 6400); // (a bigger engine: louder)
   const db = on ? 112 + 10 * Math.log10(pw) + 10 * Math.log10(Math.max(0.2, size)) : 0;
   const gain = on ? gainOf(db, 108, 1.6) : 0;
   return {
-    on, running: !!c.running, rpm, load, thr,
+    on, running, rpm, load, thr,
     fire: firingHz(rpm, E.cyl, E.strokes),
     crank: rpm / 60,
     gain,
     cutoff: on ? 220 + 2600 * n * (0.35 + 0.65 * load) : 200,
     rumble: on ? gain * (0.35 + 0.4 * load) : 0,
-    intake: c.running ? clamp(thr * n * 0.5, 0, 0.6) : 0,
-    rattle: c.running && E.kind === 'diesel' ? clamp(0.12 + 0.25 * load, 0, 0.4) * gain : 0,
-    starter: cranking ? 0.35 : 0,
+    intake: running ? clamp(thr * n * 0.5, 0, 0.6) : 0,
+    rattle: running && E.kind === 'diesel' ? clamp(0.12 + 0.25 * load, 0, 0.4) * gain : 0,
+    starter: cranking && !hyb ? 0.35 : 0,
     starterHz: 140 + 40 * Math.sin(c.t * 9),
+  };
+}
+
+/** The electrical order heard as the whine: a three-phase machine's torque ripple (6th). */
+export const WHINE_ORDER = 6;
+/** AVAS: the pedestrian warning sound, up to this speed (m/s: 30 km/h). */
+export const AVAS_SPEED = 30 / 3.6;
+
+/**
+ * An EV's or a hybrid's electric drive heard at the source: { on, rpm, elecHz (rpm / 60 × pole
+ * pairs), whineHz (its 6th order), whine (gain), inverterHz, inverter (gain), avas (gain),
+ * avasHz [two tones] }. No motor: all off.
+ */
+export function motorSound(c) {
+  const Mo = c.spec.motor;
+  if (!Mo) return { on: false, rpm: 0, elecHz: 0, whineHz: 0, whine: 0, inverterHz: 0, inverter: 0, avas: 0, avasHz: [0, 0] };
+  const on = !!c.running;
+  const rpm = c.motorRpm ?? 0;
+  const elecHz = (rpm / 60) * Mo.polePairs;
+  const current = clamp(Math.abs(c.motorT ?? 0) / Mo.tmax, 0, 1); // (its torque: the current through it)
+  const spin = clamp(rpm / 2500, 0, 1);
+  const whine = on ? clamp((0.02 + 0.35 * current) * (0.15 + 0.85 * spin) + 0.04 * spin, 0, 0.5) : 0;
+  const inverter = on ? clamp(0.015 + 0.08 * current, 0, 0.1) : 0;
+  const v = Math.abs(c.u ?? Math.hypot(c.vx ?? 0, c.vz ?? 0));
+  const avas = on && c.gear !== 0 && v < AVAS_SPEED ? clamp(0.25 * (1 - v / AVAS_SPEED) + 0.05, 0, 0.3) : 0;
+  return {
+    on, rpm, elecHz,
+    whineHz: elecHz * WHINE_ORDER,
+    whine,
+    inverterHz: 2500 + Math.min(5500, rpm * 1.8),
+    inverter,
+    avas,
+    avasHz: [360 + 30 * v, 540 + 45 * v],
   };
 }
 
@@ -95,10 +145,12 @@ export function carSoundParams(c, listener = {}) {
   const u = dist > 1e-6 ? dv.map((x) => x / dist) : [1, 0, 0];
   const dop = lp ? carDoppler([c.vx ?? 0, c.vy ?? 0, c.vz ?? 0], listener.vel, u) : 1;
   const pr = propagate(dist, { ref: 3, occluded: !!listener.occluded, underwater: !!listener.underwater });
-  const loudest = Math.max(engine.gain, roll, squeal, scrub, wind, brake, horn * 1.2, engine.starter);
+  const motor = motorSound(c);
+  const loudest = Math.max(engine.gain, roll, squeal, scrub, wind, brake, horn * 1.2, engine.starter, motor.whine, motor.avas);
   return {
-    speed: v, src, label: c.label,
+    speed: v, src, label: c.label, powertrain: c.spec.powertrain ?? 'petrol',
     engine: { ...engine, fire0: engine.fire, fire: engine.fire * dop, crank0: engine.crank, crank: engine.crank * dop, starterHz: engine.starterHz * dop },
+    motor: { ...motor, whineHz0: motor.whineHz, whineHz: motor.whineHz * dop, elecHz: motor.elecHz * dop, inverterHz: motor.inverterHz * dop, avasHz: motor.avasHz.map((f) => f * dop) },
     roll, rollHz: rollHz0 * dop, rollHz0, rough,
     squeal, squealHz: squealHz0 * dop, squealHz0, scrub, spin,
     wind, windHz: windHz0 * dop,
@@ -129,6 +181,29 @@ export function carSfxSound(e) {
       // the key: the solenoid's click, then the starter (its whine is the voice's)
       n(0, 0.03, 'bandpass', 2200, 4, 0.2);
       return { kind: 'start', gain: 0.2, layers: L };
+    }
+    case 'key': {
+      // an EV's / a hybrid's power button: the contactors closing (two relay clicks)
+      n(0, 0.02, 'bandpass', 2600, 5, 0.12);
+      n(0.12, 0.03, 'bandpass', 1400, 4, 0.1);
+      return { kind: 'key', gain: 0.12, layers: L };
+    }
+    case 'ready': {
+      // ready to drive: the chime (two narrow tones)
+      n(0, 0.15, 'bandpass', 880, 30, 0.12);
+      n(0.16, 0.22, 'bandpass', 1320, 30, 0.12);
+      return { kind: 'ready', gain: 0.12, layers: L };
+    }
+    case 'iceStart': {
+      // a hybrid's engine starting by itself: the generator whirring it up, its first firings catching
+      n(0, 0.3, 'bandpass', 600, 2, 0.12);
+      for (let i = 0; i < 5; i++) n(0.18 + i * 0.045, 0.05, 'lowpass', 260 + 30 * i, 0.9, 0.22 * (0.6 + 0.1 * i));
+      return { kind: 'iceStart', gain: 0.25, layers: L };
+    }
+    case 'iceStop': {
+      // ... and stopping: a shudder through the mounts
+      for (let i = 0; i < 3; i++) n(0.07 * i * (1 + 0.5 * i), 0.07, 'lowpass', 180, 0.8, 0.2 * (1 - i / 4));
+      return { kind: 'iceStop', gain: 0.2, layers: L };
     }
     case 'crankFail': {
       for (let i = 0; i < 3; i++) n(i * 0.18, 0.03, 'bandpass', 2000, 5, 0.18);
