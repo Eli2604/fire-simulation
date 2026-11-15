@@ -40,7 +40,7 @@ import { VoxelSet, Box, Capsule, cylinderHull, ConvexHull } from './shapes.js';
 import { buoyancy, waterLevelOfWorld } from './forces.js';
 import { mat3FromQuat, eulerYXZ, quatFromEulerYXZ, vlen, m3mulv } from './math.js';
 import { makeMovingBody, restamp } from '../sim/movingBody.js';
-import { MATERIALS, MAT, mechanics } from '../sim/materials.js';
+import { MATERIALS, MAT, mechanics, cpAt } from '../sim/materials.js';
 import { launchVoxel } from '../sim/vessels.js';
 import { stepChunkFire, chunkIsHot, chunkTopology } from './chunkFire.js';
 import { dragAir } from '../sim/bodyAir.js';
@@ -366,7 +366,7 @@ export class SimPhysics {
     const hc = 10 + 6 * Math.sqrt(sp);
     const T = f.temp;
     const q = (hc * (T - Ta) + 0.7 * 5.67e-8 * ((T + 273) ** 4 - (Ta + 273) ** 4)) * f.area;
-    f.temp = Math.max(Ta, T - (q * dt) / Math.max(1e-6, f.mass * f.cp));
+    f.temp = Math.max(Ta, T - (q * dt) / Math.max(1e-6, f.mass * (MAT[f.material] != null ? cpAt(MAT[f.material], T) : f.cp)));
     // at rest on something: it lights what it lies on
     if (b.sleeping || sp < 0.3) {
       f.restT += dt;

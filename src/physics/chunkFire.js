@@ -21,7 +21,7 @@
  * Everything stays in the body's state (B.s), so the restamp when it lands puts it back into the
  * grid as it is now: still burning, with the fuel it has left.
  */
-import { MATERIALS } from '../sim/materials.js';
+import { MATERIALS, cpAt } from '../sim/materials.js';
 
 import { F_BURNING } from '../sim/world.js';
 const RAD_FRACTION = 0.3; // (as sim/simulation.js)
@@ -92,7 +92,7 @@ export function stepChunkFire(sim, c, dt) {
     const a = ax >= 0 && ay >= 0 && az >= 0 && ax < w.anx && ay < w.any && az < w.anz ? w.airIdx(ax, ay, az) : -1;
     const Tair = a >= 0 ? w.airT[a] : Tamb;
     const dens = S.dens[k] || 1;
-    const Cvox = M.density * dens * V * M.specificHeat;
+    const Cvox = M.density * dens * V * cpAt(m, T); // (its specific heat at its temperature: sim/materials.js)
     const A = ex * h * h;
     let q = 0;
     if (M.combustible && S.fuel[k] > 0) {
@@ -140,7 +140,7 @@ export function stepChunkFire(sim, c, dt) {
             const j = nbr[6 * k + e];
             if (j < 0 || !S.mat[j]) continue;
             const N = MATERIALS[S.mat[j]];
-            const Cj = N.density * (S.dens[j] || 1) * V * N.specificHeat * 0.3;
+            const Cj = N.density * (S.dens[j] || 1) * V * cpAt(S.mat[j], S.skin[j]) * 0.3;
             S.skin[j] = Math.min(Math.max(S.skin[j], Ts), S.skin[j] + (q * 0.03 * dt) / Math.max(1e-6, Cj));
           }
           burning++;

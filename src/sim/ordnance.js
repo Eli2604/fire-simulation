@@ -37,6 +37,7 @@ import { boatShot, holeBoat, boatBlast, toLocal as boatLocal, stopMotor, seatWor
 import { toWorld as hullToWorld } from './buoyancy.js';
 import { raySolid, bulletHole, wound } from './wounds.js';
 import { explode } from './explosions.js';
+import { blastVehicles } from '../physics/vehicleCore.js';
 import { heliRayHit, heliToWorld } from '../ai/helicopter.js';
 import { vehicleKind } from '../ai/vehicleSides.js';
 
@@ -554,8 +555,9 @@ export function carBlast(ctx, p, R, amount = VEHICLE_WEAPONS.rocket, o = {}) {
       if (dist > R) continue;
       carHit(ctx, c, Z.k, amount * (1 - dist / R) * (Z.k === 'tyres' ? 0.5 : 1), carToWorld(c, Z.boxes[0].c), norm(sub(carToWorld(c, Z.boxes[0].c), p)), { he: true, big: amount >= VEHICLE_WEAPONS.rocket * 0.5, by: o.owner });
     }
-    // pushed by it (the shared physics may do better: a nudge on the velocity)
-    if (amount >= VEHICLE_WEAPONS.rocket * 0.5) {
+    // pushed by it: a car on the shared physics gets its push from the blast itself (blastVehicles,
+    // at the point of its box nearest the blast: it can roll it); a car off it, a nudge on its velocity
+    if (amount >= VEHICLE_WEAPONS.rocket * 0.5 && !c.core?.body) {
       const dx = c.x - p[0], dz = c.z - p[2], dl = Math.hypot(dx, dz) || 1;
       const k = clamp(1 - dl / (R * 1.5), 0, 1) * 2.5;
       c.vx = (c.vx ?? 0) + (dx / dl) * k;
@@ -689,6 +691,7 @@ export function battleBlast(ctx, p, E, o = {}) {
   if (ctx.sim && w.mat && inGrid) explode(ctx.sim, p, E, { name: o.name ?? 'rocket' });
   else {
     w.events?.push({ type: 'explosion', pos: p.slice(), time: w.time ?? 0, energy: E, radius: R, name: o.name ?? 'rocket' });
+    blastVehicles(w, p, E, R * 1.5); // (the bodies of the cars, boats and helicopters round it: physics/vehicleCore.js; in the grid explode() does it)
     for (const h of helisOf(w)) {
       if (len(sub(h.p, p)) > R * 2 + 12) continue;
       for (const Z of vehicleZones('helicopter')) {
