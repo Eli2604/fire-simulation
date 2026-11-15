@@ -414,7 +414,7 @@ gui.add({ restart }, 'restart').name('↺ Restart scene');
 gui.add({ walkIn: () => startWalk() }, 'walkIn').name('🚒 Walk through as a firefighter');
 gui.add({ pick: () => setTool('walkstart') }, 'pick').name('📍 Set the walk-in start (click the scene)');
 // (a world with a place to be put down in: the camp island behind its ridge)
-const deployCtl = gui.add({ deploy: () => deploy() }, 'deploy').name('🪂 Deploy: the camp island, behind the ridge');
+const deployCtl = gui.add({ deploy: () => deploy() }, 'deploy').name('🪂 Deploy: the military base island, behind the ridge');
 
 // --- fire starts: shown as markers; the "Set fire start" tool replaces them (Shift+click adds)
 const fFire = gui.addFolder('Fire start');

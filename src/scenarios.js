@@ -1,7 +1,7 @@
 import { defaultWeather } from './sim/weather.js';
 import { carrierObject } from './models/carrier.js';
 import { liftPlaces } from './models/composite.js';
-import { campIslandZone, CAMP_ISLAND_SEA } from './campIsland.js';
+import { campIslandZone, CAMP_ISLAND_SEA, HQ_PLACE } from './campIsland.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -47,6 +47,9 @@ export const SCENARIO_ALIASES = {
   // fuel tank: the street's car with a steel tank and a blocked vent, both its parameters)
   rainyHouse: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_RAIN' },
   tankRupture: { scenario: 'carrier', zone: 'carHouse' },
+  // (the hallway with sprinklers: the corridor inside the headquarters of the military base on the
+  // camp island, a place of its own: src/campIsland.js, models/militaryBase.js)
+  hallwaySprinklers: { scenario: 'carrier', zone: HQ_PLACE },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -284,19 +287,9 @@ export const SCENARIOS = {
     view: { camera: [1.2, 3.8, -1.5], walk: true },
     objects: [{ type: 'hallway', params: {}, x: 9.5, z: 2 }],
   },
-  hallwaySprinklers: {
-    name: 'Hallway with sprinklers',
-    description: 'The same office corridor and gas pipe burst, now with sprinklers. Each glass bulb heats with the gas around it and bursts at 68 °C; the heads spray, cool the smoke, wet everything and the water collects on the floor. Pick up the wall extinguisher or the hose reel (E) and close office doors to keep the fire out.',
-    world: { size: [17, 4.2, 7.6], h: 0.1 },
-    weather: w({ ambient: 18, humidity: 0.5 }),
-    exposure: 'indoor', // (no weather in an office corridor)
-    timeScale: 1,
-    view: { camera: [1.2, 3.8, -1.5], walk: true },
-    objects: [{ type: 'hallway', params: { sprinklers: true }, x: 9.5, z: 2 }],
-  },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time), and east of it a grass fire running under an oak, a weeping willow and a pine (4× time): the pine goes up in a crown fire, the willow drops burning branches, the limbs of the oak burn where they are. Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time), and east of it a grass fire running under an oak, a weeping willow and a pine (4× time): the pine goes up in a crown fire, the willow drops burning branches, the limbs of the oak burn where they are. Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). South-west of the ship lies the camp island, a military base: inside its blast walls, past the guard post at the gate, a drone camp powered by a solar park and a wind turbine, a squad on its round about it, barracks, a helicopter parked on its helipad (fly it: E), a vehicle park and the headquarters, whose door (E) leads into its office corridor: there the gas pipe in the ceiling bursts after 20 s and the glass-bulb sprinklers go off one by one at 68 °C, cooling the smoke and wetting everything; take the extinguisher or the hose reel off the wall (E) and close the office doors. Deploy on the landing ground behind the ridge, out of sight of the guards. Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     // a late-summer morning, 09:48 on 28 August at 51.5° N (sim/sky.js): the sun from the south-east,
     // 40° up (the island's old fixed sun, view.sun below: within half a degree)
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8, day: 240, time: 9.8 }),
@@ -528,8 +521,10 @@ export const SCENARIOS = {
         view: { dark: true, camera: [12, 16, -5], walk: true },
         objects: catacombObjects('island'),
       },
-      // the camp island: a drone camp on a solar park and a wind turbine, a squad on its round about it,
-      // a ridge, and behind it the landing ground where you are put down (src/campIsland.js)
+      // the camp island: a military base (blast walls, a gate with a guard post, the headquarters with
+      // its corridor with sprinklers as a place inside, barracks, a helipad, a vehicle park) round the
+      // drone camp, its solar park and wind turbine and a squad on its round; a ridge, and behind it
+      // the landing ground where you are put down (src/campIsland.js)
       camp: campIslandZone(),
     },
   },

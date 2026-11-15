@@ -30,6 +30,7 @@ export default {
     callsign: { value: 'Hawk', options: ['Hawk', 'Raven', 'Dustoff', 'Viper'], label: 'Call sign' },
     color: { value: '#4a5240', color: true, label: 'Paint' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Seed' },
+    autoStart: { value: true, label: 'On the ground: starts its mission by itself (off: parked, rotor still, until flown)' },
   },
   build(p) {
     const from = [p.fromX, 0, p.fromZ];
@@ -38,7 +39,7 @@ export default {
       helis: [{
         p: from, lz: [0, 0, 0], side: p.side ?? 'enemy', yaw: Math.atan2(-from[0], -from[2]) || 0, mission: p.mission, soldiers: p.soldiers, doorGuns: p.doorGuns,
         airborne: p.start !== 'ground', altitude: p.altitude, cruise: p.cruise, hoverAlt: p.hoverAlt, ropeLength: p.ropeLength,
-        orbitRadius: p.orbitRadius, callsign: p.callsign, color: p.color, seed: p.seed,
+        orbitRadius: p.orbitRadius, callsign: p.callsign, color: p.color, seed: p.seed, ...(p.autoStart === false ? { autoStart: false } : {}),
       }],
     };
   },

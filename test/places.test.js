@@ -18,7 +18,7 @@ const box = (n) => boxes.find((b) => b.name === n);
 // lake house) and the Catacombs are places of it
 test('the carrier world: every place a box with a label; the lake house, its garden and its meadow side by side', () => {
   assert.ok(sc.places && sc.zones, 'a world of places');
-  for (const k of ['teaGarden', 'laundry', 'winterTea', 'grassFire', 'catacombs']) assert.ok(!SCENARIOS[k], `${k}: no longer a scene of its own`);
+  for (const k of ['teaGarden', 'laundry', 'winterTea', 'grassFire', 'catacombs', 'hallwaySprinklers']) assert.ok(!SCENARIOS[k], `${k}: no longer a scene of its own`);
   // every place shows as a box (those inside or under another at a schematic spot)
   assert.deepEqual(boxes.map((b) => b.name).sort(), Object.keys(sc.zones).sort());
   for (const b of boxes) {
@@ -26,7 +26,7 @@ test('the carrier world: every place a box with a label; the lake house, its gar
     assert.ok(b.max.every((v, k) => v > b.min[k]), `${b.name}: a box`);
     assert.equal(b.schematic, !sc.zones[b.name].origin);
   }
-  assert.deepEqual(boxes.filter((b) => b.schematic).map((b) => b.name).sort(), ['below', 'catacombs', 'lower']);
+  assert.deepEqual(boxes.filter((b) => b.schematic).map((b) => b.name).sort(), ['below', 'catacombs', 'headquarters', 'lower']);
   assert.equal(box('garden').label, 'Washing line & barbecue');
   // the places in the open do not overlap
   const open = boxes.filter((b) => !b.schematic);
@@ -83,6 +83,7 @@ test('old scenario keys open the carrier world at their place', () => {
   assert.deepEqual(resolveScenario('teaGarden'), { scenario: 'carrier', zone: 'lake' });
   assert.deepEqual(resolveScenario('grassFire'), { scenario: 'carrier', zone: 'meadow' });
   assert.deepEqual(resolveScenario('catacombs'), { scenario: 'carrier', zone: 'catacombs' });
+  assert.deepEqual(resolveScenario('hallwaySprinklers'), { scenario: 'carrier', zone: 'headquarters' });
   assert.equal(resolveScenario('winterTea').zone, 'lake');
   assert.deepEqual(resolveScenario('carrier'), { scenario: 'carrier', zone: null });
   assert.equal(resolveScenario('nope'), null);
@@ -126,6 +127,37 @@ test('the catacombs under the church are the old Catacombs scene: the same passa
   assert.ok(w.doors.some((d) => d.locked), 'a locked door');
   assert.equal(w.enemies.length, 5);
   assert.ok(w.portals.some((p) => p.to === 'island'));
+});
+
+test('the hallway with sprinklers is the corridor inside the headquarters of the military base: its gas pipe bursts, its sprinklers go off', { timeout: 5 * 60 * 1000 }, () => {
+  // ?scenario=hallwaySprinklers opens the carrier's world in it
+  const open = openScenario('hallwaySprinklers');
+  assert.equal(open.startZone, 'headquarters');
+  const zd = sc.zones.headquarters;
+  assert.equal(zd.within, 'camp', 'inside a building of the camp island');
+  assert.ok(sc.zones.camp.objects.some((o) => o.type === 'hqBuilding' && o.params.doorTo === 'headquarters' && o.children?.includes(zd)));
+  // the old scene's corridor, air and view
+  assert.deepEqual(zd.world, { size: [17, 4.2, 7.6], h: 0.1 });
+  assert.equal(zd.exposure, 'indoor');
+  assert.equal(zd.timeScale, 1);
+  const hallway = zd.objects.find((o) => o.type === 'hallway');
+  assert.equal(hallway.params.sprinklers, true);
+  // built: indoors, its 18 °C, sprinklers, the extinguisher and the hose reel, the way out to the base
+  open.zones.headquarters.objects.find((o) => o.type === 'hallway').params.burstAfter = 1; // (sooner, as tests go)
+  const sim = createSimulation({ ...open, zone: 'headquarters' });
+  const w = sim.world;
+  assert.ok(w.indoor);
+  assert.ok(Math.abs(sim.weather.ambient - 18) < 1e-9);
+  assert.equal(sim.weather.windSpeed, 0);
+  assert.ok(w.sprinklers.length >= 3, 'sprinkler heads');
+  assert.deepEqual(w.pickups.map((p) => p.type).sort(), ['extinguisher', 'hoseReel']);
+  const out = w.portals.find((p) => p.to === 'camp');
+  assert.ok(out && out.arrive && out.arrive.p[0] > out.p[0], 'the entrance leads out; in, you stand inside it');
+  // the gas pipe bursts; the hot gas bursts the bulbs
+  while (w.time < 120 && !w.sprinklers.some((s) => s.active)) sim.step(sim.dt);
+  assert.ok(w.events.some((e) => e.type === 'pipeBurst'), 'the pipe burst');
+  assert.ok(w.sprinklers.some((s) => s.active), `a sprinkler head opened (by ${w.time.toFixed(0)} s)`);
+  assert.ok(w.events.some((e) => e.type === 'sprinkler'));
 });
 
 test('the meadow by the lake house: the grass fire runs downwind across it to the trees and the fence', { timeout: 10 * 60 * 1000 }, () => {
