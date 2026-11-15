@@ -42,7 +42,7 @@ export const GROUPS = [
   ['Cover & buildings', ['wall', 'crate', 'deck', 'rope', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
   ['Characters', ['squad', 'enemy', 'dragon']],
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
-  ['Vehicles', ['car']],
+  ['Vehicles', ['car', 'helicopter']],
   ['Furniture & props', ['couch', 'livingRoom', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp']],
   ['Nature', ['tree', 'grass', 'hedge', 'volcano']],
   // every kind of tree as an object of its own (models/treeObjects.js: oak, willow, pine, birch, ...)

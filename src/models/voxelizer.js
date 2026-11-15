@@ -251,6 +251,7 @@ export function placeObject(world, obj, ownerIndex = -1) {
   }
   for (const dr of built.dragons ?? []) world.dragons.push({ ...dr, p: toWorld(...dr.p), yaw: (dr.yaw ?? 0) + rot });
   for (const fl of built.flights ?? []) world.flights.push({ ...fl, p: toWorld(...fl.p), target: toWorld(...fl.target), home: toWorld(...fl.home), owner: ownerIndex });
+  for (const he of built.helis ?? []) world.helis.push({ ...he, p: toWorld(...he.p), lz: toWorld(...he.lz), yaw: (he.yaw ?? 0) + rot, owner: ownerIndex }); // ai/helicopter.js
   for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const lp of built.lookouts ?? []) world.lookouts.push(toWorld(...lp));

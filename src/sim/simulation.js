@@ -19,6 +19,7 @@ import { stepRopes, rappelFrom } from '../ai/rope.js';
 import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
 import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
+import { HeliAI } from '../ai/helicopter.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepBreach } from './breach.js';
@@ -109,6 +110,7 @@ export class Simulation {
     this.ai = new EnemyAI(this);
     this.dragonAI = new DragonAI(this); // after the guards: it wraps their hit test
     this.phoenixAI = new PhoenixAI(this);
+    this.heliAI = new HeliAI(this); // helicopters (w.helis): their parts in the way of bullets, arrows, rockets, blasts
   }
 
   rand() {
@@ -273,6 +275,7 @@ export class Simulation {
     if (w.dragons.length) this.dragonAI.step(dt);
     if (w.phoenixes.length) this.phoenixAI.step(dt);
     if (w.flights?.length) stepWorldFlights(this, dt);
+    if (w.helis?.length) this.heliAI.step(dt);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     void D;
   }

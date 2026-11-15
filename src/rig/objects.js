@@ -16,6 +16,7 @@ export const RIG_OBJECTS = [
   { kind: 'jetFlight', label: 'Jet flight (formation)' },
   { kind: 'pilot', label: 'Pilot (ejection seat, parachute)' },
   { kind: 'boat', label: 'Boat' },
+  { kind: 'helicopter', label: 'Helicopter (crew, door guns, fast-rope)' },
 ];
 export const RIG_KINDS = RIG_OBJECTS.map((o) => o.kind);
 /** The vehicles (rig/vehicles.js draws and moves them). */
@@ -43,7 +44,7 @@ export function rigKind(what) {
 }
 
 /** Scene object types (models/index.js) the rig can open, and as what. */
-export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight', catacombs: 'phoenix' };
+export const RIG_TYPES = { squad: 'squad', enemy: 'soldier', dragon: 'dragon', car: 'car', jet: 'jet', boat: 'boat', jetFlight: 'jetFlight', catacombs: 'phoenix', helicopter: 'helicopter' };
 
 /** What the rig should show for a scene object ({ type, params }), or null if it has no rig. */
 export function rigTargetFor(o) {
@@ -55,6 +56,7 @@ export function rigTargetFor(o) {
   if (VEHICLES.includes(kind) || VEHICLE_GROUPS[kind]) return { kind, params: { ...p } };
   // the catacombs' phoenix (models/catacombs.js `phoenix`, on unless switched off)
   if (kind === 'phoenix') return p.phoenix === false ? null : { kind };
+  if (kind === 'helicopter') return { kind, params: { ...p } };
   return { kind };
 }
 
@@ -69,6 +71,7 @@ export const RIG_BUTTON = {
   jetFlight: '🦴 Rig the jet flight (formations, orders, hit parts)',
   pilot: '🦴 Rig the pilot (seat, ejection, parachute, landing)',
   boat: '🦴 Rig the boat (sea, cruise, hit parts)',
+  helicopter: '🦴 Rig the helicopter (flight, crew, door guns, fast-rope, hit parts, crashes)',
 };
 
 /* ---------- parkour acts (soldier and squad): each over a prop of its own, of adjustable height ---------- */
@@ -163,7 +166,7 @@ export function parkourHeight(act, h) {
  * What each object weighs (kg): the body mass its parts' striking masses are fractions of
  * (sim/impact.js PART_MASS).
  */
-export const BODY_MASS = { soldier: 85, squad: 85, dragon: 3000, phoenix: 12, jet: 10000, jetFlight: 10000, car: 1300, pilot: 95, boat: 1500 };
+export const BODY_MASS = { soldier: 85, squad: 85, dragon: 3000, phoenix: 12, jet: 10000, jetFlight: 10000, car: 1300, pilot: 95, boat: 1500, helicopter: 7000 };
 /**
  * The contacts of each act, as impact keyframes: { t, part, material, target, targetMaterial, v,
  * mass?, contactTime?, zone?, kind?, label?, fromHeight?, sim?, trigger? }.
@@ -228,6 +231,14 @@ export const ACT_IMPACTS = {
   },
   car: {
     doors: [{ trigger: 'doorsShut', part: 'door', material: 'steel', target: 'object', targetMaterial: 'steel', mass: 30, massB: 1300, size: 1.2, sizeA: 1, label: 'door slams' }],
+  },
+  // the helicopter (ai/helicopter.js makes these itself, through sim/impact.js: the stage reads its events)
+  helicopter: {
+    land: [{ part: 'skids', material: 'steel', target: 'ground', sim: true, label: 'touchdown' }],
+    crashTail: [{ part: 'hull', material: 'aluminium', target: 'ground', sim: true, label: 'spinning hard landing' }],
+    crashMain: [{ part: 'hull', material: 'aluminium', target: 'ground', sim: true, label: 'crash' }],
+    crashEngine: [{ part: 'hull', material: 'aluminium', target: 'ground', sim: true, label: 'autorotation landing' }],
+    fuelFire: [{ part: 'hull', material: 'aluminium', target: 'ground', sim: true, label: 'emergency landing' }],
   },
   pilot: {
     plf: [{ t: 0.3, part: 'feet', target: 'ground', v: 5, contactTime: 0.3, label: 'parachute landing fall' }],

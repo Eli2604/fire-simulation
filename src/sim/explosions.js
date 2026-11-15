@@ -202,6 +202,7 @@ export function explode(sim, center, E, opts = {}) {
   sim.ai?.blast(center, blastR);
   sim.dragonAI?.blast(center, blastR);
   sim.phoenixAI?.blast(center, blastR);
+  sim.heliAI?.blast(center, blastR);
 }
 
 /** Distance from p to the segment a–b. */

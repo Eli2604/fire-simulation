@@ -207,6 +207,10 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   const tNear = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
   const dr = sim.dragonAI?.shot?.(from, d, tNear, 'bullet');
   if (dr) best = { dragon: dr.dragon, zone: dr.k, p: dr.p };
+  // a helicopter's part nearer still (ai/helicopter.js: not the shooter's own)
+  const tH = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
+  const he = sim.heliAI?.shot?.(from, d, tH, weapon, shooter);
+  if (he) best = { heli: he.heli, zone: he.k, p: he.p };
   // the report (ai/perception.js): a rifle's crack carries kilometres (who hears it goes to look only nearer)
   emitSound(w, { pos: from, loudness_dB: LOUDNESS[weapon] ?? LOUDNESS.rifle, kind: shooter ? 'enemy' : 'gunshot', source: shooter ?? player ?? null });
   // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
@@ -227,7 +231,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     best.wound = wound(sim, best.enemy, best.zone, weapon, best.p, d);
     return best;
   }
-  if (best?.dragon) return best;
+  if (best?.dragon || best?.heli) return best;
   if (best?.player) {
     best.weapon = weapon;
     return best;
