@@ -645,7 +645,8 @@ export class Helicopter {
   hurtMan(e, zone, weapon, p, dir, extra = 0) {
     if (e.dead) return;
     const kind = weapon === 'rocket' || weapon === 'shell' ? 'fragment' : weapon === 'bullet' ? 'rifle' : weapon;
-    if (this.host.wound) this.host.wound(e, zone, kind, p ?? e.p, dir ?? [0, -1, 0]);
+    // (sim/wounds.js has each leg on its own)
+    if (this.host.wound) this.host.wound(e, zone === 'legs' ? (this.rand() < 0.5 ? 'legL' : 'legR') : zone, kind, p ?? e.p, dir ?? [0, -1, 0]);
     else this.hurt(e, zone === 'head' ? 160 : 55);
     if (extra) this.hurt(e, extra);
   }
