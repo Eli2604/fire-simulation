@@ -447,7 +447,9 @@ export class Helicopter {
       if (e.dead) e.anim = 'die';
       else if (e.relieved) e.anim = pl.anim;
       else if (s.role === 'gunner') e.anim = (this.guns[sideName(s.side)].flash ?? -1) > this.time - 0.15 ? 'shoot' : 'aim';
-      else if (e.atDoor) e.anim = (e.flashUntil ?? -1) > (w.time ?? 0) - 0.3 ? 'crouchShoot' : 'crouchAim';
+      // in the door: on one knee, weapon ready (operator/rig.js kneelAim / kneelShoot; render/enemies.js
+      // falls back to the crouched clips on a figure without them)
+      else if (e.atDoor) e.anim = (e.flashUntil ?? -1) > (w.time ?? 0) - 0.3 ? 'kneelShoot' : 'kneelAim';
       else e.anim = pl.anim;
       // his eye: seated, standing at the gun, crouched in the door (ai/perception.js EYE), up the helicopter's own axis
       const eyeH = e.dead ? 0.4 : e.anim === 'aim' || e.anim === 'shoot' ? 1.55 : e.anim === 'deskSit' ? 1.05 : 1.0;
@@ -1423,10 +1425,11 @@ export class Helicopter {
       const side = s.side;
       const open = this.doorOpen(side);
       if (s.role === 'troop') {
-        // the first man on the bench on this side, when the door is open and no cable is out on it
+        // the first man on the bench on this side, when the door is open: kneeling in it, weapon
+        // ready, covering below and outward; with a cable out on his side he is the next man down,
+        // waiting his turn there (and firing at what the crew have identified until then)
         const first = this.aboard().find((o) => !o.dead && this.seats[o.seat].role === 'troop' && this.seats[o.seat].side === side);
-        const roping = this.ropes.some((r) => r.attached && r.side === side);
-        e.atDoor = open && first === e && !roping && this.mode !== 'landed';
+        e.atDoor = open && first === e && this.mode !== 'landed';
         if (!e.atDoor) continue;
       } else if (!open) continue;
       const gunner = s.role === 'gunner';

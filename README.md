@@ -481,8 +481,9 @@ paint.
   his door the gunner picks the most dangerous (`threatScore`: shooting at them ×4, a dragon or a
   helicopter over a man, nearer and more exposed first); a friendly in the line of fire holds it; an
   unidentified or friendly contact is never fired at. With a door open the **gunner** fires the pintle
-  machine gun (bursts, spread by the helicopter's speed and vibration) and the **troop by the door** his
-  own weapon, both through `sim/wounds.js shoot`: real rounds that wound a soldier, strike a dragon,
+  machine gun (bursts, spread by the helicopter's speed and vibration) and the **troop by the door**
+  (on one knee in it, weapon ready, covering below and outward; during a fast-rope he is the next man
+  down, waiting his turn there) his own weapon, both through `sim/wounds.js shoot`: real rounds that wound a soldier, strike a dragon,
   hit another helicopter's parts, or you. Fire teams of the two sides see each other as hostiles too
   (`squadHostiles`), so troops roped down from a friendly helicopter fight the red ones, not you.
 - **Fast-rope**: the cables are `world.ropes` entries (`{ kind: 'fastrope', top, bottom, owner,

@@ -221,3 +221,22 @@ test('the rig stage: the door gunners\' rounds damage the targets, and knock the
   const down = st.targetHp.findIndex((v) => v <= 0);
   if (down >= 0) assert.ok(!st.h.contacts().some((c) => c.ref === down), 'a fallen target is no longer one');
 });
+
+test('fast-roping: the man waiting his turn kneels in the door, weapon ready, and fires at an identified threat', () => {
+  const foe = { key: 'foe', ref: 'foe', kind: 'soldier', side: 'blue', p: [12, 0, 18], at: [12, 1.2, 18] };
+  const { h, world, run } = rig({ p: [-170, 0, 0], yaw: Math.PI / 2, mission: 'insert', soldiers: 6, doorGuns: 'none', altitude: 25, startSpeed: 20 }, { contacts: () => [foe], fire: () => null });
+  assert.ok(run(60, 0.05, () => world.ropes.length > 0), 'cables out');
+  let kneeling = null, fired = false;
+  run(30, 0.05, () => {
+    const out = h.ropes.filter((r) => r.attached).map((r) => r.side);
+    for (const e of h.aboard()) {
+      if (!e.atDoor || !out.includes(h.seats[e.seat].side)) continue;
+      if (/^kneel/.test(e.anim)) kneeling = e;
+    }
+    fired ||= (h.lastShots ?? []).some((s) => s.who === 'troop' && s.at === 'foe');
+    return kneeling && fired;
+  });
+  assert.ok(kneeling, 'the next man down kneels in the door while the cable is out on his side');
+  assert.ok(fired, 'and fires at the threat the crew identified');
+  assert.ok(run(60, 0.05, () => h.mode === 'depart'), 'and they all still go down the ropes');
+});

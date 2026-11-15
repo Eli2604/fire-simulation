@@ -524,7 +524,11 @@ export class EnemyRenderer {
       g.position.set(e.p[0], e.p[1], e.p[2]).add(new THREE.Vector3(0, -0.95, 0).applyEuler(g.rotation));
       name = e.dead ? 'die' : 'swim'; // (struggling; limp once dead)
     } else if (e.dead) name = 'die';
-    else if (e.heliCrew != null && e.guardCtl && e.anim) name = e.anim; // aboard a helicopter or on its cable (ai/helicopter.js): seated, at the door gun, in the door, roping
+    else if (e.heliCrew != null && e.guardCtl && e.anim) {
+      // aboard a helicopter or on its cable (ai/helicopter.js): seated, at the door gun, kneeling in the door, roping
+      name = e.anim;
+      if (!f.A?.clips?.[name]) name = { kneelAim: 'crouchAim', kneelShoot: 'crouchShoot' }[name] ?? name; // (a figure without the kneeling clips)
+    }
     else if (sq) name = e.anim ?? 'crouchAim';
     else if (e.trav?.roll) name = e.trav.kind; // a combat roll (ai/evade.js), the guard AI's or the dragon's snatch's
     else if (e.crawling) name = 'crawl';
