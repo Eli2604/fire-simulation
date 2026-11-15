@@ -6,7 +6,9 @@ import { defaultStartPower, walkMarker } from './sim/createSimulation.js';
 import { toggleDoor, nearestDoor, doorOfVoxel } from './sim/doors.js';
 import { View } from './render/view.js';
 import { SCENARIOS, cloneScene, resolveScenario, openScenario, placeOrigin, LAKESIDE_WINTER } from './scenarios.js';
-import { createSimulation } from './sim/createSimulation.js';
+import { createSimulation, SIM_OPTIONS } from './sim/createSimulation.js';
+// in the app what breaks loose falls as rigid bodies (physics/simPhysics.js); ?rigid=0 for the old voxel-by-voxel fall
+SIM_OPTIONS.rigidBodies = new URLSearchParams(location.search).get('rigid') !== '0';
 import { MODELS, defaultParams } from './models/index.js';
 import { liftPlaces, flattenObjects } from './models/composite.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift, WATER_SETTINGS } from './sim/weather.js';

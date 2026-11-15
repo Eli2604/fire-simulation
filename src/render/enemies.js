@@ -9,6 +9,8 @@ import { carriesCoil } from '../ai/ropeTeam.js';
 import { PACE } from '../ai/patrol.js';
 import { lod, updateEvery } from './lod.js';
 import { FlashlightPool } from './flashlights.js';
+import { PhysicsWorld as RigidWorld, VoxelGridCollider } from '../physics/index.js';
+import { FigureRagdoll, RAGDOLLS } from '../operator/ragdoll.js';
 
 /**
  * The soldiers' level of detail (render/lod.js), by their size on the screen (radius ~0.9 m):
@@ -449,7 +451,13 @@ export class EnemyRenderer {
     for (const f of this.figures) f.g.visible = false;
     if (this.opWorld !== world) {
       // a new scene: new figures and physics
-      for (const f of this.ops ?? []) f.dispose();
+      for (const f of this.ops ?? []) {
+        f.ragdoll?.dispose();
+        f.ragdoll = null;
+        f.dispose();
+      }
+      // the dead go limp: ragdolls (physics/ragdoll.js) on the world's voxels, drawn only (the sim keeps its own body)
+      this.ragWorld = new RigidWorld({ collider: VoxelGridCollider.fromWorld(world), substeps: 3 });
       this.ops = [];
       this.opWorld = world;
       this.seenEvents = world.events.length;
@@ -479,6 +487,7 @@ export class EnemyRenderer {
       return s;
     }));
     this.physics.step(dt);
+    this.ragWorld?.step(dt);
     // the squads: routes, trails, tags, signals, threats; radio traffic
     const threats = [...new Set(list.filter((e) => e.squad && e.aimAt).map((e) => e.aimAt))];
     this.viz.update(list, threats, time);
@@ -486,6 +495,7 @@ export class EnemyRenderer {
       const ev = world.events[this.seenEvents];
       if (ev.type === 'radio') radioSay(ev.name, { reply: ev.kind === 'reply' });
       else if (ev.type === 'shout' && ev.name !== 'enemy') shoutSay(ev.name);
+      else if (ev.type === 'explosion') this.ragWorld?.explosion(ev.pos, { energy: ev.energy, radius: (ev.radius ?? 2) * 1.5 }); // (the dead are thrown too)
       else if (ev.type === 'flashbang') {
         // the flash: a blinding light for an instant, then the bang
         this.flashLight ??= this.scene.add(new THREE.PointLight(0xfff8ee, 0, 30, 1.5)).children.at(-1);
@@ -584,6 +594,14 @@ export class EnemyRenderer {
       f.update(f.lodDt);
       f.lodDt = 0;
       this.mixerUpdates = (this.mixerUpdates ?? 0) + 1;
+    }
+    // dead: the ragdoll takes the bones over from the animation (operator/ragdoll.js)
+    if (RAGDOLLS.on && e.dead && !e.held && !e.rope && e.heliCrew == null && this.ragWorld) {
+      f.ragdoll ??= new FigureRagdoll(f, this.ragWorld, { velocity: e.knock?.v ?? null });
+      f.ragdoll.apply(dt);
+    } else if (f.ragdoll) {
+      f.ragdoll.dispose();
+      f.ragdoll = null;
     }
     lodAfter(f);
     if (e.state === 'lure' && !e.dead && this.flames) {

@@ -1755,6 +1755,141 @@ view factor; further out it comes from a few point sources, shaded along one lin
 represented through effective density and surface factors. Results are qualitatively
 right and of the right order of magnitude, but should not be used for engineering.
 
+## Rigid-body physics (src/physics)
+
+One shared rigid-body engine for everything that tumbles, rolls, swings or drives, colliding with
+the voxel world and with each other. Plain ES modules, no three.js (it runs in the tests as it
+runs in the browser), deterministic (no `Math.random`: `world.rng` is seeded).
+
+```js
+import { PhysicsWorld, Box, Sphere, Capsule, ConvexHull, Compound, VoxelSet, VoxelGridCollider,
+         HingeJoint, BallJoint, FixedJoint, DistanceJoint, SliderJoint, buoyancy } from './physics/index.js';
+
+const world = new PhysicsWorld({ collider: VoxelGridCollider.fromWorld(sim.world) }); // fixedDt 1/60, substeps 2
+const crate = world.createBody({ shape: new Box(0.3, 0.3, 0.3), position: [5, 2, 5], material: 'oak', density: 600 });
+world.addJoint(new HingeJoint(null, door, hingePoint, [0, 1, 0], { lower: 0, upper: 1.6 }));
+world.addForceGenerator(buoyancy({ level: (x, z, y) => 1.2 }));       // water at 1.2 m
+world.onImpact((e) => sound(e.materials, e.speed, e.energy, e.point)); // { a, b, point, normal, impulse, speed, energy, materials, cell }
+world.step(dt);                                   // as many fixed steps as dt holds
+const { position, quaternion } = crate.interpolated(world.alpha);    // drawn between the last two steps
+world.raycast(from, dir, 50); world.sphereCast(from, dir, 0.2, 50); world.overlapSphere(c, r);
+world.explosion(center, { energy: 2e5, radius: 4 });
+```
+
+**Bodies** (`body.js`): dynamic, static or kinematic (`setKinematicTarget`); the pose is the centre
+of mass position + a quaternion; mass and the full inertia tensor from the shape and a density
+(or a mass the tensor is scaled to; a voxel set from its voxels' own masses); linear / angular
+damping, gravity scale, collision filter `{ group, mask }`, `material` (a voxel material: friction
+and restitution come from it), rolling resistance; `applyForce / applyImpulse / applyTorque`,
+`velocityAt`, `toWorld / toLocal`, `setPose`, `interpolated(alpha)`.
+
+**Shapes** (`shapes.js`): `Sphere`, `Box`, `Capsule` (any segment), `ConvexHull` (from points,
+coplanar faces merged), `cylinderHull` (drums, barrels), `Compound` (child shapes with poses),
+`VoxelSet` (a chunk of voxels: mass from every voxel, collision from its surface voxels and outer
+corners). `shape.samples()` gives volume points for buoyancy.
+
+**Collision**: sweep and prune over x (`world.js`), then `collide.js`: analytic sphere / capsule
+pairs, closest-feature sphere and capsule against polyhedra, separating axes with face clipping
+for polyhedron pairs (up to 4 points per normal patch), compounds child by child. Against the
+world (`voxelCollider.js`): spheres against each solid cell near them with the normal components
+that point into a solid neighbour dropped (a flat voxel floor has no seams to catch on),
+polyhedra / voxel sets by their corners in solid cells (out through the cell's nearest open face)
+and the grid's exposed corners inside them; speculative contacts within a margin that grows with
+the speed; a heightfield `ground(x, z)` can stand in. Liquid voxels are not solid.
+
+**Solver**: sequential impulses with warm starting (contacts matched to the last substep's by
+position), Coulomb friction on two tangents (μ = √(μa·μb) from `physics/materials.js`, which
+derives friction and restitution from the voxel materials' mechanics in `sim/materials.js`: shape
+class, hardness, loss factor; measured values for ice, rubber, steel, soil...), rolling resistance
+and spin friction, Baumgarte position correction above a slop, then a relax pass without it (no
+bounce from pushing apart) and restitution e = √(ea·eb) for contacts closing faster than 0.5 m/s.
+**Joints** (`joints.js`): ball (optional swing cone and twist limits, joint friction), hinge (angle
+limits, motor, friction), fixed, distance (rod) / rope (max only), slider (limits, motor); all
+breakable (`breakImpulse`). **CCD**: a body moving more than half its inner radius in a substep is
+swept as its inner sphere against the grid and the other bodies and stopped at the first touch (a
+fragment at 400 m/s does not pass through a one-voxel wall). **Sleeping**: islands (contacts and
+joints); an island whose bodies have all been slow for 0.5 s sleeps; a moving body touching it, a
+joint or an impulse wakes it.
+
+**Budgets**: in the tests 200 scattered bodies settle and sleep at a few ms per fixed step while
+awake (about 7 ms mean on a busy laptop) and well under a millisecond asleep; a dense pile is one
+island and sleeps only when all of it is still. `PhysicsWorld.stats` has bodies, awake, sleeping,
+islands, contacts, pairs and ms per step. In the simulation (below) the chunks are capped
+(`maxBodies` 120, `maxVoxels` 1500 per chunk).
+
+### In the voxel simulation (physics/simPhysics.js)
+
+`enableRigidBodies(sim)` (or a scene with `rigidBodies: true`; the app turns it on for every scene
+through `SIM_OPTIONS.rigidBodies` in `sim/createSimulation.js`, `?rigid=0` turns it off; the tests
+and headless runs keep the old behaviour unless they ask) gives the simulation `sim.rigid`:
+
+- **Debris chunks**: what the structure pass finds detached (`checkSupport` → `F_FALLING`) is
+  grouped into face-connected pieces; a piece of 3..1500 voxels (not glass) becomes one `VoxelSet`
+  body. Its voxels leave the grid with all their state (`sim/movingBody.js` `makeMovingBody`:
+  temperature, char, burning, colour...), it tumbles, bounces, hits (impact events and sounds) and
+  comes to rest; asleep it is stamped back where it lies (`restamp`), whole, still charred or
+  burning, and the structure check takes it from there. In flight `world.rigidChunks` lists them
+  and `render/debris.js` draws their voxels at the body's interpolated pose. Single voxels, glass
+  and anything over the budget fall the old way.
+- **Floating debris**: a buoyancy force generator on the world's water level (water voxels,
+  `world.sea.level`): a wooden chunk in a pond floats; afloat it stays a (sleeping) body.
+- **Loose things** (`world.loose`: drums, gas cylinders, crates, the training dummy): knocked by
+  an impact or a blast (`sim/impact.js`, `sim/explosions.js`) they become bodies of their shape
+  (box, 14-sided drum, capsule) that tumble and land; `o.p` / `o.rot` follow the body
+  (`render/loose.js` draws them as before). A dragon picking one up takes it off the physics.
+- **Fragments**: `sim.rigid.launchFragment({ p, v, size, material })`: a small hull body with
+  continuous collision (gas-cylinder shrapnel can be handed over here).
+- **Explosions**: `explode()` pushes every body in range (`physics.explosion`, with the v0 law it
+  throws voxels by).
+- **Impacts**: each one over 15 J becomes a `world.events` `{ type: 'impact', kind: 'rigid',
+  materials, energy, speed, mass, pos }` for the sound (audio/sound.js) and a noise the guards
+  hear; `sim.rigid.onImpact(fn)` has the raw events (for the material-impact synthesis).
+
+### Ragdolls (physics/ragdoll.js, operator/ragdoll.js)
+
+`createRagdoll(world, spec, { pose, velocity })`: capsules on the bones of a rig, ball joints with
+swing cones and twist limits (spine, neck, shoulders, hips) and hinges with angle limits (elbows,
+knees), built in the rest pose (so the limits are the body's, whatever pose he is in) and then
+moved to the pose he is in when he goes limp. `soldierRagdollSpec(rest)` maps the operator rig
+(`operator/rig.js` BONES): pelvis, torso, head, upper and fore arms, thighs and shins, 80 kg.
+`FigureRagdoll` (operator/ragdoll.js) hands an `OperatorFigure`'s skeleton over to it, blending
+from the animation to the ragdoll in 0.3 s; the bones without a part (chest, head, hands, feet)
+go limp to their rest pose. `render/enemies.js` does this for every soldier who dies (guards and
+squads; not while held by the dragon, on a rope or aboard a helicopter); the ragdolls live in a
+render-side world on the voxel grid (`RAGDOLLS.on`). The dragon has no spec yet (rig/dragon.js
+would map the same way: neck and tail chains of ball joints, the wings as hinges).
+
+### Vehicle adapters (physics/vehicles.js)
+
+Each vehicle becomes one chassis body plus a force generator, so it meets debris, crates,
+ragdolls and the voxel world through ordinary contacts:
+
+- `RaycastVehicle(world, chassis, { wheels })`: per wheel a ray down the chassis from its mount;
+  a spring–damper strut; tyre grip in the ground plane (lateral slip curve, drive, brake, rolling
+  resistance) inside the friction circle μN; the forces at the contact (and back on a body it
+  stands on). `controls = { throttle, brake, steer }`. Tested: it settles on its springs, drives,
+  steers and brakes.
+- `RotorForce(body, { hub, axis, maxThrust })`: collective thrust along the cyclic-tilted rotor
+  axis at the hub, rotor reaction and tail-rotor yaw torque; `hoverCollective()`.
+- `HullBuoyancy(body, { cells, level })`: buoyancy from a hull's own displacement cells.
+
+Migration (after the car-power and vehicle-body work has landed; not in this pass): cars
+(`sim/carPhysics.js`) keep their drivetrain, EV and steering models and hand the tyre forces to a
+`RaycastVehicle`-style adapter (its tyre model replaced by carPhysics' and `sim/groundContact.js`'s
+grip, sinkage and rolling resistance per wheel), the chassis a box / hull body whose pose drives
+`movingBody.restamp` as now; boats (`sim/buoyancy.js`) give their displacement cells to
+`HullBuoyancy` and keep water aboard, waves and added mass as one more force generator; the
+helicopter (`ai/helicopter.js`) maps its thrust and torques onto `RotorForce` and keeps its AI and
+damage model. Each switch per vehicle, behind a flag, with the existing tests as the reference.
+
+**Limitations**: contacts are matched by position (no persistent features); polyhedron–world
+contacts sample corners (an edge crossing a voxel edge is caught a substep late);
+capsule–polyhedron uses a line search (fine for these shapes, not exact); restamping snaps a
+turned chunk to the grid (a voxel with no free cell is lost, counted in `sim.rigid.stats.lost`);
+a chunk's fire and the air round it pause while it flies; chunk impacts do not yet crack what
+they hit; ragdolls are drawn only (the sim's casualty stays where he fell); the existing vehicles
+are not on the core yet.
+
 ## Why voxels?
 
 The voxels are the *simulation*, not just the look. Heat has to flow *through* material
@@ -1816,6 +1951,7 @@ one world: each with a `label` (its box's name in the overview) and optionally i
 
 ```
 src/sim/        simulation (no dependencies): materials, world grid, solid + air physics, weather
+src/physics/    rigid bodies (no three.js): shapes, contacts, solver, joints, CCD, sleeping, ragdolls, vehicle adapters
 src/models/     parameterised models and the voxeliser
 src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, particle or
                 volumetric smoke/steam, rain, extinguisher spray, debris, view
