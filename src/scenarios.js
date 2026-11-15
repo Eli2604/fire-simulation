@@ -3,7 +3,6 @@ import { carrierObject } from './models/carrier.js';
 import { liftPlaces } from './models/composite.js';
 import { campIslandZone, CAMP_ISLAND_SEA, HQ_PLACE } from './campIsland.js';
 import { fantasyWorld } from './fantasyWorld.js';
-import { smithyScene, SMITHY_DESCRIPTION } from './smithyPlace.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -45,6 +44,7 @@ export const SCENARIO_ALIASES = {
   // (the dragon island, its catacombs and the forest in fog: places of the Fantasy world, src/fantasyWorld.js)
   catacombs: { scenario: 'fantasy', zone: 'catacombs' },
   foggyForest: { scenario: 'fantasy', zone: 'forest' },
+  metalBars: { scenario: 'fantasy', zone: 'smithy' },
   campIsland: { scenario: 'carrier', zone: 'camp' },
   carHouse: { scenario: 'carrier', zone: 'carHouse' },
   neighbourhood: { scenario: 'carrier', zone: 'dryGarden' },
@@ -209,15 +209,7 @@ function streetPlaces() {
 }
 
 export const SCENARIOS = {
-  // (the old "Metal bars on burners": the bars are now on the test hearth of a smithy)
-  // (one definition with the smithy in the Fantasy world's harbour village: src/smithyPlace.js)
-  // TODO(smith-voxel): once the rewritten smithy is on main, this becomes an alias to the fantasy
-  // world's smithy place (SCENARIO_ALIASES.metalBars → { scenario: 'fantasy', zone: 'smithy' })
-  metalBars: {
-    name: 'Smithy: forging a blade',
-    description: SMITHY_DESCRIPTION,
-    ...smithyScene(),
-  },
+  // (the old Metal bars on burners, then the smithy scene: the smithy in the Fantasy world's harbour village, ?scenario=metalBars)
   // (the old Forest fire in fog is the forest in the fog valley of the Fantasy world: ?scenario=foggyForest)
   // the dragon isle in a sea of its own: the dragon island (church, catacombs, volcano,
   // waterfall), the harbour village and its smithy, the castle and the forest in the fog valley

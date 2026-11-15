@@ -878,6 +878,7 @@ export class Walkthrough {
       boats: (w.floats ?? []).filter((f) => f.row),
       // the cars: engine, tyres, wind from each one's state (audio/carSound.js)
       cars: w.cars ?? [],
+      smithies: w.smithies ?? [], // the quench's sizzle, the bellows' whoosh (audio/smithSound.js)
       effort: 0,
       heat: 0,
       airFraction: 1,
@@ -1947,6 +1948,7 @@ export class Walkthrough {
       boats: (w.floats ?? []).filter((f) => f.row),
       // the cars: engine, tyres, wind from each one's state (audio/carSound.js)
       cars: w.cars ?? [],
+      smithies: w.smithies ?? [], // the quench's sizzle, the bellows' whoosh (audio/smithSound.js)
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });

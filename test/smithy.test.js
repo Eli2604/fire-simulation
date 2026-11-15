@@ -1,184 +1,251 @@
-// The smith's workshop (models/smithy.js, sim/smithy.js): the forge and its bellows, the smith's
-// work cycle, the quench and the steel's hardness, the shop filling up.
+// The smith's workshop (models/smithy.js, sim/smithy.js): a sword of steel voxels heated in a fire
+// of charcoal voxels blown by the bellows through the air model, moved with the smith's tongs,
+// cooled on the anvil, quenched in a trough of water voxels (steam into the air), hardened by its
+// voxels' own cooling; the smith's cycle; the shop; the drawing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import smithyModel from '../src/models/smithy.js';
-import { resolveParams } from '../src/models/index.js';
-import { placeSmithy, advanceSmithy, pumpBellows, useSmithy, describeSmithy, martensite, HEATS, FORGE } from '../src/sim/smithy.js';
+import { advanceSmithy, pumpBellows, useSmithy, describeSmithy, martensite, newBlade, swordVoxels, stepSmithies, HEATS } from '../src/sim/smithy.js';
 import { SCENARIOS, cloneScene, resolveScenario } from '../src/scenarios.js';
+import { smithyScene } from '../src/smithyPlace.js';
+
+// the smithy scene on its own (in the app it is the Fantasy world's smithy place: ?scenario=metalBars)
+const SMITHY_SCENE = { name: 'Smithy: forging a sword', ...smithyScene() };
 import { createSimulation } from '../src/sim/createSimulation.js';
 import { MAT } from '../src/sim/materials.js';
 
-/** A smithy record as the voxelizer places it (here at the origin, unturned). */
-function smithy(params = {}) {
-  const built = smithyModel.build(resolveParams(smithyModel, params), { h: 0.1 });
-  return placeSmithy(built.smithies[0], (x, y, z) => [x, y, z], 0, 0, 20);
+const DT = 0.2;
+
+/** The smithy scene without the smith (the test moves the blade itself). */
+function shop(params = {}) {
+  const sc = cloneScene(SMITHY_SCENE);
+  sc.objects[0].params = { smith: false, ...params };
+  const sim = createSimulation(sc);
+  return { sim, w: sim.world, S: sim.world.smithies[0] };
 }
 
-/** A room for it: still air at 20 °C, a trough of 100 kg water whose temperature it changes. */
-function room() {
-  const env = { Ta: 20, o2: 0.232, waterT: 20, time: 0, events: [], steam: 0 };
-  env.addWaterHeat = (J) => (env.waterT += J / (100 * 4186));
-  env.addSteam = (kg) => (env.steam += kg);
-  env.event = (e) => env.events.push(e);
-  return env;
-}
-
-function run(S, env, seconds, dt = 0.1, until = null) {
-  for (let t = 0; t < seconds; t += dt) {
-    advanceSmithy(S, dt, env);
-    env.time += dt;
-    if (until?.()) return t;
+function run(sim, seconds, dt = DT, each = null) {
+  for (let t = 0; t < seconds - 1e-9; t += dt) {
+    each?.(t);
+    sim.step(dt);
   }
-  return seconds;
 }
 
-test('the forge: the bellows (more air, more oxygen) make it burn faster and hotter', () => {
-  const still = smithy({ smith: false, fireTemp: 700 });
-  const blown = smithy({ smith: false, fireTemp: 700 });
-  const e1 = room();
-  const e2 = room();
-  for (let t = 0; t < 120; t += 0.1) {
-    advanceSmithy(still, 0.1, e1);
-    // someone at the lever: a stroke a second
-    if (Math.floor(t + 0.1) > Math.floor(t)) pumpBellows(blown, 1);
-    advanceSmithy(blown, 0.1, e2);
+/** The glowing heart of the fire: the mean surface temperature of the charcoal over the tuyere. */
+function heartT(w, S) {
+  let s = 0, n = 0;
+  for (const i of S.potList.heartCells) {
+    if (w.mat[i] !== MAT.forgeCoal || !(w.hrr[i] > 0)) continue;
+    s += w.skin[i];
+    n++;
   }
-  assert.ok(blown.forge.T > still.forge.T + 200, `on the bellows ${blown.forge.T.toFixed(0)} °C, draught only ${still.forge.T.toFixed(0)} °C`);
-  assert.ok(blown.forge.T > HEATS.forging, 'the bellows bring it above forging heat');
-  assert.ok(still.forge.T < HEATS.forging, 'the draught alone does not');
-  assert.ok(blown.forge.burn > 2 * still.forge.burn, 'more air: more charcoal burnt a second');
-  assert.ok(blown.forge.power > still.forge.power, 'and more heat into the room (up the flue)');
-  // with less oxygen in the air it burns slower
-  const stale = smithy({ smith: false, fireTemp: 900 });
-  const fresh = smithy({ smith: false, fireTemp: 900 });
-  const e3 = { ...room(), o2: 0.15 };
-  advanceSmithy(stale, 1, e3);
-  advanceSmithy(fresh, 1, room());
-  assert.ok(stale.forge.burn < fresh.forge.burn * 0.8);
-});
+  return n ? s / n : 0;
+}
 
-test('the smith completes a weapon: forges, quenches, tempers, grinds and puts it in his shop', () => {
-  const S = smithy({ weapons: 0 });
-  const env = room();
-  const seen = new Set();
-  const t = run(S, env, 1800, 0.1, () => {
-    if (S.smith) seen.add(S.smith.state);
-    return S.made >= 1;
-  });
-  assert.equal(S.made, 1, `a weapon made (smith ${S.smith.state} at ${t.toFixed(0)} s)`);
-  assert.equal(S.weapons.length, 1, 'it is in the shop');
-  const wpn = S.weapons[0];
-  assert.equal(wpn.kind, 'sword');
-  assert.ok(S.slots[wpn.slot], 'on a rack slot');
-  for (const st of ['heat', 'hammer', 'quench', 'temper', 'grind', 'shelve']) assert.ok(seen.has(st), st);
-  assert.ok(env.events.some((e) => e.type === 'impact' && e.name === 'anvil'), 'hammer blows ring on the anvil');
-  assert.ok(env.events.some((e) => e.type === 'bellows'), 'he worked the bellows');
-  assert.ok(env.events.some((e) => e.type === 'quench'), 'a hiss as it went into the water');
-  assert.ok(wpn.hardness > 40 && wpn.hardness < 60, `hardened and tempered: ${wpn.hardness.toFixed(1)} HRC`);
-  assert.ok(wpn.temper > 240 && wpn.temper < 340, `tempered at ${wpn.temper.toFixed(0)} °C`);
-  // the next one is under way, and they keep coming (an axe, a spear...)
-  const t2 = run(S, env, 3600, 0.1, () => S.made >= 3);
-  assert.ok(S.made >= 3, `three made after ${(t + t2).toFixed(0)} s`);
-  assert.equal(S.weapons.length, S.made);
-  assert.deepEqual(S.weapons.map((x) => x.kind), ['sword', 'axe', 'spear']);
-  assert.ok(describeSmithy(S).rows.some((r) => r.includes('3 weapons')));
-});
+/** The blade's voxels' temperatures, in body order. */
+function temps(w, b) {
+  const B = b.body;
+  return Array.from({ length: B.n }, (_, k) => (B.at[k] >= 0 ? w.temp[B.at[k]] : B.s.temp[k]));
+}
 
-test('quenching warms the water, boils some off, and hardens the steel (cooling in air does not)', () => {
-  const quenched = smithy({ smith: false });
-  const env = room();
-  const b = { kind: 'dagger', label: 'dagger', m: 0.35, A: 0.035, heats: 2, temperTarget: 240, T: 840, Tmax: 840, progress: 1, heat: 0, stage: 'harden', place: 'water', aus: true, t800: null, martensite: 0, temperMax: 0 };
-  quenched.blade = b;
-  run(quenched, env, 20, 0.05);
-  assert.ok(b.T < 60, `cold after 20 s in water (${b.T.toFixed(0)} °C)`);
-  assert.ok(env.waterT > 20.3, `the water warmed: ${env.waterT.toFixed(2)} °C`);
-  assert.ok(env.steam > 0, 'some boiled off');
-  assert.ok(b.t85 < 4, `800 -> 500 °C in ${b.t85.toFixed(1)} s`);
-  assert.ok(b.martensite > 0.7 && b.hardness > 55, `martensite ${b.martensite.toFixed(2)}, ${b.hardness.toFixed(0)} HRC`);
-  // the same blade left to cool in the air stays soft
-  const aired = smithy({ smith: false });
-  const a = { ...b, T: 840, place: 'tongs', aus: true, t800: null, martensite: 0 };
-  aired.blade = a;
-  run(aired, room(), 300, 0.1);
-  assert.ok(a.t85 > 15 && a.hardness < 25, `air cooled: ${a.t85.toFixed(0)} s, ${a.hardness.toFixed(0)} HRC`);
-  // tempering takes some of the hardness back
-  const hard = b.hardness;
-  b.place = 'temper';
-  run(quenched, env, 300, 0.1, () => b.T > 290);
-  assert.ok(b.hardness < hard - 3, `tempered at ${b.temperMax.toFixed(0)} °C: ${b.hardness.toFixed(0)} HRC (was ${hard.toFixed(0)})`);
-  assert.ok(martensite(1) > 0.99 && martensite(40) < 0.01);
-});
-
-test('the shop holds 14 weapons: past that the oldest is sold', () => {
-  const S = smithy({ weapons: 14 });
-  assert.equal(S.weapons.length, 14);
-  assert.equal(new Set(S.weapons.map((w) => w.slot)).size, 14);
-});
-
-test('smithy scene: the old metalBars key, a smith, the trough, the bars; the forge heats the room and the quench the water', () => {
+test('the scene: a compact smithy at fine voxels, the forge a fire of charcoal voxels, a trough of water voxels; no metal bars', () => {
   assert.deepEqual(resolveScenario('metalBars'), { scenario: 'metalBars', zone: null });
   const desc = SCENARIOS.metalBars;
   assert.match(desc.name, /[Ss]mith/);
+  assert.match(desc.name, /sword/);
   assert.equal(desc.exposure, 'indoor');
-  const sim = createSimulation(cloneScene(desc));
-  const w = sim.world;
-  assert.equal(w.smithies.length, 1);
-  const S = w.smithies[0];
-  // the three test bars are still there (steel, aluminium, copper)
-  for (const m of ['steel', 'aluminium', 'copper']) {
+  assert.ok(desc.world.h <= 0.04, 'fine voxels');
+  assert.deepEqual(desc.objects.map((o) => o.type), ['smithy'], 'no metal bars, no burners');
+  const { sim, w, S } = shop();
+  assert.equal(w.heaters.length, 0, 'no lumped heater: the fire is its voxels');
+  const count = (m) => {
     let n = 0;
-    for (let k = 0; k < w.solidCount; k++) if (w.mat[w.solids[k]] === MAT[m]) n++;
-    assert.ok(n > 5, `${m} voxels`);
+    for (let k = 0; k < w.solidCount; k++) if (w.mat[w.solids[k]] === m) n++;
+    return n;
+  };
+  assert.ok(count(MAT.forgeCoal) > 200, `charcoal voxels in the fire pot: ${count(MAT.forgeCoal)}`);
+  assert.equal(count(MAT.aluminium) + count(MAT.copper), 0, 'no aluminium or copper bars');
+  assert.ok(count(MAT.water) > 1000, 'the slack tub holds water voxels');
+  // the sword as voxels: several long, two wide at its base, thinner (less steel) towards the point
+  const sv = swordVoxels(w.h);
+  const blade = sv.filter((v) => v.part === 'blade');
+  assert.ok(new Set(blade.map((v) => v.x)).size >= 15, 'a blade ≥15 voxels long');
+  assert.ok(blade.some((v) => v.z > 0), 'two voxels wide at the base');
+  assert.ok(blade.at(-1).dens < blade[0].dens / 4, 'the point holds far less steel than the base');
+  const mass = sv.reduce((s, v) => s + v.dens * w.h ** 3 * 7850, 0);
+  assert.ok(mass > 0.6 && mass < 1.5, `a sword's weight of steel: ${mass.toFixed(2)} kg`);
+  // budget: the grid and the air small enough to stay interactive
+  assert.ok(w.N <= 400e3 && w.NA <= 50e3, `${w.N} voxels, ${w.NA} air cells`);
+  assert.ok(Number.isFinite(sim.dt));
+});
+
+test('the bellows make the fire hotter through the air model: the tuyere jet and its oxygen', () => {
+  const still = shop();
+  const blown = shop();
+  run(still.sim, 30);
+  run(blown.sim, 30, DT, (t) => {
+    if (Math.floor((t + DT) / 1.1) > Math.floor(t / 1.1)) pumpBellows(blown.S, 1);
+  });
+  const Ts = heartT(still.w, still.S);
+  const Tb = heartT(blown.w, blown.S);
+  assert.ok(Tb > Ts + 150, `the heart of the fire: ${Tb.toFixed(0)} °C on the bellows, ${Ts.toFixed(0)} °C on the draught`);
+  assert.ok(Tb > HEATS.forging, 'on the bellows the heart is past forging heat');
+  assert.ok(blown.S.forge.combustion > 1.5 * still.S.forge.combustion, `burning ${(blown.S.forge.combustion / 1e3).toFixed(1)} vs ${(still.S.forge.combustion / 1e3).toFixed(1)} kW`);
+  // it is in the air model: the jet's speed up through the bed, its oxygen at the glowing charcoal
+  const vy = (x) => x.S.potList.air.reduce((s, a) => s + x.w.vy[a], 0) / x.S.potList.air.length;
+  assert.ok(vy(blown) > vy(still) + 0.5, `air up through the heart ${vy(blown).toFixed(2)} vs ${vy(still).toFixed(2)} m/s`);
+  assert.ok(blown.S.forge.air > still.S.forge.air * 2);
+  // the smoke and hot gas go up the chimney
+  let up = 0;
+  for (let a = 0; a < blown.w.NA; a++) if (blown.w.airT[a] > 60 && Math.floor(a / blown.w.anx) % blown.w.any > blown.w.any - 4) up++;
+  assert.ok(up > 0, 'hot gas up the flue');
+});
+
+test('the sword is voxels: heated in the fire (point first), carried with its heat, cooled on the anvil, quenched in the water (steam), hardened', () => {
+  const { sim, w, S } = shop();
+  const b = (S.blade = newBlade(S, w.ambient));
+  b.place = 'fire';
+  const blow = (t) => {
+    if (Math.floor((t + DT) / 1.1) > Math.floor(t / 1.1)) pumpBellows(S, 1);
+  };
+  run(sim, 15, DT, blow);
+  assert.ok(b.body && b.body.n === swordVoxels(w.h).length, 'its voxels are in the world');
+  for (let k = 0; k < b.body.n; k++) assert.equal(w.mat[b.body.at[k]], MAT.steel);
+  let T = temps(w, b);
+  assert.ok(b.tip > b.base + 150, `the point heats first: point ${b.tip.toFixed(0)} °C, base ${b.base.toFixed(0)} °C`);
+  assert.ok(T.at(-1) > T[0], 'hotter at the point than at the tang');
+  run(sim, 60, DT, blow);
+  assert.ok(b.T > HEATS.working, `in the fire it reaches working heat: ${b.T.toFixed(0)} °C over the blade, point ${b.tip.toFixed(0)}`);
+  assert.ok(b.Tpeak > HEATS.forging - 100, `its hottest part ${b.Tpeak.toFixed(0)} °C`);
+
+  // out with the tongs to the anvil: the voxels go with their heat
+  T = temps(w, b);
+  const fireCells = [...b.body.cells];
+  b.place = 'anvil';
+  sim.step(0.01);
+  const T2 = temps(w, b);
+  for (let k = 0; k < T.length; k++) assert.ok(Math.abs(T2[k] - T[k]) < 1, `voxel ${k}: ${T[k].toFixed(1)} -> ${T2[k].toFixed(1)} °C`);
+  assert.ok(fireCells.every((c) => !b.body.cells.has(c)), 'it left the fire');
+  const anvilTop = S.stations.anvil.top;
+  const under = w.voxelAt(anvilTop[0], anvilTop[1] - w.h, anvilTop[2]);
+  assert.equal(w.mat[under], MAT.steel, 'the anvil face under it');
+  assert.ok([...b.body.cells].some((c) => c === under + w.nx || Math.abs(c - (under + w.nx)) < 30), 'it lies on the anvil');
+  const anvil0 = w.temp[under];
+  const hot0 = b.T;
+  const tip0 = b.tip;
+  run(sim, 10);
+  assert.ok(w.temp[under] > anvil0 + 3, `the anvil takes its heat by contact: ${anvil0.toFixed(0)} -> ${w.temp[under].toFixed(0)} °C`);
+  assert.ok(b.T < hot0 - 50, `it cools on the anvil: ${hot0.toFixed(0)} -> ${b.T.toFixed(0)} °C`);
+  assert.ok((tip0 - b.tip) / (tip0 - 20) > (hot0 - b.T) / (hot0 - 20), `the thin point cools first: ${tip0.toFixed(0)} -> ${b.tip.toFixed(0)} °C`);
+
+  // quench: back to cherry red (every voxel austenite) and into the slack tub
+  for (let k = 0; k < b.body.n; k++) {
+    const c = b.body.at[k];
+    w.temp[c] = w.skin[c] = 850;
   }
-  const forge = w.heaters.find((ht) => ht.forge);
-  assert.ok(forge, 'the forge fire is a heater');
-  for (let k = 0; k < 40; k++) sim.step(0.05);
-  assert.ok(forge.power > 1000, `the forge heats the air: ${forge.power.toFixed(0)} W`);
-  // a hot blade into the trough: its water voxels warm
+  sim.step(0.01);
+  const water = S.water.voxels.length;
   const water0 = S.water.T;
-  S.smith = null;
-  S.blade = { kind: 'sword', label: 'sword', m: 1.1, A: 0.09, heats: 4, temperTarget: 290, T: 850, Tmax: 850, progress: 1, heat: 0, stage: 'harden', place: 'water', aus: true, t800: null, martensite: 0, temperMax: 0 };
-  for (let k = 0; k < 200; k++) sim.step(0.05);
-  assert.ok(S.water.T > water0 + 0.5, `trough ${water0.toFixed(1)} -> ${S.water.T.toFixed(1)} °C`);
-  assert.ok(S.blade.hardness > 50);
-  // the bellows by E in the walk-through
+  let steamAir0 = 0;
+  for (let a = 0; a < w.NA; a++) steamAir0 += w.steam[a];
+  b.place = 'water';
+  run(sim, 2, 0.05);
+  let steamAir = 0;
+  for (let a = 0; a < w.NA; a++) steamAir += w.steam[a];
+  assert.ok(S.water.steam > 0 && steamAir > steamAir0, `water boiled off into the air: ${(S.water.steam * 1000).toFixed(1)} g`);
+  assert.ok(S.water.steamRate > 0, 'steaming now (the hiss)');
+  run(sim, 20, 0.1);
+  assert.ok(b.Tpeak < 100, `quenched cold: ${b.Tpeak.toFixed(0)} °C`);
+  assert.ok(S.water.T > water0 + 0.05, `the water warmed: ${water0.toFixed(2)} -> ${S.water.T.toFixed(2)} °C`);
+  assert.ok(S.water.heat > 0);
+  assert.ok(b.martensite > 0.6, `its voxels cooled fast enough to harden: martensite ${(b.martensite * 100).toFixed(0)} %`);
+  assert.ok(b.hardness > 50, `${b.hardness.toFixed(0)} HRC`);
+  // lifted out: the water comes back where it was
+  b.place = 'tongs';
+  sim.step(0.01);
+  const back = S.water.voxels ? S.water.voxels.length : 0;
+  stepSmithies(sim, 0.01);
+  assert.ok(Math.abs(S.water.voxels.length - water) <= 2, `water voxels ${water} -> ${S.water.voxels.length} (${back})`);
+  assert.ok(martensite(1) > 0.99 && martensite(40) < 0.01);
+  const d = describeSmithy(S);
+  assert.ok(d.rows.some((r) => /point .* base/.test(r)));
+  for (let a = 0; a < w.NA; a++) assert.ok(Number.isFinite(w.airT[a]) && Number.isFinite(w.steam[a]));
+});
+
+/** The smith's cycle on its own: the blade's heat stood in for by a lumped model (no world). */
+function standIn(S, dt) {
+  const b = S.blade;
+  if (!b) return;
+  const to = (T, tau) => (b.T += (T - b.T) * Math.min(1, dt / tau));
+  if (b.place === 'fire') to(1250, 40);
+  else if (b.place === 'anvil') to(20, 50);
+  else if (b.place === 'water') to(20, 2);
+  else if (b.place === 'temper') to(450, 40);
+  else to(20, 200);
+  b.Tpeak = b.tip = b.base = b.T;
+}
+
+test("the smith's cycle: heat, hammer, reheat, quench, temper, grind, rack; the hammer's blows are impacts with the steel's temperature", () => {
+  const { w, S } = shop({ smith: true, weapons: 0 });
+  const events = [];
+  const env = { Ta: 20, time: 0, event: (e) => events.push(e), restock: () => 0 };
+  const seen = new Set();
+  for (let t = 0; t < 3000 && S.made < 1; t += 0.1) {
+    standIn(S, 0.1);
+    advanceSmithy(S, 0.1, env);
+    env.time += 0.1;
+    seen.add(S.smith.state);
+  }
+  assert.equal(S.made, 1, `a sword made (smith: ${S.smith.state})`);
+  for (const st of ['pick', 'heat', 'hammer', 'quench', 'temper', 'grind', 'shelve']) assert.ok(seen.has(st), st);
+  assert.equal(S.cooling.length, 1, 'it stands on the rack to cool');
+  const blows = events.filter((e) => e.type === 'impact' && e.kind === 'hammer');
+  assert.ok(blows.some((e) => !e.bare && e.bladeT > 700), 'blows on the hot blade, with its temperature');
+  assert.ok(blows.some((e) => e.bare), 'taps on the bare anvil between them');
+  assert.ok(blows.every((e) => e.mass > 0 && e.speed > 0 && e.materials[0] === 'steel'));
+  assert.ok(events.some((e) => e.type === 'bellows') && events.some((e) => e.type === 'quench'));
+  assert.ok(w.smithies[0] === S);
+});
+
+test('the bellows by E at the lever; the inspector; the shop', () => {
+  const { sim, S } = shop({ weapons: 3 });
   const L = S.stations.bellows.lever;
   const before = S.forge.blast;
   assert.match(useSmithy(sim, [L[0], 1, L[2] + 0.5]), /bellows/);
   assert.ok(S.forge.blast > before);
-  assert.equal(useSmithy(sim, [0, 1, 0]), null);
-  for (let a = 0; a < w.NA; a++) assert.ok(Number.isFinite(w.airT[a]));
+  assert.equal(useSmithy(sim, [L[0] + 5, 1, L[2] + 5]), null);
+  assert.equal(S.weapons.length, 3);
+  sim.step(DT);
+  const d = describeSmithy(S);
+  assert.match(d.title, /forge/);
+  assert.ok(d.rows.some((r) => /charcoal voxels glowing/.test(r)));
+  assert.ok(d.rows.some((r) => /Slack tub/.test(r)));
+  assert.ok(d.rows.some((r) => /3 weapons/.test(r)));
 });
 
-test('the smithy is drawn: the smith, the blade, the bellows, the shop; clicking it inspects it', async () => {
+test('the smithy is drawn: the blade as its voxels (glowing by each voxel), the smith; clicking it inspects it', async () => {
   const THREE = await import('three');
   const { SmithyRenderer } = await import('../src/render/smithy.js');
   const { describeThing } = await import('../src/sim/inspectThings.js');
-  const sim = createSimulation(cloneScene(SCENARIOS.metalBars));
-  const w = sim.world;
+  const { sim, w, S } = shop({ smith: true });
   const scene = new THREE.Scene();
-  const spawned = [];
-  const R = new SmithyRenderer(scene, { spawn: (...a) => spawned.push(a) });
+  const R = new SmithyRenderer(scene, { spawn() {} });
   R.setWorld(w);
-  const S = w.smithies[0];
-  // through a whole weapon (the smithy on its own, quickly), drawing as it goes
-  const env = { Ta: 20, o2: 0.232, waterT: 20, time: 0, addWaterHeat() {}, addSteam() {}, event: (e) => w.events.push({ ...e }) };
-  for (let t = 0; t < 900 && S.made < 1; t += 0.5) {
-    advanceSmithy(S, 0.5, env);
-    R.update(0.5, t);
-  }
-  assert.equal(S.made, 1);
+  sim.step(DT);
+  sim.step(DT);
+  const b = S.blade;
+  assert.ok(b?.body, 'a blank lies on the anvil');
+  // the point red hot, the rest cold
+  const B = b.body;
+  w.temp[B.at[B.n - 1]] = 900;
+  R.update(0.1, 0);
   const it = R.items[0];
-  assert.equal(it.shop.children.length, S.weapons.length, 'every weapon in the shop is drawn');
-  assert.ok(spawned.length > 0, 'sparks off the anvil and the grindstone');
+  const d = it.blades.get(b);
+  assert.equal(d.segs.length, B.n, 'a piece per voxel');
+  assert.ok(d.segs.at(-1).material.emissive.r > d.segs[0].material.emissive.r + 0.1, 'the hot voxel glows');
   scene.updateMatrixWorld(true);
-  // a ray down onto the smith
   const p = S.smith.p;
-  const ray = new THREE.Ray(new THREE.Vector3(p[0], 3, p[2]), new THREE.Vector3(0, -1, 0));
-  const hit = R.pick(ray);
+  const hit = R.pick(new THREE.Ray(new THREE.Vector3(p[0], 3, p[2]), new THREE.Vector3(0, -1, 0)));
   assert.ok(hit?.thing, 'the smith can be clicked');
-  const d = describeThing(sim, hit.thing);
-  assert.match(d.title, /forge/);
-  assert.ok(d.rows.some((r) => /Forge: fuel bed/.test(r)));
+  assert.match(describeThing(sim, hit.thing).title, /forge/);
+  assert.equal(it.shop.children.length, S.weapons.length, 'the weapons on display are drawn');
 });

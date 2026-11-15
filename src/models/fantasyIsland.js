@@ -45,7 +45,7 @@ export const CORE_ISLAND = {
  * floor: the ground's height above the sea where it is level (the village square, the valley floor).
  */
 export const VILLAGE = { origin: [70, 0.5, 48], size: [32, 11, 30], h: 0.25 };
-export const SMITHY = { origin: [78, null, 39.5], size: [8, 4.6, 7], h: 0.1 };
+export const SMITHY = { origin: [79.4, null, 42.8], size: [2.96, 2.56, 2.72], h: 0.04 }; // (its doorway where the old workshop's was)
 export const FOREST = { origin: [120, null, 60], size: [16, 10, 12], h: 0.2 };
 export const CASTLE = { origin: [112, 1.0, 23], size: [32, 23, 32], h: 0.3 };
 /** Level ground: the village square (and the smithy on it), the forest's valley floor, the castle's hilltop. */

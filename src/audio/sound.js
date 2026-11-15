@@ -33,6 +33,10 @@
  *    from its revs and cylinders, its load, the gear shifts, the exhaust and intake, the starter;
  *    the tyres rolling and squealing with their slip, the wind, the brakes, the horn, crashes;
  *    with the Doppler shift.
+ *  - a smithy (audio/smithSound.js: hammer impacts, state.smithies): the hammer's blows by modal
+ *    synthesis of the anvil, the blade at its temperature (hot steel thuds, cold rings) and the
+ *    hammer, from the blow's force and the Hertz contact; scale spattering; the quench's sizzle
+ *    from the steam the water voxels give off; the bellows' whoosh from the air through the tuyere.
  *  - CPU: a voice budget (MAX_VOICES one-shots at a time; quieter ones are dropped).
  *  - the space (audio/roomReverb.js, audio/acoustics.js): the voxels around the listener probed
  *    by rays (volume, openness, the absorption of what is hit, clutter) → a reverb (a procedural
@@ -43,6 +47,7 @@
 import { HeliVoices } from './heliVoices.js';
 import { BoatVoices } from './boatVoices.js';
 import { CarVoices } from './carVoices.js';
+import { hammerBlow, quenchSizzle, bellowsWhoosh } from './smithSound.js';
 import { heliCrashSound, heliHitSound } from './heliSound.js';
 import { RoomAcoustics } from './roomReverb.js';
 import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
@@ -163,6 +168,7 @@ export class SoundScape {
     this.boatVoices = null;
     this.carVoices = null;
     this.room = null;
+    this.smithVoices = null;
     this.ctx.close();
     this.ctx = null;
   }
@@ -363,6 +369,8 @@ export class SoundScape {
     if (state.boats) this.updateBoats(state.boats);
     // the cars (engine, tyres, wind, horn from each one's state: audio/carSound.js)
     if (state.cars) this.updateCars(state.cars);
+    // the smithies: the quench's sizzle and the bellows' whoosh from their physics (audio/smithSound.js)
+    if (state.smithies?.length) this.updateSmithies(state.smithies, t, setPos);
     // breathing (not at the controls of a helicopter: no breathing set on)
     if (state.flying) this.nextBreath = t + 1;
     else if (t >= this.nextBreath - 0.05) {
@@ -461,16 +469,16 @@ export class SoundScape {
       } else if (e.type === 'spall') {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       } else if (e.type === 'quench') {
-        // hot steel into the slack tub (sim/smithy.js): a sharp hiss, the boiling seething on
-        const pl = this.place(e.pos, 0.9, 4);
-        if (pl) {
-          this.noiseTo(pl.out, pl.t0, 1.2, 'highpass', 3500, 0.7, 0.7 * pl.gain);
-          this.noiseTo(pl.out, pl.t0 + 0.1, 3.5, 'bandpass', 1800, 1.2, 0.35 * pl.gain);
-        }
+        // hot steel into the slack tub (sim/smithy.js): the first sharp hiss as it goes in (the
+        // seething after it is the smithy's sizzle voice: updateSmithies, from the steam the
+        // water voxels give off)
+        const pl = this.place(e.pos, 0.9, 1.5);
+        if (pl) this.noiseTo(pl.out, pl.t0, 1.2, 'highpass', 3500, 0.7, 0.7 * pl.gain);
       } else if (e.type === 'bellows') {
-        // a stroke of the forge's bellows: air rushing through the tuyere into the fire
-        const pl = this.place(e.pos, 0.5, 1);
-        if (pl) this.noiseTo(pl.out, pl.t0, 0.8, 'lowpass', 500, 0.8, 0.6 * pl.gain);
+        // a stroke of the forge's bellows: the leather and the valve flap (the air's whoosh is
+        // the smithy's bellows voice: updateSmithies, from the air through the tuyere)
+        const pl = this.place(e.pos, 0.3, 0.3);
+        if (pl) this.noiseTo(pl.out, pl.t0, 0.12, 'bandpass', 700, 1.5, 0.5 * pl.gain);
       } else if (e.type === 'grind') {
         // steel on the turning grindstone
         const pl = this.place(e.pos, 0.35, 0.5);
@@ -512,6 +520,40 @@ export class SoundScape {
   }
 
   /** The cars heard from where the listener is (its velocity: as updateHelis found it). */
+  /**
+   * The smithies heard (sim/smithy.js): positional loops for each, the quench's sizzle (the steam
+   * the trough's water voxels give off now: its hiss, the crackle of nucleate boiling) and the
+   * bellows' whoosh (the air through the tuyere: its jet noise).
+   */
+  updateSmithies(list, t, setPos) {
+    this.smithVoices ??= [];
+    list.forEach((S, k) => {
+      if (!S?.ready) return;
+      let v = this.smithVoices[k];
+      if (!v) {
+        v = this.smithVoices[k] = {
+          sizzle: this.loop([{ type: 'bandpass', frequency: 4000, Q: 0.7 }], true),
+          crackle: this.loop([{ type: 'bandpass', frequency: 1800, Q: 1.5 }], true),
+          bellows: this.loop([{ type: 'lowpass', frequency: 400, Q: 0.6 }, { type: 'peaking', frequency: 120, Q: 1, gain: 8 }], true),
+        };
+      }
+      const w = S.stations?.trough?.water;
+      if (w) {
+        setPos(v.sizzle.panner, w);
+        setPos(v.crackle.panner, w);
+      }
+      const q = quenchSizzle(S.water?.steamRate ?? 0, S.blade?.place === 'water' ? S.blade.Tpeak ?? S.blade.T : 20);
+      v.sizzle.gain.gain.setTargetAtTime(Math.min(1.2, q.gain), t, 0.08);
+      v.sizzle.filters[0].frequency.setTargetAtTime(q.band, t, 0.2);
+      v.crackle.gain.gain.setTargetAtTime(Math.min(0.8, q.gain * q.crackle * (0.6 + 0.4 * Math.random())), t, 0.03);
+      if (S.bellowsBox) setPos(v.bellows.panner, S.bellowsBox);
+      const b = bellowsWhoosh(S.forge?.air ?? 0);
+      v.bellows.gain.gain.setTargetAtTime(Math.min(1, b.gain), t, 0.12);
+      v.bellows.filters[0].frequency.setTargetAtTime(b.cutoff, t, 0.2);
+      v.bellows.filters[1].frequency.setTargetAtTime(b.peak, t, 0.2);
+    });
+  }
+
   updateCars(cars, listener = null) {
     if (!this.running) return;
     const pos = listener?.pos ?? this.state?.listener?.pos;
@@ -691,7 +733,18 @@ export class SoundScape {
    */
   impact(e) {
     if (!this.running) return;
-    const S = impactSound({ materials: e.materials, energy: (e.dissipated ?? e.energy ?? 1) + 0.1 * (e.energy ?? 0), mass: e.mass, speed: e.speed, radius: e.radius, size: e.size, sizeA: e.sizeA, footprint: e.footprint });
+    // a smith's hammer (sim/smithy.js): the anvil, the blade at its temperature, the hammer's head
+    // (audio/smithSound.js), and the scale spattering off hot steel
+    if (e.kind === 'hammer') {
+      const S = hammerBlow({ mass: e.mass, speed: e.speed, bare: e.bare, bladeT: e.bladeT ?? e.temps?.[1], anvilT: e.bare ? e.temps?.[1] : undefined, blade: e.blade, radius: e.radius });
+      this.strike(S, e.pos, e.delay ?? 0);
+      if (S.scale) {
+        const pl = this.place(e.pos, S.gain * S.scale.amp, S.scale.spread + 0.05);
+        if (pl) for (let n = 0; n < S.scale.n; n++) this.noiseTo(pl.out, pl.t0 + Math.random() * S.scale.spread, 0.012, 'bandpass', S.scale.band * (0.7 + Math.random() * 0.6), 3, 0.6 * pl.gain);
+      }
+      return S;
+    }
+    const S = impactSound({ materials: e.materials, energy: (e.dissipated ?? e.energy ?? 1) + 0.1 * (e.energy ?? 0), mass: e.mass, speed: e.speed, radius: e.radius, size: e.size, sizeA: e.sizeA, footprint: e.footprint, temps: e.temps });
     this.strike(S, e.pos, e.delay ?? 0, e.underwater);
     return S;
   }

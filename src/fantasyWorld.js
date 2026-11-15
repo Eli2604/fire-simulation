@@ -178,7 +178,7 @@ function smithyPlace() {
   const P = SMITHY;
   const sc = smithyScene();
   return {
-    name: 'Smithy: forging a blade',
+    name: 'Smithy: forging a sword',
     label: 'Smithy',
     group: ISLE_GROUP,
     origin: P.origin.slice(),
@@ -192,8 +192,8 @@ function smithyPlace() {
       // the square round it (level: nothing over its ground layer) and the sea's level, for the ground drawn round it
       landOf(P, { grass: false }),
       ...sc.objects,
-      // out of the front, west of the forge's doorway: back to the square
-      { type: 'signpost', params: { to: 'village', label: 'Out to the village square', arriveX: 1.6, arriveZ: 0, arriveYaw: 0 }, x: 0.5, z: 6.5 },
+      // inside by the doorway: back out to the square
+      { type: 'signpost', params: { to: 'village', label: 'Out to the village square', arriveX: 1.6, arriveZ: 0, arriveYaw: 0 }, x: 1.05, z: 2.4 },
     ],
   };
 }
@@ -260,7 +260,7 @@ function catacombsPlace() {
 }
 
 export const FANTASY_DESCRIPTION =
-  "A world of its own: the dragon isle in an open sea, on a bright late-summer morning. You come ashore at the landing stage of the harbour village on its south coast. West along the road lies the old dragon island: hills, a pond, a gothic church being built on a plateau (its tower and south arm in scaffolding, the sun falling through the stained glass) with the catacombs under it (guards, a dungeon cell, an underground chapel), a house with a campfire, a volcano on the main hill and on the far side a waterfall off a rocky height (a walkway behind the falling water, a river to the sea, a water mill on it). A dragon lives there: it rests on the hillside, crawls up the hill (over the volcano: it wakes and erupts), climbs over the church roof and sniffs at the crypt, then flies back; a younger koi-scaled dragon now and then flies out to fight it. They hunt what they see, guards and you: fire breath, and they devour their prey. Off the village square the smithy, where the smith forges a blade (bellows, anvil, quench; the old metal bars on burners on its test hearth). East a road climbs to the castle on its hill: curtain walls, corner towers, a gatehouse with a portcullis and oak gates (E), battlements, the keep, a timber great hall and stables with hay, its garrison. Below the castle, in the valley between its hill and the ridge along the south coast, a stand of conifers burns in the fog that pools there: the inversion caps the plume and the smoke spreads sideways (6× time). Signposts at the ends of the roads take you along them (E), a boat round the coast between the village and the dragon island's pier. Zoomed out every place shows as a labelled box: click one to go there; the village, the smithy, the castle and the forest take over as the camera comes close.";
+  "A world of its own: the dragon isle in an open sea, on a bright late-summer morning. You come ashore at the landing stage of the harbour village on its south coast. West along the road lies the old dragon island: hills, a pond, a gothic church being built on a plateau (its tower and south arm in scaffolding, the sun falling through the stained glass) with the catacombs under it (guards, a dungeon cell, an underground chapel), a house with a campfire, a volcano on the main hill and on the far side a waterfall off a rocky height (a walkway behind the falling water, a river to the sea, a water mill on it). A dragon lives there: it rests on the hillside, crawls up the hill (over the volcano: it wakes and erupts), climbs over the church roof and sniffs at the crypt, then flies back; a younger koi-scaled dragon now and then flies out to fight it. They hunt what they see, guards and you: fire breath, and they devour their prey. Off the village square the smithy, where the smith forges a blade (a sword of steel voxels heated in a charcoal fire he blows up with the bellows, hammered on the anvil, quenched in the slack tub: steam). East a road climbs to the castle on its hill: curtain walls, corner towers, a gatehouse with a portcullis and oak gates (E), battlements, the keep, a timber great hall and stables with hay, its garrison. Below the castle, in the valley between its hill and the ridge along the south coast, a stand of conifers burns in the fog that pools there: the inversion caps the plume and the smoke spreads sideways (6× time). Signposts at the ends of the roads take you along them (E), a boat round the coast between the village and the dragon island's pier. Zoomed out every place shows as a labelled box: click one to go there; the village, the smithy, the castle and the forest take over as the camera comes close.";
 
 /** The Fantasy world scene. */
 export function fantasyWorld() {

@@ -1100,7 +1100,9 @@ export class Simulation {
         // a dry skin can burn on a still-moist core
         const wetOk = Cs > 0 ? ws < 0.2 || mo < M.extinctionMoisture : mo < M.extinctionMoisture;
         // oxygen at the surface: flames weaken below fresh air and die below ~15 % by volume
-        const ox = oxygenFactor(this.o2Near(fa));
+        // (glowing char, forge charcoal: it burns at its surface as fast as oxygen reaches it,
+        // in proportion to the oxygen there, with no flame to blow out below ~15 %)
+        const ox = M.glows ? Math.min(1, this.o2Near(fa) / O2_AIR) : oxygenFactor(this.o2Near(fa));
         if (ex > 0 && !(f & F_BURNING) && Ts >= M.ignitionTemp && wetOk && sf > 0.5 && ox > 0.3) {
           f |= F_BURNING;
         }
@@ -1118,6 +1120,15 @@ export class Simulation {
                 ? ((fuelMass0 / M.burnTime) * tf * windO2 * dt * faces) / 3 // fine fuel: residence time
                 : M.burnRate * A * faces * tf * windO2 * dt; // bulk fuel: regression per surface area
             dm *= sf * ox; // water, foam, powder, and the oxygen left, set how fast it can burn
+            // forge charcoal: blown air (the bellows through the tuyere: sim/smithy.js) burns it
+            // faster and hotter: the forced air's speed through the air cell in front of it
+            // (world.forcedAir, m/s, written by what blows: not the fire's own updraught, or a
+            // fire would fan itself)
+            let blast = 0;
+            if (M.draught > 0 && w.forcedAir) {
+              blast = w.forcedAir[fa];
+              dm *= 1 + M.draught * blast;
+            }
             let Hc = M.heatOfCombustion;
             let smokeYield = M.smokeYield;
             let sc = M.smokeColor;
@@ -1151,7 +1162,7 @@ export class Simulation {
             q += (dm * M.heatOfCombustion) / dt;
             // part of the heat keeps the fuel surface hot (pyrolysis)...
             const selfQ = q * M.selfHeating * dt;
-            const cap = M.maxBurnTemp;
+            const cap = blast > 0 ? Math.min(M.maxBlastTemp, M.maxBurnTemp + M.draughtHeat * blast) : M.maxBurnTemp;
             let toAir = q * (1 - M.selfHeating - RAD_FRACTION);
             if (Ts < cap) {
               const room = (cap - Ts) * Csurf;

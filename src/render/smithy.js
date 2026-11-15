@@ -3,16 +3,19 @@ import { blackbody } from './colors.js';
 import { heatTint, HT_STEEL } from './heatColor.js';
 import { TMAX_STEP } from '../sim/world.js';
 import { raycastDrawn } from './pickThings.js';
+import { worldOf } from '../sim/movingBody.js';
 
 /**
- * The smith's workshop (sim/smithy.js): what is not voxels.
+ * The smith's workshop (sim/smithy.js): what is not drawn as voxels.
  *  - the smith: a burly figure in a leather apron, posed by what he is doing (walking, at the
  *    bellows lever, hammering with the tongs in his other hand, quenching, grinding);
- *  - the blade he works: its shape by its kind, black with scale while he forges it, bright
- *    after the grindstone with its temper colour; it glows by its temperature (dull red at
- *    600 °C, cherry, orange, yellow at forging heat);
- *  - the glowing fuel bed in the fire pot (its colour from the bed's temperature, brighter on
- *    the bellows) and the forge's light on the room;
+ *  - the blade he works: its voxels (a moving body of steel voxels, F_HIDDEN) drawn as the thin
+ *    blade they stand for, a piece per voxel at that voxel's place and of its real width and
+ *    thickness, each glowing by its own voxel's temperature (the point first: dull red at
+ *    600 °C, cherry, orange, yellow at forging heat); black with scale while he forges it,
+ *    bright after the grindstone with each piece's temper colour; the same for a new sword
+ *    cooling on the rack;
+ *  - the forge's light on the room (from the glowing charcoal voxels' temperature);
  *  - the great bellows beside the hearth (its top board rising and falling with each stroke)
  *    on its rocker lever, and its nozzle into the fire;
  *  - the finished weapons in the shop: on the rack, the pegs and the counter;
@@ -23,6 +26,10 @@ import { raycastDrawn } from './pickThings.js';
 
 const STEEL = new THREE.Color(0.62, 0.64, 0.68);
 const SCALE = new THREE.Color(0.17, 0.16, 0.16);
+const GREY = new THREE.Color(0.4, 0.4, 0.42);
+const _col = new THREE.Color();
+const _m4 = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
 const _c = [0, 0, 0];
 const _t = [0, 0, 0, 0];
 const _v = new THREE.Vector3();
@@ -32,22 +39,6 @@ function box(w, h, d, mat, x = 0, y = 0, z = 0) {
   m.position.set(x, y, z);
   m.castShadow = true;
   return m;
-}
-
-/** A blade's shape (along +z from the tang, flat in x-z... lying on its side: thin in y). */
-function weaponGeometry(kind) {
-  const g = new THREE.Group();
-  const parts = [];
-  if (kind === 'sword') {
-    parts.push([0.045, 0.006, 0.72, 0, 0, 0.42], [0.016, 0.01, 0.06, 0, 0, 0.03]);
-  } else if (kind === 'axe') {
-    parts.push([0.05, 0.03, 0.09, 0, 0, 0.05], [0.12, 0.012, 0.12, 0.07, 0, 0.12]);
-  } else if (kind === 'spear') {
-    parts.push([0.04, 0.008, 0.22, 0, 0, 0.17], [0.022, 0.022, 0.08, 0, 0, 0.03]);
-  } else {
-    parts.push([0.035, 0.006, 0.26, 0, 0, 0.17], [0.014, 0.01, 0.05, 0, 0, 0.02]);
-  }
-  return { g, parts };
 }
 
 /** A finished weapon to show: the blade with its fittings (grip, haft). */
@@ -132,22 +123,7 @@ export class SmithyRenderer {
     const it = { S, g, thing, shopSig: '' };
     const heading = S.heading ?? 0;
 
-    // ---- the fuel bed: lumps of charcoal glowing by the bed's temperature
-    const bedMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 1, emissive: 0x000000 });
-    const bed = new THREE.Group();
-    bed.position.set(...S.fire);
-    bed.rotation.y = heading;
-    let seed = 7;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let k = 0; k < 22; k++) {
-      const s = 0.04 + rnd() * 0.04;
-      const lump = box(s, s * 0.8, s, bedMat, (rnd() - 0.5) * 0.32, -0.06 + rnd() * 0.06, (rnd() - 0.5) * 0.32);
-      lump.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
-      lump.castShadow = false;
-      bed.add(lump);
-    }
-    g.add(bed);
-    it.bedMat = bedMat;
+    // ---- the forge's glow on the room (the fire itself is the charcoal voxels)
     it.light = new THREE.PointLight(0xff8a3a, 0, 7, 1.6);
     it.light.position.set(S.fire[0], S.fire[1] + 0.35, S.fire[2]);
     g.add(it.light);
@@ -221,26 +197,13 @@ export class SmithyRenderer {
       it.fig = { f, legL, legR, torso, armL, armR, tongs, tip, hammer };
     }
 
-    // ---- the blade he works
-    const bladeMat = new THREE.MeshStandardMaterial({ color: SCALE.clone(), metalness: 0.6, roughness: 0.55, emissive: 0x000000 });
-    it.bladeMat = bladeMat;
-    it.blades = {};
-    it.blade = null;
+    // ---- the blades he works (their voxels: drawn by drawBlades)
+    it.blades = new Map();
     // ---- the shop's weapons
     it.shop = new THREE.Group();
     g.add(it.shop);
     g.traverse((o) => (o.userData.thing ??= thing));
     return it;
-  }
-
-  bladeMesh(it, kind) {
-    if (!it.blades[kind]) {
-      const grp = new THREE.Group();
-      for (const [w, h, d, x, y, z] of weaponGeometry(kind).parts) grp.add(box(w, h, d, it.bladeMat, x, y, z));
-      grp.traverse((o) => (o.userData.thing = it.thing));
-      it.blades[kind] = grp;
-    }
-    return it.blades[kind];
   }
 
   /** Rebuild the shop's display when what is in it changed. */
@@ -350,74 +313,72 @@ export class SmithyRenderer {
     F.hammer.rotation.x = Math.PI / 2 - 0.3;
   }
 
-  /** The blade where it is (in the tongs, in the fire, on the anvil, in the water...), its colour from its heat. */
-  placeBlade(it) {
+  /**
+   * The blades as their voxels are (the one he works, those cooling on the rack): a thin piece of
+   * steel per voxel where the voxel is (its body's pose), its colour from that voxel's state.
+   */
+  drawBlades(it) {
     const S = it.S;
-    const b = S.blade;
-    if (!b) {
-      if (it.blade) it.blade.parent?.remove(it.blade);
-      it.blade = null;
-      return;
-    }
-    const mesh = this.bladeMesh(it, b.kind);
-    if (it.blade !== mesh) {
-      it.blade?.parent?.remove(it.blade);
-      it.blade = mesh;
-    }
-    const st = S.stations;
-    const heading = S.heading ?? 0;
-    const fig = it.fig;
-    const inHand = fig && (b.place === 'tongs' || b.place === 'water' || b.place === 'temper' || b.place === 'grind' || b.place === 'stock');
-    if (inHand && b.place === 'tongs') {
-      if (mesh.parent !== fig.tip) fig.tip.add(mesh);
-      mesh.position.set(0, 0, 0);
-      mesh.rotation.set(0, 0, 0);
-    } else {
-      if (mesh.parent !== it.g) it.g.add(mesh);
-      mesh.rotation.set(0, heading, 0);
-      if (b.place === 'fire') {
-        mesh.position.set(S.fire[0], S.fire[1] - 0.02, S.fire[2]);
-        mesh.rotation.y = heading + Math.PI; // its tang out towards the smith
-        mesh.position.z += Math.cos(heading) * 0.35;
-        mesh.position.x += Math.sin(heading) * 0.35;
-      } else if (b.place === 'anvil') {
-        mesh.position.set(st.anvil.top[0] - Math.cos(heading) * 0.25, st.anvil.top[1] + 0.01, st.anvil.top[2]);
-        mesh.rotation.y = heading + Math.PI / 2;
-      } else if (b.place === 'water') {
-        mesh.position.set(st.trough.water[0], st.trough.water[1] - 0.12, st.trough.water[2]);
-        mesh.rotation.set(-1.2, heading + Math.PI, 0, 'YXZ');
-      } else if (b.place === 'temper') {
-        mesh.position.set(S.fire[0], S.fire[1] + 0.12, S.fire[2] + Math.cos(heading) * 0.3);
-        mesh.rotation.y = heading + Math.PI;
-      } else if (b.place === 'grind') {
-        const wh = st.grinder.wheel;
-        mesh.position.set(wh[0], wh[1] + 0.05, wh[2] + Math.cos(heading) * 0.32);
-        mesh.rotation.set(0.25, heading + Math.PI / 2, 0, 'YXZ');
-      } else {
-        mesh.position.set(st.forge.p[0], 1, st.forge.p[2]);
+    const w = this.world;
+    const live = [S.blade, ...(S.cooling ?? [])].filter((b) => b?.body);
+    for (const [b, d] of it.blades)
+      if (!live.includes(b)) {
+        it.g.remove(d.g);
+        d.g.traverse((o) => o.material?.dispose?.());
+        it.blades.delete(b);
+      }
+    for (const b of live) {
+      const B = b.body;
+      let d = it.blades.get(b);
+      if (!d) {
+        d = { g: new THREE.Group(), segs: [] };
+        for (const v of b.spec) {
+          const mat = new THREE.MeshStandardMaterial({ color: SCALE.clone(), metalness: 0.6, roughness: 0.55, emissive: 0x000000 });
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w.h * 1.02, v.part === 'tang' ? 0.012 : Math.max(0.002, v.thick), v.width), mat);
+          m.castShadow = true;
+          m.userData.thing = it.thing;
+          d.segs.push(m);
+          d.g.add(m);
+        }
+        it.g.add(d.g);
+        it.blades.set(b, d);
+      }
+      const R = B.pose.R;
+      // (the pose's axes: along the blade, through its flat, across it)
+      _m4.set(R[0], R[1], R[2], 0, R[3], R[4], R[5], 0, R[6], R[7], R[8], 0, 0, 0, 0, 1);
+      _q.setFromRotationMatrix(_m4);
+      const bright = b.quenched && (b.place === 'grind' || b.place === 'rack' || S.cooling?.includes(b) || (b.place === 'tongs' && S.smith?.dest === 'rack'));
+      for (let k = 0; k < B.n; k++) {
+        const m = d.segs[k];
+        if (!B.s.mat[k]) {
+          m.visible = false;
+          continue;
+        }
+        m.visible = true;
+        const v = b.spec[k];
+        const p = worldOf(B, k);
+        // (two voxels across: each piece of steel sits against the other, the blade whole)
+        const off = v.width < w.h * 0.99 && b.spec.some((u) => u !== v && u.x === v.x) ? (v.z > 0 ? -1 : 1) * (w.h - v.width) * 0.5 : 0;
+        m.position.set(p[0] + R[2] * off, p[1] + R[5] * off, p[2] + R[8] * off);
+        m.quaternion.copy(_q);
+        const c = B.at[k];
+        const T = c >= 0 && w.mat[c] === B.s.mat[k] ? w.temp[c] : B.s.temp[k];
+        const mat = m.material;
+        if (bright || b.quenched) {
+          heatTint(HT_STEEL, Math.max(b.vox?.temperMax[k] ?? 0, Math.min(T, 400)) / TMAX_STEP, _t);
+          mat.color.copy(bright ? STEEL : GREY).lerp(_col.setRGB(_t[0], _t[1], _t[2]), Math.min(0.6, _t[3] * 0.6));
+          mat.metalness = bright ? 0.9 : 0.7;
+          mat.roughness = bright ? 0.25 : 0.4;
+        } else {
+          mat.color.copy(SCALE);
+          mat.metalness = 0.5;
+          mat.roughness = 0.6;
+        }
+        blackbody(T, _c);
+        mat.emissive.setRGB(_c[0], _c[1], _c[2]);
+        mat.emissiveIntensity = 0.9;
       }
     }
-    // colour: scale while forged, bright (with its temper colour) after the grindstone; the glow by its heat
-    const mat = it.bladeMat;
-    if (b.quenched && (b.place === 'grind' || S.smith?.state === 'shelve' || (b.place === 'tongs' && S.smith?.dest === 'rack'))) {
-      heatTint(HT_STEEL, b.temperMax / TMAX_STEP, _t);
-      mat.color.copy(STEEL).lerp(new THREE.Color(_t[0], _t[1], _t[2]), Math.min(0.6, _t[3] * 0.6));
-      mat.metalness = 0.9;
-      mat.roughness = 0.25;
-    } else if (b.quenched) {
-      // the scale cracked off in the quench, a grey surface; its temper colour shows as he tempers it
-      heatTint(HT_STEEL, Math.max(b.temperMax, b.T) / TMAX_STEP, _t);
-      mat.color.setRGB(0.4, 0.4, 0.42).lerp(new THREE.Color(_t[0], _t[1], _t[2]), Math.min(0.6, _t[3] * 0.6));
-      mat.metalness = 0.7;
-      mat.roughness = 0.4;
-    } else {
-      mat.color.copy(SCALE);
-      mat.metalness = 0.5;
-      mat.roughness = 0.6;
-    }
-    blackbody(b.T, _c);
-    mat.emissive.setRGB(_c[0], _c[1], _c[2]);
-    mat.emissiveIntensity = 0.9;
   }
 
   update(dt, time) {
@@ -429,7 +390,6 @@ export class SmithyRenderer {
       const T = S.forge.T;
       blackbody(T, _c);
       const flick = 0.85 + 0.15 * Math.sin(time * 13.1 + Math.sin(time * 7.3) * 2);
-      it.bedMat.emissive.setRGB(_c[0] * 0.6 * flick, _c[1] * 0.6 * flick, _c[2] * 0.6 * flick);
       it.light.intensity = Math.min(6, Math.max(0, (T - 500) / 160)) * flick;
       // the bellows: the top board rises as it fills and falls on the stroke
       const sm = S.smith;
@@ -441,7 +401,7 @@ export class SmithyRenderer {
       it.bellows.leather.position.y = 0.04 + 0.1 * open;
       it.bellows.lever.rotation.x = -0.35 + 0.4 * open;
       this.pose(it, time);
-      this.placeBlade(it);
+      this.drawBlades(it);
       this.updateShop(it);
     }
     this.sparks();

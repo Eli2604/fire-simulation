@@ -107,6 +107,7 @@ export class World {
     this.tmpG = fa();
     this.supp = fa(); // flame suppression by dry powder (chemical inhibition), 1 = fully suppressed
     this.o2 = fa().fill(O2_AIR); // oxygen mass fraction of the gas (fresh air 0.232)
+    this.forcedAir = null; // m/s of air blown through a cell (a forge's tuyere: sim/smithy.js), made by what blows
     this.tmpI = fa();
     this.tmpJ = fa();
     this.tmpH = fa();

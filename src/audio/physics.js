@@ -70,26 +70,52 @@ export const soundSpeed = (m) => {
  * thickness (a fraction of L); solid ones (block, soft, granular): f₁ = c/2L. Higher modes at the
  * shape's ratios, each ringing τ = 1/(π f η), weaker the higher.
  */
-export function modes(m, size = 0.5, shape) {
+export function modes(m, size = 0.5, shape, thick, damp = 0) {
   const M = mat(m);
   const sh = shape ?? M.shape;
   const L = Math.max(0.005, size);
   const c = soundSpeed(M);
+  // (thick: the thickness as a share of the size, when it is known: a sword's blade 5 mm over 0.84 m)
+  const t = thick ?? THICK[sh];
   let f1;
   if (sh === 'liquid') f1 = minnaert(clamp(0.004 * Math.sqrt(L / 0.3), 0.0008, 0.02));
-  else if (FLEX[sh]) f1 = (FLEX[sh] * c * THICK[sh] * L) / (L * L);
+  else if (FLEX[sh]) f1 = (FLEX[sh] * c * t * L) / (L * L);
   else f1 = c / (2 * L);
   const R = MODE_RATIOS[sh] ?? MODE_RATIOS.block;
   const f = [], tau = [], amp = [];
+  // (damp: loss added by what touches it: a hot work piece lying on an anvil, a hand on a bell)
+  const eta = M.eta + Math.max(0, damp);
   R.forEach((r, n) => {
     const fn = f1 * r;
     if (fn > 18000) return;
     f.push(fn);
-    tau.push(clamp(1 / (Math.PI * Math.max(fn, 1) * M.eta), 0.003, 8));
+    tau.push(clamp(1 / (Math.PI * Math.max(fn, 1) * eta), 0.003, 8));
     amp.push(1 / Math.sqrt(n + 1));
   });
   return { f, tau, amp, f1, shape: sh };
 }
+
+/**
+ * A material as it is at T °C. Metals soften as they heat: the stiffness falls (E roughly
+ * linearly towards the melting point: steel 200 GPa cold, ~120 GPa at forging heat), the internal
+ * damping climbs steeply above ~400 °C (grain-boundary relaxation: hot steel does not ring, it
+ * thuds), and the surface yields (hardness falls), so a blow on it is a longer, plastic contact
+ * (Econtact: the stiffness the contact sees, the yield included). Non-metals are returned as
+ * they are (their own changes with heat are not modelled here).
+ */
+export function atTemperature(m, T = 20) {
+  const M = mat(m);
+  const Tm = M.name && MELT[M.name];
+  if (!Tm || !(T > 100)) return M;
+  const x = clamp(T / Tm, 0, 0.98);
+  const hot = clamp((T - 400) / (Tm - 400), 0, 1);
+  const soft = clamp((T - 300) / (Tm - 300), 0, 1);
+  const E = M.E * (1 - 0.5 * x);
+  const hardness = M.hardness * (1 - 0.8 * soft);
+  return { ...M, E, eta: M.eta + 0.08 * hot * hot, hardness, Econtact: E * (0.03 + 0.97 * (1 - soft) ** 3), T };
+}
+/** Melting points (°C) of the metals whose stiffness and damping change with heat (atTemperature). */
+const MELT = { steel: 1450, deckSteel: 1450, steelProfile: 1450, cable: 1450, aluminium: 660, copper: 1085, brass: 930 };
 
 /**
  * Hertz contact between bodies of materials a and b: the effective mass (kg), the closing speed
@@ -98,7 +124,8 @@ export function modes(m, size = 0.5, shape) {
  */
 export function contact(a, b, { mass = 1, speed = 1, radius = 0.05 } = {}) {
   const A = mat(a), B = mat(b);
-  const Estar = 1 / ((1 - A.nu ** 2) / A.E + (1 - B.nu ** 2) / B.E);
+  // (a hot metal yields under the blow: the contact sees less than its elastic stiffness)
+  const Estar = 1 / ((1 - A.nu ** 2) / (A.Econtact ?? A.E) + (1 - B.nu ** 2) / (B.Econtact ?? B.E));
   const v = Math.max(0.01, speed);
   const tc = clamp(2.87 * ((mass * mass) / (Math.max(0.002, radius) * Estar * Estar * v)) ** 0.2, 4e-5, 0.4);
   const e = clamp(0.1 + 0.8 * Math.sqrt(A.hardness * B.hardness) * (1 - (A.eta + B.eta) / 2), 0.02, 0.95);
@@ -111,29 +138,35 @@ const excite = (f, tc) => 1 / (1 + (2 * f * tc) ** 2);
 /**
  * The sound of an impact (sim/impact.js computes the physics). o: { materials: [striker, struck],
  * energy (J), mass (kg, effective), speed (m/s), radius (contact, m), size (the struck body, m),
- * sizeA (the striker, m), footprint (m: what moves the ground, for the boom) }. Returns
- * { db, gain, contact, partials: [{ f, tau, amp }], noise: { amp, cutoff, dur }, bubbles, shards,
- * boom, dur }.
+ * sizeA (the striker, m), footprint (m: what moves the ground, for the boom), and optionally
+ * temps: [°C, °C] (hot metal: softer, duller: atTemperature), shapes: [striker's, struck's],
+ * thick: [t/L, t/L] (thickness shares when known), damp: [η, η] (loss added by what touches them) }.
+ * Returns { db, gain, contact, partials: [{ f, tau, amp }], noise: { amp, cutoff, dur }, bubbles,
+ * shards, boom, dur }.
  */
 export function impactSound(o) {
   const [a, b] = o.materials ?? ['flesh', 'soil'];
-  const A = mat(a), B = mat(b);
+  const A0 = mat(a), B0 = mat(b);
+  const A = o.temps ? atTemperature(A0, o.temps[0]) : A0;
+  const B = o.temps ? atTemperature(B0, o.temps[1]) : B0;
   const E = Math.max(1e-6, o.energy ?? 0.5 * (o.mass ?? 1) * (o.speed ?? 1) ** 2);
-  const rad = (A.radiation + B.radiation) / 2;
+  // (a blow into soft hot metal goes into shaping it, not into sound)
+  const plastic = o.temps ? (0.2 + 0.8 * (A.hardness * B.hardness) / Math.max(1e-6, A0.hardness * B0.hardness)) : 1;
+  const rad = ((A.radiation + B.radiation) / 2) * plastic;
   const db = dbOf(E * rad);
   const gain = gainOf(db);
   const ct = contact(A, B, { mass: o.mass ?? 1, speed: o.speed ?? 1, radius: o.radius ?? 0.05 });
   const partials = [];
-  const add = (M, size, w) => {
-    const md = modes(M, size);
+  const add = (M, size, w, k) => {
+    const md = modes(M, size, o.shapes?.[k], o.thick?.[k], o.damp?.[k] ?? 0);
     if (md.shape === 'liquid' || md.shape === 'granular') return;
     md.f.forEach((f, i) => {
       const amp = w * md.amp[i] * excite(f, ct.tc);
       if (amp > 0.01) partials.push({ f, tau: md.tau[i], amp });
     });
   };
-  add(B, o.size ?? 0.5, 1);
-  add(A, o.sizeA ?? 0.2, 0.6);
+  add(B, o.size ?? 0.5, 1, 1);
+  add(A, o.sizeA ?? 0.2, 0.6, 0);
   partials.sort((x, y) => y.amp - x.amp);
   partials.length = Math.min(partials.length, 8);
   // the contact itself: a noise burst as long as the contact, as bright as it is short; soft and

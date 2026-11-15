@@ -157,12 +157,11 @@ test('the places of the isle are joined: every road has its way back, the boats 
   assert.equal(VILLAGE.origin[0] > CORE.origin[0] + CORE.size[0], true);
 });
 
-test('the smithy in the village is the smithy scene: the same workshop, bars, air and time', () => {
+test('the smithy in the village is the smithy scene: the same workshop, air and time', () => {
   const zd = fw.zones.smithy;
   const sc = smithyScene();
   const types = (list) => list.filter((o) => o.type !== 'fantasyLand' && o.type !== 'signpost').map((o) => [o.type, o.x, o.z]);
   assert.deepEqual(types(zd.objects), types(sc.objects));
-  assert.deepEqual(types(SCENARIOS.metalBars.objects), types(sc.objects));
   assert.equal(zd.exposure, 'indoor');
   assert.equal(zd.timeScale, sc.timeScale);
   assert.deepEqual(zd.world.size, sc.world.size);

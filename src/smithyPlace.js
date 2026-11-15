@@ -1,34 +1,29 @@
 import { defaultWeather } from './sim/weather.js';
 
 /**
- * The smithy: a smith forging a blade in his workshop, and on the test hearth by its front wall
- * the old Metal bars on burners. One definition for the scene of its own (scenarios.js
- * `metalBars`) and for the smithy in the harbour village of the Fantasy world (src/fantasyWorld.js):
+ * The smithy: a smith forging a sword (all of it voxels: sim/smithy.js). Its one definition, for
+ * the smithy in the harbour village of the Fantasy world (src/fantasyWorld.js; the old key `metalBars`
+ * opens it) and for the smithy in the harbour village of the Fantasy world (src/fantasyWorld.js):
  * its world, its air and its objects (models/smithy.js; the forge, the smith and his shop:
  * sim/smithy.js, render/smithy.js).
  *
- * The workshop stands at (4, 3.2) in its 8 × 7 m world, its front (the doorways) to +z.
+ * The workshop (one room at 4 cm voxels: forge, anvil, slack tub, grindstone, the rack of its shop
+ * corner) fills its 2.96 × 2.72 m world, its front (the doorway) to +z.
  */
 export const SMITHY_DESCRIPTION =
-  "A smith's workshop. At the charcoal forge the smith works the bellows: more air through the tuyere means more oxygen to the fuel bed, so the charcoal burns faster and the fire climbs from ~900 °C (the chimney's draught alone) to 1200–1400 °C; the smoke and hot gas go up the hood and the chimney. When the blank glows yellow-orange (forging heat) he takes it out with the tongs and hammers it on the anvil (sparks, the ring of the anvil) until it cools to a dull cherry, then back into the fire; shaped, he heats it to cherry red and quenches it in the slack tub: a hiss, steam, the water warms, and the fast cooling turns the steel to hard, brittle martensite. He tempers it over the fire to its temper colour, grinds the edge and puts it in his shop next door (sword, axe, spear, dagger in turn: they pile up on the rack, the pegs and the counter). Walk in and press E at the bellows lever to blow the fire yourself; click the forge or the smith to see the temperatures, the hardness and the shop. On the test hearth by the front wall the old lesson: steel, aluminium and copper bars on burners. Copper conducts heat fastest; aluminium is first to melt; steel takes temper colours (straw, brown, purple, blue, grey) spreading from the burner. Switch the view to thermal to see the temperatures.";
+  "A compact smith's workshop at fine voxels (4 cm): one room with the forge, the anvil, the slack tub, a grindstone and the rack of his shop corner by the door,, where the smith forges a sword and all of it is the voxel physics. The forge's fire pot is full of real charcoal voxels burning in the room's air; the bellows blow through the tuyere into the bed through the air model (fresh oxygen and the jet's speed), so the charcoal burns faster and hotter, from ~1000 °C on the chimney's draught alone to 1300–1400 °C; the smoke and hot gas go up the hood and the chimney, and the charcoal burns away (he tops it up from the bin). The sword is a body of steel voxels (a tang and a 72 cm blade, two voxels wide at its base, thinner and narrower towards the point) that goes wherever his tongs take it, carrying its heat: in the fire the heat runs along it by conduction and the thin point glows first; on the anvil it loses heat into the anvil's steel (and rings or thuds under the hammer by how hot it is); quenched in the slack tub it gives its heat to the water voxels around it: the water at the steel boils, steam comes off the surface into the air, the water warms, and each voxel's fast cooling (its own 800→500 °C time) turns its steel to hard martensite. He tempers it over the fire to its temper colour, grinds it and stands it on the rack to cool; cold, it joins the weapons on display. Walk in and press E at the bellows lever to blow the fire yourself; click the forge or the smith to see the temperatures of the fire, the blade (point and base), the water and the hardness. Switch the view to thermal to see the heat.";
 
 /** Where the workshop's front is in its world (z of its front wall's face) and its doorways (x). */
-export const SMITHY_FRONT = { z: 6.0, forgeDoorX: 3.0, shopDoorX: 6.9 };
+export const SMITHY_FRONT = { z: 2.68, forgeDoorX: 1.6 };
 
 /** The smithy's scene content (a fresh copy each call): world, exposure, weather, time, view, objects. */
 export function smithyScene() {
   return {
-    world: { size: [8, 4.6, 7], h: 0.1 },
-    exposure: 'indoor', // (a workshop: its open doorway and windows let a little outside air in, no weather)
+    world: { size: [2.96, 2.56, 2.72], h: 0.04, maxDt: 0.16 }, // (steps of 0.16 s: the air's backtrace ~4 cells at 1 m/s)
+    exposure: 'indoor', // (a workshop: its open doorway and window let a little outside air in, no weather)
     weather: { ...defaultWeather(), ambient: 18 },
     timeScale: 3,
-    view: { camera: [-1.5, 2.6, 5.2], walk: true },
-    objects: [
-      { type: 'smithy', params: {}, x: 4, z: 3.2 },
-      // the test hearth: bars as thick as a finger on gas burners (thinner than the voxels: models/metalBar.js)
-      { type: 'metalBar', params: { material: 'steel', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 4.85 },
-      { type: 'metalBar', params: { material: 'aluminium', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 5.15 },
-      { type: 'metalBar', params: { material: 'copper', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 5.45 },
-    ],
+    view: { camera: [2.2, 1.6, 2.45], walk: true },
+    objects: [{ type: 'smithy', params: {}, x: 1.48, z: 1.36 }],
   };
 }
