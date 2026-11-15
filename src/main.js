@@ -15,6 +15,7 @@ import { skyFolder } from './skyGui.js';
 import { dayOfDate } from './sim/sky.js';
 import { PATCH } from './sim/patches.js';
 import { lod } from './render/lod.js';
+import { describeCloth, clothRows } from './sim/cloth.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
@@ -67,6 +68,7 @@ let sim = null;
 let weather = defaultWeather(); // the scene's (outdoor) weather settings; a zone may have its own
 const drift = new WeatherDrift(7); // the weather changing by itself (when it is set to)
 let inspected = -1;
+let inspectedCloth = null; // a garment on a washing line clicked: { prop, piece } (sim/cloth.js)
 let speed = 0;
 const tank = { remaining: AGENTS.water.capacity }; // the extinguisher in your hand
 let spraying = false;
@@ -380,6 +382,7 @@ function load(desc, fresh = true) {
   }
   view.voxels.mode = state.mode;
   inspected = -1;
+  inspectedCloth = null;
   $('inspect').hidden = true;
   $('title').textContent = (scene.name ?? 'Custom scene') + (scene.zones ? ` – ${scene.zones[scene.zone].name}` : '');
   $('desc').textContent = scene.description ?? '';
@@ -762,7 +765,7 @@ function updateHud(dt) {
     ['FPS', fps.toFixed(0)],
   ];
   $('stats').innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
-  if (inspected >= 0) showInspect();
+  if (inspected >= 0 || inspectedCloth) showInspect();
 }
 
 const VESSEL_STATE = { sealed: 'sealed', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
@@ -786,6 +789,14 @@ function eventRows(w) {
 function showInspect() {
   const d = sim.describe(inspected);
   const el = $('inspect');
+  // a garment on the line: the whole of it (its voxels summed), then the voxel clicked
+  const cloth = inspectedCloth && describeCloth(sim.world, inspectedCloth.prop, inspectedCloth.piece);
+  if (cloth) {
+    const [head, ...rows] = clothRows(cloth);
+    el.hidden = false;
+    el.innerHTML = [`<b>${head}</b> <span style="color:var(--muted)">(Washing line)</span>`, ...rows, d ? `<span style="color:var(--muted)">This voxel: ${d.temperature.toFixed(0)} °C, ${d.state}${d.fuel !== null ? `, fuel ${(d.fuel * 100).toFixed(0)} %` : ''}</span>` : ''].filter(Boolean).join('<br>');
+    return;
+  }
   if (!d) {
     el.innerHTML = '<b>Gone</b> – this voxel burnt away or moved.';
     return;
@@ -905,6 +916,7 @@ canvas.addEventListener('pointerup', (e) => {
   switch (state.tool) {
     case 'inspect':
       inspected = hit.voxel;
+      inspectedCloth = hit.cloth ?? null; // (the wash on a line: its garment, as a whole)
       showInspect();
       break;
     case 'ignite':
@@ -1078,6 +1090,7 @@ document.getElementById('walkRespawn').addEventListener('click', () => {
 });
 function startWalk() {
   inspected = -1;
+  inspectedCloth = null;
   $('inspect').hidden = true;
   walk.enter();
 }

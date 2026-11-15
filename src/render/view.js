@@ -23,6 +23,7 @@ import { HeliRenderer } from './helis.js';
 import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
+import { pickScene } from './pick.js';
 import { BloodRenderer } from './blood.js';
 import { Ocean } from './ocean.js';
 import { ArchipelagoRenderer } from './archipelago.js';
@@ -1013,19 +1014,17 @@ export class View {
     if (k <= 0) this.flash = null;
   }
 
-  /** Raycast the voxels under a screen point. Returns { voxel, point, normal } or null. */
+  /**
+   * Raycast the voxels under a screen point, through whatever draws them (render/pick.js: the
+   * voxel cubes or smooth surface, and the meshes drawn over hidden voxels – the wash on the
+   * line, scans, trees, grass). Returns { voxel, point, normal, cloth? } or null.
+   */
   pick(clientX, clientY) {
     const el = this.renderer.domElement;
     const rect = el.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    if (this.surfaceMode === 'smooth') return this.surface.pick(this.raycaster);
-    if (!this.voxels.mesh) return null;
-    const hits = this.raycaster.intersectObject(this.voxels.mesh, false);
-    if (!hits.length) return null;
-    const hit = hits[0];
-    const voxel = this.voxels.voxelOfInstance(hit.instanceId);
-    const p = this.root.worldToLocal(hit.point.clone());
-    return { voxel, point: [p.x, p.y, p.z], normal: hit.face ? [hit.face.normal.x, hit.face.normal.y, hit.face.normal.z] : [0, 1, 0] };
+    const smooth = this.surfaceMode === 'smooth';
+    return pickScene(this.raycaster, { world: this.world, root: this.root, voxels: this.voxels, surface: smooth ? this.surface : null, drawings: this.props.drawings, trees: this.trees });
   }
 }
