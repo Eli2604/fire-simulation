@@ -1,6 +1,7 @@
 import { MATERIALS } from './materials.js';
 import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
+import { boatShot } from './boats.js';
 
 /**
  * Wounds, blood and bullets.
@@ -211,6 +212,11 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   const tH = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
   const he = sim.heliAI?.shot?.(from, d, tH, weapon, shooter);
   if (he) best = { heli: he.heli, zone: he.k, p: he.p };
+  // a boat's hull nearer still (sim/boats.js: the round holes its planking; its own voxels are
+  // the wall it hit while it is at its berth)
+  const tB = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : wall ? wall.t + w.h : range;
+  const bo = w.floats?.length ? boatShot(sim, from, d, tB, weapon) : null;
+  if (bo) best = { boat: bo.boat, zone: 'hull', p: bo.p, holes: bo.holes };
   // the report (ai/perception.js): a rifle's crack carries kilometres (who hears it goes to look only nearer)
   emitSound(w, { pos: from, loudness_dB: LOUDNESS[weapon] ?? LOUDNESS.rifle, kind: shooter ? 'enemy' : 'gunshot', source: shooter ?? player ?? null });
   // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
@@ -231,7 +237,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     best.wound = wound(sim, best.enemy, best.zone, weapon, best.p, d);
     return best;
   }
-  if (best?.dragon || best?.heli) return best;
+  if (best?.dragon || best?.heli || best?.boat) return best;
   if (best?.player) {
     best.weapon = weapon;
     return best;

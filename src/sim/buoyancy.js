@@ -1,4 +1,6 @@
 import { MAT } from './materials.js';
+import { waterStirAt } from './stirrers.js';
+import { initBoat, stepDrift, updateHoles } from './boats.js';
 
 /**
  * Floating bodies: Archimedes for a rigid hull (a rowing boat, the aircraft carrier).
@@ -21,7 +23,7 @@ import { MAT } from './materials.js';
  *   weight    m · g of the hull, its load and the people aboard at their centre of mass G, and
  *             the water aboard at its own centre (it runs to the low side: the free-surface
  *             effect comes with it).
- * The boat moves in heave, roll and pitch (moored: it does not drift) as a rigid body with the
+ * The boat moves in heave, roll and pitch (surge, sway and yaw: sim/boats.js) as a rigid body with the
  * water's added mass (heave: ½·ρ·π/8·B²·L, about a strip of half a cylinder) and inertia, and
  * damping from making waves and from drag: a linear part at a damping ratio ζ (heave 0.25, roll
  * 0.08, pitch 0.3: ships roll long, heave and pitch die out in a few swings) plus a quadratic
@@ -811,7 +813,7 @@ export function stepFloats(sim, dt) {
     if (!f.water) continue; // (on dry land: it stays as it was put)
     // its planking: burnt or blown away below the sheer it lets the water in (every half second)
     f.check = (f.check ?? 0) - dt;
-    if (f.check <= 0 && f.voxels?.length) {
+    if (f.check <= 0 && f.voxels?.length && !f.detached) {
       f.check = 0.5;
       checkPlanking(w, f);
     }
@@ -841,6 +843,7 @@ export function stepFloats(sim, dt) {
       }
     }
     stepBody(f.body, dt, env);
+    if (f.row) moveBoat(sim, f, dt, env);
     if (f.body.sunk && !f.sunkNoted) {
       f.sunkNoted = true;
       w.events.push({ type: 'sinking', pos: f.body.pose.p, time: w.time, name: f.label ?? 'a boat' });
@@ -899,7 +902,89 @@ export function initFloat(sim, f) {
     f.n0 = f.voxels.length;
   }
   b.pose = framePose(b);
+  if (f.model === 'rowBoat' || f.seats) initBoat(f);
   return f;
+}
+
+/**
+ * A boat's surge, sway and yaw in the world (sim/boats.js stepDrift): the current where it is
+ * (rivers, whirlpools; on the sea w.sea.current) and the wind's surface drift (~3 % of the wind on
+ * the sea, 1.5 % on a pond); kept off the shore (it stops against what is solid at its waterline);
+ * the water's level and the bottom under it found again as it goes (a river's reaches, over the
+ * fall); off its berth, its voxels out of the grid (they would stay behind where it was built).
+ */
+function moveBoat(sim, f, dt, env) {
+  const w = sim.world;
+  const b = f.body;
+  const wind = env.wind;
+  const drift = wind ? (f.water.sea ? 0.03 : 0.015) * wind.speed : 0;
+  const sc = f.water.sea ? w.sea?.current : null;
+  const cur = [0, 0];
+  env.current = (x, z) => {
+    waterStirAt(w, x, z, cur);
+    if (sc) {
+      cur[0] += sc[0];
+      cur[1] += sc[1];
+    }
+    if (drift) {
+      cur[0] += drift * Math.cos(wind.dir);
+      cur[1] += drift * Math.sin(wind.dir);
+    }
+    return cur;
+  };
+  const was = [b.X, b.Z, b.yaw];
+  // (built touching something: free to move until it is clear of it)
+  f.jammed ??= boatBlocked(w, f);
+  stepDrift(f, dt, env);
+  if (Math.abs(b.X - was[0]) + Math.abs(b.Z - was[1]) + Math.abs(b.yaw - was[2]) < 1e-7) return;
+  const blocked = boatBlocked(w, f);
+  if (f.jammed) f.jammed = blocked;
+  else if (blocked) {
+    b.X = was[0];
+    b.Z = was[1];
+    b.yaw = was[2];
+    b.vx *= -0.2;
+    b.vz *= -0.2;
+    b.wy *= -0.2;
+    b.pose = framePose(b);
+    return;
+  }
+  // off its berth: its voxels out of the grid (from now on its own mesh is all of it)
+  const home = f.home;
+  if (!f.detached && home && (Math.hypot(b.X - home.X, b.Z - home.Z) > 0.4 || Math.abs(b.yaw - home.yaw) > 0.12)) {
+    f.detached = true;
+    for (const i of f.own ?? []) if (w.mat[i] && w.mat[i] !== MAT.water) w.clearVoxel(i);
+  }
+  // where it is now: the water's level (not the sea: a pond, a river's reach) and the bottom
+  f.look = (f.look ?? 0) - dt;
+  if (f.look <= 0) {
+    f.look = 0.25;
+    const k = toWorld(b, [0, 0, 0]);
+    if (!f.water.sea) {
+      const top = surfaceUnder(w, k[0], k[2], f.water.level + 0.6);
+      if (top !== null) f.water.level = top;
+    }
+    f.bottom = bottomUnder(w, k[0], k[2], f.water.level, f);
+  }
+}
+
+/** Something solid (not water, not its own planking) where its hull is at its waterline, or the world's edge. */
+function boatBlocked(w, f) {
+  const b = f.body;
+  const hull = b.hull;
+  const own = f.detached ? null : (f.ownSet ??= new Set(f.own ?? []));
+  const lvl = f.water.level;
+  for (const [x, z] of [[hull.x1 - 0.05, 0], [hull.x0 + 0.05, hull.B * 0.3], [hull.x0 + 0.05, -hull.B * 0.3], [0, hull.B / 2], [0, -hull.B / 2], [hull.L * 0.3, hull.B * 0.35], [hull.L * 0.3, -hull.B * 0.35]]) {
+    const p = toWorld(b, [x, 0, z]);
+    if (p[0] < 0 || p[2] < 0 || p[0] >= w.size[0] || p[2] >= w.size[2]) return true;
+    for (const y of [lvl - 0.05, lvl + 0.2]) {
+      const i = w.voxelAt(p[0], y, p[2]);
+      if (i < 0) continue;
+      const m = w.mat[i];
+      if (m && m !== MAT.water && !(own && own.has(i))) return true;
+    }
+  }
+  return false;
 }
 
 function surfaceUnder(w, x, z, from) {
@@ -950,7 +1035,8 @@ function checkPlanking(w, f) {
     holes.length = 40;
     for (const h of holes) h.area *= s;
   }
-  f.body.holes = [...(f.spec.holes ?? []), ...holes];
+  f.plankHoles = holes;
+  updateHoles(f);
   const m = f.body.hullMass0 * (0.3 + 0.7 * f.left);
   if (Math.abs(m - f.body.hullMass) > 1) {
     f.body.hullMass = m;

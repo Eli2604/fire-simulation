@@ -744,7 +744,7 @@ carrier's too: a ladder down from the corridor below deck. The **campfire** burn
 out on the reef (a second boat at the island's pier): a log-cabin fire lit from the kindling
 in a stone ring on dry grass, its logs charring into embers, then ash. The **boats** at the
 piers (the red one back, the blue one on: islet, island, lake island) are rowing boats
-(`models/rowBoat.js`) afloat on the sea: walk up to one and press E.
+(`models/rowBoat.js`) afloat on the sea: walk up to one and press E (Shift+E: row it yourself).
 
 **Scanned objects that burn and break** (models/statue.js, models/candelabra.js,
 render/statue.js): photo-scanned models (CC0, Poly Haven) are simulated as voxels of their
@@ -1094,7 +1094,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed. Its boats at the pier are rowing boats (below) |
-| Rowing boat | length, beam, depth, hull of wood planks / aluminium / GRP, hull, inside and stripe colours, thwarts, oars, people aboard (80 kg each on the thwarts), load on the floorboards, buoyancy tanks, the water (auto: the sea, or fresh on a pond), the place it takes you to and where you step ashore coming back. Floats by Archimedes (`sim/buoyancy.js`): put its origin at the water's level; its hidden voxels burn as their material does, and are drawn afloat in their pose (`render/floats.js`) |
+| Rowing boat | length, beam, depth, hull of wood planks / aluminium / GRP, hull, inside and stripe colours, thwarts, oars, people aboard (80 kg each on the thwarts), load on the floorboards, buoyancy tanks, the water (auto: the sea, or fresh on a pond), the place it takes you to and where you step ashore coming back, moored (and its line's length; off: it drifts). Floats by Archimedes (`sim/buoyancy.js`): put its origin at the water's level; its hidden voxels burn as their material does, and are drawn afloat in their pose (`render/floats.js`) |
 | Water mill | house size, wall height, wheel radius, width, paddles and their depth, axle height, race wall, millstones grinding (a load) |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Terrain | width, depth, base ground thickness, base surface, grass moisture, tall grass, water / lava level and snow depth (for a base of those), border slope, ground under the surface (the rest hollow), seed, and its **areas** (see *Terrain* below) |
@@ -1510,6 +1510,23 @@ goes down while a wooden one fills to the outside level and floats waterlogged o
 as does an aluminium one with buoyancy tanks. In the world the boats' planking is voxels
 (hidden, drawn by `render/floats.js` in their pose): where fire or a blast takes it away below
 the waterline, that is a hole.
+
+**Drifting and rowing** (`sim/boats.js`). A boat also surges, sways and yaws: the water drags
+it towards the current where it is (a river's, a whirlpool's, `w.sea.current`, and the wind's
+surface drift, ~3 % of the wind on the sea) with surge resistance ½·ρ·0.012·S·u² on its wetted
+surface and side-on drag ½·ρ·1.0·L·T·u², its added mass, and the wind on its topsides. Moored
+(params *moored*, *mooring*: a painter from its stem to a ring ahead of it) it swings on its
+line; cast off it drifts, is kept off the shore, and finds the water's level and the bottom as
+it goes. Walk up to one and press E (Shift+E for a boat with a destination): you sit at the
+oars. W/S pull and back water, A/D turn (one oar pulls, the other backs), C casts off or makes
+fast, E steps ashore. Each stroke (2 s, drive 42 %) pushes it at the rowlocks with up to 160 N an
+oar: ~1.4 m/s. AI soldiers take seats with `boardSeat` / `leaveSeat`, and the one on the rowing
+thwart rows it with `row` or `rowToward` (or `f.row.goal`); see the top of `sim/boats.js`.
+A rifle round through its planking (the ray against the hull's shape in its pose) or a blast's
+fragments hole it: below the waterline they let water in by Torricelli and it settles, swamps
+and, with people aboard, sinks; above it they do nothing until it settles that deep. Once it
+has left its berth its voxels are taken out of the grid (they would stay behind): from then on
+it no longer burns.
 
 The **aircraft carrier** floats by the same law (`carrierBody`): a Nimitz hull, 317 m on the
 waterline and 40.8 m wide there, 100 000 t with its centre of mass 15 m over the keel, floats

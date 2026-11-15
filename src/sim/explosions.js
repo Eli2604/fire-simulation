@@ -7,6 +7,7 @@ const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gra
 const TREE_WOOD = new Set(['oak', 'pine', 'willow', 'bark', 'deadWood'].map((n) => MAT[n]).filter(Boolean));
 const FOLIAGE = new Set(['leaves', 'needles', 'twigs'].map((n) => MAT[n]).filter(Boolean));
 import { raySolid, bulletHole } from './wounds.js';
+import { boatBlast } from './boats.js';
 import { F_FALLING, F_ANCHOR } from './world.js';
 import { launchVoxel } from './vessels.js';
 import { fellTree } from './trees.js';
@@ -203,6 +204,7 @@ export function explode(sim, center, E, opts = {}) {
   sim.dragonAI?.blast(center, blastR);
   sim.phoenixAI?.blast(center, blastR);
   sim.heliAI?.blast(center, blastR);
+  if (w.floats?.length) boatBlast(sim, center, blastR * 1.5); // (fragments hole the boats: sim/boats.js)
 }
 
 /** Distance from p to the segment a–b. */
