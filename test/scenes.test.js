@@ -46,6 +46,10 @@ test('every model builds voxels with its default parameters', () => {
       assert.equal(countOwned(world, 0), 0, 'nothing of its own');
       continue;
     }
+    if (type === 'helicopter') {
+      assert.equal(world.helis.length, 1, 'a helicopter flies (ai/helicopter.js) and is drawn, not voxels');
+      continue;
+    }
     if (type === 'jetFlight') {
       assert.equal(world.flights.length, 1, 'a flight of jets flies (ai/flight.js), not voxels');
       continue;
