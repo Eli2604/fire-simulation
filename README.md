@@ -1481,7 +1481,9 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
      flames, a minute or two even with a working valve) or once a blocked cylinder is full of
      liquid (hydraulic); at the edge of a fire a working valve jet-fires for minutes. The burst:
      a fireball of the flashing liquid and its spray, a blast (energy from the expanding vapour,
-     overpressure by Hopkinson scaling), fragments, the top rocketing off. A hole in the shell
+     overpressure by Hopkinson scaling), fragments, the top rocketing off (with rigid bodies on:
+     the cylinder's steel as a few tumbling, hot pieces, the valve end thrust by the liquid
+     flashing out of it: "Rigid-body physics", Fragments). A hole in the shell
      makes a burning jet until it is empty. Click a cylinder (Inspect) for its pressure, liquid and
      wall temperatures, fill, relief valve, jet flame, and why it did or did not burst. There are
      racks of them below deck in the carrier (in the store room off the passageway whose gas line
@@ -1855,14 +1857,36 @@ and headless runs keep the old behaviour unless they ask) gives the simulation `
   burning, and the structure check takes it from there. In flight `world.rigidChunks` lists them
   and `render/debris.js` draws their voxels at the body's interpolated pose. Single voxels, glass
   and anything over the budget fall the old way.
+- **Fire in flight** (`physics/chunkFire.js`): a chunk's voxels are off the grid while it flies,
+  so the solid pass does not see them; `stepChunkFire` burns them where the body is, with the
+  solid pass's laws for a voxel with exposed faces (fine fuel by its residence time, bulk fuel by
+  its regression rate, faster the hotter the surface and the faster the air rushes past): the fuel
+  goes down, the heat (`airQ`, `flameAcc`, radiation), the smoke and the oxygen used go into the
+  air cell each burning voxel is passing through (a trail of flames and hot smoke along its path),
+  neighbours on the chunk heat and catch, burnt-out voxels turn to their residue, the rest cools
+  towards the air it flies through. It stays in the body's state, so the restamp puts it back
+  burning with the fuel it has left. `render/flames.js` draws flames from the burning voxels of
+  the chunks in flight.
 - **Floating debris**: a buoyancy force generator on the world's water level (water voxels,
   `world.sea.level`): a wooden chunk in a pond floats; afloat it stays a (sleeping) body.
 - **Loose things** (`world.loose`: drums, gas cylinders, crates, the training dummy): knocked by
   an impact or a blast (`sim/impact.js`, `sim/explosions.js`) they become bodies of their shape
   (box, 14-sided drum, capsule) that tumble and land; `o.p` / `o.rot` follow the body
   (`render/loose.js` draws them as before). A dragon picking one up takes it off the physics.
-- **Fragments**: `sim.rigid.launchFragment({ p, v, size, material })`: a small hull body with
-  continuous collision (gas-cylinder shrapnel can be handed over here).
+- **Fragments**: `sim.rigid.launchFragment({ p, v, size | points, material, mass, temp, thrust })`:
+  a hull body with continuous collision and air drag (½ρ·Cd·A·v², a quarter of its surface as the
+  tumbling piece's projected area). A burst vessel hands its shell over here (`sim/vessels.js`):
+  a gas cylinder's steel (its real mass and wall) tears into its two dished ends and two or three
+  lengthwise strips (curved plates), sharing a tenth of the burst energy by mass (tens of m/s, as
+  BLEVE fragments fly); the valve end goes up its axis and, with the liquid still in it flashing
+  out of its open end (5 % of the contents, u = √(2Δp/ρ), for 0.5 s), rockets; each piece is as
+  hot as the wall it was. A voxel vessel's shell (a car's tank) is torn into sectors of its own
+  voxels. A fragment's hit (`fragmentHit`) breaks glass, cracks brittle material, plugs a hole
+  through a thin wall when it carries the perforation energy (≈ π·a·t²·σ/2: a board or a sheet,
+  not a 10 cm plank or masonry) and goes on through, and, hot, lights what it hits or lies on; it
+  cools by convection and radiation. `world.rigidFragments` lists them (`render/debris.js` draws
+  each hull, glowing while hot). Without `sim.rigid` (the headless default) the shell voxels fly
+  as before.
 - **Explosions**: `explode()` pushes every body in range (`physics.explosion`, with the v0 law it
   throws voxels by).
 - **Impacts**: each one over 15 J becomes a `world.events` `{ type: 'impact', kind: 'rigid',
@@ -1880,8 +1904,21 @@ moved to the pose he is in when he goes limp. `soldierRagdollSpec(rest)` maps th
 from the animation to the ragdoll in 0.3 s; the bones without a part (chest, head, hands, feet)
 go limp to their rest pose. `render/enemies.js` does this for every soldier who dies (guards and
 squads; not while held by the dragon, on a rope or aboard a helicopter); the ragdolls live in a
-render-side world on the voxel grid (`RAGDOLLS.on`). The dragon has no spec yet (rig/dragon.js
-would map the same way: neck and tail chains of ball joints, the wings as hinges).
+render-side world on the voxel grid (`RAGDOLLS.on`).
+
+**The dragon** (`physics/dragonRagdoll.js`): `dragonRagdollSpec(d)` builds it straight and level
+from its body plan (`ai/dragon.js` PLAN, bodyRadius) and size: the spine in capsules as thick as
+the body (three for the neck, chest, belly, four for the tail) chained by ball joints with cones
+and twist limits, and the head; the legs sprawled (a ball at the shoulder / hip, a hinge at the
+elbow / knee); the wings as two hinged plates each (the arm plate on a ball joint at the shoulder,
+the hand plate on a hinge at the wrist that folds back); 3000 kg at 9 m (∝ k³, the young lighter,
+the ancient heavier) shared by volume. Air drag on the wing plates lets them trail as it falls.
+When a dragon dies with `sim.rigid` on (`DRAGON_RAGDOLL.on`), `DragonAI.goLimp` builds the ragdoll
+in the simulation's world from the pose it died in (the legs as they were, by IK), moving as it
+flew; every step `DragonRagdoll.apply` writes its pose back (`d.spine`, `d.rolls`, `d.head`,
+`d.ragLegs`, `d.ragWing`), so `render/dragon.js` and the hit zones follow it. Killed in flight it
+plummets; its first hard hit on the ground is the crash (the impact, `dragonDown`, the noise,
+whoever is under it); blasts push it. Without rigid bodies it falls the old way.
 
 ### Vehicle adapters (physics/vehicles.js)
 

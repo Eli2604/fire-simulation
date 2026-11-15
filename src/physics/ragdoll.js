@@ -20,7 +20,7 @@
  * soldierRagdollSpec(rest) maps the operator rig (operator/rig.js BONES: rest positions by bone
  * name, plain [x, y, z] arrays): pelvis, torso, head, upper and fore arms, thighs and shins.
  */
-import { Capsule } from './shapes.js';
+import { Capsule, Box } from './shapes.js';
 import { BallJoint, HingeJoint } from './joints.js';
 import { vsub, vnorm, vcross, vlen, vdot, vadd, vscale } from './math.js';
 
@@ -62,16 +62,18 @@ export function soldierRagdollSpec(R) {
 /** Build a ragdoll in `world` from a spec (see the top). */
 export function createRagdoll(world, spec, { pose = null, velocity = null, mass = spec.mass ?? 80, rest = spec.rest ?? null, material = spec.material ?? 'flesh', friction = 0.03 } = {}) {
   const total = spec.parts.reduce((s, p) => s + p.mass, 0);
+  const massRef = spec.frictionMass ?? 80;
   const bodies = {};
   const boneOf = {};
   const restPos = (p) => rest?.[p.bone] ?? null;
   // 1. the bodies in the rest pose: each body's frame is its bone's (at the bone's rest position)
   for (const p of spec.parts) {
-    const origin = restPos(p) ?? lerp(p.a, p.b, 0.5);
-    const shape = new Capsule(p.radius, sub(p.a, origin), sub(p.b, origin));
+    // (a plate, a wing: a box about its centre; else a capsule between a and b)
+    const origin = p.box ? p.center : restPos(p) ?? lerp(p.a, p.b, 0.5);
+    const shape = p.box ? new Box(...p.box) : new Capsule(p.radius, sub(p.a, origin), sub(p.b, origin));
     const b = world.createBody({
       shape, position: origin, mass: (mass * p.mass) / total, material, group: RAGDOLL_GROUP, mask: 0xffff & ~RAGDOLL_GROUP,
-      linearDamping: 0.05, angularDamping: 0.6, userData: { ragdoll: true, part: p.name, bone: p.bone },
+      linearDamping: spec.linearDamping ?? 0.05, angularDamping: spec.angularDamping ?? 0.6, userData: { ragdoll: true, part: p.name, bone: p.bone },
     });
     b.restOrigin = origin;
     bodies[p.name] = b;
@@ -82,9 +84,12 @@ export function createRagdoll(world, spec, { pose = null, velocity = null, mass 
   for (const p of spec.parts) {
     if (!p.parent) continue;
     const a = bodies[p.parent], b = bodies[p.name], J = p.joint;
-    const fr = friction * (mass / 80) * 40;
+    const fr = friction * (mass / massRef) * 40 * (spec.frictionScale ?? 1);
     let j;
-    if (J.type === 'hinge') {
+    if (J.type === 'hinge' && J.axis) {
+      // (an explicit axis and limits, measured from the rest pose)
+      j = new HingeJoint(a, b, J.at, J.axis, { lower: J.lower ?? null, upper: J.upper ?? null, friction: fr * 0.5 });
+    } else if (J.type === 'hinge') {
       const [s, e, w] = J.bend;
       const u = dirOf(s, e), f = dirOf(e, w);
       let ax = vcross([0, 0, 0], u, f);

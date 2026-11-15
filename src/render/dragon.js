@@ -1002,6 +1002,22 @@ export class DragonRenderer {
       const along = (u < 0.62 ? 0.35 - (0.7 * u) / 0.62 : -0.35 + (0.7 * (u - 0.62)) / 0.38) * k;
       foot = root.clone().addScaledVector(out, 0.55 * k).addScaledVector(fr.u, -(fr.ry + 0.15 * k)).addScaledVector(fwd, along + (L.front ? 0.3 : 0) * k);
     } else foot = this.tucked(fr, L, root, k);
+    // limp (a ragdoll: physics/dragonRagdoll.js): the leg where the ragdoll has it
+    const RL = d.ragdoll && d.ragLegs?.[(L.front ? 'fore' : 'hind') + (L.side > 0 ? 'L' : 'R')];
+    if (RL) {
+      root.set(...RL.root);
+      foot = new THREE.Vector3(...RL.foot);
+      const knee = new THREE.Vector3(...RL.knee);
+      const ankle = foot.clone();
+      foot.addScaledVector(fr.u, -0.09 * k);
+      place(L.up, root, knee);
+      place(L.lo, knee, ankle);
+      L.joint.position.copy(knee);
+      L.hipJ.position.copy(root);
+      L.foot.position.copy(foot);
+      L.foot.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, fr.u.clone().negate()).multiply(new THREE.Matrix4().makeRotationX(-Math.PI / 2)));
+      return;
+    }
     const ankle = foot.clone().addScaledVector(UP, 0.09 * k);
     // two-bone IK, the elbow/knee out and up (sprawling), elbows back, knees forward
     // (in flight the legs fold under the body: the joints point down and back)
