@@ -34,6 +34,7 @@ import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, pla
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
 import { PhoenixRig } from './phoenix.js';
+import { HeliRig } from './heli.js';
 import { VehicleRig } from './vehicles.js';
 import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS, PEEK_ACTS } from './objects.js';
 import { lightSource, hasWeaponLight, LIGHT_MOUNT } from '../ai/flashlight.js';
@@ -263,6 +264,28 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <label class="sl"><span>Damage ×</span><input type="range" data-id="pzM" min="0.1" max="5" step="0.1"><output data-id="pzMo"></output></label>
     <div class="row"><button data-id="pRevive" type="button">Revive</button></div>
     <p class="hint" data-id="pLastHit">The simulation's own phoenix (ai/phoenix.js flies it; render/phoenix.js draws it), on a stone perch like the one in its cell in the catacombs. It watches you (the camera) from its perch. Its hit zones follow the pose (the wings only when spread); the same zones decide what the guards' bullets do to it. Fire does not hurt it. Killed, it bursts into flame, lies as glowing ash and is born again from it. Click it to see a zone; with Damage on click, to hit it there.</p>
+  </section>
+
+  <section data-pane="heli" hidden>
+    <div class="sel">
+      <div class="selrow"><b>Helicopter</b><span data-id="hState">hover</span></div>
+      <div class="hp"><i data-id="hHp"></i></div>
+    </div>
+    <div class="grid" data-id="hActs"></div>
+    <label class="sl"><span>Speed</span><input type="range" data-id="hSpeed" min="0" max="2" step="0.05" value="1"><output data-id="hSpeedO"></output></label>
+    <label class="sl"><span>Soldiers</span><input type="range" data-id="hSoldiers" min="0" max="8" step="1"><output data-id="hSoldiersO"></output></label>
+    <label class="sl"><span>Door guns</span><select data-id="hDoorGuns" style="grid-column:2/4"><option value="both">Both doors</option><option value="left">Left</option><option value="right">Right</option><option value="none">None</option></select></label>
+    <div class="row"><button data-id="tgHZones" type="button" aria-pressed="false">Show hit areas</button><button data-id="tgHFire" type="button" aria-pressed="false">Damage on click</button><button data-id="tgHFollow" type="button" aria-pressed="false">Follow</button><button data-id="hRepair" type="button">Again (repaired)</button></div>
+    <label class="sl"><span>Weapon</span><select data-id="hWeapon" style="grid-column:2/4"><option value="bullet">Bullet (25)</option><option value="shell">Cannon shell (120)</option><option value="rocket">Rocket (350)</option></select></label>
+    <label class="sl"><span>Part</span><select data-id="hZoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Size ×</span><input type="range" data-id="hzS" min="0.5" max="2" step="0.05"><output data-id="hzSo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" data-id="hzM" min="0.1" max="5" step="0.1"><output data-id="hzMo"></output></label>
+    <p class="hint" data-id="hZoneInfo"></p>
+    <div class="lab">Crew</div>
+    <pre data-id="hCrew"></pre>
+    <div class="lab">Radio, hits, impacts</div>
+    <pre data-id="hLog"></pre>
+    <p class="hint" data-id="hLastHit">The simulation's own helicopter (ai/helicopter.js flies it; render/heliMesh.js draws it): pilot and co-pilot, door gunners and troops in the back (the simulation's soldiers), the cables (ai/rope.js). Its hit parts are models/vehicleZones.js VEHICLE_ZONES.helicopter, the same the simulation's rounds, rockets and blasts use: what goes decides how it comes down (tail rotor: it spins; main rotor: it drops; engine: it autorotates; fuel: it burns). Click it to see a part; with Damage on click, to hit it there.</p>
   </section>
 
   <section data-pane="vehicle" hidden>
@@ -1252,9 +1275,10 @@ export function mountRig(root, opts = {}) {
   /* ================= the dragon (rig/dragon.js, built the first time it is picked) and the vehicles ================= */
   let dragonRig = null;
   let phoenixRig = null; // (rig/phoenix.js, built the first time it is picked)
+  let heliRig = null; // (rig/heli.js, built the first time it is picked)
   const vehicleRig = new VehicleRig({ scene, camera, controls, renderer, toast, $, qs });
   /** The soldiers are on the stage (not the dragon or a vehicle). */
-  const people = () => !dragonRig?.active && !phoenixRig?.active && !vehicleRig.active;
+  const people = () => !dragonRig?.active && !phoenixRig?.active && !heliRig?.active && !vehicleRig.active;
 
   /* ================= the squad: a fire team in formation (models/squad.js's roles) ================= */
   const ROLE = { CMD: 'commander', MG: 'gunner', R1: 'rifleman', R2: 'rifleman', UAV: 'drone operator' };
@@ -1304,6 +1328,7 @@ export function mountRig(root, opts = {}) {
     pilot: 'render/pilotFigure.js · sim/ejection.js · seat, canopy, PLF',
     jetFlight: 'ai/flight.js · formations, the leader’s orders, hit parts per jet',
     boat: 'Motorboat on a sea · outboard, cabin',
+    helicopter: 'ai/helicopter.js · render/heliMesh.js · crew, door guns, fast-rope, hit parts, crashes',
   };
   /** What is on the stage: swaps the object and the panels (the last vehicle is freed). */
   function setKind(k, what = {}) {
@@ -1313,6 +1338,7 @@ export function mountRig(root, opts = {}) {
     // off first (each puts the camera back), then on
     if (kind !== 'dragon') dragonRig?.setActive(false);
     if (kind !== 'phoenix') phoenixRig?.setActive(false);
+    if (kind !== 'helicopter') heliRig?.setActive(false);
     const vehicle = VEHICLE_STAGE.includes(kind);
     if (!vehicle) vehicleRig.setKind(null);
     if (kind === 'dragon') {
@@ -1322,6 +1348,10 @@ export function mountRig(root, opts = {}) {
     if (kind === 'phoenix') {
       phoenixRig ??= new PhoenixRig({ scene, camera, controls, renderer, toast, $, qs });
       phoenixRig.setActive(true);
+    }
+    if (kind === 'helicopter') {
+      heliRig ??= new HeliRig({ scene, camera, controls, renderer, toast, $, qs });
+      heliRig.setActive(true);
     }
     if (vehicle) vehicleRig.setKind(kind, what.params ?? null);
     $('tabs').hidden = !man;
@@ -1340,7 +1370,7 @@ export function mountRig(root, opts = {}) {
           }
       }
       arrange(kind);
-    } else openTab(kind === 'dragon' || kind === 'phoenix' ? kind : 'vehicle');
+    } else openTab(kind === 'dragon' || kind === 'phoenix' ? kind : kind === 'helicopter' ? 'heli' : 'vehicle');
   }
   const soldierStats = () => (A ? `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips` : 'Skinned sculpt · 21 bones');
 
@@ -1714,6 +1744,7 @@ export function mountRig(root, opts = {}) {
     if (soldiers.length && Math.random() < 0.08) onChange();
     dragonRig?.update(dt);
     phoenixRig?.update(dt);
+    heliRig?.update(dt);
     forceTick(frozen ? 0 : dt);
     vehicleRig.update(dt);
     controls.update();
@@ -1803,6 +1834,10 @@ export function mountRig(root, opts = {}) {
     /** The phoenix's rig (rig/phoenix.js), once the phoenix has been picked. */
     get phoenix() {
       return phoenixRig;
+    },
+    /** The helicopter's rig (rig/heli.js), once it has been picked. */
+    get heli() {
+      return heliRig;
     },
     /** The car / jet / boat (rig/vehicles.js). */
     vehicles: vehicleRig,

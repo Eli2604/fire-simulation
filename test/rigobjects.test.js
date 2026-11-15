@@ -5,7 +5,7 @@ import { RIG_OBJECTS, RIG_KINDS, VEHICLES, VEHICLE_ACTS, rigKind, rigTargetFor, 
 import { MODELS } from '../src/models/index.js';
 
 test('the Object drop-down: soldier, squad, dragon, phoenix, car, jet, boat; every vehicle has its acts', () => {
-  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'phoenix', 'car', 'jet', 'jetFlight', 'pilot', 'boat']);
+  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'phoenix', 'car', 'jet', 'jetFlight', 'pilot', 'boat', 'helicopter']);
   assert.ok(RIG_OBJECTS.every((o) => o.label && RIG_BUTTON[o.kind]));
   for (const k of ['squad', 'car', 'jet', 'boat', 'dragon', 'phoenix', 'soldier']) assert.equal(rigKind({ kind: k }), k);
   assert.equal(rigKind({ kind: 'tank' }), 'soldier', 'an unknown kind: the soldier');

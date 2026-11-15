@@ -150,6 +150,7 @@ export class World {
     this.enemies = []; // AI characters (see ai/enemies.js)
     this.dragons = []; // dragons (see ai/dragon.js): flying, crawling, fire-breathing predators
     this.flights = []; // flights of jets in formation (ai/flight.js, models/jetFlight.js)
+    this.helis = []; // helicopters (ai/helicopter.js, models/helicopter.js): spec, and its Helicopter as .ai
     this.phoenixes = []; // a phoenix locked in the catacombs (see ai/phoenix.js)
     this.sprinklers = []; // { p, bulb, actT, rti, rate, radius, active }
     this.pickups = []; // { type, agent?, capacity?, length?, p, taken }

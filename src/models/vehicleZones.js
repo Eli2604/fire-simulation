@@ -13,6 +13,7 @@
  *   const Z = vehicleZones('car');                // resolved boxes (a scaled car: pass its dims)
  *   zoneAt('car', [1.4, 0.6, 0])?.k               // 'engine'
  *   rayZone('jet', from, dir)                     // { k, zone, t, p } of the first part hit, or null
+ *   rayZone('helicopter', from, dir, 80, null, new Set(['rotor']))  // ... going on past the parts in `skip`
  *   hitPart(dmg, 'boat', 'hull', 120)             // the hull 60% gone: { k, amount, value, destroyed }
  */
 
@@ -21,6 +22,7 @@ export const VEHICLE_DIMS = {
   car: [4.2, 1.45, 1.8], // models/car.js defaults
   jet: [17.4, 4.5, 11.2], // render/jetMesh.js
   boat: [4.8, 1.4, 1.84], // rig/vehicleMeshes.js (the size of the island's boat)
+  helicopter: [19.6, 4.6, 16], // render/heliMesh.js: nose to tail rotor, skids to rotor head, rotor disc (ai/helicopter.js)
 };
 
 /**
@@ -48,6 +50,21 @@ export const VEHICLE_ZONES = {
     { k: 'engine', label: 'Engine (outboard)', boxes: [{ c: [-2.6, 0.35, 0], h: [0.25, 0.55, 0.2] }], mult: 1.5, hp: 60, color: '#ffcc33', effect: 'stops, smokes; destroyed it burns' },
     { k: 'cabin', label: 'Cabin (crew)', boxes: [{ c: [0.45, 0.95, 0], h: [0.7, 0.42, 0.66] }], mult: 1, hp: 80, color: '#8fe36a', effect: 'windows shatter, the crew is hit' },
     { k: 'hull', label: 'Hull', boxes: [{ c: [0, 0.05, 0], h: [2.45, 0.5, 0.92] }], mult: 1, hp: 200, color: '#5ad1ff', effect: 'holed: it settles lower; destroyed it sinks' },
+  ],
+  // the helicopter (ai/helicopter.js flies it and takes these up: `sim` is what each part does when
+  // it goes). Its frame: skids on y = 0, the mast at x = 0, nose +x, the tail rotor on the right of
+  // the fin. The rotors are discs: a round through a spinning disc meets a blade only now and then
+  // (ai/helicopter.js HELI.bladeChance). Parts inside others come first (the mast in the disc).
+  helicopter: [
+    { k: 'cockpit', label: 'Cockpit (pilot, co-pilot)', boxes: [{ c: [3.0, 1.45, 0], h: [1.05, 0.75, 1.0] }], mult: 2.5, hp: 60, color: '#8fe36a', effect: 'glass shatters, a pilot is hit; both down: out of control', sim: 'pilot' },
+    { k: 'mast', label: 'Rotor mast, hub, gearbox', boxes: [{ c: [0, 3.1, 0], h: [0.35, 0.5, 0.35] }], mult: 2, hp: 90, color: '#ff4fd8', effect: 'the rotor seizes and comes apart: no lift, it falls', sim: 'main' },
+    { k: 'engine', label: 'Engines (turbines)', boxes: [{ c: [-0.5, 2.65, 0], h: [1.3, 0.3, 0.75] }], mult: 1.5, hp: 110, color: '#ffcc33', effect: 'smokes, less power; destroyed: autorotation to a hard landing', sim: 'engine' },
+    { k: 'fuel', label: 'Fuel tank (under the floor)', boxes: [{ c: [-1.1, 0.6, 0], h: [0.9, 0.15, 0.95] }], mult: 2, hp: 70, color: '#ff7a1a', effect: 'leaks; destroyed it burns: an emergency landing, or it blows up in the air', sim: 'fuel' },
+    { k: 'tailRotor', label: 'Tail rotor', shape: 'cyl', axis: 'z', boxes: [{ c: [-9.3, 3.0, 0.35], h: [1.6, 1.6, 0.12] }], mult: 1.5, hp: 45, color: '#c58cff', effect: 'no yaw control: it spins round the mast as it comes down', sim: 'tail' },
+    { k: 'tailBoom', label: 'Tail boom and fin', boxes: [{ c: [-5.7, 2.0, 0], h: [3.5, 0.4, 0.4] }, { c: [-9.1, 2.9, 0], h: [0.45, 0.9, 0.12] }], mult: 0.8, hp: 160, color: '#9a7cff', effect: 'shot through, the tail rotor drive is cut: it spins', sim: 'tail' },
+    { k: 'rotor', label: 'Main rotor blades', shape: 'cyl', axis: 'y', boxes: [{ c: [0, 3.6, 0], h: [8.0, 0.1, 8.0] }], mult: 0.5, hp: 220, color: '#5ad1ff', effect: 'vibrates; destroyed the blades fly off: it drops and tumbles', sim: 'main' },
+    { k: 'cabin', label: 'Cabin (troops, door gunners)', boxes: [{ c: [0.0, 1.55, 0], h: [2.0, 0.8, 1.15] }], mult: 1, hp: 200, color: '#3fd0a0', effect: 'the men in the back are hit', sim: 'cabin' },
+    { k: 'skids', label: 'Skids', boxes: [-1, 1].map((s) => ({ c: [0.3, 0.08, s * 1.25], h: [2.1, 0.1, 0.08] })), mult: 0.4, hp: 80, color: '#b0b8c0', effect: 'bent: it lands lopsided, a hard landing rolls it', sim: 'skids' },
   ],
 };
 for (const zs of Object.values(VEHICLE_ZONES)) for (const z of zs) {
@@ -99,10 +116,10 @@ export function zoneAt(kind, p, dims) {
  * The first part a ray hits (vehicle frame): { k, zone, t, p } or null. A cylinder is tested as
  * its box, then the point is checked inside it (a ray past the round edge goes on to the next).
  */
-export function rayZone(kind, from, dir, maxT = 1000, dims) {
+export function rayZone(kind, from, dir, maxT = 1000, dims, skip = null) {
   let best = null;
   for (const Z of vehicleZones(kind, dims))
-    for (const b of Z.boxes) {
+    for (const b of skip?.has(Z.k) ? [] : Z.boxes) {
       let t0 = 0;
       let t1 = maxT;
       for (let i = 0; i < 3 && t0 <= t1; i++) {
