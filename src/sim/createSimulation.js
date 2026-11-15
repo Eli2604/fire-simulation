@@ -26,6 +26,9 @@ export function createSimulation(scene, prebuilt = null) {
   world.indoor = !!(scene.indoor ?? zone?.indoor) || exposure !== 'outdoor'; // no sky over it: no snow
   if (weather.snowCover > 0 || world.snowDepth0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors; a terrain's snowfields too)
   const sim = new Simulation(world, weather);
+  // a fine grid whose air moves slowly may take longer steps than its cells would set (the air's
+  // backtrace a few cells; the solids are implicit): scene.world.maxDt (s, at most 0.2)
+  if (scene.world?.maxDt > sim.dt) sim.dt = Math.min(0.2, scene.world.maxDt);
   // where the firefighter walk-through starts: chosen by the user, the scene's own, or the edge
   sim.spawn = scene.walkStart ?? spawn ?? defaultSpawn(world);
   world.doors.forEach((d, k) => d.startOpen && toggleDoor(sim, k, true));

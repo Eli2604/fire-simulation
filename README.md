@@ -154,7 +154,7 @@ place you are in.
 
 ## Using it
 
-- **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
+- **Scenario**: a smithy at 4 cm voxels (a smith forging a sword that is a body of steel voxels moving with his tongs: heated point first in a fire of real charcoal voxels he blows up with the bellows through the air model – E at the lever to work it yourself –, hammered on the anvil (physics-driven blows: the anvil's ring, the hot blade's dull thud), quenched in a trough of water voxels that boils off as steam, its hardness from each voxel's cooling, then onto the rack of his shop corner; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,

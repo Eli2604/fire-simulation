@@ -77,6 +77,10 @@ const DEFAULTS = {
   liquidColor: null,
   pattern: null, // texture drawn on the voxels ('limestone', 'ossuary', ...; see render/patterns.js)
   photo: null, // a photographed texture drawn on the voxels ('grass', 'sand', ...; render/patterns.js PHOTOS)
+  draught: 0, // burning fuel that responds to forced air (forge charcoal): burn rate ×(1 + draught·v), v the forced air blown past it (world.forcedAir, m/s)
+  draughtHeat: 0, // ... and the cap on its glowing surface (maxBurnTemp) raised by this many °C per m/s
+  maxBlastTemp: Infinity, // ... at most to this
+  glows: false, // burns glowing at its surface (char): its rate ∝ the oxygen there, no flame to go out below ~15 %
   vapor: null, // liquid fuels: { refP Pa at refT °C, B (K, Clausius–Clapeyron), Tb boiling °C, Lv J/kg, beta thermal expansion 1/K }
 };
 
@@ -430,6 +434,17 @@ const DEFS = {
     emissivity: 0.95, meltingPoint: 1120, latentHeat: 400e3, fluidity: 0.3, maxMoisture: 0.3, moisture: 0.02,
     charColor: [0.16, 0.15, 0.14], liquidColor: [0.95, 0.42, 0.08], crust: true, photo: 'ash',
   },
+  forgeCoal: {
+    // a smith's forge charcoal (lump charcoal in a fire pot: sim/smithy.js). It glows more than it
+    // flames, and how fast it burns is set by how fast air reaches it (the oxygen diffusing to the
+    // glowing surface): in still air it holds ~950 °C, in the bellows' blast through the tuyere it
+    // burns faster and hotter (to ~1400 °C). draught / draughtHeat / maxBlastTemp: see DEFAULTS
+    label: 'Forge charcoal', color: [0.08, 0.075, 0.07], density: 250, specificHeat: 1000, conductivity: 0.12,
+    combustible: true, ignitionTemp: 380, pyrolysisTemp: Infinity, heatOfCombustion: 30e6, burnRate: 0.0025,
+    selfHeating: 0.6, residue: 0.05, residueMaterial: 'ash', smokeYield: 0.0008, smokeColor: [0.55, 0.55, 0.55],
+    maxMoisture: 1.0, extinctionMoisture: 0.3, charColor: [0.08, 0.075, 0.07], maxBurnTemp: 950,
+    draught: 3, draughtHeat: 160, maxBlastTemp: 1420, glows: true,
+  },
 };
 
 /** id -> material definition. id 0 is air/empty. */
@@ -537,6 +552,7 @@ const MECH = {
   deadWood: { ...WOOD, E: 8e9, eta: 0.02, pop: 0.55, grain: 0.06 },
   twigs: { ...WOOD, E: 8e9, eta: 0.03, pop: 0.7, grain: 0.01 },
   charcoal: { E: 2e9, nu: 0.3, eta: 0.05, hardness: 0.3, strength: 3e6, radiation: 0.008, shape: 'block', brittle: true, pop: 0.15, grain: 0.03, burnSound: 'smoulder' },
+  forgeCoal: { E: 2e9, nu: 0.3, eta: 0.05, hardness: 0.3, strength: 3e6, radiation: 0.008, shape: 'block', brittle: true, pop: 0.1, grain: 0.03, burnSound: 'smoulder' },
   leaves: { ...FINE, E: 0.5e9, pop: 0.25, grain: 0.003 },
   needles: { ...FINE, E: 1e9, pop: 0.8, grain: 0.002, burnSound: 'crackle' },
   paper: { ...FINE, E: 3e9, eta: 0.1, pop: 0.05, grain: 0.001, burnSound: 'flutter', shape: 'plate' },

@@ -20,7 +20,8 @@ import { describeSmithy } from './smithy.js';
  *   grid        a camp on a grid: what it makes and takes, the battery, ops and lights
  *   carrier     the ship (sim/water.js stepBuoyancy, sim/buoyancy.js): draft, list, trim,
  *               water aboard and coming in, GM, foundering
- *   smithy      a smith's forge (sim/smithy.js): the fire, the bellows' air, the blade he works
+ *   smithy      a smith's forge (sim/smithy.js): the fire's charcoal voxels, the bellows' air, the
+ *               sword he works (its voxels: point and base), the slack tub's water and steam
  *               (its heat, hardness and temper), the slack tub, the shop
  *   volcano     world.volcanoes (sim/volcano.js): asleep / erupting / spent, how long, the
  *               lava in the crater and how hot it is
