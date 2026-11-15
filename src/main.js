@@ -25,6 +25,7 @@ import { Prebuild } from './sim/prebuild.js';
 import { Editor } from './editor/editor.js';
 import { FORMATIONS } from './ai/flight.js';
 import { playSnatch, playFight, AIR_EVENT_TEXT } from './ai/dragonAir.js';
+import { summarizeWorld, menuRelevance } from './ui/menuRelevance.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -178,6 +179,7 @@ function activateZone(name, keepView = false) {
   view.applyWeather(sim.weather);
   view.voxels.mode = state.mode;
   $('title').textContent = `${scene.name} – ${zd.name}`;
+  updateMenu();
   buildWeatherFolder();
   buildObjectsFolder();
   updateProxies(true);
@@ -390,6 +392,7 @@ function load(desc, fresh = true) {
   $('title').textContent = (scene.name ?? 'Custom scene') + (scene.zones ? ` – ${scene.zones[scene.zone].name}` : '');
   $('desc').textContent = scene.description ?? '';
   gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  updateMenu();
   buildWeatherFolder();
   buildObjectsFolder();
   updateLegend();
@@ -511,7 +514,7 @@ function buildWeatherFolder() {
   wNow.here = EXPOSURES[exp];
   fW.add(wNow, 'here').name('Here').disable();
   const live = (c) => (wc.push(c), c.onChange(() => syncWeather()));
-  if (exp !== 'outdoor') {
+  if (!menu.has('weather.outdoor')) {
     fW.title(`Weather (none here: ${exp === 'underground' ? 'underground' : exp === 'sealed' ? 'a sealed cabin' : 'indoors'})`);
     live(fW.add(W, 'ambient', -20, 45, 0.5).name('Air temperature (°C)'));
     live(fW.add(W, 'humidity', 0, 1, 0.01).name('Relative humidity'));
@@ -541,12 +544,15 @@ function buildWeatherFolder() {
   wc.push(
     fW.add(W, 'season', ['spring', 'summer', 'autumn', 'winter']).name('Season').onChange(setSeason),
     fW.add(W, 'snowCover', 0, 1.5, 0.05).name('Snow lying (m)').onFinishChange(setSnow),
-    fW.add(W, 'iceCover', 0, 0.6, 0.01).name('Ice on the water (m)').onFinishChange(setIce),
   );
-  live(fW.add(W, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)'));
+  // (ice and the water's look only where there is water open to the sky: ui/menuRelevance.js)
+  if (menu.has('weather.ice')) {
+    wc.push(fW.add(W, 'iceCover', 0, 0.6, 0.01).name('Ice on the water (m)').onFinishChange(setIce));
+    live(fW.add(W, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)'));
+  }
   live(fW.add(W, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)'));
   // the water: clarity, turbidity, grease, turbulence (render/waterOptics.js)
-  for (const s of WATER_SETTINGS) live(fW.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label));
+  if (menu.has('weather.water')) for (const s of WATER_SETTINGS) live(fW.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label));
   // the date, the time of day, the sun and the moon; the clock fixed or running (sim/sky.js)
   skyCtl = skyFolder(fW, W, {
     now: () => sim?.weather,
@@ -558,17 +564,17 @@ function buildWeatherFolder() {
   const fP = fW.addFolder('Presets').close();
   fP.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
   // lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
-  fP.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
+  if (menu.has('preset.lightning')) fP.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
   fP.add({ rain: () => setWeather({ ambient: 10, rain: 15, humidity: 0.9, windSpeed: 1, fog: 0, sunshine: 0.2 }) }, 'rain').name('Rain (10 °C, steady: soaks what is outside, steam off hot surfaces)');
   fP.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
   fP.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidity: 0.92, fog: 0.12, sunshine: 0.2, snowSpeed: 30 }) }, 'snowfall').name('Snowfall (−4 °C, snowing: it builds up 30× faster)');
   fP.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');
   // the sun on the snow at a few degrees above freezing: it shrinks, the ground under it wet
   fP.add({ thaw: () => setWeather({ ambient: 5, rain: 0, windSpeed: 2, humidity: 0.7, fog: 0, sunshine: 1 }) }, 'thaw').name('Thaw (+5 °C, sunny: the snow melts)');
-  fP.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
+  if (menu.has('weather.ice')) fP.add({ frost: () => (setWeather({ ambient: -12, rain: 0, windSpeed: 3, humidity: 0.75, fog: 0, sunshine: 0.6 }), setIce(0.15)) }, 'frost').name('Hard frost (−12 °C: 15 cm of ice, it bears you)');
   // a cold snap (the lake house's winter, the old Tea by the lake in winter): the lake frozen over, snow lying
-  fP.add({ lakeWinter: () => (Object.assign(settingsNow(), LAKESIDE_WINTER), restart(), wUpdate()) }, 'lakeWinter').name('Cold snap (−4 °C, snow lying, the lake frozen over: it bears you)');
-  fP.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
+  if (menu.has('preset.coldSnap')) fP.add({ lakeWinter: () => (Object.assign(settingsNow(), LAKESIDE_WINTER), restart(), wUpdate()) }, 'lakeWinter').name('Cold snap (−4 °C, snow lying, the lake frozen over: it bears you)');
+  if (menu.has('weather.ice')) fP.add({ freeze: () => (setWeather({ ambient: -15, rain: 0, windSpeed: 4, humidity: 0.7, fog: 0, sunshine: 0.3, iceSpeed: 600 }), setIce(0)) }, 'freeze').name('Watch it freeze (−15 °C, ice forming 600× faster)');
 }
 
 const fV = gui.addFolder('View');
@@ -631,7 +637,10 @@ fV.add(state, 'section', 0.05, 1, 0.01)
   });
 
 const fT = gui.addFolder('Tools (click the model)');
-const toolCtl = fT.add(state, 'tool', { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Squad: set the threat (click)': 'squadThreat', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' })
+const TOOLS = { 'Inspect voxel': 'inspect', 'Set fire start (click, Shift = add)': 'firestart', 'Set walk-in start (click)': 'walkstart', 'Ignite (lighter)': 'ignite', 'Fire torch (hold)': 'torch', 'Throw hand grenade': 'grenade', 'Squad: set the threat (click)': 'squadThreat', 'Open / close door': 'door', 'Remove oxygen (inert the room)': 'inert', 'Water bucket': 'water', 'Fire extinguisher (hold)': 'extinguisher' };
+// (the tools that need something in the scene: its menu key, ui/menuRelevance.js)
+const TOOL_NEEDS = { squadThreat: 'tool.squadThreat', door: 'tool.door' };
+const toolCtl = fT.add(state, 'tool', TOOLS)
   .name('Tool')
   .onChange(() => {
     toolChanged();
@@ -683,6 +692,28 @@ fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) =>
   .name('Extinguisher')
   .onChange(() => (tank.remaining = AGENTS[state.agent].capacity));
 fT.add({ refill: () => (tank.remaining = AGENTS[state.agent].capacity) }, 'refill').name('↻ Refill extinguisher');
+
+/**
+ * Only the parts of the menu that apply to where you are (ui/menuRelevance.js): the Dragon folder
+ * with dragons, the jet flights with flights, the squads with soldiers or guards, the door and
+ * squad tools with doors and squads; the weather folder reads `menu` as it is built. Called when a
+ * scene is loaded or restarted (an edit in Edit world restarts it) and when another place runs.
+ */
+let menu = new Set();
+function updateMenu() {
+  if (!sim) return;
+  menu = menuRelevance(summarizeWorld(sim.world, placeNow()));
+  fDragon.show(menu.has('dragon'));
+  fFlight.show(menu.has('flights'));
+  fSquad.show(menu.has('squads'));
+  const tools = Object.fromEntries(Object.entries(TOOLS).filter(([, t]) => !TOOL_NEEDS[t] || menu.has(TOOL_NEEDS[t])));
+  toolCtl.options(tools);
+  if (!Object.values(tools).includes(state.tool)) {
+    state.tool = 'inspect';
+    toolCtl.updateDisplay();
+    toolChanged();
+  }
+}
 
 // the scene's objects, the world and its weather are edited in Edit world (editor/editor.js)
 const addState = { type: 'tree' };
