@@ -1048,7 +1048,7 @@ function frame(now) {
     return;
   }
   if (walk.active) walk.update(dt);
-  view.markers.visible = state.markers && !walk.active; // no labels and patrol outlines in the walk-through
+  view.markers.visible = state.markers && !walk.active && !view.cinema?.active; // no labels (nor in a movie) and patrol outlines in the walk-through
   if (torching && torchPoint) sim.holdTorch(torchPoint, state.torchPower, Math.max(sim.world.h, state.toolRadius * 0.5));
   if (state.running && sim) {
     // the walk-through runs in real time

@@ -93,6 +93,65 @@ old pages `rig.html` and `camp.html` only send you on to the editor (`?mode=rig`
 `?mode=camp`; `?mode=edit` opens Edit world). `node scripts/build-rig-artifact.mjs out.html`
 builds the whole editor as one file.
 
+### Film cameras and the in-game movie
+
+**Edit world › + Add › Cinema › Film camera** puts a camera in the world (`models/camera.js`): an
+object like the others (saved with the scene, in a place / zone, moved and turned with the gizmo:
+turn = pan, *Tilt X* = tilt down, *Tilt Z* = roll), drawn in Edit world as a camera with the
+frustum of its lens, its keyframed path and the focus plane, never in Play or in the movie.
+Its properties, in folders:
+
+- **Lens**: presets 14 / 24 / 35 / 50 / 85 / 135 / 200 mm, fisheye 8 mm (a wide view bent back by
+  strong barrel distortion), anamorphic 35 / 50 mm (2× squeeze: twice the width of view, oval
+  bokeh, blue horizontal streaks, a 2.39:1 frame) or any focal length on a sensor (Super 35, full
+  frame, APS-C, Super 16, Micro 4/3, large format, IMAX, 2/3"); the field of view is worked out
+  from them (`cinema/lens.js`); the frame (letterbox 1.33 … 2.76, or the lens's own).
+- **Focus & exposure**: depth of field from the aperture (f-stop), focal length and focus
+  distance by the thin lens (manual, on its aim point, or on the subject: a focus pull follows
+  it); shutter angle and frame rate (motion blur: 180° at 24 fps is 1/48 s); ISO and exposure
+  compensation (auto exposure, or the ISO / aperture / shutter triangle by hand); white balance
+  (K) and tint.
+- **Effects**: colour grade (neutral, warm, cool, teal & orange, bleach bypass, black & white,
+  vintage film, day for night, night vision, thermal — the voxels by their heat, as Play's
+  thermal camera), film grain, vignette, chromatic aberration, lens distortion, bloom / glare,
+  anamorphic streaks, handheld shake, a dutch angle.
+- **Move** (`cinema/rig.js`): static; keyframes; a dolly (forward / back), a truck (sideways), a
+  crane (up, still looking at what it looked at); an orbit round the point it looks at or a
+  subject; follow (behind) or track (alongside) a subject with a lag. The subject is one of the
+  world's moving things (the dragon, a helicopter, a soldier of a squad, a boat, a car, a jet,
+  the phoenix; *which one*: the first, the second…); *Look: subject* keeps it in the middle of the
+  frame whatever the move.
+- **Keyframes**: scrub the timeline, frame the view, **◆ Set key here** (the view's position and
+  aim, relative to the camera object, so moving it moves the whole path, and the focal length,
+  focus, aperture and roll; with *Keys record the effects too* also the grain, bloom, exposure,
+  white balance…). Each key has its easing to the next (linear, ease in / out / in-out, smooth,
+  hold); positions follow a Catmull-Rom spline (or straight lines). **📷 Camera from view**,
+  **⇢ View from camera**, **👁 Look through** (its picture with all its effects at the scrubbed
+  time; Esc: back), **▶ Preview** (its move played).
+
+**🎬 Movie** (the mode bar): the shot list of the place you are in (saved with it as `movie`):
+each shot a camera (by its name), its length, where in the camera's move it starts, and how it
+comes in — a cut, a dissolve (from the last picture of the shot before) or a fade through black;
+the world's speed while it plays, fades in and out, from the scene's start. **▶ Play movie**
+switches to Play, hides the UI, runs the simulation and cuts between the cameras (Esc stops and
+goes back); **⏺ Record** does the same and saves the picture as a video (WebM, MediaRecorder on
+the canvas, 30 fps, no sound) when it ends or on Esc.
+
+The picture's effects are post-processing (`render/cinePost.js`, three.js `EffectComposer`): the
+frame as the view drew it (any path: plain, ambient occlusion, volumetric smoke, the flames
+over it) through a depth-of-field gather blur (a depth pre-pass of the scene), `UnrealBloomPass`,
+a motion blur that mixes in the frames before by the shutter angle, and a final shader for
+exposure, white balance, grade, streaks, distortion, aberration, vignette, grain and the bars.
+None of it runs unless a camera is looked through or a movie plays. The sums (field of view,
+circle of confusion, exposure, white balance, grades, motion blur weight, easing, keyframes,
+moves, the shot list) are pure modules in `src/cinema/` (`test/cinema.test.js`).
+
+Limits: a dissolve fades from a still of the last picture (not two cameras rendered at once);
+motion blur is an accumulation over frames (a smear behind what moves, not per-object vectors);
+the fisheye is a wide perspective view bent round (up to 150°), not a true 180° fisheye; flames,
+sparks and spray take the depth of field of what is behind them; a movie uses the cameras of the
+place you are in.
+
 ## Using it
 
 - **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
@@ -1647,6 +1706,8 @@ src/audio/      procedural sound, synthesised from physics (physics.js: modes, f
 src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library, terrain areas
 src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
 src/camp/       the drone operations camp stage (stage.js; opened from the editor)
+src/cinema/     film cameras and the movie: lenses, depth of field, the look, keyframes, moves,
+                shot list (pure), and the director that plays it (render/cinePost.js: effects)
 src/main.js     app, controls panel, HUD, tools, zones
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers
