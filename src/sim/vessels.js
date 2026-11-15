@@ -4,6 +4,7 @@ import { airStirAt } from './stirrers.js';
 import { breachFlowAt } from './breach.js';
 import { inHull } from './vacuum.js';
 import { F_BURNING, F_LIQUID, F_FALLING, F_ANCHOR } from './world.js';
+import { blastVehicles } from '../physics/vehicleCore.js';
 
 /**
  * Pressure vessels: closed containers holding a volatile liquid (a car's fuel
@@ -566,6 +567,7 @@ function ruptureLumped(sim, v, a, k, gauge) {
   // with rigid bodies (physics/simPhysics.js): the shell flies as a few real pieces of its steel
   // (the blast pushes the bodies that are there first, not the pieces it makes)
   sim.rigid?.explosion(center, E, blastR * 1.5);
+  blastVehicles(sim.world, center, E, blastR * 1.5); // (the vehicles' bodies: physics/vehicleCore.js)
   const rigidShell = !!sim.rigid && v.radius > 0 && v.height > 0;
   if (rigidShell) {
     const level = Math.max(0, Math.min(1, v.fill ?? 0.8));
@@ -716,6 +718,7 @@ function rupture(sim, v, a, gauge, Tf) {
   // with rigid bodies: the shell's voxels torn into a few pieces (by sector round the middle),
   // each a hull body of its voxels' mass; without, every shell voxel flies on its own
   sim.rigid?.explosion(center, E, blastR * 1.5);
+  blastVehicles(sim.world, center, E, blastR * 1.5); // (the vehicles' bodies: physics/vehicleCore.js)
   if (sim.rigid && a.shell.length >= 2) v.fragmentBodies = shellFragments(sim, a.shell, center, v0);
   else for (const i of a.shell) launch(i, v0 * (0.5 + sim.rand() * 0.7));
   // part of the remaining liquid is thrown out as burning droplets, the rest spills

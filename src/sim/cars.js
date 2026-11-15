@@ -6,8 +6,9 @@ import { dragAir } from './bodyAir.js';
 import { impact } from './impact.js';
 import { stepDriver } from '../ai/carDriver.js';
 import { wheelContact, groundDrag, groundWork } from './groundContact.js';
-import { isCore } from '../physics/vehicleCore.js';
-import { carCoreWorld, attachCar, prepareCar, syncCar, pushCarVelocity, takeImpacts, carBodyMoving, stepWorld } from '../physics/carCore.js';
+import { isCore, stepVehicles } from '../physics/vehicleCore.js';
+import { peopleNear, shoved } from '../physics/peopleCore.js';
+import { carCoreWorld, attachCar, prepareCar, syncCar, pushCarVelocity, takeImpacts, carBodyMoving } from '../physics/carCore.js';
 
 /**
  * Cars in the world: every object of type 'car' (models/car.js: the street's cars, the military
@@ -519,45 +520,74 @@ export function stepCarList(cars, dt, ctx = {}) {
 function stepCoreCars(cars, dt, ctx) {
   const w = ctx.world;
   const PW = carCoreWorld(cars, ctx);
-  const awake = [];
   for (const c of cars) {
     controls(c, dt, ctx);
     const inp = c.input ?? {};
     const active = c.running || c.crank > 0 || (inp.throttle ?? 0) > 0;
-    if ((active || carBodyMoving(c)) && w?.mat) ensureBody(w, c);
-    carEnv(c, ctx);
-    attachCar(c, PW, c._env, w?.h ?? 0);
-    c.core.groundDrag = !!w?.mat;
+    // (parked and asleep: as it was; its body wakes if it is hit, written to or driven)
+    const parked = !active && c.core?.body?.sleeping && c.core.world === PW && c._env;
+    if (!parked) {
+      if ((active || carBodyMoving(c)) && w?.mat) ensureBody(w, c);
+      carEnv(c, ctx);
+      attachCar(c, PW, c._env, w?.h ?? 0, w);
+      c.core.groundDrag = !!w?.mat;
+    }
     prepareCar(c, active);
   }
-  stepWorld(PW, dt);
+  // the people near a moving car: bodies in its way (physics/peopleCore.js)
+  const people = ctx.people ? peopleNear(PW, ctx.people(), cars, dt) : [];
+  const bodies = cars.map((c) => c.core.body);
+  for (const P of people) bodies.push(P.B);
+  // the world's step (in a simulation's frame: once for every vehicle and the debris, at its end)
+  stepVehicles(w, PW, bodies, dt, () => afterCoreCars(cars, dt, ctx, people));
+}
+
+/** After the world's step: the cars' state from their bodies, what they hit, the ground, the seats, the voxels. */
+function afterCoreCars(cars, dt, ctx, people) {
+  const w = ctx.world;
+  const awake = [];
   for (const c of cars) {
-    syncCar(c);
-    if (c.core.body.sleeping && !carBodyMoving(c) && !c.running && !(c.crank > 0)) {
+    // (asleep since the last sync: its pose is as it was)
+    const B = c.core.body;
+    if (!(B.sleeping && c.core.syncedAsleep && !c.running)) syncCar(c);
+    c.core.syncedAsleep = B.sleeping;
+    if (B.sleeping && !carBodyMoving(c) && !c.running && !(c.crank > 0)) {
       takeImpacts(c);
       if (c.body && w?.mat) restamp(w, c);
       continue;
     }
     awake.push(c);
   }
-  // what they hit: the voxels (n from the world into the car), the other cars (once an impact)
+  // what they hit: the voxels (n from the world into the car), the other cars (once an impact),
+  // a man (below), anything else that moves (debris, a loose drum, a boat, a helicopter)
   const pairs = new Set();
+  const hitMen = new Map();
   for (const c of cars)
     for (const { e, other } of takeImpacts(c)) {
       const n = e.b === c.core.body ? e.normal.map((x) => -x) : e.normal.slice();
-      const oc = other?.userData?.car;
-      if (oc) {
+      const ud = other?.userData;
+      if (ud?.person) {
+        const h = hitMen.get(ud.person);
+        if (!h || e.speed > h.e.speed) hitMen.set(ud.person, { c, e });
+        continue;
+      }
+      if (ud?.car) {
         if (pairs.has(e)) continue;
         pairs.add(e);
-        carsCollided(c, oc, e, ctx);
+        carsCollided(c, ud.car, e, ctx);
+        continue;
+      }
+      if (other && other.isDynamic) {
+        struck(c, ctx, e, other);
         continue;
       }
       const mat = e.materials.find((m) => m && m !== 'unknown' && m !== 'steel') ?? (e.materials.includes('steel') ? 'steel' : 'concrete');
       hitSomething(c, ctx, e.point, e.speed, n, mat);
     }
+  for (const P of people) runOver(P, hitMen.get(P.e), ctx);
   for (const c of awake) {
     if (w?.mat) groundWork(w, c, dt, ctx);
-    collidePeople(c, ctx);
+    if (!ctx.people) collidePeople(c, ctx);
     pushCarVelocity(c);
     placeAboard(c);
     if (!w?.mat || !c.body) continue;
@@ -567,6 +597,61 @@ function stepCoreCars(cars, dt, ctx) {
       checkState(w, c);
     }
     restamp(w, c);
+  }
+}
+
+/**
+ * A man's body met a car (P: his body; hit: the car and the impact, or none): fast (closing at more
+ * than 2 m/s) he is knocked down and hurt (sim/impact.js; you: a hit) and thrown off its side; slow,
+ * he is pushed aside as far as the contact moved him. The car has given up his share of its
+ * momentum in the contact.
+ */
+function runOver(P, hit, ctx) {
+  const e = P.e;
+  if (hit && hit.e.speed > 2) {
+    const { c } = hit;
+    const vn = hit.e.speed;
+    const seen = (c._hitPeople ??= new Map());
+    if (c.t - (seen.get(e.player ? 'player' : e) ?? -9) > 1) {
+      seen.set(e.player ? 'player' : e, c.t);
+      const vp = c.core.body.velocityAt(P.B.pos);
+      if (e.player) ctx.world?.playerHits?.push({ zone: vn > 6 ? 'torso' : 'legs', weapon: 'vehicle' });
+      else if (ctx.sim) impact(ctx.sim, { target: e, mass: massOf(c), velocity: [vp[0], 0, vp[2]], materials: ['steel', 'flesh'], kind: 'vehicle', name: c.label, zone: 'legs', radius: 0.25, effects: { crush: false } });
+      sfx(c, 'thud', { v: vn, p: e.p.slice() });
+      // he goes off its side
+      if (!e.player) {
+        const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), S = c.spec;
+        const dx = e.p[0] - c.x, dz = e.p[2] - c.z;
+        const lx = dx * cy - dz * sy, lz = dx * sy + dz * cy;
+        const side = Math.sign(lz) || 1;
+        e.p = [c.x + (lx * cy + side * (S.W / 2 + 0.5) * sy), e.p[1], c.z + (-lx * sy + side * (S.W / 2 + 0.5) * cy)];
+      }
+      return;
+    }
+  }
+  // pushed aside (not you: you move yourself)
+  if (e.player) return;
+  const [dx, dz] = shoved(P);
+  if (Math.hypot(dx, dz) > 1e-4) e.p = [e.p[0] + dx, e.p[1], e.p[2] + dz];
+}
+
+/**
+ * Something that moves hit the car (a chunk of debris, a fragment, a loose drum, a boat, a
+ * helicopter): damage by the energy of the impact (as a crash into a wall at the speed that carries
+ * it: (v / 26)²), a dent counted, the knock heard. The push is the contact's.
+ */
+function struck(c, ctx, e, other) {
+  const m = massOf(c);
+  if (e.energy < 50) return;
+  const v = Math.sqrt((2 * e.energy) / m);
+  c.damage = Math.min(1, c.damage + (v / 26) ** 2);
+  c.dents = (c.dents ?? 0) + 1;
+  c.struck = { p: e.point.slice(), energy: e.energy, by: other.userData?.chunk ? 'debris' : other.userData?.fragment ? 'fragment' : other.userData?.vehicle ?? 'thing', time: c.t };
+  sfx(c, v > 2 ? 'crash' : 'thud', { v: Math.max(v, e.speed * 0.3), p: e.point.slice(), material: 'steel' });
+  if (c.damage >= 1 && !c.dead) {
+    c.dead = true;
+    c.wrecked = true;
+    c.why = 'wrecked';
   }
 }
 

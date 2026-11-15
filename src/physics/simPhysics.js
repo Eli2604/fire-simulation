@@ -37,7 +37,6 @@
  */
 import { PhysicsWorld } from './world.js';
 import { VoxelSet, Box, Capsule, cylinderHull, ConvexHull } from './shapes.js';
-import { VoxelGridCollider } from './voxelCollider.js';
 import { buoyancy, waterLevelOfWorld } from './forces.js';
 import { mat3FromQuat, eulerYXZ, quatFromEulerYXZ, vlen, m3mulv } from './math.js';
 import { makeMovingBody, restamp } from '../sim/movingBody.js';
@@ -45,6 +44,7 @@ import { MATERIALS, MAT, mechanics } from '../sim/materials.js';
 import { launchVoxel } from '../sim/vessels.js';
 import { stepChunkFire, chunkIsHot, chunkTopology } from './chunkFire.js';
 import { dragAir } from '../sim/bodyAir.js';
+import { debrisCollider, deferRigid, stepAlone } from './vehicleCore.js';
 
 const F_LIQUID = 1, F_FALLING = 2, F_ANCHOR = 4, F_HIDDEN = 64;
 const DEBRIS_GROUP = 1 << 1;
@@ -72,7 +72,13 @@ export class SimPhysics {
     this.sim = sim;
     this.o = o;
     const w = (this.w = sim.world);
-    this.physics = new PhysicsWorld({ collider: VoxelGridCollider.fromWorld(w), substeps: o.substeps, seed: o.seed ?? 7, maxSteps: 12 });
+    // (one world for everything: the vehicles' too, physics/vehicleCore.js sharedWorld; taken over if
+    // they made it first. The grid as debris meets it leaves out the vehicles' stamped voxels: their
+    // bodies stand for them, so a chunk that hits a car pushes it)
+    const prev = w._physicsWorld;
+    this.physics = prev ?? new PhysicsWorld({ collider: debrisCollider(w), substeps: o.substeps, seed: o.seed ?? 7, maxSteps: 12 });
+    if (prev) prev.collider = debrisCollider(w);
+    w._physicsWorld = this.physics;
     this.level = waterLevelOfWorld(w);
     this.physics.addForceGenerator(buoyancy({ level: this.level, density: 1000, drag: 3 }));
     this.chunks = [];
@@ -380,12 +386,22 @@ export class SimPhysics {
 
   /* ---------- the step ---------- */
   step(dt) {
-    const w = this.w;
-    // (and whatever else is in its world: a dragon gone limp, physics/dragonRagdoll.js)
-    if (!this.chunks.length && !this.loose.size && !this.fragments.length && !this.physics.bodies.length) {
+    // (and whatever else is in its world: a dragon gone limp, physics/dragonRagdoll.js; not the
+    // vehicles: their own steps move them)
+    if (!this.chunks.length && !this.loose.size && !this.fragments.length && !this.physics.bodies.some((b) => !b.userData?.vehicle)) {
       return;
     }
-    this.physics.step(dt);
+    // in a simulation's frame the world steps once for everything at its end (sim/simulation.js,
+    // physics/vehicleCore.js); outside one, now (the vehicles held where they are)
+    if (deferRigid(this.w, () => this.afterStep(dt))) return;
+    if (this.physics.bodies.some((b) => b.userData?.vehicle)) stepAlone(this.physics, (b) => !b.userData?.vehicle, dt, 'accumulate');
+    else this.physics.step(dt);
+    this.afterStep(dt);
+  }
+
+  /** After the world's step: the chunks' fire, the chunks at rest stamped, the loose things, the fragments. */
+  afterStep(dt) {
+    const w = this.w;
     // fire on the chunks in flight (physics/chunkFire.js): it burns on where the body is
     for (const c of this.chunks) {
       if (!c.hot) continue;
@@ -448,7 +464,8 @@ export class SimPhysics {
 
   /** A blast: every body in range pushed (and woken). */
   explosion(center, E, radius) {
-    const hit = this.physics.explosion(center, { energy: E, radius });
+    // (the vehicles' bodies are pushed by physics/vehicleCore.js blastVehicles, with their damage)
+    const hit = this.physics.explosion(center, { energy: E, radius, skip: (b) => !!b.userData?.vehicle });
     // loose things in range that are not bodies yet become ones
     for (const o of this.w.loose ?? []) {
       if (o.held || o.gone || this.loose.has(o)) continue;
@@ -464,6 +481,9 @@ export class SimPhysics {
   impactEvent(e) {
     const w = this.w;
     if (e.energy < 15) return;
+    // (a vehicle's knocks are its own: sim/cars.js, boats.js, ai/helicopter.js; a chunk on a car is heard as the chunk's)
+    if ((e.a?.userData?.vehicle || !e.a) && e.b?.userData?.vehicle) return;
+    if (e.a?.userData?.vehicle && !e.b?.userData?.chunk && !e.b?.userData?.fragment && !e.b?.userData?.loose) return;
     const mass = Math.min(e.a?.mass ?? Infinity, e.b?.mass ?? Infinity);
     const size = Math.cbrt((e.b?.volume ?? w.h ** 3) || w.h ** 3);
     w.events.push({ type: 'impact', kind: 'rigid', pos: e.point.slice(), time: w.time, energy: e.energy, name: e.materials[1], materials: [e.materials[1], e.materials[0]], mass, speed: e.speed, size: 1, sizeA: size, radius: size * 0.3, impulse: e.impulse });

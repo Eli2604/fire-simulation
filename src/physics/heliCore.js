@@ -29,8 +29,8 @@
 import { Box, Capsule, Compound } from './shapes.js';
 import { Body } from './body.js';
 import { quatFromMat3 } from './math.js';
-import { vehicleCollider, groundWorld, setMassProps, boxInertia, trackPose, trackedChange, stepExact, VEHICLE_DT } from './vehicleCore.js';
-import { PhysicsWorld } from './world.js';
+import { sharedWorld, vehicleColliderOf, vehicleFilter, groundWorld, setMassProps, boxInertia, trackPose, trackedChange, stepVehicles } from './vehicleCore.js';
+import { shipsOf } from './shipCore.js';
 
 const WRAP = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -62,12 +62,29 @@ export function heliShape() {
   ]);
 }
 
-function worldOf(h) {
+/** The sim World it flies in (with voxels), or null. */
+function voxelWorldOf(h) {
   const host = h.host ?? {};
   const w = host.sim?.world ?? host.world;
-  // (one world per helicopter: they do not meet each other here)
-  if (w?.mat?.length && w.flags && w.nx > 0) return new PhysicsWorld({ collider: vehicleCollider(w), fixedDt: VEHICLE_DT, substeps: 1, maxSteps: 40, iterations: 10, seed: 17 });
+  return w?.mat?.length && w.flags && w.nx > 0 ? w : null;
+}
+/** Its world: the simulation's one (the other helicopters, the cars, the boats, the debris in it), or, with no voxels, one on the host's ground shared by the helicopters of that host's world. */
+function worldOf(h) {
+  const w = voxelWorldOf(h);
+  if (w) {
+    const PW = sharedWorld(w);
+    shipsOf(w, PW);
+    return PW;
+  }
+  const hw = h.host?.world;
+  if (hw && typeof hw === 'object') return (hw._heliGround ??= groundWorld((x, z) => h.ground(x, z)));
   return groundWorld((x, z) => h.ground(x, z));
+}
+
+/** What it weighs now: its mass as built, less the fuel burnt since (1360 kg a full tank). */
+export function heliBodyMass(h) {
+  const K = h.core;
+  return Math.max(1000, K.m0 + ((h.fuel ?? K.fuel0) - K.fuel0) * 1360);
 }
 
 function bodyOf(h) {
@@ -77,6 +94,9 @@ function bodyOf(h) {
   const R = heliRot(h.yaw, h.pitch, h.roll);
   const B = new Body({ shape: heliShape(), position: h.p.slice(), quaternion: quatFromMat3([0, 0, 0, 1], R), material: 'aluminium', linearDamping: 0.02, angularDamping: 0.1, gravityScale: 0 });
   const m = h.mass ?? 7000;
+  K.m0 = m;
+  K.fuel0 = h.fuel ?? 1;
+  K.m = m;
   // (its centre of mass high in the cabin: the engines and the gearbox are on its roof)
   setMassProps(B, m, [0.2, 1.6, 0], boxInertia(m, 11, 2.6, 2.6));
   // (skids dig in: a slide sideways on them trips it over)
@@ -84,7 +104,30 @@ function bodyOf(h) {
   B.restitution = 0.1;
   B.buoyant = false;
   B.canSleep = false;
-  B.userData = { heli: h };
+  B.userData = {
+    heli: h,
+    onImpact: (e, self, other) => (K.impacts ??= []).push({ e, other }),
+    // a blast: flying, into its model's velocity and yaw rate (its parts are hit by HeliAI.blast);
+    // a wreck, its body takes the push (vehicleCore.blastVehicles)
+    onBlast: (dv, dw) => {
+      if (K.free) return;
+      for (let i = 0; i < 3; i++) h.v[i] += dv[i];
+      h.yawRate = (h.yawRate ?? 0) + dw[1];
+    },
+  };
+  // (its model's ground: what it stands on, a car's roof, a boat, as well as the ground: standingOn)
+  if (!Object.prototype.hasOwnProperty.call(h, 'ground')) {
+    const g0 = h.ground;
+    h.ground = function (x, z) {
+      const g = g0.call(this, x, z);
+      const u = this.core?.under;
+      if (u && (this.time ?? 0) - u.t < 0.2 && Math.hypot(x - u.x, z - u.z) < 3) return Math.max(g, u.y);
+      return g;
+    };
+  }
+  vehicleFilter(B, 'heli');
+  const vw = voxelWorldOf(h);
+  B.collider = vw ? vehicleColliderOf(vw, 'heli') : null;
   K.world.addBody(B);
   K.body = B;
   K.seen = null;
@@ -96,6 +139,12 @@ const SEEN = (h) => [h.p[0], h.p[1], h.p[2], h.yaw, h.pitch, h.roll];
 /** Before its model's step: its body; a pose written from outside (placed) taken over. */
 export function heliBegin(h) {
   const B = bodyOf(h), K = h.core;
+  // its mass as the fuel burns (or leaks)
+  const m = heliBodyMass(h);
+  if (Math.abs(m - K.m) > 1) {
+    K.m = m;
+    setMassProps(B, m, [0.2, 1.6, 0], boxInertia(m, 11, 2.6, 2.6));
+  }
   const s = SEEN(h);
   if (K.seen && s.some((v, k) => Math.abs(v - K.seen[k]) > 1e-9)) B.setPose(h.p.slice(), quatFromMat3([0, 0, 0, 1], heliRot(h.yaw, h.pitch, h.roll)));
   return B;
@@ -138,6 +187,8 @@ export function heliEnd(h, dt) {
   const K = h.core, B = K.body;
   const p = B.shapePos();
   const a = heliAngles(B.R);
+  standingOn(h, B, p);
+  K.impacts = [];
   if (K.free) syncFree(h, B, a, p);
   else if (B.track) {
     const { dv, dw } = trackedChange(B);
@@ -169,6 +220,25 @@ export function heliEnd(h, dt) {
   K.seen = SEEN(h);
 }
 
+/**
+ * What it stands on that is not the ground: its skids on another body (a car's roof, a boat, the
+ * carrier's hull) are its ground there for its model (its touchdown, its landed height) while they
+ * touch (h.core.under; the model's ground(x, z) is wrapped in bodyOf).
+ */
+function standingOn(h, B, p) {
+  const K = h.core;
+  const PW = B.world;
+  if (!PW) return;
+  for (const m of PW.manifolds.values()) {
+    if (!m.points.length || !m.a || (m.a !== B && m.b !== B)) continue;
+    const n = m.points[0].n;
+    const up = m.b === B ? n[1] : -n[1];
+    if (up < 0.7) continue;
+    K.under = { x: p[0], z: p[2], y: p[1], t: h.time ?? 0, body: m.a === B ? m.b : m.a };
+    return;
+  }
+}
+
 function syncFree(h, B, a, p) {
   h.p = p;
   h.yaw = h.yaw + WRAP(a.yaw - h.yaw);
@@ -183,6 +253,6 @@ export function heliStep(h, dt, fn) {
   const K = h.core;
   fn();
   heliTrack(h, dt);
-  stepExact(K.world, dt);
-  heliEnd(h, dt);
+  // the world's step (in a simulation's frame: once for every vehicle and the debris, at its end)
+  stepVehicles(voxelWorldOf(h), K.world, [K.body], dt, () => heliEnd(h, dt));
 }

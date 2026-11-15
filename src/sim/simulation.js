@@ -13,6 +13,7 @@ import { stepVolcanoes } from './volcano.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { stepFloats } from './buoyancy.js';
 import { stepCars } from './cars.js';
+import { beginVehicleFrame, endVehicleFrame } from '../physics/vehicleCore.js';
 import { stepGates } from './gates.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
@@ -252,6 +253,10 @@ export class Simulation {
   /** What moves: falling voxels, debris, projectiles, water, the soldiers, the dragon. */
   motionStep(dt, D) {
     const w = this.world;
+    // one physics world for the debris and the vehicles (physics/vehicleCore.js): each does its part
+    // before its step as it comes (the boats' models, the drivers, the pilots), the world steps once
+    // for all of them at the end (endVehicleFrame), then each takes what it did
+    beginVehicleFrame(w, dt);
     this.structure(dt);
     stepDebris(this, dt);
     this.rigid?.step(dt); // rigid bodies: debris chunks, knocked loose things, fragments (physics/simPhysics.js)
@@ -312,6 +317,7 @@ export class Simulation {
     if (w.phoenixes.length) this.phoenixAI.step(dt);
     if (w.flights?.length) stepWorldFlights(this, dt);
     if (w.helis?.length) this.heliAI.step(dt);
+    endVehicleFrame(w);
     if (w.gasPipes.length && this.stats.steps % 5 === 0) stepGasPipes(this);
     void D;
   }

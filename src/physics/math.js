@@ -248,9 +248,13 @@ export function m3inverse(o, m) {
   return o;
 }
 /** R·M·Rᵀ (an inertia tensor turned into another frame). */
+const RT = new Array(9), RT2 = new Array(9);
 export function m3rotate(o, R, M) {
-  const t = m3mul([], R, M);
-  return m3mul(o, t, m3transpose([], R));
+  // (R·M, then ·Rᵀ: the same sums in the same order as m3mul, without its scratch arrays)
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) RT[3 * i + j] = R[3 * i] * M[j] + R[3 * i + 1] * M[3 + j] + R[3 * i + 2] * M[6 + j];
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) RT2[3 * i + j] = RT[3 * i] * R[3 * j] + RT[3 * i + 1] * R[3 * j + 1] + RT[3 * i + 2] * R[3 * j + 2];
+  for (let k = 0; k < 9; k++) o[k] = RT2[k];
+  return o;
 }
 export const m3add = (o, a, b) => {
   for (let k = 0; k < 9; k++) o[k] = a[k] + b[k];

@@ -78,7 +78,7 @@ export class Capsule {
     return { mass: mc + ms, com, I, volume: Math.PI * r * r * L + (4 / 3) * Math.PI * r ** 3 };
   }
   aabb(p, R, out) {
-    const A = m3mulv([0, 0, 0], R, this.a), B = m3mulv([0, 0, 0], R, this.b), r = this.r;
+    const A = m3mulv(CA, R, this.a), B = m3mulv(CB, R, this.b), r = this.r;
     for (let c = 0; c < 3; c++) {
       out[c] = p[c] + Math.min(A[c], B[c]) - r;
       out[c + 3] = p[c] + Math.max(A[c], B[c]) + r;
@@ -362,8 +362,12 @@ export class Compound {
     this.id = ++SHAPE_ID;
     this.children = children.map((c) => {
       const quat = c.quat ? c.quat.slice() : qident();
-      return { shape: c.shape, pos: c.pos ? c.pos.slice() : [0, 0, 0], quat, R: mat3FromQuat([], quat), density: c.density, mass: c.mass };
+      const R = mat3FromQuat([], quat);
+      const ident = Math.abs(R[0] - 1) + Math.abs(R[4] - 1) + Math.abs(R[8] - 1) < 1e-12;
+      return { shape: c.shape, pos: c.pos ? c.pos.slice() : [0, 0, 0], quat, R, ident, density: c.density, mass: c.mass };
     });
+    this._cb = [0, 0, 0, 0, 0, 0];
+    this._cp = [0, 0, 0];
   }
   massProps(rho = 1000) {
     const parts = this.children.map((c) => {
@@ -384,10 +388,10 @@ export class Compound {
   aabb(p, R, out) {
     out[0] = out[1] = out[2] = Infinity;
     out[3] = out[4] = out[5] = -Infinity;
-    const cb = [0, 0, 0, 0, 0, 0];
-    const cp = [0, 0, 0];
+    const cb = this._cb;
+    const cp = this._cp;
     for (const c of this.children) {
-      const CR = mulR(R, c.R);
+      const CR = c.ident ? R : mulR(R, c.R);
       vadd(cp, p, m3mulv(cp, R, c.pos));
       c.shape.aabb(cp, CR, cb);
       for (let a = 0; a < 3; a++) {
@@ -398,7 +402,7 @@ export class Compound {
     return out;
   }
   get innerRadius() {
-    return Math.max(...this.children.map((c) => c.shape.innerRadius ?? 0));
+    return (this._inner ??= Math.max(...this.children.map((c) => c.shape.innerRadius ?? 0)));
   }
   samples(n = 3) {
     const out = [];
@@ -407,6 +411,7 @@ export class Compound {
   }
 }
 
+const CA = [0, 0, 0], CB = [0, 0, 0]; // (scratch for Capsule.aabb)
 const mulR = (A, B) => {
   const o = new Array(9);
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) o[3 * i + j] = A[3 * i] * B[j] + A[3 * i + 1] * B[3 + j] + A[3 * i + 2] * B[6 + j];

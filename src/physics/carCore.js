@@ -43,11 +43,19 @@
 import { ConvexHull } from './shapes.js';
 import { Body } from './body.js';
 import { quatFromMat3 } from './math.js';
-import { groundWorld, vehicleWorld, setMassProps, boxInertia, inertiaAbout, yprOf } from './vehicleCore.js';
-import { subStep, massOf, sfx, CAR_SUBSTEP, G, carRot } from '../sim/carPhysics.js';
+import { groundWorld, vehicleWorld, vehicleColliderOf, vehicleFilter, setMassProps, boxInertia, inertiaAbout, yprOf } from './vehicleCore.js';
+import { subStep, massOf, sfx, G, carRot } from '../sim/carPhysics.js';
 import { groundDrag } from '../sim/groundContact.js';
 
 const W_SPRING = 2 * Math.PI * 1.6;
+/**
+ * The tyres' sub-step on the core (carPhysics' subStep inside the force generator): one per world
+ * substep (1/120 s) on the move; at walking pace and below, where the slip angle's floor (UMIN) makes
+ * the tyres stiffest (the side slip decays at ~85/s: k·dt 0.7 at 1/120 s), 1/240 s. The old model ran
+ * at 1/300 s; the paths agree within a few per cent (a slalom on the flat and across a slope).
+ */
+export const CORE_TYRE_STEP = 1 / 120;
+const CORE_TYRE_STEP_SLOW = 1 / 240;
 const Z_SPRING = 0.55;
 const WRAP = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const groundAt = (env, x, z, y) => env?.ground?.(x, z, y) ?? { y: 0, mu: 1, road: true };
@@ -78,15 +86,30 @@ function chassisOf(c, h) {
   const B = new Body({ shape: new ConvexHull(pts), position: [c.x, c.y, c.z], quaternion: quatFromMat3([0, 0, 0, 1], R), material: 'steel', linearDamping: 0, angularDamping: 0.05, mass: 1000 });
   B.buoyant = false;
   // (a car's body crumples: little bounce; nothing like a ball's rolling resistance)
-  B.restitution = 0.15;
+  B.restitution = 0.2; // (as the old model's car–car e)
   B.rollingResistance = 0;
   B.vel = [c.vx ?? 0, c.vy ?? 0, c.vz ?? 0];
   B.angVel = [0, c.wz ?? 0, 0];
-  B.userData = { car: c, onImpact: (e, self, other) => K.impacts.push({ e, other }) };
+  B.userData = { car: c, onImpact: (e, self, other) => K.impacts.push({ e, other }), onBlast: (dv) => carBlast(c, dv) };
+  vehicleFilter(B, 'car');
   B.forceGenerators.push((b, dt) => carForces(c, b, dt));
   K.body = B;
   setCarMass(c);
   return B;
+}
+
+/** A blast pushed it by dv (its body takes the push: vehicleCore.blastVehicles): the damage, the bang heard on it. */
+function carBlast(c, dv) {
+  const v = Math.hypot(dv[0], dv[1], dv[2]);
+  if (v < 0.2) return;
+  c.damage = Math.min(1, (c.damage ?? 0) + (v / 5) ** 2);
+  c.blasted = { dv: v, time: c.t };
+  sfx(c, 'crash', { v: v * 4, p: [c.x, c.y + 0.5, c.z], material: 'steel' });
+  if (c.damage >= 1 && !c.dead) {
+    c.dead = true;
+    c.wrecked = true;
+    c.why = 'wrecked';
+  }
 }
 
 /** Its mass, centre of mass and inertia from what it carries now. */
@@ -97,14 +120,15 @@ function setCarMass(c) {
   setMassProps(K.body, m, [S.cgX, S.cgH, 0], boxInertia(m, S.L, S.H, S.W));
 }
 
-/** Its chassis in world PW (moved there from another world if need be); env: its ground. */
-export function attachCar(c, PW, env, h = 0) {
+/** Its chassis in world PW (moved there from another world if need be); env: its ground; w: the sim World (its voxels as a car meets them). */
+export function attachCar(c, PW, env, h = 0, w = null) {
   const K = coreOf(c);
   const B = chassisOf(c, h);
   if (B.world !== PW) {
     B.world?.removeBody(B);
     PW.addBody(B);
   }
+  B.collider = w?.mat ? vehicleColliderOf(w, 'car') : null;
   K.world = PW;
   K.env = env;
   return B;
@@ -128,6 +152,7 @@ export function carCoreWorld(cars, ctx = {}) {
   if (!PW) {
     PW = groundWorld((x, z) => groundAt(PW.groundEnv, x, z, 1e6)?.y ?? null);
     PW.ownGround = true;
+    PW.accumulate = true; // (stepped as before: its fixed steps and the remainder carried)
   }
   PW.groundEnv = { ground: ctx.ground ? (x, z) => ctx.ground(x, z) : null };
   return PW;
@@ -181,7 +206,7 @@ function adoptWrites(c) {
 }
 
 /** The car's pose and velocity from its body. */
-export function syncCar(c) {
+export function syncCar(c, light = false) {
   const B = c.core?.body;
   if (!B) return;
   const p = B.shapePos();
@@ -201,6 +226,7 @@ export function syncCar(c) {
   c.v = c.vx * sy + c.vz * cy;
   c.upturned = B.R[4] < 0.2;
   c.core.upturned = c.upturned;
+  if (light) return; // (inside a step: the last sync of the step records what it left)
   const s = (c.core.seen ??= new Array(10));
   for (let k = 0; k < 10; k++) s[k] = c[SEEN[k]];
 }
@@ -239,17 +265,19 @@ const WHEELS = [[1, -1], [1, 1], [-1, -1], [-1, 1]]; // FL, FR, RL, RR: (± whee
 /** Each substep h: the springs on the ground under the wheels, then the tyres (carPhysics) as a force. */
 function carForces(c, B, h) {
   const K = c.core, S = c.spec, env = K.env;
-  syncCar(c);
+  syncCar(c, true);
   const m = B.mass;
   const R = B.R;
   const upY = R[4];
   const L = S.a + S.b, hw = S.track / 2;
   // ---- the ground under each wheel
-  const p = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  const g = [null, null, null, null];
+  // (scratch kept on the car: this runs every substep)
+  const p = (K.p ??= [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]);
+  const g = (K.g ??= [null, null, null, null]);
+  const wl = (K.wl ??= WHEELS.map(([fx, fz]) => [fx * S.wheelX, 0, fz * hw]));
   const from = Math.max(S.maxStep, env?.h ?? 0) + 0.05;
   for (let q = 0; q < 4; q++) {
-    B.shapeToWorld([WHEELS[q][0] * S.wheelX, 0, WHEELS[q][1] * hw], p[q]);
+    B.shapeToWorld(wl[q], p[q]);
     const gq = upY > 0.25 ? groundAt(env, p[q][0], p[q][2], p[q][1] + from) : null;
     g[q] = gq && Number.isFinite(gq.y) ? gq : null;
   }
@@ -310,7 +338,8 @@ function carForces(c, B, h) {
   E.h = env?.h ?? 0;
   E.ground = env?.ground;
   const v0x = c.vx, v0z = c.vz, w0 = c.wz;
-  const ns = Math.max(1, Math.round(h / CAR_SUBSTEP)), ds = h / ns;
+  const slow = Math.abs(c.u ?? 0) < 4;
+  const ns = Math.max(1, Math.ceil(h / (slow ? CORE_TYRE_STEP_SLOW : CORE_TYRE_STEP) - 1e-6)), ds = h / ns;
   for (let s = 0; s < ns; s++) {
     subStep(c, ds, E);
     if (K.groundDrag) groundDrag(c, ds);

@@ -91,26 +91,74 @@ export function vehicleCollider(w, { edges = true, maxCorners = 24000, beds = tr
   return C;
 }
 
-/** The PhysicsWorld of a sim World's vehicles of a kind ('car', 'boat', 'heli'). */
-export function vehicleWorld(w, kind) {
-  const all = (w._vehicleWorlds ??= {});
-  if (all[kind]) {
-    vehicleOwners(w); // (owners come and go: a car's voxels, a boat's)
-    return all[kind];
-  }
-  // (boats: their hull's points against the voxels, the old model keeping them off the shore and in
-  // the world; cars: their box's corners and the voxels' corners inside it, the world's edge a wall)
-  const world = new PhysicsWorld({ collider: kind === 'boat' ? vehicleCollider(w, { edges: false, maxCorners: 0, beds: false }) : vehicleCollider(w), fixedDt: VEHICLE_DT, substeps: 1, maxSteps: 40, iterations: 10, seed: 11 });
-  world.onImpact((e) => dispatchImpact(e));
-  all[kind] = world;
-  return world;
+/* ---------- one world for everything: the vehicles, the debris, the people near a car ---------- */
+
+/** Collision groups (body.filter): who meets whom. */
+export const GROUP = { DEFAULT: 1, DEBRIS: 1 << 1, CAR: 1 << 3, BOAT: 1 << 4, HELI: 1 << 5, PERSON: 1 << 6, SHIP: 1 << 7 };
+const ALL = 0xffff;
+/** Each kind's mask: people meet cars only; the carrier's hull meets boats, helicopters and debris (the deck is voxels). */
+export const MASK = {
+  car: ALL & ~GROUP.SHIP,
+  boat: ALL & ~GROUP.PERSON,
+  heli: ALL & ~GROUP.PERSON,
+  person: GROUP.CAR,
+  ship: GROUP.DEFAULT | GROUP.DEBRIS | GROUP.BOAT | GROUP.HELI,
+};
+/** A vehicle body's group and mask (and what it is: body.userData.vehicle). */
+export function vehicleFilter(b, kind) {
+  b.filter = { group: { car: GROUP.CAR, boat: GROUP.BOAT, heli: GROUP.HELI, person: GROUP.PERSON, ship: GROUP.SHIP }[kind] ?? GROUP.DEFAULT, mask: MASK[kind] ?? ALL };
+  b.userData = { ...(b.userData ?? {}), vehicle: kind };
+  // (a vehicle keeps a free box round it: the voxel grid is not scanned every substep, world.js)
+  if (kind !== 'ship') b.worldCache = true;
+  return b;
+}
+const kindOf = (b) => b.userData?.vehicle ?? null;
+
+/** The grid as a kind of vehicle meets it (cars and helicopters; boats: their hull's points, the soft beds left to the keel's furrow). */
+export function vehicleColliderOf(w, kind) {
+  const all = (w._vehColliders ??= {});
+  if (kind === 'boat') return (all.boat ??= vehicleCollider(w, { edges: false, maxCorners: 0, beds: false }));
+  return (all.car ??= vehicleCollider(w));
 }
 
-/** A world of its own on a heightfield ground(x, z) → y (a vehicle stepped with no voxel world). */
+/**
+ * The one PhysicsWorld of a sim World: sim.rigid's when it has one (debris chunks, loose things,
+ * fragments, ragdolls: physics/simPhysics.js), else one made here (and taken over by sim.rigid if it
+ * is enabled later). Its own collider is the grid as debris meets it (the vehicles' stamped voxels
+ * left out: their bodies stand for them); each vehicle body has its kind's (vehicleColliderOf).
+ */
+export function sharedWorld(w) {
+  let PW = w._physicsWorld;
+  if (!PW) {
+    PW = new PhysicsWorld({ collider: debrisCollider(w), fixedDt: VEHICLE_DT, substeps: 1, maxSteps: 40, iterations: 10, seed: 11, timing: false });
+    w._physicsWorld = PW;
+  }
+  if (!PW._vehicles) {
+    PW._vehicles = true;
+    PW.iterations = Math.max(PW.iterations, 10);
+    PW.onImpact((e) => dispatchImpact(e));
+  }
+  vehicleOwners(w); // (owners come and go: a car's voxels, a boat's)
+  return PW;
+}
+/** The grid as debris and loose things meet it: not liquid, not a vehicle's own stamped voxels. */
+export function debrisCollider(w) {
+  const owners = (w._vehicleOwners ??= new Set());
+  return VoxelGridCollider.fromWorld(w, { ignore: (i) => owners.size > 0 && owners.has(w.owner[i]) });
+}
+
+/** The PhysicsWorld of a sim World's vehicles (all kinds share it: sharedWorld). */
+export function vehicleWorld(w, kind) {
+  void kind;
+  return sharedWorld(w);
+}
+
+/** A world of its own on a heightfield ground(x, z) → y (vehicles stepped with no voxel world). */
 export function groundWorld(ground = () => 0) {
   const C = new VoxelGridCollider({ h: 1, nx: 0, ny: 0, nz: 0, solid: () => false, floor: false, ground: (x, z) => ground(x, z) });
   C.maxCorners = 0;
-  const world = new PhysicsWorld({ collider: C, fixedDt: VEHICLE_DT, substeps: 1, maxSteps: 40, iterations: 10, seed: 11 });
+  const world = new PhysicsWorld({ collider: C, fixedDt: VEHICLE_DT, substeps: 1, maxSteps: 40, iterations: 10, seed: 11, timing: false });
+  world._vehicles = true;
   world.onImpact((e) => dispatchImpact(e));
   return world;
 }
@@ -120,6 +168,154 @@ function dispatchImpact(e) {
   e.a?.userData?.onImpact?.(e, e.a, e.b);
   e.b?.userData?.onImpact?.(e, e.b, e.a);
 }
+
+/*
+ * Stepping. In a simulation's frame (sim/simulation.js motionStep: beginVehicleFrame … endVehicleFrame)
+ * each kind does its part before the world's step (the models move their vehicles, the drivers
+ * drive) and hands what it does after (stepVehicles(w, PW, bodies, dt, post)); at the end of the
+ * frame the world steps once for all of them together (and sim.rigid's debris), then the posts run.
+ * Outside a frame (a test stepping the cars, the boats or a helicopter alone) the world steps at
+ * once with only those bodies moving (stepAlone): the rest are held where they are, as obstacles.
+ */
+export function beginVehicleFrame(w, dt) {
+  w._vehFrame = { dt, n: (w._vehFrameN = (w._vehFrameN ?? 0) + 1), posts: [], vehicles: false, rigid: null };
+}
+/** At the end of the frame: one step of the world for everything that took part, then each kind's post. */
+export function endVehicleFrame(w) {
+  const F = w._vehFrame;
+  w._vehFrame = null;
+  if (!F || (!F.vehicles && !F.rigid)) return;
+  const PW = w._physicsWorld;
+  if (PW) {
+    const moving = (b) => (kindOf(b) ? b._frame === F.n : !!F.rigid);
+    if (F.vehicles) stepAlone(PW, moving, F.dt, 'exact');
+    else stepAlone(PW, moving, F.dt, 'accumulate');
+  }
+  for (const post of F.posts) post();
+}
+/** The kind's bodies stepped by dt (in the frame, or at once), then post(). */
+export function stepVehicles(w, PW, bodies, dt, post) {
+  const F = w?._vehFrame;
+  if (F && PW === w._physicsWorld) {
+    F.vehicles = true;
+    for (const b of bodies) b._frame = F.n;
+    F.posts.push(post);
+    return;
+  }
+  const one = bodies.length === 1 ? bodies[0] : null;
+  const set = one ? null : new Set(bodies);
+  stepAlone(PW, one ? (b) => b === one : (b) => set.has(b), dt, PW.accumulate ? 'accumulate' : 'exact');
+  post();
+}
+/** sim.rigid's step in the frame (its post: what it does with its chunks, loose things, fragments). → deferred */
+export function deferRigid(w, post) {
+  const F = w?._vehFrame;
+  if (!F) return false;
+  F.rigid = true;
+  F.posts.push(post);
+  return true;
+}
+/**
+ * Step PW by dt with only the bodies moving(b) moving: the other dynamic bodies are held (no
+ * velocity, not integrated: obstacles) for this step. mode 'exact': whole fixed steps of about its
+ * nominal step (stepExact); 'accumulate': PW.step's fixed steps and remainder.
+ */
+export function stepAlone(PW, moving, dt, mode = 'exact') {
+  const held = [];
+  // a carried vehicle (a boat, a helicopter) with nothing in its way all the way to where its model
+  // put it is moved there without the world's steps (it would arrive exactly anyway)
+  const carried = [];
+  for (const b of PW.bodies) if (b.track && b.trackTo && b.type === 'dynamic' && !b.sleeping && moving(b) && clearWay(PW, b, dt)) carried.push(b);
+  for (const b of carried) b._carried = true;
+  let live = false;
+  for (const b of PW.bodies) {
+    if (b.type !== 'dynamic') continue;
+    if (moving(b) && !b._carried) {
+      if (!b.sleeping) live = true;
+      continue;
+    }
+    b.frozen = true;
+    held.push(b, b.vel[0], b.vel[1], b.vel[2], b.angVel[0], b.angVel[1], b.angVel[2]);
+    b.vel[0] = b.vel[1] = b.vel[2] = 0;
+    b.angVel[0] = b.angVel[1] = b.angVel[2] = 0;
+  }
+  // (all it moves asleep, the rest held: nothing can happen; parked cars cost nothing)
+  if (!live) PW.time += dt;
+  else if (mode === 'exact') stepExact(PW, dt);
+  else {
+    // (in pieces of at most maxSteps fixed steps)
+    let left = dt;
+    const chunk = PW.fixedDt * (PW.maxSteps - 1);
+    while (left > 1e-12) {
+      const d = Math.min(left, chunk);
+      PW.step(d);
+      left -= d;
+    }
+  }
+  for (let k = 0; k < held.length; k += 7) {
+    const b = held[k];
+    b.frozen = false;
+    b.vel[0] = held[k + 1];
+    b.vel[1] = held[k + 2];
+    b.vel[2] = held[k + 3];
+    b.angVel[0] = held[k + 4];
+    b.angVel[1] = held[k + 5];
+    b.angVel[2] = held[k + 6];
+  }
+  for (const b of carried) {
+    b._carried = false;
+    const T = b.trackTo;
+    const p0 = b.pos.slice(), q0 = b.quat.slice();
+    b.setPose(T.p, T.q);
+    b.prevPos = p0;
+    b.prevQuat = q0;
+    b.vel = b.track.v.slice();
+    b.angVel = b.track.w.slice();
+    // (its box there: clearWay's, fattened as the world's step would)
+    const m = 0.01 + Math.hypot(b.vel[0], b.vel[1], b.vel[2]) * (PW.fixedDt / PW.substeps) * 2;
+    const tb = T.box;
+    for (let a = 0; a < 3; a++) {
+      b.aabb[a] = tb[a] - m;
+      b.aabb[a + 3] = tb[a + 3] + m;
+    }
+    b.aabbDone = true;
+  }
+}
+
+const AB = [0, 0, 0, 0, 0, 0], AB2 = [0, 0, 0, 0, 0, 0];
+/** Whether nothing (the grid, a body it meets, a joint) is in a carried body's way from its pose to its target over dt. */
+function clearWay(PW, b, dt) {
+  for (const j of PW.joints) if (j.a === b || j.b === b) return false;
+  const T = b.trackTo;
+  // (where it is: its box from the last step; where it goes: its shape's box there)
+  if (b.aabbDone) for (let a = 0; a < 6; a++) AB[a] = b.aabb[a];
+  else b.shape.aabb(b.shapePos(), b.R, AB);
+  b.shape.aabb(T.p, mat3FromQuat(T.R ??= [], T.q), AB2);
+  T.box = AB2.slice();
+  const pad = 0.05;
+  const box = [Math.min(AB[0], AB2[0]) - pad, Math.min(AB[1], AB2[1]) - pad, Math.min(AB[2], AB2[2]) - pad, Math.max(AB[3], AB2[3]) + pad, Math.max(AB[4], AB2[4]) + pad, Math.max(AB[5], AB2[5]) + pad];
+  const C = b.collider ?? PW.collider;
+  if (b.collideWorld && C) {
+    if (!C.emptyBox) return false;
+    const F = b._free;
+    const inF = F && F[7] === C && PW.time < F[6] && box[0] >= F[0] && box[1] >= F[1] && box[2] >= F[2] && box[3] <= F[3] && box[4] <= F[4] && box[5] <= F[5];
+    if (!inF) {
+      const e = Math.max(0.3, C.h * 2);
+      const big = [box[0] - e, box[1] - e, box[2] - e, box[3] + e, box[4] + e, box[5] + e];
+      if (!C.emptyBox(big)) return false;
+      b._free = [...big, PW.time + 0.1, C];
+    }
+  }
+  for (const o of PW.bodies) {
+    if (o === b || !(o.filter.group & b.filter.mask) || !(b.filter.group & o.filter.mask)) continue;
+    const ob = o.aabb;
+    const e = o.type === 'static' ? 0 : Math.hypot(o.vel[0], o.vel[1], o.vel[2]) * dt + 0.05;
+    if (ob[0] - e > box[3] || ob[3] + e < box[0] || ob[1] - e > box[4] || ob[4] + e < box[1] || ob[2] - e > box[5] || ob[5] + e < box[2]) continue;
+    return false;
+  }
+  return true;
+}
+
 
 /** Mass m, centre of mass com (shape frame) and inertia I (3×3 about it, shape axes) of a dynamic body. */
 export function setMassProps(b, m, com, I) {
@@ -181,6 +377,7 @@ export function trackPose(b, p, q, dt) {
   b.angVel = w.slice();
   if (b.sleeping) b.wake();
   b.track = { v, w };
+  b.trackTo = { p: p.slice(), q: q.slice(), R: R };
   return b.track;
 }
 /** What the world did to a tracked body in its step: { dv, dw } (world frame), beyond its targets. */
@@ -192,8 +389,52 @@ export function trackedChange(b) {
 /** Step a world by exactly dt: whole fixed steps of about VEHICLE_DT. */
 export function stepExact(PW, dt) {
   if (dt <= 0) return;
-  const n = Math.max(1, Math.ceil(dt / VEHICLE_DT - 1e-6));
+  // (its nominal fixed step: 1/120 s for a world of the vehicles', sim.rigid's 1/60 s in two substeps)
+  const base = (PW.nominalDt ??= PW.fixedDt);
+  const n = Math.max(1, Math.ceil(dt / base - 1e-6));
   PW.fixedDt = dt / n;
   for (let k = 0; k < n; k++) PW.stepFixed();
+  PW.fixedDt = base;
   PW.alpha = 1;
+}
+
+/* ---------- a blast ---------- */
+/**
+ * A blast of energy E (J) at center: every vehicle body within radius pushed as debris is
+ * (sim.rigid's explosion: v0 = min(80, 8 + √(E/2000)) m/s falling off as (1 − d/R)², heavy things
+ * less: an impulse v0·k·√(2m)), away from the blast at the point of its box nearest it (so a blast
+ * under one side of a car rolls it over). A car takes it on its body (and its damage: (Δv / 5)²);
+ * a carried one (a boat, a flying helicopter) in its model's velocities (vehicle.onBlast(dv, dw)),
+ * the helicopter's parts being hit by HeliAI.blast as before. → the bodies pushed
+ */
+export function blastVehicles(w, center, E, radius) {
+  const PW = w?._physicsWorld;
+  if (!PW || !(E > 0)) return [];
+  const v0 = Math.min(80, 8 + Math.sqrt(E / 2000));
+  const out = [];
+  for (const b of PW.bodies) {
+    const kind = kindOf(b);
+    if (!kind || kind === 'ship' || kind === 'person' || b.type !== 'dynamic') continue;
+    const bb = b.aabb;
+    const q = [Math.max(bb[0], Math.min(bb[3], center[0])), Math.max(bb[1], Math.min(bb[4], center[1])), Math.max(bb[2], Math.min(bb[5], center[2]))];
+    const d = Math.hypot(q[0] - center[0], q[1] - center[1], q[2] - center[2]);
+    if (d > radius) continue;
+    const k = (1 - d / radius) ** 2;
+    const J = v0 * k * Math.sqrt(2 * b.mass);
+    // (the push: square to the face of its box that the blast is off; from inside its box, out
+    // through its middle)
+    let n = d > 0.05 ? [q[0] - center[0], q[1] - center[1], q[2] - center[2]] : [b.pos[0] - center[0], b.pos[1] - center[1], b.pos[2] - center[2]];
+    const l = Math.hypot(n[0], n[1], n[2]);
+    n = l > 1e-6 ? [n[0] / l, n[1] / l, n[2] / l] : [0, 1, 0];
+    const imp = [n[0] * J, n[1] * J, n[2] * J];
+    const dv = [imp[0] / b.mass, imp[1] / b.mass, imp[2] / b.mass];
+    const r = [q[0] - b.pos[0], q[1] - b.pos[1], q[2] - b.pos[2]];
+    const tq = [r[1] * imp[2] - r[2] * imp[1], r[2] * imp[0] - r[0] * imp[2], r[0] * imp[1] - r[1] * imp[0]];
+    const dw = m3mulv([0, 0, 0], b.invIworld, tq);
+    const onBlast = b.userData?.onBlast;
+    if (onBlast) onBlast(dv, dw, { center, E, point: q, impulse: J });
+    if (!b.track || kind === 'car') b.applyImpulse(imp, q);
+    out.push(b);
+  }
+  return out;
 }
