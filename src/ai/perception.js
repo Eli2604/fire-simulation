@@ -21,6 +21,9 @@
  *    still and camouflaged it takes seconds or never comes. A target seen a moment ago is picked
  *    up again at once. Light (ambientLight, the beams of flashlights: lightAt) helps the one who
  *    looks; a light carried on shows its carrier from far away at night.
+ *  - A man under water (target.submerged: his head's depth, m; ai/dive.js) is seen from above only
+ *    within submergedRange (the water's visibility, target.waterVis, and his depth) and dimly; a
+ *    scuba set's bubbles (target.bubbles) show where he is from BUBBLE_RANGE in daylight.
  *
  * Hearing
  *  - Sounds are events with a loudness at the source (dB at 1 m), a place, a kind and a source:
@@ -43,6 +46,7 @@
 import { traceVoxels } from './sight.js';
 import { EXPERIENCE } from './experience.js';
 import { MATERIALS } from '../sim/materials.js';
+import { submergedRange, WATER_VIS, BUBBLE_RANGE, UNDER } from './dive.js';
 
 const { hypot, min, max, log10, sqrt, acos } = Math;
 const DEG = Math.PI / 180;
@@ -326,6 +330,17 @@ export function perceive(obs, target, dt, ctx = {}) {
     range = max(range, min(prof.sightRange * 1.5, into ? BEAM.into : BEAM.glow));
     light = max(light, 0.6);
   }
+  // under water (ai/dive.js): seen from above only as far as the water lets one see into it, and
+  // dimly; a scuba diver's bubbles boiling up show where he is from much further off (in daylight)
+  let exposure = target.exposure ?? 1;
+  if (target.submerged > UNDER) {
+    const sub = submergedRange(target.submerged, target.waterVis ?? WATER_VIS);
+    exposure *= 0.5;
+    if (target.bubbles && light > 0.3 && BUBBLE_RANGE * rK > sub) {
+      range = min(range, BUBBLE_RANGE * rK);
+      exposure = 0.3;
+    } else range = min(range, sub);
+  }
   const view = viewFactor(obs, eye, at, prof);
   let visible = d <= range && view > 0;
   let trans = 1;
@@ -345,7 +360,7 @@ export function perceive(obs, target, dt, ctx = {}) {
   else {
     // seen a moment ago, or where they expect him (the threat they know of, watched): at once
     const recent = now - s.seenT < 3 || (ctx.expect && hypot(ctx.expect[0] - at[0], ctx.expect[2] - at[2]) < 3);
-    const rate = noticeRate({ q: d / max(1e-6, range), view, exposure: target.exposure ?? 1, moving: target.speed ?? (target.moving ? 1.2 : 0), size: target.size ?? 1, camo: target.camo ?? 0, trans, light: max(light, rK), react: prof.react });
+    const rate = noticeRate({ q: d / max(1e-6, range), view, exposure, moving: target.speed ?? (target.moving ? 1.2 : 0), size: target.size ?? 1, camo: target.camo ?? 0, trans, light: max(light, rK), react: prof.react });
     s.a = min(1, s.a + rate * dt * (recent ? 6 : 1));
   }
   const seen = s.a >= 1;

@@ -16,6 +16,10 @@
  *   drone (the drone kit in the pack), breach (breaching kit: charges, a halligan)   booleans
  *   radio     none | handheld | manpack;  medkit  none | ifak | bag (the medic's bag)
  *   water     litres
+ *   diving kit (ai/dive.js): fins (mask and fins), breather none | rebreather (closed-circuit
+ *             oxygen on the chest) | scuba (a small open-circuit set on the back), drybag (the
+ *             weapon sealed in it, the pack towed), weights (kg of lead), diveWorn (on him; else
+ *             packed in the backpack, if it has the room: diveStowage, taken out at the water's edge)
  * Masses are realistic (kg, loaded: a magazine with its rounds, a canteen full).
  *
  * The total (with the uniform and boots) sets, through mobility(): walk / run / sprint speed and
@@ -48,7 +52,8 @@ export const SIDEARM = {
   none: { label: 'None', kg: 0, mag: null, mags: 0, arms: null },
 };
 export const GRENADE_KG = { frag: 0.4, smoke: 0.5, flash: 0.45 };
-export const PACK = { none: { label: 'None', kg: 0 }, assault: { label: 'Assault pack (day pack)', kg: 4 }, rucksack: { label: 'Rucksack (full ruck)', kg: 18 } };
+/** litres: the room left in it over what it already holds (for the diving kit, ai/dive.js). */
+export const PACK = { none: { label: 'None', kg: 0, litres: 0 }, assault: { label: 'Assault pack (day pack)', kg: 4, litres: 14 }, rucksack: { label: 'Rucksack (full ruck)', kg: 18, litres: 40 } };
 /**
  * Armour: kg, and per hit area the chance a round of each kind still gets through (pen: × the
  * weapon's own plate penetration, sim/wounds.js WEAPONS; or a fixed chance) and what one that does
@@ -80,6 +85,25 @@ export const FLAT = {
 };
 export const WATER_KG = 1.05; // a litre with its bottle
 
+/**
+ * Diving kit (ai/dive.js): kg (in air), litres (its bulk packed), gearT (s to take out and put on,
+ * a regular's, the checks included), and what it holds. The rebreather: a closed-circuit oxygen set
+ * on the chest (LAR-7-like: ~1.5 l of O₂ at 200 bar, ~300 l, some 2–4 h; pure oxygen, so no
+ * deeper than ~6 m). The scuba set: a 7 l steel tank at 200 bar (~1400 l of air) on a harness with
+ * its regulator, on the back (open circuit: every breath out bubbles up to the surface).
+ */
+export const BREATHER = {
+  none: { label: 'None', kg: 0, litres: 0, gearT: 0 },
+  rebreather: { label: 'Rebreather (closed-circuit O₂, chest: no bubbles, ~3 h, ≤ 6 m)', kg: 11, litres: 22, gearT: 80, o2: 300 },
+  scuba: { label: 'Scuba set (7 l tank, 200 bar, back: bubbles)', kg: 14, litres: 28, gearT: 55, air: 1400 },
+};
+export const DIVE_FLAT = {
+  fins: { label: 'Mask and fins', kg: 1.8, litres: 7, gearT: 25 },
+  drybag: { label: 'Dry bag (weapon sealed, pack towed)', kg: 0.7, litres: 2, gearT: 30 },
+};
+/** Dive weights: litres and seconds (to put on) a kg of lead. */
+export const LEAD = { litres: 0.09, gearT: 2 };
+
 /** The fields of a kit with their options (the editor and the rig build their fields from this). */
 export const KIT_FIELDS = {
   primary: { options: Object.keys(PRIMARY), label: 'Primary weapon' },
@@ -101,12 +125,18 @@ export const KIT_FIELDS = {
   knife: { bool: true, label: 'Knife' },
   torch: { bool: true, label: 'Hand torch' },
   water: { min: 0, max: 4, step: 0.5, label: 'Water (litres)' },
+  fins: { bool: true, label: 'Mask and fins (diving)' },
+  breather: { options: Object.keys(BREATHER), label: 'Breathing set (diving)' },
+  drybag: { bool: true, label: 'Dry bag (diving: weapon sealed, pack towed)' },
+  weights: { min: 0, max: 6, step: 1, label: 'Dive weights (kg of lead)' },
+  diveWorn: { bool: true, label: 'Diving kit worn (else in the backpack)' },
 };
 
 /** A rifleman's kit: the reference load (mobility() 1.0 on the AI's speeds). */
 export const BASE_KIT = Object.freeze({
   primary: 'rifle', mags: 5, sidearm: 'carbine', sideMags: 2, frag: 2, smoke: 1, flash: 2, pack: 'assault', armour: 'plates', helmet: true, nvg: false,
   radio: 'handheld', rope: false, medkit: 'ifak', drone: false, breach: false, knife: true, torch: true, water: 1,
+  fins: false, breather: 'none', drybag: false, weights: 0, diveWorn: false,
 });
 
 /**
@@ -172,7 +202,28 @@ export function fullKit(role = 'rifleman', over = {}) {
   if (!PRIMARY[k.primary]) k.primary = 'rifle';
   // (the flame gun's tanks are on his back: no pack with them)
   if (k.primary === 'flamer' && k.pack !== 'none' && !over?.pack) k.pack = 'none';
+  if (!BREATHER[k.breather]) k.breather = 'none';
+  // (diving kit with no pack to go in, or more than his pack has room for: he has to wear it)
+  if (!k.diveWorn) {
+    const st = diveStowage(k);
+    if (st.bulk > 0 && !st.fits) k.diveWorn = true;
+  }
   return k;
+}
+
+/**
+ * The diving kit in a kit: what it is, its bulk (l), the pack's room for it (l), whether it fits in
+ * the pack, and whether it is packed now (not worn).
+ */
+export function diveStowage(k) {
+  const items = [];
+  if (k.fins) items.push('fins');
+  if (k.breather && k.breather !== 'none') items.push(k.breather);
+  if (k.drybag) items.push('drybag');
+  if (k.weights > 0) items.push('weights');
+  const bulk = (k.fins ? DIVE_FLAT.fins.litres : 0) + (BREATHER[k.breather]?.litres ?? 0) + (k.drybag ? DIVE_FLAT.drybag.litres : 0) + (k.weights ?? 0) * LEAD.litres;
+  const room = PACK[k.pack]?.litres ?? 0;
+  return { items, bulk: +bulk.toFixed(2), room, fits: bulk <= room, packed: bulk > 0 && !k.diveWorn };
 }
 
 /**
@@ -214,6 +265,10 @@ export function kitMass(kit) {
   add(MEDKIT[k.medkit]?.label ?? '', MEDKIT[k.medkit]?.kg ?? 0);
   for (const f of Object.keys(FLAT)) if (k[f]) add(FLAT[f].label, FLAT[f].kg);
   add(`${k.water} l water`, (k.water ?? 0) * WATER_KG);
+  const inPack = k.diveWorn ? '' : ' (in the pack)';
+  add((BREATHER[k.breather]?.label ?? '') + inPack, BREATHER[k.breather]?.kg ?? 0);
+  for (const f of Object.keys(DIVE_FLAT)) if (k[f]) add(DIVE_FLAT[f].label + inPack, DIVE_FLAT[f].kg);
+  add(`${k.weights} kg dive weights${inPack}`, k.weights ?? 0);
   add('Uniform, boots, belt', UNIFORM_KG);
   const total = items.reduce((s, [, kg]) => s + kg, 0);
   return { total: +total.toFixed(2), carry: +(total - P.kg - UNIFORM_KG).toFixed(2), items };

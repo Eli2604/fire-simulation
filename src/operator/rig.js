@@ -39,7 +39,7 @@
  *    bipod) have meshes of their own, each with the points its hands go to (gunPoints). A pistol as
  *    the sidearm (setSidearm) sits in a holster on the right thigh: drawPistol takes it out into a
  *    two-handed grip (the long gun slung first), and it is aimed, fired and reloaded as a pistol.
- *  - In the water (ai/swim.js): swim, treadWater, swimStruggle (a heavy load), drown.
+ *  - In the water (ai/swim.js): swim, treadWater, swimStruggle (a heavy load), drown; diving (ai/dive.js): duckDive, swimUnder (breaststroke, frog kick), finKick, surfacing, and gearUp at the edge (DIVE). The diving kit drawn when worn (setLoadout): mask, fins, rebreather on the chest, scuba tank on the back, lead, dry bag.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -2457,6 +2457,80 @@ Object.assign(LABELS, { drawPistol: 'Draw pistol (holster)', holsterPistol: 'Hol
 Object.assign(NO_UNARMED, WATER, { drawPistol: 1, holsterPistol: 1 });
 Object.assign(NO_STYLE, WATER, { drawPistol: 1, holsterPistol: 1 });
 SWITCH_TIME.pistol = PUT_T + PISTOL_DRAW_T;
+/**
+ * Diving (ai/dive.js), the body along the water as in the swim clip (hand targets in the body's
+ * own upright frame: +y ahead of him, +z down): the duck dive (head and arms down, the hips up, a
+ * kick), the underwater breaststroke (a long pull down to the thighs, a glide, the arms forward
+ * with the knees drawn up, a frog kick, a glide), the fin kick (a slow flutter from the hips, the
+ * arms along the body), surfacing (up ahead of him, the arms sweeping down, kicking) and gearing
+ * up at the edge (on one knee, hands at the chest and down at the feet: the kit out and on).
+ */
+const breastArm = (u, s) => pathK([[0, [0.08, 1.95, 0.12]], [0.12, [0.45, 1.72, 0.22]], [0.3, [0.24, 0.98, 0.1]], [0.5, [0.24, 0.98, 0.1]], [0.62, [0.14, 1.35, 0.28]], [0.78, [0.08, 1.95, 0.12]], [1, [0.08, 1.95, 0.12]]], u).map((v, i) => (i === 0 ? s * v : v));
+function diveLying(p, pitch = 1.45) {
+  waterPose(p);
+  p.hips = [pitch, 0, 0]; p.hipsPos = [0, -0.6, 0]; p.neck = [-0.3, 0, 0]; p.head = [-0.6, 0, 0];
+  return p;
+}
+const DIVE_CLIPS = {
+  swimUnder: [2.4, (t, u) => {
+    const p = diveLying(pose0());
+    p.lT = breastArm(u, 1); p.rT = breastArm(u, -1); p.lPole = [1, 0, -0.6]; p.rPole = [-1, 0, -0.6];
+    // the frog kick: the knees drawn up and out as the arms go forward, then whipped round and together
+    const draw = env(u, 0.5, 0.68, 0.74, 0.86);
+    p.thighR = [-0.75 * draw, 0, -0.5 * draw]; p.thighL = [-0.75 * draw, 0, 0.5 * draw];
+    p.shinR = [0.1 + 1.6 * draw, 0, 0]; p.shinL = [0.1 + 1.6 * draw, 0, 0];
+    p.footR = [0.6 - 0.9 * draw, 0, 0]; p.footL = [0.6 - 0.9 * draw, 0, 0];
+    p.hipsPos = [0, -0.6 + 0.04 * draw, 0];
+    return p;
+  }],
+  finKick: [1.5, (t, u) => {
+    const p = diveLying(pose0()), f = TAU * u;
+    // the arms along his body (the hands by the thighs), a slow, long flutter kick from the hips
+    p.lT = [0.24, 1.0, 0.12]; p.rT = [-0.24, 1.0, 0.12]; p.lPole = [1, 0, 0.3]; p.rPole = [-1, 0, 0.3];
+    p.thighR = [0.32 * sin(f), 0, -0.04]; p.thighL = [-0.32 * sin(f), 0, 0.04];
+    p.shinR = [0.25 + 0.22 * sin(f + 0.9), 0, 0]; p.shinL = [0.25 - 0.22 * sin(f + 0.9), 0, 0];
+    p.footR = [0.95, 0, 0]; p.footL = [0.95, 0, 0];
+    p.spine = [0.03 * sin(f), 0, 0];
+    return p;
+  }],
+  duckDive: [1.2, (t, u) => {
+    const p = diveLying(pose0(), 2.2), f = TAU * u;
+    // head and arms down, the hips up over them, the legs straight up and kicking
+    p.head = [-0.15, 0, 0]; p.neck = [-0.1, 0, 0];
+    p.lT = [0.1, 1.95, 0.2 + 0.08 * sin(f)]; p.rT = [-0.1, 1.95, 0.2 + 0.08 * sin(f)];
+    p.thighR = [0.15 * sin(f), 0, 0]; p.thighL = [-0.15 * sin(f), 0, 0]; p.shinR = [0.1, 0, 0]; p.shinL = [0.1, 0, 0];
+    p.footR = [0.9, 0, 0]; p.footL = [0.9, 0, 0];
+    return p;
+  }],
+  surfacing: [1.2, (t, u) => {
+    const p = diveLying(pose0(), 0.75), f = TAU * u;
+    // up ahead of him, looking up at the light, the arms sweeping down, a kick
+    p.head = [-0.55, 0, 0]; p.neck = [-0.3, 0, 0];
+    const a = 0.5 + 0.5 * sin(f);
+    p.lT = lerpA([0.35, 1.7, 0.25], [0.3, 1.15, 0.15], a); p.rT = lerpA([-0.35, 1.7, 0.25], [-0.3, 1.15, 0.15], a);
+    p.thighR = [-0.25 + 0.3 * sin(f), 0, -0.05]; p.thighL = [-0.25 - 0.3 * sin(f), 0, 0.05];
+    p.shinR = [0.5 + 0.3 * sin(f + 1), 0, 0]; p.shinL = [0.5 - 0.3 * sin(f + 1), 0, 0]; p.footR = [0.7, 0, 0]; p.footL = [0.7, 0, 0];
+    return p;
+  }],
+  gearUp: [4.0, (t, u) => {
+    const p = kneelLegs(waterPose(pose0())), f = TAU * u;
+    // on one knee by the water: the hands at the chest (the set's harness, the mouthpiece), then down at the left foot (a fin)
+    const low = env(u, 0.45, 0.55, 0.85, 0.95);
+    p.spine = [0.15 + 0.45 * low, 0, 0]; p.head = [0.15 + 0.2 * low, 0, 0];
+    p.lT = lerpA([0.12, 1.3 + 0.03 * sin(2 * f), 0.24], [0.14, 0.42, 0.42], low);
+    p.rT = lerpA([-0.12, 1.32 - 0.03 * sin(2 * f), 0.24], [0.04, 0.45, 0.45], low);
+    p.lPole = [1, -0.5, 0]; p.rPole = [-1, -0.5, 0];
+    return p;
+  }],
+};
+Object.assign(CLIPS, DIVE_CLIPS);
+Object.assign(WATER, { swimUnder: 1, finKick: 1, duckDive: 1, surfacing: 1 });
+/** The diving clips (ai/dive.js), gearing up at the edge with them. */
+export const DIVE = { swimUnder: 1, finKick: 1, duckDive: 1, surfacing: 1, gearUp: 1 };
+Object.assign(MOVING, { swimUnder: 0.5, finKick: 0.8 });
+Object.assign(LABELS, { swimUnder: 'Swim under water (breaststroke, frog kick)', finKick: 'Fin kick (under water)', duckDive: 'Duck dive', surfacing: 'Surfacing', gearUp: 'Gear up (diving kit, at the edge)' });
+Object.assign(NO_UNARMED, DIVE);
+Object.assign(NO_STYLE, DIVE);
 // in a boat (boatClipPose): at work the weapon is slung, as at a desk; seated, up with it, as kneeling
 Object.assign(NO_UNARMED, BOAT_WORK);
 Object.assign(NO_STYLE, BOAT_WORK);
@@ -4542,6 +4616,75 @@ export class OperatorFigure {
       return m;
     }) && flags.pack;
     flags.drone = !!k.drone && flags.pack;
+    // diving kit (ai/dive.js), drawn when worn (packed, it is inside the pack): the mask over the
+    // eyes, fins on the boots, the rebreather on the chest, the scuba tank on the back, lead on the
+    // belt, the dry bag; the pack towed in it (or left at the edge) is off his back
+    const dw = !!k.diveWorn;
+    const breather = k.breather ?? 'none';
+    flags.diveMask = show('diveMask', dw && (k.fins || breather !== 'none'), () => {
+      const g = new THREE.Group();
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.075, 0.03), mat('#1b2a33', { roughness: 0.15, metalness: 0.3, transparent: true, opacity: 0.85 }));
+      visor.position.set(0, 0.06, 0.115);
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.09, 0.03), this.A.black);
+      skirt.position.set(0, 0.06, 0.1);
+      const strap = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.008, 6, 20), this.A.black);
+      strap.rotation.x = Math.PI / 2;
+      strap.position.set(0, 0.06, 0.0);
+      g.add(skirt, visor, strap);
+      this.headFrame.add(g);
+      return g;
+    });
+    const fin = (side) => () => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.015, 0.5), mat('#202422'));
+      m.position.copy(T([side === 'L' ? 0.125 : -0.125, 0.03, 0.3], 'foot' + side));
+      m.castShadow = true;
+      this.bones['foot' + side].add(m);
+      return m;
+    };
+    flags.fins = show('finL', dw && k.fins, fin('L'));
+    show('finR', dw && k.fins, fin('R'));
+    flags.rebreather = show('rebreather', dw && breather === 'rebreather', () => {
+      const g = new THREE.Group();
+      box(0.3, 0.3, 0.11, '#3b4236', [0, 1.24, 0.25], 'chest', g);
+      box(0.12, 0.08, 0.06, '#2a2d2a', [0, 1.4, 0.3], 'chest', g); // the canister's top, the valve
+      const hose = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.015, 6, 14, Math.PI), this.A.black);
+      hose.position.copy(T([0, 1.47, 0.24], 'chest'));
+      hose.rotation.y = Math.PI / 2;
+      g.add(hose);
+      this.bones.chest.add(g);
+      return g;
+    });
+    flags.scuba = show('scubaTank', dw && breather === 'scuba', () => {
+      const g = new THREE.Group();
+      const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.52, 14), mat('#b8b9a8', { roughness: 0.45, metalness: 0.5 }));
+      tank.position.copy(T([0, 1.2, -0.26], 'chest'));
+      tank.castShadow = true;
+      const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.07, 8), mat('#3a3a3a', { metalness: 0.7 }));
+      valve.position.copy(T([0, 1.5, -0.26], 'chest'));
+      g.add(tank, valve);
+      box(0.3, 0.32, 0.03, '#202422', [0, 1.22, -0.17], 'chest', g); // the harness's back plate
+      this.bones.chest.add(g);
+      return g;
+    });
+    flags.weights = show('leadBelt', dw && (k.weights ?? 0) > 0, () => {
+      const g = new THREE.Group();
+      for (const x of [-0.13, 0.13]) box(0.07, 0.05, 0.04, '#55585c', [x, 1.0, 0.13], 'hips', g);
+      this.bones.hips.add(g);
+      return g;
+    });
+    flags.drybag = show('drybag', dw && k.drybag, () => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.36, 12), mat('#5d6a3a'));
+      m.rotation.z = Math.PI / 2;
+      m.position.copy(T([0, 0.93, -0.19], 'hips'));
+      this.bones.hips.add(m);
+      return m;
+    });
+    if (dw && k.pack !== 'none' && breather === 'scuba') {
+      // (the tank where the pack was: the pack towed behind in the dry bag)
+      pack.visible = false;
+      flags.pack = false;
+    }
+    flags.towed = dw && !!k.drybag && k.pack !== 'none';
     this.kitFlags = flags;
     return flags;
   }

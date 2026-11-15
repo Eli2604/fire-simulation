@@ -15,10 +15,10 @@
  */
 import { squadMen } from '../models/squad.js';
 import { guardKit } from '../models/enemy.js';
-import { ROLES, ROLE_KEYS, KIT_FIELDS, PRIMARY, SIDEARM, PACK, ARMOUR, RADIO, MEDKIT, loadSummary } from '../ai/loadout.js';
+import { ROLES, ROLE_KEYS, KIT_FIELDS, PRIMARY, SIDEARM, PACK, ARMOUR, RADIO, MEDKIT, BREATHER, loadSummary } from '../ai/loadout.js';
 import { LEVELS, LEVEL_LABELS, RANKS, RANK_ABBR, describeLevel } from '../ai/experience.js';
 
-const OPTION_LABELS = { primary: PRIMARY, sidearm: SIDEARM, pack: PACK, armour: ARMOUR, radio: RADIO, medkit: MEDKIT };
+const OPTION_LABELS = { primary: PRIMARY, sidearm: SIDEARM, pack: PACK, armour: ARMOUR, radio: RADIO, medkit: MEDKIT, breather: BREATHER };
 /** lil-gui options as { label: value } (the catalogue's labels). */
 const optionsOf = (key) => {
   const T = OPTION_LABELS[key];

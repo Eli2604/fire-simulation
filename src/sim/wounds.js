@@ -71,6 +71,8 @@ export function armourStops(e, zone, kind, rand = Math.random) {
 
 /** Which part of a standing person at e (facing e.yaw) a point p is in, or null if it misses. */
 export function hitZone(e, p) {
+  // a man well under water (ai/dive.js): a rifle round loses its energy within a metre of water
+  if (e.submerged > 0.9) return null;
   const dy = p[1] - e.p[1];
   if (dy < 0 || dy > 1.85) return null;
   const dx = p[0] - e.p[0];
