@@ -129,7 +129,7 @@ const rule = (kind, act) => {
 export function handKind(m = {}) {
   if (m.handling && HANDLING[m.handling]) return m.handling;
   if (m.weapon === 'torch' || m.loadout === 'torch') return 'torch';
-  if (m.weapon === 'secondary') return 'carbine';
+  if (m.weapon === 'secondary') return m.secArms === 'pistol' ? 'pistol' : 'carbine';
   if (m.weapon === 'knife') return 'knife';
   if (m.weapon === 'fists' || m.loadout === 'unarmed') return 'unarmed';
   if (m.weapon === 'none') return 'none';

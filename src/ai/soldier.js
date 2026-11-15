@@ -48,7 +48,8 @@ export const ARMS = {
 
 // Base times (s) of the animations (operator/rig.js), scaled by the expertise
 // (operator/rig.js: RELOAD_TIME, SWITCH_TIME, STAB_HIT, THROW_FLASH_RELEASE)
-export const TIMES = { reload: 2.8, toKnife: 1.6, toRifle: 1.8, toSecondary: 2.0, stab: 0.7, stabHit: 0.36, flash: 1.6, flashRelease: 1.0 };
+// (toPistol: the long gun slung, the sidearm pistol drawn from its holster: operator/rig.js SWITCH_TIME.pistol)
+export const TIMES = { reload: 2.8, toKnife: 1.6, toRifle: 1.8, toSecondary: 2.0, toPistol: 1.7, stab: 0.7, stabHit: 0.36, flash: 1.6, flashRelease: 1.0 };
 export const KNIFE_REACH = 1.6; // m: he stabs from here
 const CLOSE = 2.0; // m: an enemy this close (in arm's reach and a step): the knife
 const CLEAR = 4.5; // m: no one this close any more: back to the rifle
@@ -92,7 +93,7 @@ export const skillOf = (m) => SKILL[m.skill] ?? SKILL.regular;
  */
 export function recoilOf(m) {
   const wk = weaponKind(m);
-  const kind = ['mg', 'carbine', 'shotgun', 'pistol'].includes(wk) ? wk : 'rifle';
+  const kind = ['mg', 'carbine', 'shotgun', 'pistol', 'marksman'].includes(wk) ? wk : 'rifle';
   const key = `${kind}|${m.recoil ?? 1}|${m.fireMode ?? ''}`;
   if (m.recoilSpec?.key !== key) m.recoilSpec = { ...recoilSpec(kind, { recoil: m.recoil, mode: m.fireMode }), key };
   return m.recoilSpec;
@@ -135,7 +136,8 @@ function current(m) {
 
 /** Can he fire a round now? (a round in the magazine, the gun in his hands) */
 export function canShoot(m) {
-  if (m.weapon === 'knife' || m.weapon === 'torch' || m.weapon === 'fists' || m.switching) return false;
+  // (swimming: the weapon slung on his back, ai/swim.js)
+  if (m.weapon === 'knife' || m.weapon === 'torch' || m.weapon === 'fists' || m.switching || m.swimming) return false;
   return m[current(m).mag] > 0;
 }
 
@@ -225,10 +227,12 @@ export function manage(sq, m, dt, enemies) {
 export function switchTo(sq, m, to) {
   if (m.weapon === to || m.switching) return;
   const K = skillOf(m);
-  const dur = (to === 'knife' ? TIMES.toKnife : to === 'secondary' ? TIMES.toSecondary : TIMES.toRifle) * K.reload;
+  // (his sidearm a pistol: from the holster on his thigh, the long gun slung first; the rig's drawPistol)
+  const pistol = to === 'secondary' && m.secArms === 'pistol';
+  const dur = (to === 'knife' ? TIMES.toKnife : pistol ? TIMES.toPistol : to === 'secondary' ? TIMES.toSecondary : TIMES.toRifle) * K.reload;
   m.switching = { to, from: m.weapon, until: sq.time + dur };
   m.reloadUntil = 0;
-  sq.setAnim(m, to === 'knife' ? 'drawKnife' : to === 'secondary' ? 'drawSecondary' : m.weapon === 'knife' ? 'sheathKnife' : 'drawRifle', dur);
+  sq.setAnim(m, to === 'knife' ? 'drawKnife' : pistol ? 'drawPistol' : to === 'secondary' ? 'drawSecondary' : m.weapon === 'knife' ? 'sheathKnife' : 'drawRifle', dur);
 }
 
 /** An unarmed man takes on an enemy within this (m). */

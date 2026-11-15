@@ -31,6 +31,10 @@
  *  - hears(listener, noise): within his hearing (the range times his hearing factor, plus his
  *    pad), less through walls (each wall between takes WALL_DB off), and where it came from is
  *    uncertain: the further and fainter, the further off his guess (the place to investigate).
+ *  - Footsteps (stepNoise): one rule for the soldiers (ai/squad.js footfall, each stride) and the
+ *    player (walk/walk.js): the pace (crawl, sneak, walk, run, sprint), the ground (hard rings, soft
+ *    deadens, wading splashes), the rattle of what he carries (ai/loadout.js noiseDb) and his care
+ *    (stealth): a loaded squad running is heard far further off than a light one crawling.
  *
  * Darkness: another part of the simulation (time of day: the sun and the moon) may give the world
  * its light; ambientLight reads whatever is there (world.lightAt(p), world.light.level,
@@ -360,7 +364,7 @@ export const WALL_DB = 12, WALL_MAX = 40;
 export const LOUDNESS = {
   rifle: 157, carbine: 152, mg: 159, shotgun: 156, pistol: 150, suppressed: 125,
   explosion: 180, grenade: 175, flashbang: 172, rocket: 165, bow: 55,
-  footstepCrawl: 30, footstepSneak: 38, footstepWalk: 45, footstepRun: 57,
+  footstepCrawl: 30, footstepSneak: 38, footstepWalk: 45, footstepRun: 57, footstepSprint: 61,
   voice: 60, shout: 85, radio: 58, door: 75, glass: 90, impact: 80,
 };
 /** How far a sound of loudness dB carries (m), to the threshold of hearing. */
@@ -378,10 +382,40 @@ export function rangeFromDb(dB) {
 export const dbFromRange = (r) => THRESHOLD + 20 * log10(max(1, r)) + ALPHA * max(1, r);
 /** Footsteps' loudness by pace (m/s) and the ground (soft: grass, soil, sand; hard: stone, metal). */
 export function footstepDb(speed, surface = 'soil') {
-  if (!(speed > 0.05)) return 0;
-  const base = speed > 2.2 ? LOUDNESS.footstepRun : speed > 0.9 ? LOUDNESS.footstepWalk : speed > 0.45 ? LOUDNESS.footstepSneak : LOUDNESS.footstepCrawl;
-  const hard = /stone|concrete|metal|steel|tile|marble|wood|plank|deck|gravel|glass/i.test(surface) ? 6 : /water|snow|grass|leaves|moss|carpet/i.test(surface) ? -4 : 0;
-  return base + hard;
+  return stepNoise({ speed, surface }).step;
+}
+/** The pace of a man moving at speed (m/s): crawl (o.crawl), sneak, walk, run, sprint. */
+export function paceOf(speed, crawl = false) {
+  if (!(speed > 0.05)) return null;
+  if (crawl) return 'crawl';
+  return speed > 4.2 ? 'sprint' : speed > 2.2 ? 'run' : speed > 0.9 ? 'walk' : speed > 0.45 ? 'sneak' : 'crawl';
+}
+const PACE_DB = { crawl: LOUDNESS.footstepCrawl, sneak: LOUDNESS.footstepSneak, walk: LOUDNESS.footstepWalk, run: LOUDNESS.footstepRun, sprint: LOUDNESS.footstepSprint };
+/** How much of his gear's rattle each pace shakes out of it (a crawl drags and scrapes it; sneaking he holds it still). */
+export const RATTLE_K = { crawl: 0.6, sneak: 0.3, walk: 0.7, run: 1.0, sprint: 1.25 };
+/** The ground's share (dB): hard ground rings, soft ground deadens; water splashes (wading). */
+export function surfaceDb(surface = 'soil') {
+  if (/water|wade|puddle/i.test(surface)) return 5;
+  if (/stone|concrete|metal|steel|iron|tile|marble|wood|plank|deck|gravel|glass|asphalt|brick|rock/i.test(surface)) return 6;
+  if (/snow|grass|leaves|moss|carpet|turf|sand/i.test(surface)) return -4;
+  return 0;
+}
+/**
+ * One footfall's noise (dB at 1 m): { step (the footfall), rattle (his gear), dB (both together),
+ * pace }. pace (or from speed m/s and crawl), surface (the ground's material name: 'concrete',
+ * 'grass', 'water' wading...), gearDb (ai/loadout.js mobility noiseDb: the rattle of what he
+ * carries, more the heavier), stealth (moving with care: a soft foot, his kit held and taped down).
+ * A loaded man sprinting is heard much further than a light one walking, a crawler hardly at all.
+ */
+export function stepNoise({ pace, speed = 0, crawl = false, surface = 'soil', gearDb = 0, stealth = false } = {}) {
+  pace ??= paceOf(speed, crawl);
+  if (!pace) return { step: 0, rattle: 0, dB: 0, pace: null };
+  const step = PACE_DB[pace] + surfaceDb(surface) - (stealth ? 4 : 0);
+  const k = RATTLE_K[pace] * (stealth ? 0.5 : 1);
+  // the rattle: buckles, magazines, the sling swivel, the kit knocking about (louder the more there is)
+  const rattle = gearDb > 0 ? PACE_DB[pace] - 6 + 1.2 * gearDb * k : 0;
+  const dB = rattle > 0 ? 10 * log10(10 ** (step / 10) + 10 ** (rattle / 10)) : step;
+  return { step, rattle, dB, pace };
 }
 /**
  * A sound in the world (for the impact and sound modules to call too): { pos, loudness_dB, kind,
