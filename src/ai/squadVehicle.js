@@ -322,7 +322,8 @@ export function stepBoarding(sq, dt) {
       const who = lead && lead.inVehicle === V ? lead : men.find((m) => m.inVehicle === V);
       const dest = B.dest ?? awayPoint(V, sq.threat ?? B.face, sq.host.retreat ?? {});
       B.dest = dest;
-      V.go(dest);
+      // (a car at a gate calls in with the squad's call sign; falling back under fire it rams a gate refused: ai/carDriver.js)
+      V.go(dest, { callsign: sq.unit, urgent: B.why === 'retreat' && !!sq.threat, log: (s) => vnote(sq, `vehicle:${s}`) });
       const drv = V.driver();
       vnote(sq, `vehicle:depart:${V.kind}${drv ? `:${drv.heliCrew ? drv.role : drv.squad ?? drv.role ?? 'driver'}` : ''}`);
       if (who) sq.say(who, B.why === 'backup' ? `${sq.unit}, mounted up, moving to ${B.call?.unit ?? 'you'}` : `${sq.unit}, all aboard, moving out`, 'order');

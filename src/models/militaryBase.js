@@ -10,7 +10,8 @@ import { PLACE } from './composite.js';
  *    only when you go in by its door (E at the door: a portal to `doorTo`).
  *  - barracks: a long single-storey hut (walls, windows, two doors that open, a gable roof).
  *  - helipad: a concrete pad with its yellow ring and the white H, lights round its edge.
- *  - guardPost: the gate: a sentry booth beside the road and a barrier arm across it (a door: E).
+ *  - guardPost: the gate: a sentry booth beside the road and a barrier arm across it (a door: E),
+ *    run by sim/gates.js: drivers radio the base to have it raised, a sentry works it.
  *  - blastWall: a run of concrete T-wall panels (the perimeter).
  *  - road: a strip of tarmac (or hardstanding) laid in the ground's top layer: no step up.
  *
@@ -208,6 +209,10 @@ export const guardPost = {
     roadWidth: { value: 6, min: 3, max: 12, step: 0.5, label: 'Road width the barrier spans (m)' },
     side: { value: '-z', options: ['-z', '+z'], label: 'Booth on the side of the road' },
     barrierOpen: { value: false, label: 'Barrier up' },
+    unit: { value: 'Lima', options: ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Kilo', 'Lima', 'none'], label: "Sentries' call sign (who mans it)" },
+    callsign: { value: 'Base', label: 'Base call sign (the radio a driver calls)' },
+    remote: { value: true, label: 'Base can raise it remotely (no sentry needed)' },
+    lockdown: { value: false, label: 'Lockdown (every request denied)' },
   },
   build(p, { h }) {
     const thin = thinOf(h);
@@ -238,7 +243,14 @@ export const guardPost = {
     }
     // sandbags before the booth
     prims.push({ shape: 'box', min: [bx + B + 0.2, 0, bz - 0.9], max: [bx + B + 0.8, 0.9, bz + 0.9], material: 'quarrySand', color: [0.62, 0.55, 0.4], anchored: true });
-    return { prims };
+    // the gate as a thing that is run (sim/gates.js): the barrier's door, its pivot on the post and
+    // its tip, the road's way through it (+x: out of the base), where a sentry works it (between
+    // the sandbags and the post), who mans it, the base's call sign
+    const gates = [{
+      name: 'gate barrier', p: [0, 1, 0], dir: [1, 0, 0], half, pivot: [0, 1.0, pz], tip: [0, 1.0, -s * half], control: [-0.5, 0, s * (half + 0.8)], booth: [bx, 0, bz],
+      unit: p.unit === 'none' ? null : p.unit, callsign: p.callsign || 'Base', remote: !!p.remote, lockdown: !!p.lockdown,
+    }];
+    return { prims, gates };
   },
 };
 
