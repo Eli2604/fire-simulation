@@ -867,6 +867,7 @@ export class Walkthrough {
     this.sound.update({
       listener: { pos: [cam.position.x, cam.position.y, cam.position.z], forward: [fwd.x, fwd.y, fwd.z], up: [up.x, up.y, up.z] },
       flying: true,
+      world: w, // the space around the camera: reverb, echoes, walls between (audio/roomReverb.js)
       fireSources: sim.fireAudio?.sources,
       fireVersion: sim.fireAudio?.version,
       wind: { speed: sim.weather?.windSpeed ?? 0 },
@@ -1918,6 +1919,7 @@ export class Walkthrough {
     const fl = v.fireLight;
     this.sound.update({
       listener: { pos: head, forward: [fwd.x, fwd.y, fwd.z], up: [up.x, up.y, up.z] },
+      world: w, // the space around you: reverb, echoes, walls between (audio/roomReverb.js)
       fire: sim.stats.hrr > 0 ? { pos: [fl.position.x, fl.position.y, fl.position.z], hrr: sim.stats.hrr } : null,
       // the fire per region, from the simulation (sim/fireAudio.js), and what carries the sound
       fireSources: sim.fireAudio?.sources,
