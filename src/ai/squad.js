@@ -95,6 +95,7 @@ import { pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES, recoilOf, skillOf } from './soldier.js';
 import { stepClimb } from './recoil.js';
 import { gaitK } from './weapons.js';
+import { stepStamina } from './loadout.js';
 import { stepKnocked } from './melee.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
@@ -116,6 +117,7 @@ const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-we
 /** s: a hostile seen is remembered this long (counted by the leader: knownHostiles); m: a friendly team this near shares what it sees. */
 export const KNOWN_T = 30, SHARE_R = 60;
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
+const ROLE_NAME = { marksman: 'the marksman', grenadier: 'the grenadier', medic: 'the medic', radio: 'the radio operator', engineer: 'the engineer', rope: 'the rope man' };
 export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
 
 export class SquadAI {
@@ -749,6 +751,8 @@ export class SquadAI {
   }
   /** What the radio calls him ("rifleman two"). */
   name(m) {
+    // (a role of his own from the squad's settings, ai/loadout.js ROLES: the medic, the marksman...)
+    if (ROLE_NAME[m.squadRole]) return ROLE_NAME[m.squadRole];
     return NAME[m.squad] ?? 'rifleman';
   }
   busy(m) {
@@ -765,6 +769,8 @@ export class SquadAI {
   move(m, dt) {
     m.moving = false;
     m.speed = 0;
+    // his load and his wind (ai/loadout.js; with a loadout from the scene): running drains him, rest brings it back
+    if (m.paceK) m.tired = stepStamina(m, dt, m.path && !m.trav && !this.busy(m) ? (m.crawling ? 'crawl' : m.moveMode) : 'still');
     if (m.trav?.ext) return; // (a roll the dragon's snatch carries him through: ai/dragonAir.js)
     if (m.trav) return this.traverse(m, dt);
     if (!m.path || this.busy(m)) return;
@@ -811,6 +817,8 @@ export class SquadAI {
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
     // (the weapon he carries sets his pace too, ai/weapons.js: a machine gun or the flame gun's tanks slow his run)
     let sp = SPEED[mode] * (m.speedFactor ?? 1) * gaitK(m, mode) * Math.max(0, Math.cos(dy)) ** 2;
+    // (and what he carries: ai/loadout.js, × a rifleman's pace; spent from running, slower still)
+    if (m.paceK) sp *= mode === 'run' ? m.paceK.run * (m.tired ?? 1) : m.paceK.walk;
     // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop); only in
     // action (a threat, something to look into): on a routine move they walk round, as on patrol
     const alert = this.alert();
@@ -1459,7 +1467,7 @@ export class SquadAI {
       if (this.on && this.time > 1.5) this.postLookout();
       for (const m of ms) {
         if (m.dead || this.host.ownMove?.(m)) continue;
-        m.squadInit ??= (m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
+        m.squadInit ??= (kit(m), m.arrived = true, m.grenades = m.kitGiven ? m.kit.frag : 2, m.coverCell = -1, m.track = [], true);
         kit(m);
         this.release(m, null);
         if (!this.busy(m)) manage(this, m, dt, this.host.hostiles?.() ?? []);
@@ -1502,7 +1510,7 @@ export class SquadAI {
         continue;
       }
       if (this.host.ownMove?.(m)) continue;
-      m.squadInit ??= (m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
+      m.squadInit ??= (kit(m), m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = m.kitGiven ? m.kit.frag : 2, m.coverCell = -1, m.track = [], true);
       m.track ??= [];
       kit(m);
       this.dodge(m);

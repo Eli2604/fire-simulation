@@ -24,6 +24,9 @@ export default {
     coal: { value: 8, min: 0, max: 30, step: 0.5, label: 'Charcoal in the forge (kg)' },
     fireTemp: { value: 900, min: 20, max: 1400, step: 10, label: 'Fuel bed at the start (°C)' },
     smith: { value: true, label: 'The smith at work' },
+    // the smith himself (sim/smithy.js): how briskly he works, how much steel a blow moves
+    smithPace: { value: 1, min: 0.5, max: 2, step: 0.05, label: 'Work pace (× his timings and hammer rhythm)', group: 'The smith' },
+    smithSkill: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Skill (how much a blow shapes the blade: fewer heats, 0.5 a journeyman)', group: 'The smith' },
     shopDoorOpen: { value: true, label: 'Shop door open' },
     weapons: { value: 3, min: 0, max: 14, step: 1, label: 'Finished weapons in the shop at the start' },
   },
@@ -109,6 +112,8 @@ export default {
       coal: p.coal,
       fireTemp: p.fireTemp,
       smith: p.smith,
+      pace: p.smithPace ?? 1,
+      skill: p.smithSkill ?? 0.5,
       weapons: p.weapons,
       fire: at(-2.4, 0.72, -2.2), // the top of the fuel bed
       stations: {

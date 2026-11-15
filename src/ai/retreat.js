@@ -60,6 +60,7 @@
  * them to this; the coverers have none and fight as the squad does.
  */
 import { roundsLeft, aimPoint, spend, weaponKind, skillOf, canShoot, TIMES } from './soldier.js';
+import { EXPERIENCE } from './experience.js';
 import { exposedTo, srand } from './strategy.js';
 import { retreatCase, startWord, stepWord, hasWord } from './retreatRadio.js';
 import { vehicleForRetreat, guardSlots, startBoarding, goingMen, vnote } from './squadVehicle.js';
@@ -75,7 +76,7 @@ export const WIRE_E = 1.0e6; // J: the charge on the wire (~0.2 kg of explosive)
 export const WIRE_H = 0.15; // m: the wire above the floor
 const WOUND_SCATTER = 0.05; // m of scatter a metre of range, at the worst, a wounded man's aim
 export const RETREAT_DEFAULTS = { order: false, auto: true, rally: null, casualties: 'auto', tripwire: true, wires: 1, dropPack: true, vehicle: 'auto' };
-const SKILL_CARRY = { recruit: -0.35, regular: 0, veteran: 0.3, elite: 0.45 };
+const SKILL_CARRY = Object.fromEntries(Object.entries(EXPERIENCE).map(([k, E]) => [k, E.carry])); // (ai/experience.js)
 const NAME = { CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two', UAV: 'the drone operator' };
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const cen = (l) => l.reduce((c, m) => [c[0] + m.p[0] / l.length, c[1] + m.p[1] / l.length, c[2] + m.p[2] / l.length], [0, 0, 0]);

@@ -575,6 +575,11 @@ export class EnemyRenderer {
     if (!sq) f.setAim(null);
     // the weapon light (ai/flashlight.js: e.lightSrc 'weapon'); the hand torch is the figure's left hand (drive.js);
     // a rope coil on the pack while he carries one (ai/ropeTeam.js m.ropes: gone once lowered, in his hands as he throws it)
+    // the loadout the scene gave him (ai/loadout.js: pack, helmet and night vision, radio, armour, grenades...), drawn once
+    if (e.kitGiven && e.kit && f.kitShown !== e.kit && f.setLoadout) {
+      f.kitShown = e.kit;
+      f.setLoadout(e.kit);
+    }
     f.setGear({ thermal: !!e.thermal, light: e.lightSrc !== undefined ? !!e.lightOn && e.lightSrc === 'weapon' : !!e.light, rope: carriesCoil(e) });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;

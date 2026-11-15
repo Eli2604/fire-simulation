@@ -29,7 +29,7 @@
  */
 import { mono, clear } from './parkour.js';
 import { handKind, evadeKind } from './weapons.js';
-import { SKILL } from './soldier.js';
+import { nerveOf } from './experience.js';
 
 /** The rolls: their clip duration (s) and the distance the root goes (m). */
 export const ROLLS = {
@@ -274,8 +274,8 @@ export function worthRolling(m, t, rand = Math.random, now = 0) {
     // (once for each crack past him)
     if (m.fireSeen === t.time) return false;
     m.fireSeen = t.time;
-    // (a recruit flinches into a roll more readily than a veteran: ai/soldier.js SKILL nerve)
-    return rand() < (m.inCover ? 0.1 : 0.45) * (SKILL[m.skill]?.nerve ?? 1);
+    // (a recruit flinches into a roll more readily than a veteran, a disciplined man less: ai/experience.js nerveOf)
+    return rand() < (m.inCover ? 0.1 : 0.45) * nerveOf(m);
   }
   return true;
 }

@@ -141,7 +141,7 @@ export function placeSmithy(s, toWorld, rot, owner, Ta = 20) {
     bellowsBox: toWorld(...s.bellowsBox.p),
     trough: { min: tmin.map((v, k) => Math.min(v, tmax[k])), max: tmin.map((v, k) => Math.max(v, tmax[k])) },
     slots: s.rackSlots.map((r) => ({ ...r, p: toWorld(...r.p) })),
-    init: { coal: s.coal, fireTemp: s.fireTemp, smith: s.smith, weapons: s.weapons },
+    init: { coal: s.coal, fireTemp: s.fireTemp, smith: s.smith, weapons: s.weapons, pace: s.pace, skill: s.skill },
   };
   return initSmithy(S, Ta);
 }
@@ -157,6 +157,8 @@ export function initSmithy(S, Ta = 20) {
   S.sparks = 0;
   for (let k = 0; k < (I.weapons ?? 0); k++) shelve(S, { kind: WEAPONS[k % WEAPONS.length].kind, hardness: 55 + (k % 3), temper: WEAPONS[k % WEAPONS.length].temper, made: -1 });
   const st = S.stations;
+  S.pace = I.pace ?? 1;
+  S.skill = I.skill ?? 0.5;
   S.smith = I.smith === false ? null : { p: st.forge.p.slice(), yaw: yawTo(st.forge.p, st.forge.face), state: 'start', t: 0, path: null, then: null, pose: 'stand', phase: 0, blows: 0 };
   S.blade = null;
   S.water = { voxels: null, T: Ta, steam: 0, heat: 0 };
@@ -357,7 +359,7 @@ function stepSmith(S, dt, env) {
   const sm = S.smith;
   const F = S.forge;
   const ev = (type, extra = {}) => env.event?.({ type, time: env.time ?? S.time, ...extra });
-  sm.t += dt;
+  sm.t += dt * (S.pace ?? 1); // (his work pace: the scene's setting, models/smithy.js)
   const b = S.blade;
   switch (sm.state) {
     case 'start': {
@@ -455,11 +457,12 @@ function stepSmith(S, dt, env) {
       sm.pose = 'hammer';
       b.place = 'anvil';
       const prev = sm.phase;
-      sm.phase += dt / BLOW;
+      sm.phase += (dt * (S.pace ?? 1)) / BLOW;
       if (Math.floor(sm.phase) > Math.floor(prev)) {
         // a blow: the hotter the steel, the more it moves
         const soft = Math.min(1.25, Math.max(0.05, (b.T - 650) / (HEATS.forging - 650)));
-        b.progress = Math.min(1, b.progress + soft / (b.heats * 12));
+        // (a skilled smith moves more steel a blow: models/smithy.js smithSkill, 0.5 as he always was)
+        b.progress = Math.min(1, b.progress + (soft / (b.heats * 12)) * (0.5 + (S.skill ?? 0.5)));
         sm.blows++;
         const top = S.stations.anvil.top;
         ev('impact', { pos: top.slice(), materials: ['steel', 'steel'], energy: 60, mass: 1.5, speed: 6, radius: 0.02, size: 0.4, sizeA: 0.3, name: 'anvil', kind: 'hammer', quiet: true });

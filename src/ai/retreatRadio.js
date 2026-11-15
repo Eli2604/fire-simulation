@@ -61,6 +61,7 @@ import { badlyHit } from './soldier.js';
 import { srand } from './strategy.js';
 import { LOUDNESS, wallLoss } from './perception.js';
 import { mountForBackup } from './squadVehicle.js';
+import { experienceOf, moraleK } from './experience.js';
 
 /** How much each kind of hostile counts for, against one man. */
 export const STRENGTH = { man: 1, vehicle: 4, tank: 5, helicopter: 6, jet: 6, dragon: 8 };
@@ -128,8 +129,11 @@ export function retreatCase(sq, a, o) {
   const now = sq.host.now?.() ?? sq.time;
   const lost = ms.filter((m) => m.dead || m.down || badlyHit(m)).length;
   const wounded = al.filter((m) => m.down || badlyHit(m)).length;
-  const cracked = al.filter((m) => (m.lastHitT != null && now - m.lastHitT < 6) || (m.shotAt && now - m.shotAt.time < 3)).length;
+  // (rounds past him keep a man down longer the greener he is: ai/experience.js suppress)
+  const cracked = al.filter((m) => (m.lastHitT != null && now - m.lastHitT < 6) || (m.shotAt && now - m.shotAt.time < 3 * experienceOf(m).suppress)).length;
+  // (the team's morale: how far outgunned before they pull out; 0.5 → as it always was)
   const cmd = ms.find((m) => m.squad === 'CMD');
+  const mk = moraleK(cmd ?? al[0]);
   const cmdLost = !!cmd && (cmd.dead || cmd.down || badlyHit(cmd));
   // flanked: enemies well off the line to the threat, or spread right round them
   const c = cen(al.length ? al : ms);
@@ -147,7 +151,7 @@ export function retreatCase(sq, a, o) {
   const reasons = [];
   if (cmdLost && S >= Math.max(2, fit - 1)) reasons.push('the commander is down');
   if (wounded >= 1 && S >= 2 && S >= fit) reasons.push('heavy casualties');
-  if ((E.heavy && S >= 2 * Math.max(1, fit)) || S >= 3 * Math.max(1, fit)) reasons.push('outgunned');
+  if ((E.heavy && S >= 2 * mk * Math.max(1, fit)) || S >= 3 * mk * Math.max(1, fit)) reasons.push('outgunned');
   if (flanked && S >= 2 && S + 1 >= fit) reasons.push('flanked');
   if (cracked >= 2 && S >= 2 && S >= fit) reasons.push('pinned down');
   if ((a.ammo ?? 1) < 0.12 && S >= 1) reasons.push('low on ammunition');

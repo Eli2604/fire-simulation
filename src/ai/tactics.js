@@ -189,9 +189,18 @@ export function junctionAt(sq, p) {
 
 /* ------------------------------------------------------------------ groups and formations */
 
-function slotsFor(type, n) {
+export function slotsFor(type, n) {
   if (type === 'square' && n > 5) type = 'wedge';
-  return SLOTS[type].slice(0, n).concat(Array.from({ length: Math.max(0, n - SLOTS[type].length) }, (_, i) => [0, -GAP * (i + 1), 180]));
+  const S = SLOTS[type];
+  if (n <= S.length) return S.slice(0, n);
+  // more men than the shape has places (a squad of up to 12, models/squad.js): another of the same
+  // shape behind the first (two fire teams' wedges), and so on
+  const ys = S.map((s) => s[1]);
+  const depth = Math.max(...ys) - Math.min(...ys) + GAP;
+  return Array.from({ length: n }, (_, i) => {
+    const s = S[i % S.length], k = Math.floor(i / S.length);
+    return [s[0], s[1] - k * depth, k && s[2] === 0 ? 180 : s[2]];
+  });
 }
 
 /** The formation for n men: moving or at a halt. */

@@ -50,6 +50,7 @@ import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
 import { TORCH_T } from '../ai/flashlight.js';
 import { FAST, ZIP, RAPPEL_QUICK, ROPE_T } from '../ai/rope.js';
 import { RT_T } from '../ai/retreat.js';
+import { PRIMARY as KIT_PRIMARY, fullKit } from '../ai/loadout.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -3239,6 +3240,7 @@ export class OperatorFigure {
     thermal.add(tm, tl, arm);
     thermal.visible = false;
     hf.add(thermal);
+    this.headFrame = hf; // (night vision and other loadout parts on the head: setLoadout)
     this.lightOn = false;
     // the hand torch (ai/flashlight.js): in its pouch on the left of the belt, or in the left hand
     const tMat = new THREE.MeshStandardMaterial({ color: '#1c1e21', roughness: 0.45, metalness: 0.6 });
@@ -3979,7 +3981,7 @@ export class OperatorFigure {
       }
     } else {
       this.flashHand.visible = false;
-      this.flashBelt.visible = true;
+      this.flashBelt.visible = this.kitFlags?.flash !== false; // (none left in his loadout: setLoadout)
     }
     // the weapon dropped (dropWeapon): it leaves his hands, he is bare-handed
     if (this.dropping && this.shown === 'dropWeapon' && a && a.time >= DROP_T) {
@@ -4109,6 +4111,169 @@ export class OperatorFigure {
       this.parts.pack.add(g);
     }
     this.coil.visible = !!on;
+  }
+  /**
+   * Draw a loadout (ai/loadout.js kit; fields left out: a rifleman's): the backpack (none, an
+   * assault pack, a bigger rucksack with a bedroll), the helmet and night vision on it, the radio
+   * (the pack's antenna; a manpack radio and its long whip), the armour (none, the plate carrier,
+   * heavy: shoulder pads too), the sidearm (the carbine across the back, a holster on the hip, none),
+   * frag and smoke grenades on the carrier, the flash-bang on the belt, the medical kit (an IFAK on
+   * the belt, the medic's bag), water, the hand torch, the knife, a rope coil, a breaching bar, and the
+   * primary (setPrimary; the flame gun and bare hands are a loadout of their own, the figure is made
+   * with them: needsRebuild says so). Simple meshes, made the first time. Returns the flags shown.
+   */
+  setLoadout(kit = {}) {
+    const k = fullKit(undefined, kit);
+    const P = (this.loParts ??= {});
+    const T = (w, bone) => V3(w).sub(REST[bone]);
+    const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...o });
+    const box = (sx, sy, sz, color, at, bone, par = this.bones[bone]) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat(color));
+      m.position.copy(T(at, bone));
+      m.castShadow = true;
+      par.add(m);
+      return m;
+    };
+    const cross = (m, s) => {
+      const red = new THREE.MeshBasicMaterial({ color: '#c8102e' });
+      const a = new THREE.Mesh(new THREE.BoxGeometry(s, s / 3, 0.004), red), b = new THREE.Mesh(new THREE.BoxGeometry(s / 3, s, 0.004), red);
+      a.position.z = b.position.z = -(m.geometry.parameters.depth / 2 + 0.003);
+      m.add(a, b);
+      return m;
+    };
+    const make = (name, fn) => (P[name] ??= fn());
+    const show = (name, on, fn) => {
+      if (!on && !P[name]) return false;
+      make(name, fn).visible = !!on;
+      return !!on;
+    };
+    const flags = {};
+    // the primary on the weapon bone (the flame gun and bare hands need a figure made with them)
+    const want = KIT_PRIMARY[k.primary]?.rig ?? 'rifle';
+    this.needsRebuild = (want === 'torch') !== (this.loadout === 'torch') || (want === 'unarmed') !== (this.loadout === 'unarmed');
+    if (!this.needsRebuild && want !== 'torch' && want !== 'unarmed') this.setPrimary(want);
+    flags.primary = this.needsRebuild ? this.loadout : want;
+    // the pack: none, the assault pack, the rucksack (the pack scaled up about its middle, a bedroll on top)
+    const pack = this.parts.pack, pm = pack.children[0];
+    flags.pack = k.pack !== 'none';
+    pack.visible = flags.pack;
+    const big = k.pack === 'rucksack';
+    const c = T(PACK_C, 'chest');
+    const s = big ? [1.2, 1.45, 1.6] : [1, 1, 1];
+    pm.scale.set(...s);
+    pm.position.set(c.x * (1 - s[0]), c.y * (1 - s[1]) + (big ? 0.03 : 0), c.z * (1 - s[2]) - (big ? 0.02 : 0));
+    flags.rucksack = show('bedroll', big, () => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.42, 12), mat('#4f5a3c'));
+      m.rotation.z = Math.PI / 2;
+      m.position.copy(T([0, 1.6, -0.31], 'chest'));
+      pack.add(m);
+      return m;
+    }) && flags.pack;
+    // the radio: the pack's antenna for a handheld set; a manpack: the set on the pack and a long whip
+    const ant = pack.children.find((m) => m.geometry === this.A.antenna);
+    if (ant) ant.visible = k.radio !== 'none';
+    flags.antenna = k.radio !== 'none' && flags.pack;
+    flags.manpack = show('manpack', k.radio === 'manpack', () => {
+      const g = new THREE.Group();
+      box(0.24, 0.28, 0.09, '#3a4030', [0.0, 1.3, -0.4], 'chest', g);
+      const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.006, 1.0, 6), this.A.black);
+      whip.position.copy(T([0.11, 1.92, -0.4], 'chest'));
+      whip.rotation.z = -0.08;
+      g.add(whip);
+      pack.add(g);
+      return g;
+    }) && flags.pack;
+    // helmet, night vision on it (flipped up)
+    this.parts.helmet.visible = !!k.helmet;
+    flags.helmet = !!k.helmet;
+    flags.nvg = show('nvg', k.nvg && k.helmet, () => {
+      const g = new THREE.Group();
+      const mount = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.02), this.A.black);
+      mount.position.set(0, 0.105, 0.115);
+      g.add(mount);
+      for (const x of [-0.03, 0.03]) {
+        const t = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.019, 0.075, 12), this.A.black);
+        t.rotation.x = Math.PI / 2 - 0.5;
+        t.position.set(x, 0.12, 0.15);
+        g.add(t);
+      }
+      this.headFrame.add(g);
+      return g;
+    });
+    // armour: none, the carrier (soft or plates), heavy (shoulder pads on the upper arms)
+    this.setArmour(k.armour !== 'none');
+    flags.armour = k.armour;
+    const pads = make('shoulders', () =>
+      ['L', 'R'].map((side) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.13, 0.14), mat('#4a4f3e'));
+        m.position.set(0, -0.06, 0);
+        m.castShadow = true;
+        this.bones['upperArm' + side].add(m);
+        return m;
+      }),
+    );
+    for (const m of pads) m.visible = k.armour === 'heavy';
+    flags.shoulders = k.armour === 'heavy';
+    // the sidearm: the carbine across his back, a pistol in a holster on the right hip, or none
+    this.parts.secondary.visible = k.sidearm === 'carbine';
+    flags.sidearm = k.sidearm;
+    flags.holster = show('holster', k.sidearm === 'pistol', () => box(0.05, 0.17, 0.12, '#1d1f1c', [0.215, 0.86, 0.02], 'hips'));
+    // grenades: frags (up to 4 shown) and smokes (up to 2) on the carrier; the flash-bang on the belt
+    const frags = Math.min(4, k.frag ?? 0), smokes = Math.min(2, k.smoke ?? 0);
+    make('frags', () => {
+      const g = new THREE.Group();
+      for (let i = 0; i < 4; i++) {
+        const m = new THREE.Mesh(this.A.grenade ?? new THREE.SphereGeometry(0.028, 10, 8), this.A.grenadeMat ?? this.A.black);
+        m.position.copy(T([-0.16 + 0.055 * i, 1.12, 0.165], 'chest'));
+        g.add(m);
+      }
+      this.bones.chest.add(g);
+      return g;
+    }).children.forEach((m, i) => (m.visible = i < frags));
+    make('smokes', () => {
+      const g = new THREE.Group();
+      for (let i = 0; i < 2; i++) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.1, 10), mat('#7d8270'));
+        m.position.copy(T([0.1 + 0.05 * i, 1.12, 0.165], 'chest'));
+        g.add(m);
+      }
+      this.bones.chest.add(g);
+      return g;
+    }).children.forEach((m, i) => (m.visible = i < smokes));
+    flags.frags = frags;
+    flags.smokes = smokes;
+    flags.flash = (k.flash ?? 0) > 0;
+    this.flashBelt.visible = flags.flash;
+    // medical: an IFAK at the back of the belt; the medic's bag on the left hip (a red cross on each)
+    flags.ifak = show('ifak', k.medkit === 'ifak', () => cross(box(0.15, 0.1, 0.06, '#566048', [0, 0.97, -0.165], 'hips'), 0.04));
+    flags.medbag = show('medbag', k.medkit === 'bag', () => {
+      const m = box(0.12, 0.24, 0.26, '#566048', [-0.25, 0.9, -0.03], 'hips');
+      m.rotation.y = Math.PI / 2;
+      return cross(m, 0.08);
+    });
+    // water, the hand torch, the knife, the rope coil, a breaching bar on the pack
+    flags.water = show('canteen', (k.water ?? 0) > 0, () => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.17, 12), mat('#3f4733'));
+      m.position.copy(T([-0.17, 0.95, -0.13], 'hips'));
+      this.bones.hips.add(m);
+      return m;
+    });
+    if (this.torchBelt) this.torchBelt.visible = !!k.torch;
+    flags.torch = !!k.torch;
+    if (this.parts.knife && this.parts.knife.parent === this.bones.thighR) this.parts.knife.visible = !!k.knife;
+    flags.knife = !!k.knife;
+    if (this.A.coil) this.setCoil(!!k.rope);
+    flags.rope = !!k.rope;
+    flags.breach = show('halligan', k.breach, () => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.75, 0.025), mat('#2b2d2f', { roughness: 0.4, metalness: 0.7 }));
+      m.position.copy(T([0.14, 1.25, -0.42], 'chest'));
+      m.rotation.z = 0.35;
+      pack.add(m);
+      return m;
+    }) && flags.pack;
+    flags.drone = !!k.drone && flags.pack;
+    this.kitFlags = flags;
+    return flags;
   }
   /** Where the weapon light sits along the weapon in his hands (rifle-local x). */
   lampX() {

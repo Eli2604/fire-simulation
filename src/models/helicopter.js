@@ -31,6 +31,11 @@ export default {
     color: { value: '#4a5240', color: true, label: 'Paint' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Seed' },
     autoStart: { value: true, label: 'On the ground: starts its mission by itself (off: parked, rotor still, until flown)' },
+    // load and crew (ai/helicopter.js heliMass: its weight sets how fast it climbs and turns)
+    fuel: { value: 1, min: 0.1, max: 1, step: 0.05, label: 'Fuel load (of full: 1360 kg; lighter climbs and accelerates quicker, less to burn when hit)', group: 'Load & crew' },
+    armour: { value: 'standard', options: ['none', 'standard', 'armoured'], label: 'Armour (cockpit and cabin; armoured: +450 kg)', group: 'Load & crew' },
+    pilotSkill: { value: 'veteran', options: ['recruit', 'regular', 'veteran', 'elite'], label: 'Pilot experience', group: 'Load & crew' },
+    troopSkill: { value: 'regular', options: ['recruit', 'regular', 'veteran', 'elite'], label: 'Experience of the soldiers in the back', group: 'Load & crew' },
   },
   build(p) {
     const from = [p.fromX, 0, p.fromZ];
@@ -40,6 +45,7 @@ export default {
         p: from, lz: [0, 0, 0], side: p.side ?? 'enemy', yaw: Math.atan2(-from[0], -from[2]) || 0, mission: p.mission, soldiers: p.soldiers, doorGuns: p.doorGuns,
         airborne: p.start !== 'ground', altitude: p.altitude, cruise: p.cruise, hoverAlt: p.hoverAlt, ropeLength: p.ropeLength,
         orbitRadius: p.orbitRadius, callsign: p.callsign, color: p.color, seed: p.seed, ...(p.autoStart === false ? { autoStart: false } : {}),
+        fuel: p.fuel ?? 1, armour: p.armour ?? 'standard', pilotSkill: p.pilotSkill, troopSkill: p.troopSkill,
       }],
     };
   },

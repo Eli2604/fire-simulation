@@ -3,6 +3,7 @@ import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
 import { boatShot } from './boats.js';
 import { sideOf, hostile, PLAYER_SIDE } from '../ai/sides.js';
+import { armourPen, armourDamageK } from '../ai/loadout.js';
 
 /**
  * Wounds, blood and bullets.
@@ -41,6 +42,7 @@ const ZONES = {
 export const WEAPONS = {
   rifle: { dmg: 1, pen: 0.3, penHelmet: 0.7, bleed: 1 }, // 5.56 mm
   mg: { dmg: 1.25, pen: 0.55, penHelmet: 0.8, bleed: 1.15 }, // the gunner's 7.62 mm
+  marksman: { dmg: 1.3, pen: 0.55, penHelmet: 0.8, bleed: 1.15 }, // a marksman rifle's 7.62 mm (ai/loadout.js)
   carbine: { dmg: 0.7, pen: 0.05, penHelmet: 0.4, bleed: 0.9 }, // the compact secondary, pistol calibre
   shotgun: { dmg: 1.5, pen: 0.02, penHelmet: 0.15, bleed: 1.3 }, // 12 gauge buckshot: hard close in, no use against plates
   pistol: { dmg: 0.65, pen: 0.03, penHelmet: 0.35, bleed: 0.85 }, // 9 mm from a pistol
@@ -54,6 +56,13 @@ const weaponOf = (kind) => WEAPONS[kind === 'bullet' ? 'rifle' : kind] ?? WEAPON
 /** Did armour stop it? (torso: the plates; head: the helmet, if still on) */
 export function armourStops(e, zone, kind, rand = Math.random) {
   const W = weaponOf(kind);
+  // (a level from his loadout, ai/loadout.js ARMOUR: a soft vest, heavy armour with side plates and
+  // shoulders; 'plates' or a plain e.armour: the plate carrier, the weapon's pen as it is)
+  const lvl = e.armourLevel;
+  if (lvl && lvl !== 'plates' && zone !== 'head') {
+    const pen = armourPen(lvl, zone, kind, W.pen);
+    return pen == null ? false : rand() > pen;
+  }
   if (zone === 'torso' && e.armour) return rand() > W.pen;
   if (zone === 'head' && e.helmet && !e.helmetOff && kind !== 'knife') return rand() > W.penHelmet;
   return false;
@@ -109,7 +118,8 @@ export function wound(sim, e, zone, kind, p, dir) {
   const legs = (e.wounds.legL ?? 0) + (e.wounds.legR ?? 0);
   e.speedFactor = legs >= 2 || (e.wounds.legL && e.wounds.legR) ? 0.18 : legs ? 0.45 : 1;
   e.crawling = !!(e.wounds.legL && e.wounds.legR);
-  sim.ai?.damage(e, kind === 'arrow' ? Z.arrow : Z.bullet * W.dmg);
+  // (what got through his armour there still does less: ai/loadout.js armourDamageK)
+  sim.ai?.damage(e, (kind === 'arrow' ? Z.arrow : Z.bullet * W.dmg) * armourDamageK(e.armourLevel, zone));
   // the spray behind the wound, onto whatever is there
   splatter(sim, p, dir, (zone === 'head' ? 2.2 : zone === 'torso' ? 1.6 : 1) * (kind === 'knife' ? 0.6 : 1));
   w.events.push({ type: 'enemyHit', pos: p.slice(), time: w.time, name: zone });

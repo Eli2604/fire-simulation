@@ -49,6 +49,14 @@ export const ROW_BOAT_PARAMS = {
   arriveYaw: { value: 0, min: -180, max: 180, step: 5, label: 'Ashore facing (degrees from its bow)' },
   seed: { value: 1, min: 1, max: 999, step: 1, label: 'Seed' },
 };
+// (the editor's folders for these: editor/editor.js puts a param in the folder its group names)
+for (const [g, keys] of Object.entries({
+  'Crew & load': ['crew', 'load', 'flotation'],
+  Propulsion: ['kind', 'oars', 'motor', 'motorPower', 'sailArea'],
+  'Hull & paint': ['length', 'beam', 'depth', 'material', 'transom', 'thwarts', 'hullColor', 'insideColor', 'stripeColor'],
+  'Water & mooring': ['water', 'moored', 'mooring'],
+  'Where it takes you': ['goesTo', 'label', 'arriveX', 'arriveY', 'arriveZ', 'arriveYaw'],
+})) for (const k of keys) if (ROW_BOAT_PARAMS[k]) ROW_BOAT_PARAMS[k].group = g;
 
 const PERSON = 80; // kg
 /** The rowlocks: this far along the boat from the rowing thwart (aft of it: in front of the rower, who faces aft; the handles come to his chest at the finish). */

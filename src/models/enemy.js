@@ -10,6 +10,17 @@
  * (models/catacombs.js); killed, he drops it.
  */
 import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
+import { fullKit, PACK, ARMOUR, RADIO } from '../ai/loadout.js';
+
+const LO = 'Loadout (each guard)';
+/**
+ * A guard's kit (ai/loadout.js) from the Loadout params (loadout 'custom'; 'default': none given,
+ * the AI's old defaults: a rifle, no armour, a rifleman's pace). w: his weapon (the Weapon param's).
+ */
+export function guardKit(p, w) {
+  const primary = w === 'unarmed' ? 'none' : w && w !== 'rifle' && w !== 'mixed' ? w : 'rifle';
+  return fullKit('rifleman', { primary, mags: p.mags, pack: p.pack, armour: p.armour, helmet: p.helmet, nvg: p.nvg, radio: p.radio, frag: p.frag, flash: p.flash, smoke: 0, water: p.water, rope: false });
+}
 
 /** The k-th guard's weapon (undefined: a rifle). */
 const weaponOf = (w, k) => (w === 'mixed' ? [undefined, 'shotgun', 'pistol'][k % 3] : w && w !== 'rifle' ? w : undefined);
@@ -40,6 +51,18 @@ export default {
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
     force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
+    // what each carries (ai/loadout.js): default, as guards always were; custom, the fields below (the weight sets their pace, stamina, climbing, landings)
+    loadout: { value: 'default', options: ['default', 'custom'], label: 'Loadout (default: a rifle and belt kit, no armour, as guards always were; custom: the fields below, their weight sets their pace)', group: LO },
+    armour: { value: 'none', options: Object.keys(ARMOUR), label: 'Armour', group: LO },
+    helmet: { value: false, label: 'Helmet', group: LO },
+    pack: { value: 'assault', options: Object.keys(PACK), label: 'Backpack', group: LO },
+    radio: { value: 'handheld', options: Object.keys(RADIO), label: 'Radio', group: LO },
+    nvg: { value: false, label: 'Night vision', group: LO },
+    mags: { value: 5, min: 0, max: 12, step: 1, label: 'Spare magazines', group: LO },
+    frag: { value: 2, min: 0, max: 8, step: 1, label: 'Frag grenades', group: LO },
+    flash: { value: 2, min: 0, max: 4, step: 1, label: 'Flash-bangs', group: LO },
+    water: { value: 1, min: 0, max: 4, step: 0.5, label: 'Water (litres)', group: LO },
+    fitness: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Fitness (0.5 a regular soldier)', group: LO },
     ...PATROL_PARAMS,
   },
   build(p, { rng }) {
@@ -53,7 +76,7 @@ export default {
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: drawn ? -1 : k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false, forceScale: p.force ?? 1 });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: drawn ? -1 : k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false, forceScale: p.force ?? 1, ...(p.loadout === 'custom' ? { kit: guardKit(p, weaponOf(p.weapon, k) ?? 'rifle'), fitness: p.fitness ?? 0.5 } : {}) });
     }
     return { prims: [], enemies };
   },
