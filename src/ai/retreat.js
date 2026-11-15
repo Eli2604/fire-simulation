@@ -15,6 +15,11 @@
  *    they started), else the squad's deploy point (sq.home) if that lies behind them, else a
  *    point ~20 m back from the threat, out of its sight if there is one. Each man has his slot
  *    there (a line across the way the threat lies, 1.3 m apart).
+ *  - Or a vehicle (ai/squadVehicle.js; ai/vehicles.js wraps helicopters, boats, cars): one near
+ *    them, standing still, with a seat for every man going (the wounded too) and not out towards the
+ *    threat (param vehicle: false rules it out). Then the rally point is the vehicle and each slot a
+ *    guard post round it; once all are back they board it one by one (the wounded lifted in first,
+ *    the rest guarding, the first in firing from where the seats allow) and it takes them off.
  *  - (a) Peeling back by bounding overwatch: one man at a time leaves his cover (the one nearest
  *    the enemy first) for the next cover behind the rearmost man (ai/squad.js covers: free cells
  *    by something solid between them and the threat), or his slot at the rally point when that is
@@ -57,6 +62,7 @@
 import { roundsLeft, aimPoint, spend, weaponKind, skillOf, canShoot, TIMES } from './soldier.js';
 import { exposedTo, srand } from './strategy.js';
 import { retreatCase, startWord, stepWord, hasWord } from './retreatRadio.js';
+import { vehicleForRetreat, guardSlots, startBoarding, goingMen, vnote } from './squadVehicle.js';
 
 /** Durations of the retreat's clips (operator/rig.js RETREAT_CLIPS bakes them at these). */
 export const RT_T = { lift: 2.6, putDown: 2.2, wire: 5.2, stow: 0.8, pack: 4.2, signal: 2.0 };
@@ -68,7 +74,7 @@ const RALLY_R = 1.6; // m: at his slot
 export const WIRE_E = 1.0e6; // J: the charge on the wire (~0.2 kg of explosive)
 export const WIRE_H = 0.15; // m: the wire above the floor
 const WOUND_SCATTER = 0.05; // m of scatter a metre of range, at the worst, a wounded man's aim
-export const RETREAT_DEFAULTS = { order: false, auto: true, rally: null, casualties: 'auto', tripwire: true, wires: 1, dropPack: true };
+export const RETREAT_DEFAULTS = { order: false, auto: true, rally: null, casualties: 'auto', tripwire: true, wires: 1, dropPack: true, vehicle: 'auto' };
 const SKILL_CARRY = { recruit: -0.35, regular: 0, veteran: 0.3, elite: 0.45 };
 const NAME = { CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two', UAV: 'the drone operator' };
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
@@ -242,11 +248,18 @@ export function startRetreat(sq, P) {
   sq.phase = 'strategy';
   sq.moving = null;
   const men = sq.members().filter((m) => !m.dead && m.squad !== 'UAV');
-  const R = rallyPoint(sq, T);
+  // a vehicle near them with seats for all (ai/squadVehicle.js): the rally point is beside it, each
+  // man's slot his guard post round it; there they board it and it takes them off
+  const VR = vehicleForRetreat(sq, goingMen(sq), T, retreatOpts(sq));
+  const R = VR ? VR.V.p().slice() : rallyPoint(sq, T);
   P.rally = R;
-  P.rt = { rally: R, slots: slotsAt(sq, R, T, men), mover: null, setT: sq.time + 1.2, jobs: [], wires: 0, t0: sq.time };
+  P.rt = { rally: R, slots: VR ? guardSlots(sq, VR.V, T, men) : slotsAt(sq, R, T, men), mover: null, setT: sq.time + 1.2, jobs: [], wires: 0, t0: sq.time, vehicle: VR?.V ?? null };
   // the word: the leader shouts it and signals it, his men pick it up (ai/retreatRadio.js)
   startWord(sq, P);
+  if (VR) {
+    const lead = sq.radioMan();
+    if (lead && sq.time >= sq.silentUntil) sq.host.shout?.(lead, `To the ${VR.V.kind}! Fall back to the ${VR.V.kind}!`);
+  }
   for (const m of men) {
     m.planRoute = null;
     m.path = null;
@@ -334,6 +347,18 @@ export function stepRetreat(sq, dt) {
   const o = retreatOpts(sq);
   // the word going round (no man moves before he has it), then the call to the other teams
   stepWord(sq, P, dt);
+  // at the vehicle: boarding it, then off in it (ai/squadVehicle.js, stepped by ai/squad.js)
+  if (P.phase === 'board') {
+    if (sq.board) return true;
+    P.phase = 'done';
+    sq.phase = 'hold';
+    sq.retreating = false;
+    const B = sq.lastBoard;
+    const lead = sq.radioMan() ?? al[0];
+    const hurt = al.filter((m) => m.down && m.rt?.role !== 'left').length;
+    if (B?.phase === 'done' && lead) sq.say(lead, `${sq.unit}, clear of the contact by ${B.kind}, ${al.filter((m) => !m.down).length} fit${hurt ? `, ${hurt} wounded with us` : ''}`, 'order');
+    return false;
+  }
   // men lost on the way: the man moving, a carrier, the man carried
   for (const J of R.jobs.slice()) if (J.carrier.dead || J.carrier.down || J.cas.dead) dropJob(sq, R, J);
   if (R.mover && (R.mover.dead || R.mover.down)) R.mover = null;
@@ -396,6 +421,15 @@ export function stepRetreat(sq, dt) {
   }
   // all back: at the rally point, the carried with them
   const back = fit.every((m) => m.rt.role === 'rally') && !R.jobs.length && !R.mover;
+  if (back && P.phase !== 'done' && R.vehicle) {
+    const V = R.vehicle;
+    const B = V.usable() && V.stationary() ? startBoarding(sq, V, { men: goingMen(sq), lead: sq.radioMan(), face: T, slots: R.slots, why: 'retreat' }) : null;
+    if (B) {
+      P.phase = 'board';
+      return true;
+    }
+    vnote(sq, 'retreat:vehicle:lost');
+  }
   if (back && P.phase !== 'done') {
     P.phase = 'done';
     sq.phase = 'hold';

@@ -48,6 +48,9 @@
  *      near (within SUPPORT_R of them), fit: moves up to an overwatch point on its side of the
  *                 retreating team, towards the threat, and puts suppressive fire on it while the
  *                 others get back (sq.supporting: the base of fire's rate, ai/squad.js)
+ *      not in a fight, too far to walk up, a stationary vehicle by it with seats for all
+ *                 (ai/squadVehicle.js mountForBackup): mounts up (the signaller calls it, the men
+ *                 get in one by one, he last) and the vehicle takes it to them
  *      further, but in contact beside them (within FLANK_R, its front the same way as theirs):
  *                 its flank is open now, it falls back too (its own retreat, 'our flank is exposed')
  *      already falling back: says so
@@ -57,6 +60,7 @@
 import { badlyHit } from './soldier.js';
 import { srand } from './strategy.js';
 import { LOUDNESS, wallLoss } from './perception.js';
+import { mountForBackup } from './squadVehicle.js';
 
 /** How much each kind of hostile counts for, against one man. */
 export const STRENGTH = { man: 1, vehicle: 4, tank: 5, helicopter: 6, jet: 6, dragon: 8 };
@@ -343,6 +347,9 @@ export function reactToCall(p, call) {
   if (p.retreating || p.strategy?.kind === 'retreat' || p.strategy?.kind === 'withdraw') {
     react = 'also';
     text = `${me}, copy ${U}, we are falling back too, out`;
+  } else if ((text = mountForBackup(p, call))) {
+    // a stationary vehicle by them, too far to walk up: they mount up and come (ai/squadVehicle.js)
+    react = 'mount';
   } else if (d <= SUPPORT_R && fit.length >= 2) {
     // overwatch: on our side of them, level with them, a little towards the threat
     const ax = call.T[0] - call.p[0], az = call.T[2] - call.p[2], l = Math.hypot(ax, az) || 1;
