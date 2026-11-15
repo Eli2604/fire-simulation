@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { defaultSpawn, spawnFloor } from '../sim/createSimulation.js';
 import { SoundScape } from '../audio/sound.js';
+import { shakeAt, bodyLanding } from '../sim/impact.js';
+import { FireAudio } from '../sim/fireAudio.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
@@ -11,6 +13,12 @@ import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
+import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
+import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
+import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
+import { peekOptions } from '../ai/peek.js';
+import { lightSource, TORCH_T } from '../ai/flashlight.js';
+import { emitSound, footstepDb, BEAM } from '../ai/perception.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -31,6 +39,7 @@ const AIR_LITRES = 2040;
  * air round you, smoke and heat and all, and it stings your eyes; on, the cylinder again).
  * 7 (or Q, to swap to it and back) is the rifle: hold the right mouse button to bring it up
  * to your eye, looking along its sight, the view zoomed in a little.
+ * Hand-to-hand (ai/melee.js): G punches, V kicks, B throws the man in front of you.
  *
  * The mask view shows the remaining air (consumption depends on effort and
  * heat), the gas temperature at your face, a rough visibility estimate and
@@ -88,6 +97,14 @@ export class Walkthrough {
     this.lamp.position.set(0.15, 0.1, 0);
     this.lamp.target.position.set(0, 0, -1);
     this.lampOn = true;
+    // the flashlight (N, ai/flashlight.js): the rifle's light along the muzzle, or the hand torch
+    // from the belt in the left hand when a hand is free (bare hands, the fire torch, a grenade)
+    this.flashLamp = new THREE.SpotLight(0xfff3dc, 0, 32, 0.34, 0.55, 1.6);
+    this.flashLamp.target.position.set(0, 0, -1);
+    this.flashOn = false;
+    this.leanK = 0;
+    this.riseK = 0;
+    this.stride = 0;
     this.tank = { remaining: 1e9 };
     this.bind();
   }
@@ -142,11 +159,13 @@ export class Walkthrough {
         if (e.code === 'KeyE') this.flight.tryExit();
         if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
+        if (e.code === 'KeyF') this.flight.flaresRequested = true;
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
+      if (e.code === 'KeyN') this.toggleFlashlight();
       if (e.code === 'Digit1') this.tool = 'hose';
       if (e.code === 'Digit2') this.tool = 'torch';
       if (e.code === 'Digit3') this.tool = 'grenade';
@@ -154,6 +173,7 @@ export class Walkthrough {
       if (e.code === 'Digit5' && this.reel) this.tool = 'reel';
       if (e.code === 'Digit6') this.tool = 'bow';
       if (e.code === 'Digit7') this.tool = 'rifle';
+      if (e.code === 'Digit8') this.tool = 'fists'; // bare hands: hand-to-hand (G / V / B), the most agile
       // Q: to the rifle and back to what you had
       if (e.code === 'KeyQ') {
         if (this.tool === 'rifle') this.tool = this.prevTool ?? 'hose';
@@ -173,8 +193,21 @@ export class Walkthrough {
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'KeyO') this.inert();
       if (e.code === 'KeyF') this.strike();
+      // hand-to-hand (ai/melee.js): G punch, V kick, B throw
+      if (!e.repeat && (e.code === 'KeyG' || e.code === 'KeyV' || e.code === 'KeyB') && !this.crawl && !this.swimming && !this.downed) this.melee({ KeyG: 'punch', KeyV: 'kick', KeyB: 'throw' }[e.code]);
       // Space by a low wall, a ledge or a drop ahead: over it, up onto it, down off it
       if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.downed) this.parkour();
+      // a direction key tapped twice quickly: a combat roll that way (A / D sideways, W forward;
+      // W twice with Shift held: a dive to prone)
+      if (!e.repeat) {
+        const dirKey = { KeyA: 'rollLeft', ArrowLeft: 'rollLeft', KeyD: 'rollRight', ArrowRight: 'rollRight', KeyW: 'rollForward', ArrowUp: 'rollForward' }[e.code];
+        const now = performance.now();
+        if (dirKey && this.lastTap?.code === e.code && now - this.lastTap.t < 300) {
+          this.lastTap = null;
+          const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+          this.roll(dirKey === 'rollForward' && hurry ? 'diveProne' : dirKey);
+        } else if (dirKey) this.lastTap = { code: e.code, t: now };
+      }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     document.getElementById('walkGo').addEventListener('click', () => this.resume());
@@ -206,6 +239,8 @@ export class Walkthrough {
     if (!v.camera.parent) v.scene.add(v.camera);
     v.camera.add(this.lamp);
     v.camera.add(this.lamp.target);
+    v.camera.add(this.flashLamp);
+    v.camera.add(this.flashLamp.target);
     this.el.mask.hidden = false;
     this.el.start.hidden = false;
     this.maskOn = true;
@@ -301,7 +336,8 @@ export class Walkthrough {
         }
         return this.say(d0.glass?.length ? 'Locked. Break the glass (F) and reach through' : 'Locked', 3);
       }
-      toggleDoor(sim, best.door);
+      // (a pressure door with vacuum on one side: the difference holds it shut, sim/doors.js)
+      if (!toggleDoor(sim, best.door) && w.doors[best.door].equalize) return this.say(`${w.doors[best.door].name}: the pressure difference holds it shut – its valve hisses open to level it`, 3);
       const d = w.doors[best.door];
       this.sound.door?.();
       return this.say(`${d.name}: ${d.open ? 'opened' : 'closed'}`, 2);
@@ -338,7 +374,7 @@ export class Walkthrough {
     this.view.camera.updateProjectionMatrix();
     this.el.mask.hidden = true;
     this.lamp.intensity = 0;
-    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, X eject', 6);
+    this.say('W/S throttle (full throttle on deck = catapult), mouse pitch/roll, A/D rudder, Space/click rockets, F flares, X eject', 6);
   }
 
   /** Back on your feet after flying: next to the parked jet, or ejected at the spawn point. */
@@ -396,6 +432,45 @@ export class Walkthrough {
       w.noises.push({ p: hit.point, loud: 8, time: w.time, kind: 'strike' });
       this.sound.door?.();
     }
+  }
+
+  /**
+   * Hand-to-hand (ai/melee.js), as the soldiers fight: what ('punch', 'kick', 'throw') at the
+   * nearest man in front of you within reach: punches (a jab and a cross, close in a hook or an
+   * uppercut), kicks (front or roundhouse, close in a low kick), throws (hip or shoulder throw
+   * close in, a foot sweep a little further out). The move he would make at that distance; out of
+   * its reach it misses. Returns the result (or null: nobody there).
+   */
+  melee(what) {
+    const sim = this.hooks.getSim();
+    const w = sim?.world;
+    if (!w || this.flight || (this.meleeCd ?? 0) > w.time) return null;
+    const fwd = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    let best = null, bd = 1.8;
+    for (const e of w.enemies ?? []) {
+      if (e.dead) continue;
+      const dx = e.p[0] - this.pos.x, dz = e.p[2] - this.pos.z, d = Math.hypot(dx, dz);
+      if (Math.abs(e.p[1] - this.pos.y) > 1.2 || d >= bd || (dx * fwd[0] + dz * fwd[1]) / (d || 1) < 0.5) continue;
+      best = e;
+      bd = d;
+    }
+    const n = (this.meleeN = (this.meleeN ?? 0) + 1);
+    const kind = playerMove(what, bd, n);
+    this.meleeCd = w.time + MELEE[kind].dur;
+    this.arm = { mode: 'swing', t: 0 };
+    if (!best) return null;
+    const me = { p: [this.pos.x, this.pos.y, this.pos.z], yaw: Math.atan2(fwd[0], fwd[1]) };
+    const res = resolveMelee(me, best, kind, bd, { now: w.time });
+    if (res.hit) {
+      // the damage through the guard AI (its death, its alarm), the daze and the fall here
+      if (sim.ai?.damage && res.dmg) sim.ai.damage(best, res.dmg);
+      applyMelee(best, { ...res, dmg: sim.ai?.damage ? 0 : res.dmg }, w.time, me);
+      w.noises.push({ p: best.p.slice(), loud: 6, time: w.time, kind: 'strike' });
+      this.sound.door?.();
+    }
+    const label = MELEE[kind].label;
+    this.say(res.hit ? `${label}${res.blocked ? ' – blocked' : res.down ? ' – he goes down' : ''}` : `${label} – ${res.why || 'missed'}`, 1.2);
+    return res;
   }
 
   /** O: flood the room you are in with inert gas. */
@@ -849,6 +924,9 @@ export class Walkthrough {
     const lock = this.view.renderer.domElement.requestPointerLock();
     lock?.catch?.(() => {});
     this.sound.start();
+    // the fire's sound comes from the simulation's burning regions (sim/fireAudio.js)
+    const sim = this.hooks.getSim?.();
+    if (sim && !sim.fireAudio) sim.fireAudio = new FireAudio();
   }
 
   pause() {
@@ -869,6 +947,7 @@ export class Walkthrough {
     this.active = false;
     const s0 = this.hooks.getSim();
     if (s0?.ai) s0.ai.player = null;
+    if (s0) s0.fireAudio = null;
     this.spraying = false;
     if (document.pointerLockElement) document.exitPointerLock();
     this.sound.stop();
@@ -876,6 +955,10 @@ export class Walkthrough {
     const v = this.view;
     v.camera.remove(this.lamp);
     v.camera.remove(this.lamp.target);
+    v.camera.remove(this.flashLamp);
+    v.camera.remove(this.flashLamp.target);
+    const sw = this.hooks.getSim()?.world;
+    if (sw) sw.playerBeam = null;
     v.camera.fov = this.savedFov ?? 50;
     if (this.gun) this.gun.visible = false;
     if (this.el.eyes) this.el.eyes.style.opacity = '0';
@@ -890,7 +973,102 @@ export class Walkthrough {
 
   toggleCrawl() {
     if (this.crawl && this.blocked(this.pos.x, this.pos.z, this.pos.y, EYE_STAND)) return; // no room to stand
+    // down on the ground only with what allows it (ai/weapons.js)
+    if (!this.crawl && !allows(this.handling(), 'crawl')) {
+      this.say(`${whyNot(this.handling(), 'crawl')}: switch tool to crawl`, 1.5);
+      return;
+    }
     this.crawl = !this.crawl;
+  }
+
+  /**
+   * The handling of what is in your hands (ai/weapons.js HANDLING): the rifle as the soldiers carry
+   * it, the fire torch held out in one hand, else nothing that changes how you move.
+   */
+  /** You as the flashlight rules see you (ai/flashlight.js): what is in your hands; a torch on the belt. */
+  lightGear() {
+    return { handling: this.handling(), weaponLight: { rifle: true }, flashlight: true };
+  }
+
+  /** N: the flashlight on or off (the rifle's own light, or the hand torch from the belt if a hand is free). */
+  toggleFlashlight() {
+    const s = lightSource(this.lightGear());
+    if (!this.flashOn && !s.src) {
+      this.say(s.why || 'No light to use', 3);
+      return;
+    }
+    this.flashOn = !this.flashOn;
+    if (this.flashOn && s.src === 'hand' && !this.torchOut) {
+      this.torchDraw = TORCH_T.draw; // the torch from the belt first
+      this.say('The torch from your belt', 1.5);
+    }
+  }
+
+  /**
+   * The flashlight each frame: from where it is (the rifle's muzzle, low right; the torch in your
+   * left hand), along where you look. Swapping to something two-handed (the hose, the bow, the
+   * extinguisher) puts the torch away: no light. Published for the AIs (world.playerBeam): it lights
+   * what you look at, and gives you away in the dark.
+   */
+  stepFlashlight(dt, sim) {
+    const s = lightSource(this.lightGear());
+    if (this.flashOn && !s.src) {
+      this.flashOn = false;
+      this.say(s.why, 3);
+    }
+    if (s.src !== 'hand' && this.torchOut) this.torchOut = false;
+    if (this.torchDraw > 0) {
+      this.torchDraw -= dt;
+      if (this.torchDraw <= 0) this.torchOut = true;
+    }
+    const lit = this.flashOn && !this.downed && (s.src === 'weapon' || (s.src === 'hand' && this.torchOut));
+    this.flashLamp.intensity = lit ? 9 : 0;
+    if (lit) {
+      if (s.src === 'weapon') this.flashLamp.position.set(0.14, -0.16, -0.35);
+      else this.flashLamp.position.set(-0.26, -0.22, -0.32);
+      this.flashLamp.target.position.set(this.flashLamp.position.x * 0.2, this.flashLamp.position.y * 0.2, -6);
+    }
+    const w = sim.world;
+    if (lit) {
+      const cam = this.view.camera;
+      const cp = Math.cos(this.pitch);
+      const dir = [-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp];
+      w.playerBeam = { from: [cam.position.x, cam.position.y - 0.15, cam.position.z], dir, range: BEAM.range, cone: BEAM.cone, owner: 'player', src: s.src };
+    } else w.playerBeam = null;
+    this.flashLit = lit;
+    return lit;
+  }
+
+  /**
+   * Z / X held: lean out left / right round a corner (as far as there is room: not into a wall);
+   * low (C) behind a low wall, Z and X together: rise just enough to look over it (ai/peek.js).
+   * Your head goes with it, so the enemy may see it.
+   */
+  stepLean(dt, locked, eye) {
+    const L = locked && this.keys.has('KeyZ'), Rk = locked && this.keys.has('KeyX');
+    const both = L && Rk;
+    let side = both ? 0 : (Rk ? 1 : 0) - (L ? 1 : 0);
+    let rise = 0;
+    if (both) {
+      const o = peekOptions((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], [this.pos.x - Math.sin(this.yaw), this.pos.y, this.pos.z - Math.cos(this.yaw)]);
+      rise = Math.max(0, (o.over ? o.over.rise : this.crawl ? 1.3 : eye) - eye);
+    }
+    let out = 0.42 * side * (this.crawl ? 0.6 : 1);
+    if (side) {
+      const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+      for (let d = 0.1; d <= Math.abs(out) + 1e-6; d += 0.1)
+        if (this.solidAt(this.pos.x + rx * d * side, this.pos.y + eye, this.pos.z + rz * d * side)) {
+          out = side * Math.max(0, d - 0.15);
+          break;
+        }
+    }
+    this.leanK += (out - this.leanK) * Math.min(1, dt * 9);
+    this.riseK += (rise - this.riseK) * Math.min(1, dt * 7);
+    return { out: this.leanK, rise: this.riseK };
+  }
+
+  handling() {
+    return { rifle: 'rifle', torch: 'handTorch', fists: 'unarmed' }[this.tool] ?? 'none';
   }
 
   setThermal(on) {
@@ -960,7 +1138,7 @@ export class Walkthrough {
     const geo = probe((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], dir, { range: 1.4 });
     if (!geo) return false;
     const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-    const ab = ability({ health: this.health });
+    const ab = ability({ health: this.health, handling: this.handling() });
     const kind = moveFor(geo, ab, hurry ? 'run' : 'walk');
     if (!kind) {
       if (geo.type === 'wall' || geo.type === 'up') this.say(geo.type === 'wall' || geo.h > 2.3 ? 'Too high to climb' : ab.wounded ? 'Too hurt to climb that' : 'Cannot get over that', 1.5);
@@ -968,6 +1146,24 @@ export class Walkthrough {
       return false;
     }
     this.trav = { kind, t: 0, dur: durFor(kind, ab), geo: geoFor(kind, geo), from: [this.pos.x, this.pos.y, this.pos.z], dir };
+    return true;
+  }
+  /**
+   * A combat roll (ai/evade.js, as the soldiers roll): sideways out of a line of fire, forward,
+   * or a dive to the ground (then you lie flat: C or Ctrl to get up). Not crawling, swimming or hurt.
+   */
+  roll(kind) {
+    if (this.swimming || this.crawl || this.trav || this.downed || this.flight || this.health < 45) return false;
+    // what is in your hands may rule the roll out (ai/weapons.js): a crouched side step that way instead, or nothing
+    const want = kind;
+    kind = evadeKind(this.handling(), kind);
+    if (!kind) {
+      this.say(whyNot(this.handling(), want), 1.5);
+      return false;
+    }
+    const fwd = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    const left = [-Math.cos(this.yaw), Math.sin(this.yaw)];
+    this.trav = { kind, t: 0, dur: ROLLS[kind].dur, from: [this.pos.x, this.pos.y, this.pos.z], fwd, left, roll: true };
     return true;
   }
   /** Height of the floor under (x, z), searching down from `from`. */
@@ -1051,11 +1247,33 @@ export class Walkthrough {
       const j = sn.cell(this.pos.x, this.pos.z);
       if (j >= 0 && sn.depth[j] > 0.08) trudge = Math.max(0.45, 1 - 0.9 * sn.depth[j] * (1 - Math.min(1, (sn.rho[j] - 150) / 350)));
     }
-    const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * wade * trudge * (1 - 0.45 * this.aimK);
+    // (and what is in your hands: ai/weapons.js gaitK)
+    const gait = gaitK(this.handling(), this.crawl ? 'crawl' : hurry && this.aimK < 0.5 ? 'run' : 'walk');
+    const speed = (this.crawl ? 0.5 : hurry && this.aimK < 0.5 ? 2.2 : 1.2) * gait * wade * trudge * (1 - 0.45 * this.aimK);
     const len = Math.hypot(fx, fz);
     let moving = 0;
     let dip = 0;
-    if (this.trav) {
+    if (this.trav?.roll) {
+      // a roll under way (ai/evade.js): along its path, as far as there is room
+      const T = this.trav;
+      T.t += dt;
+      const u = Math.min(1, T.t / T.dur);
+      const [s, f] = rollAt(T.kind, u);
+      const nx = T.from[0] + T.fwd[0] * f + T.left[0] * s;
+      const nz = T.from[2] + T.fwd[1] * f + T.left[1] * s;
+      const fl = this.floorAt(nx, nz, this.pos.y + 0.45);
+      if (!T.stopped && fl - this.pos.y <= 0.42 && !this.blocked(nx, nz, fl, EYE_CRAWL)) {
+        this.pos.x = nx;
+        this.pos.z = nz;
+      } else T.stopped = true; // (against something: the roll ends where it is)
+      dip = rollEyeDip(T.kind, u);
+      moving = 1;
+      if (u >= 1) {
+        this.trav = null;
+        bodyLanding(sim, { p: [this.pos.x, this.pos.y, this.pos.z], name: 'you' }, { speed: T.kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'your roll' });
+        if (T.kind === 'diveProne') this.crawl = true; // (down flat: the crawl's eye height, as the dip ends)
+      }
+    } else if (this.trav) {
       // a vault, a climb or a drop under way: carried along its path (ai/parkour.js)
       const T = this.trav;
       T.t += dt;
@@ -1066,7 +1284,11 @@ export class Walkthrough {
       moving = 1;
       if (u >= 1) {
         this.trav = null;
+        const was = this.pos.y;
         this.pos.y = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
+        // landing (a drop, the far side of a vault): its force and sound from the height (sim/impact.js)
+        const fall = T.kind.startsWith('drop') ? T.geo?.h ?? 1 : Math.max(0, was - this.pos.y) + (T.kind.startsWith('vault') ? 0.5 : 0);
+        if (fall > 0.3) bodyLanding(sim, { p: [this.pos.x, this.pos.y, this.pos.z], name: 'you' }, { height: fall, roll: T.kind === 'dropRoll', name: 'your landing' });
       }
     } else if (len > 0) {
       const sy = Math.sin(this.yaw);
@@ -1187,9 +1409,33 @@ export class Walkthrough {
     if (!this.trav) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
-    cam.position.set(this.pos.x, this.pos.y + eye - dip + bob, this.pos.z);
+    // a big impact near you (a dragon landing, a crash): the ground shakes, and you with it (sim/impact.js shakeAt)
+    this.shake = (this.shake ?? 0) * Math.exp(-dt * 5);
+    const sh = this.shake > 0.002 ? this.shake : 0;
+    cam.position.set(this.pos.x + (Math.random() - 0.5) * sh * 0.3, this.pos.y + eye - dip + bob + (Math.random() - 0.5) * sh * 0.4, this.pos.z + (Math.random() - 0.5) * sh * 0.3);
     cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    // leaning round a corner, rising over a low wall (Z / X): the head goes out, the view tilts a little
+    const lean = this.stepLean(dt, locked, eye);
+    if (Math.abs(lean.out) > 1e-3 || lean.rise > 1e-3) {
+      cam.position.x += Math.cos(this.yaw) * lean.out;
+      cam.position.z += -Math.sin(this.yaw) * lean.out;
+      cam.position.y += lean.rise - Math.abs(lean.out) * 0.08;
+      cam.rotation.z = -lean.out * 0.35;
+    }
     cam.updateMatrixWorld();
+    // your footsteps (ai/perception.js): heard by the guards and soldiers, louder running, on stone or metal
+    this.stride += Math.hypot(this.pos.x - (this.lastStep?.[0] ?? this.pos.x), this.pos.z - (this.lastStep?.[1] ?? this.pos.z));
+    const stepV = this.stride / Math.max(1e-3, w.time - (this.strideT ?? w.time - 1));
+    this.lastStep = [this.pos.x, this.pos.z];
+    if (this.stride > (this.crawl ? 0.5 : 0.75) && !this.swimming) {
+      const under = w.voxelAt(this.pos.x, this.pos.y - w.h * 0.5, this.pos.z);
+      const surf = under >= 0 && w.mat[under] ? MATERIALS[w.mat[under]].name : 'soil';
+      const dB = footstepDb(this.crawl ? 0.35 : Math.min(4, stepV), surf);
+      if (dB > 0) emitSound(w, { pos: [this.pos.x, this.pos.y, this.pos.z], loudness_dB: dB, kind: 'footstep', source: 'player' });
+      this.stride = 0;
+      this.strideT = w.time;
+    }
+    this.stepFlashlight(dt, sim);
     // the eye adapts: close up to something (an altar cloth a metre off) the lamp's spot would
     // burn white at the brightness that lights a passage 5 m ahead; dimmed with the square of
     // how near what it falls on is (as far as a ~2.5 m look ahead), eased over a few frames
@@ -1346,7 +1592,7 @@ export class Walkthrough {
       this.draw = undefined;
     }
     // where you are, for the enemies (they see your head)
-    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving };
+    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving, lightOn: !!(this.lampOn || this.flashLit), beam: this.flashLit ? w.playerBeam : null, crouch: this.crawl };
     // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine and 4 spare
     // magazines (ammunition is limited, as for the soldiers), R reloads
     this.ammo ??= 30;
@@ -1383,11 +1629,11 @@ export class Walkthrough {
       // what hit you matters as much as where (sim/wounds.js WEAPONS)
       const dmg = ({ head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20) * (WEAPONS[hit.weapon ?? 'rifle']?.dmg ?? 1);
       this.hurt(dmg);
-      if (hit.zone === 'head') this.damageMask(0.35, 0.5, 0.4);
-      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : `You are hit – ${hit.zone}!`, 2);
+      if (hit.zone === 'head' && hit.weapon !== 'fist') this.damageMask(0.35, 0.5, 0.4);
+      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : hit.weapon === 'fist' ? (hit.down ? 'Thrown – you hit the ground' : `Struck – ${hit.zone}!`) : `You are hit – ${hit.zone}!`, 2);
     }
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
-    if (this.lampOn && !this.downed) {
+    if ((this.lampOn || this.flashLit) && !this.downed) {
       if (!sim.ai.lamp || w.time - sim.ai.lamp.time > 0.3) {
         const spot = this.beamSpot(head, [aimFwd.x, aimFwd.y, aimFwd.z], 25);
         sim.ai.lamp = spot ? { from: head.slice(), spot, time: w.time } : null;
@@ -1396,6 +1642,7 @@ export class Walkthrough {
     // a guard noticed the light
     for (this.seenEv ??= sim.world.events.length; this.seenEv < sim.world.events.length; this.seenEv++) {
       const ev = sim.world.events[this.seenEv];
+      if (ev.type === 'shockwave' || (ev.type === 'impact' && ev.energy > 500)) this.shake = Math.max(this.shake ?? 0, shakeAt(ev, Math.hypot(ev.pos[0] - head[0], ev.pos[1] - head[1], ev.pos[2] - head[2])));
       if (ev.type === 'lightSeen') this.say('Someone saw your light and is coming to look – L switches the lamp off', 4);
       // a flashbang in view: blinded for a few seconds
       else if (ev.type === 'flashbang' && !this.downed) {
@@ -1452,7 +1699,7 @@ export class Walkthrough {
     if (w.vacuum && (this.cabinP ?? 1) < 0.95) warn.push(`CABIN PRESSURE ${Math.round((this.cabinP ?? 1) * 100)} %`);
     if (gasT > 100) warn.push('HIGH HEAT');
     if (visibility < 1.5 && !this.thermal) warn.push('ZERO VISIBILITY – use T (thermal camera) or crawl (C)');
-    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'} · ${this.mags ?? 4} mags${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
+    const toolLabel = { hose: '1 HOSE', torch: '2 FIRE TORCH', grenade: '3 GRENADE', ext: `4 EXTINGUISHER ${this.ext ? this.ext.tank.remaining.toFixed(1) : ''}`, reel: '5 HOSE REEL', bow: `6 BOW${this.draw !== undefined ? ' – drawing ' + Math.round((this.draw / 1.2) * 100) + '%' : ' (fire arrows)'}`, fists: '8 BARE HANDS (G punch · V kick · B throw)', rifle: `7 RIFLE ${this.reloading ? 'reloading' : (this.ammo ?? 30) + '/30'} · ${this.mags ?? 4} mags${this.aimK > 0.5 ? ' · AIMING' : ''}` }[this.tool];
     // the mask off: no display in the visor, only what you know (how you are, what you hold)
     const bare = this.maskK < 0.6;
     this.el.hud.classList.toggle('bare', bare);
@@ -1483,6 +1730,14 @@ export class Walkthrough {
     this.sound.update({
       listener: { pos: head, forward: [fwd.x, fwd.y, fwd.z], up: [up.x, up.y, up.z] },
       fire: sim.stats.hrr > 0 ? { pos: [fl.position.x, fl.position.y, fl.position.z], hrr: sim.stats.hrr } : null,
+      // the fire per region, from the simulation (sim/fireAudio.js), and what carries the sound
+      fireSources: sim.fireAudio?.sources,
+      fireVersion: sim.fireAudio?.version,
+      wind: { speed: sim.weather?.windSpeed ?? 0 },
+      rain: sim.weather?.rain ?? 0,
+      underwater: !!this.underwater,
+      indoors: !!sim.world.vacuum || (this.indoorsT = (this.indoorsT ?? 0) + 1) % 30 === 0 ? (this.indoorsV = roofedAt(sim, head)) : this.indoorsV,
+      lineOfSight: (a, b) => sim.ai?.sees ? sim.ai.sees(a, [b[0], b[1] + 0.3, b[2]]) : true,
       jet,
       spraying: this.spraying && locked,
       effort: moving,
@@ -1499,6 +1754,12 @@ export class Walkthrough {
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });
   }
+}
+
+/** Under a roof (2.2-10 m above the head): the wind and rain are muffled. */
+function roofedAt(sim, p) {
+  for (let y = p[1] + 0.8; y < p[1] + 10; y += sim.world.h) if (sim.ai?.solidAt?.(p[0], y, p[2])) return true;
+  return false;
 }
 
 /** What the walk-through says when the phoenix (ai/phoenix.js) does something. */

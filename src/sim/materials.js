@@ -453,3 +453,107 @@ export function materialId(name) {
 }
 
 export const MATERIAL_NAMES = Object.keys(DEFS);
+
+/* ---------- mechanics and acoustics (impacts: sim/impact.js; physical sound: audio/physics.js) ---------- */
+/**
+ * How a material takes a blow and how it sounds, by name: the voxel materials above and what is
+ * not a voxel (flesh, scales, feathers, a ceramic plate, ice). Representative values:
+ *
+ *  E          Young's modulus, Pa (stiffness). With the density, the speed of sound in it, c = √(E/ρ),
+ *             which sets its ringing frequencies (audio/physics.js modes()).
+ *  nu         Poisson's ratio (Hertz contact)
+ *  eta        loss factor (internal damping): a mode at f rings for τ = 1/(π f η) s. Steel clangs
+ *             (η ~ 5e-4), wood knocks (~1e-2), stone cracks (~1e-2 but stiff), flesh thuds (~0.5).
+ *  hardness   0..1 surface hardness (how sharp the contact is; restitution)
+ *  strength   Pa, what breaks it (crushing / fracture strength)
+ *  radiation  fraction of the impact energy that leaves as sound (acoustic efficiency)
+ *  shape      default shape class of a struck body: 'shell' (a drum, a car body: thin, rings),
+ *             'plate', 'bar', 'block', 'soft' (flesh: no ring, a thud), 'liquid' (a splash:
+ *             bubbles), 'granular' (soil, sand: a dull thump, a hiss of grains)
+ *  brittle    breaks into pieces when hit hard (glass shatters, ceramic, ice)
+ *  alpha      linear thermal expansion 1/K (metals tick as they heat and cool)
+ *  pop        crackle when burning: resin pockets and trapped moisture bursting (pine > oak)
+ *  grain      m, typical piece of fuel (fine grass crackles fast and small, logs pop seldom and loud)
+ *  burnSound  'crackle' | 'hiss' (fine dry fuel, fabric) | 'flutter' (paper) | 'smoulder' (books,
+ *             charcoal) | 'whoosh' (plastics, liquid fuels: vapour burning)
+ */
+const MECH_DEFAULTS = { E: 1e9, nu: 0.3, eta: 0.05, hardness: 0.5, strength: 10e6, radiation: 0.004, shape: 'block', brittle: false, alpha: 10e-6, pop: 0.1, grain: 0.05, burnSound: 'crackle' };
+const METAL = { nu: 0.3, eta: 0.0006, hardness: 0.95, strength: 250e6, radiation: 0.02, shape: 'shell', pop: 0 };
+const STONE = { nu: 0.25, eta: 0.012, hardness: 0.85, strength: 60e6, radiation: 0.008, shape: 'block', pop: 0 };
+const GROUND = { nu: 0.35, eta: 0.35, hardness: 0.2, strength: 0.2e6, radiation: 0.003, shape: 'granular', pop: 0 };
+const WOOD = { nu: 0.35, eta: 0.012, hardness: 0.45, strength: 40e6, radiation: 0.01, shape: 'plate', alpha: 4e-6, burnSound: 'crackle' };
+const FINE = { nu: 0.35, eta: 0.3, hardness: 0.1, strength: 1e6, radiation: 0.002, shape: 'soft', burnSound: 'hiss' };
+const SOFT = { nu: 0.45, eta: 0.4, hardness: 0.1, strength: 2e6, radiation: 0.002, shape: 'soft' };
+const MECH = {
+  steel: { ...METAL, E: 200e9, alpha: 12e-6 },
+  deckSteel: { ...METAL, E: 200e9, alpha: 12e-6, shape: 'plate' },
+  steelProfile: { ...METAL, E: 200e9, alpha: 12e-6, shape: 'bar' },
+  cable: { ...METAL, E: 120e9, eta: 0.01, hardness: 0.6, shape: 'bar', alpha: 17e-6 },
+  aluminium: { ...METAL, E: 70e9, eta: 0.0008, alpha: 23e-6 },
+  copper: { ...METAL, E: 120e9, eta: 0.002, alpha: 17e-6 },
+  brass: { ...METAL, E: 100e9, eta: 0.001, alpha: 19e-6 },
+  glass: { E: 70e9, nu: 0.22, eta: 0.002, hardness: 0.9, strength: 50e6, radiation: 0.02, shape: 'plate', brittle: true, alpha: 9e-6, pop: 0 },
+  ceramic: { E: 200e9, nu: 0.22, eta: 0.003, hardness: 0.95, strength: 300e6, radiation: 0.015, shape: 'shell', brittle: true, alpha: 7e-6, pop: 0 },
+  tiles: { E: 50e9, nu: 0.22, eta: 0.006, hardness: 0.85, strength: 40e6, radiation: 0.012, shape: 'plate', brittle: true, alpha: 6e-6, pop: 0 },
+  stone: { ...STONE, E: 50e9 },
+  basalt: { ...STONE, E: 70e9 },
+  bedrock: { ...STONE, E: 60e9 },
+  hillRock: { ...STONE, E: 50e9 },
+  ashlar: { ...STONE, E: 40e9 },
+  sandstone: { ...STONE, E: 15e9, eta: 0.02, strength: 40e6 },
+  brick: { ...STONE, E: 15e9, eta: 0.02, strength: 20e6 },
+  concrete: { ...STONE, E: 30e9, eta: 0.02, strength: 30e6 },
+  plaster: { E: 5e9, nu: 0.3, eta: 0.03, hardness: 0.4, strength: 4e6, radiation: 0.006, shape: 'plate', brittle: true, pop: 0.05 },
+  ceilingTile: { E: 0.5e9, nu: 0.3, eta: 0.1, hardness: 0.2, strength: 1e6, radiation: 0.004, shape: 'plate', brittle: true, pop: 0.05 },
+  shingles: { E: 1e9, nu: 0.3, eta: 0.05, hardness: 0.4, strength: 5e6, radiation: 0.006, shape: 'plate', pop: 0.3, burnSound: 'crackle' },
+  soil: { ...GROUND, E: 50e6 },
+  quarrySand: { ...GROUND, E: 80e6, eta: 0.4 },
+  beachSand: { ...GROUND, E: 80e6, eta: 0.4 },
+  ash: { ...GROUND, E: 5e6, eta: 0.5, burnSound: 'smoulder' },
+  grass: { ...GROUND, E: 10e6, eta: 0.45, pop: 0.35, grain: 0.004, burnSound: 'hiss' },
+  wood: { ...WOOD, E: 10e9, pop: 0.6, grain: 0.08 },
+  pine: { ...WOOD, E: 9e9, pop: 1.0, grain: 0.1 },
+  oak: { ...WOOD, E: 12e9, eta: 0.008, pop: 0.3, grain: 0.12 },
+  willow: { ...WOOD, E: 7e9, eta: 0.015, pop: 0.5, grain: 0.06 },
+  bark: { ...WOOD, E: 8e9, eta: 0.02, pop: 0.5, grain: 0.05 },
+  deadWood: { ...WOOD, E: 8e9, eta: 0.02, pop: 0.55, grain: 0.06 },
+  twigs: { ...WOOD, E: 8e9, eta: 0.03, pop: 0.7, grain: 0.01 },
+  charcoal: { E: 2e9, nu: 0.3, eta: 0.05, hardness: 0.3, strength: 3e6, radiation: 0.008, shape: 'block', brittle: true, pop: 0.15, grain: 0.03, burnSound: 'smoulder' },
+  leaves: { ...FINE, E: 0.5e9, pop: 0.25, grain: 0.003 },
+  needles: { ...FINE, E: 1e9, pop: 0.8, grain: 0.002, burnSound: 'crackle' },
+  paper: { ...FINE, E: 3e9, eta: 0.1, pop: 0.05, grain: 0.001, burnSound: 'flutter', shape: 'plate' },
+  pages: { ...FINE, E: 3e9, eta: 0.15, pop: 0.05, grain: 0.001, burnSound: 'flutter' },
+  books: { ...FINE, E: 2e9, eta: 0.2, hardness: 0.3, pop: 0.03, grain: 0.05, burnSound: 'smoulder', shape: 'block' },
+  fabric: { ...SOFT, E: 5e6, pop: 0.05, grain: 0.001, burnSound: 'hiss' },
+  cotton: { ...SOFT, E: 5e6, pop: 0.05, grain: 0.001, burnSound: 'hiss' },
+  polyester: { ...SOFT, E: 5e6, pop: 0.02, grain: 0.001, burnSound: 'whoosh' },
+  foam: { ...SOFT, E: 1e6, eta: 0.6, pop: 0.02, burnSound: 'whoosh' },
+  rubber: { ...SOFT, E: 10e6, eta: 0.3, hardness: 0.2, pop: 0.05, burnSound: 'whoosh' },
+  plastic: { E: 2e9, nu: 0.38, eta: 0.04, hardness: 0.5, strength: 40e6, radiation: 0.008, shape: 'shell', alpha: 80e-6, pop: 0.05, burnSound: 'whoosh' },
+  wax: { ...SOFT, E: 0.2e9, eta: 0.1, pop: 0.02, burnSound: 'hiss' },
+  beeswax: { ...SOFT, E: 0.2e9, eta: 0.1, pop: 0.02, burnSound: 'hiss' },
+  wick: { ...SOFT, E: 5e6, pop: 0.02, burnSound: 'hiss' },
+  pitch: { ...SOFT, E: 0.1e9, eta: 0.3, pop: 0.6, burnSound: 'crackle' },
+  gasoline: { E: 1.3e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
+  propane: { E: 1e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
+  water: { E: 2.2e9, nu: 0.5, eta: 1, hardness: 0.03, strength: 0, radiation: 0.004, shape: 'liquid', pop: 0 },
+  bone: { E: 15e9, nu: 0.3, eta: 0.03, hardness: 0.7, strength: 150e6, radiation: 0.008, shape: 'bar', brittle: true, pop: 0.1 },
+  ossuary: { E: 15e9, nu: 0.3, eta: 0.03, hardness: 0.7, strength: 100e6, radiation: 0.008, shape: 'block', brittle: true, pop: 0.1 },
+  // (not voxels: people and creatures, their armour; ice: sim/ice.js)
+  flesh: { E: 0.5e6, nu: 0.45, eta: 0.5, hardness: 0.08, strength: 1e6, radiation: 0.002, shape: 'soft', density: 1060 },
+  scales: { E: 2e9, nu: 0.35, eta: 0.08, hardness: 0.6, strength: 30e6, radiation: 0.005, shape: 'plate', density: 1300 },
+  feathers: { E: 0.3e9, nu: 0.4, eta: 0.6, hardness: 0.05, strength: 2e6, radiation: 0.001, shape: 'soft', density: 150 },
+  plate: { E: 300e9, nu: 0.22, eta: 0.004, hardness: 0.95, strength: 400e6, radiation: 0.012, shape: 'plate', density: 3800 }, // a ceramic body-armour plate
+  kevlar: { E: 70e9, nu: 0.35, eta: 0.08, hardness: 0.3, strength: 3e9, radiation: 0.003, shape: 'soft', density: 1440 },
+  ice: { E: 9e9, nu: 0.33, eta: 0.005, hardness: 0.7, strength: 5e6, radiation: 0.012, shape: 'plate', brittle: true, density: 917, alpha: 50e-6 },
+};
+
+/** The mechanical / acoustic properties of a material (by name or voxel id), density included. */
+export function mechanics(m) {
+  const name = typeof m === 'number' ? MATERIALS[m]?.name : m;
+  const def = name && MAT[name] !== undefined ? MATERIALS[MAT[name]] : null;
+  const own = MECH[name] ?? (def?.fluidity >= 0.95 ? MECH.water : def?.granular ? MECH.soil : def?.combustible ? MECH.wood : {});
+  return { name: name ?? 'unknown', ...MECH_DEFAULTS, density: def?.density ?? 1000, ...own };
+}
+/** The names with mechanical properties (voxel materials and the others: flesh, scales, ...). */
+export const MECHANICS_NAMES = [...new Set([...Object.keys(DEFS), ...Object.keys(MECH)])];

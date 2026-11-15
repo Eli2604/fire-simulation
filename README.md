@@ -38,14 +38,16 @@ at the top switches between:
 - **🦴 Rig** (R from a selected character or vehicle): a stage of its own (`rig/stage.js`) with an
   **Object** drop-down: the *soldier* (every clip, loadouts, weapons, gear, hit zones), a *squad*
   (the fire team of `models/squad.js` in formation, playing clips together; pick a member, add a
-  flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), a *car* (idle, drive,
+  flame trooper or a drone operator), the *dragon* (acts, wings, hit zones), the *phoenix* (acts,
+  flame wings, hit zones, rebirth), a *car* (idle, drive,
   steer, doors open, burning), a *jet* (idle, taxi, gear up / down, flaps, afterburner, banking)
-  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's and dragon's zone tables are the
+  and a *boat* (idle bob, cruise, turn, rough sea). The soldier's, dragon's and phoenix's zone tables are the
   ones the world's hit tests use, so what you adjust there applies when you play. The vehicles'
   hit parts (car: engine, fuel tank, tyres, cabin; jet: cockpit, fuel tanks, engines, tail, wings;
   boat: hull, engine, fuel tank, cabin) are `models/vehicleZones.js`, shown, resized and hit on
   click in the rig; the simulation does not use that table yet. A squad, an enemy, the dragon, a
-  car or the jet selected in Edit world opens with *Rig the …*.
+  car or the jet selected in Edit world opens with *Rig the …*; the catacombs (with their phoenix)
+  with *Rig the phoenix*.
 
 **Scene ▾**: save the scene in this browser, open what you saved, export / import JSON, a new
 empty scene, and every scenario. The drone camp is a world of another scale (a swarm over
@@ -56,24 +58,35 @@ builds the whole editor as one file.
 
 ## Using it
 
-- **Scenario**: metal bars on burners, a wind-driven grass fire, a car fire
-  next to a house, a garden on a dry day, a forest fire in fog, gas cylinders in a bonfire,
+- **Scenario**: metal bars on burners, a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   oak, willow and pine in a grass fire, catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
   spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
-  with the washing line and the barbecue, a meadow with a wind-driven grass fire), all places of
+  with the washing line and the barbecue, a meadow with a wind-driven grass fire) and the street
+  beside it (a car fire next to a house, a garden on a dry day), all places of
   the carrier's world, and a house fire in the rain.
   (Old links to scenes that are now places of that world, `?scenario=laundry`, `teaGarden`,
-  `winterTea` (the lake frozen), `grassFire` and `catacombs`, open it at the place.)
+  `winterTea` (the lake frozen), `grassFire`, `catacombs`, `carHouse` and `neighbourhood`,
+  open it at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
   these can be changed while the fire burns.
 - **View**: realistic or thermal-camera mode, flames, smoke, steam, fire light, and a
   section cut to look inside objects (for example heat soaking into a wall).
+  - *Heat colours* (realistic view, `src/render/heatColor.js`): every solid is coloured by its
+    own temperature. Above about 500 °C it glows (dull red, cherry, orange, yellow, white), as
+    strongly as its emissivity: bright aluminium and copper glow far less than oxidised steel or
+    stone at the same temperature, and an oxide layer makes a metal glow more. The hottest a
+    surface has been leaves a lasting tint: steel takes its temper colours (straw ~220 °C,
+    bronze ~250, purple ~280, blue ~300, grey ~330, then black scale), copper tarnishes through
+    rose, violet and blue to dark oxide, aluminium goes matte, wood, paper and cloth brown before
+    they char, sandstone and limestone redden. The glow goes when it cools; the tint stays (it
+    moves, falls and lands with the voxel). On the metal bars the colours spread out from the
+    burner as the heat is conducted along them, and the steel glows over the flame.
   - *Surfaces*: **voxels** (exactly what is simulated) or **smooth**, a surface-nets mesh of
     the voxel field, rebuilt chunk by chunk as things burn, melt and collapse.
   - *Relief*: some surfaces are more than a colour per voxel.
@@ -405,6 +418,20 @@ fold along the back when it sits). It has a train of flame streamers for a tail,
 fire, a golden hooked beak and white-hot eyes, and it sheds flames and sparks as it flies.
 Its cry is a raptor's scream, made live like the other sounds.
 
+**Its hit zones** (`ai/phoenix.js` `PHOENIX_ZONES`): body, head (×1.5), the wings (×0.6, only
+when spread) and the tail (×0.4), capsules that follow its pose; a guard's round does 22 times
+the zone's multiplier.
+
+**On the rig** (Object › *Phoenix*, `rig/phoenix.js` and `rig/phoenixStage.js`): the same AI
+and renderer on a stone perch in a field of its own, at dusk so its light shows. Its acts as
+buttons: perch (it watches you, the camera), spread wings, call, take off, fly, hover, glide
+(wings spread and still), bank, dive (a stoop with the wings half folded, its fire flaring as it
+pulls out), flame burst, land on the perch, settle on the ground, burst into flame (dies, lies in
+its ash and is born again) and rise from the ashes; a speed control; wing span, flames, size and
+flight speed; its hit zones shown and adjusted (radius, damage), and damage on click.
+`?mode=rig&phoenix=1&pact=dive&pzones=1` opens it (also `&pspan= &pheat= &psize= &pfly=
+&phits=head &psteps=n &pfollow=1 &pdark=0`).
+
 ### Flying the jet (carrier scenario)
 
 Walk up to any of the jets on the flight deck and press **E** (the two on the bow catapults
@@ -475,20 +502,41 @@ the engine room, which has machinery, cable trays and a propellant tank. Along i
 crew quarters, the mess, the cargo bay, a lab and the airlock. Guards walk the corridor,
 and a cable fire starts in the engine room after 40 s.
 
-**Decompression** (sim/vacuum.js) replaces flooding: outside the hull there is vacuum, not
-water or air. Breach the hull with a grenade or rocket, shoot out a window, or open both
-airlock doors, and every space connected to the hole empties:
+**Decompression** (sim/vacuum.js) is flooding the other way round (sim/breach.js): on a ship
+holed below the waterline the sea is the higher pressure and comes in; in space the cabin
+air is, and goes out. Breach the hull with a grenade or rocket, shoot out a window, or open
+both airlock doors, and every space connected to the hole empties:
 
-- How fast depends on the path to the hole and its size: about 1 s right next to a big hole,
-  several seconds at the end of the corridor.
-- The air streams to the hole, carrying smoke and loose light things with it, and cools as
-  it expands.
-- The oxygen goes too, so fires die.
-- Closed doors hold: a room behind one keeps its pressure.
+- Each compartment (the air cells joined through open faces; closed doors and bulkheads
+  part them) has one pressure. Through the hole the air leaves as a choked jet,
+  ṁ = Cd·A·p·√(γ/RT)·(2/(γ+1))^((γ+1)/(2(γ−1))) (the pressure ratio to vacuum is always
+  under the critical 0.528), so it empties as exp(−t/τ), τ = V / (Cd·A·0.685·√(RT)): a
+  1 m² hole empties 100 m³ in about a second, a fist-sized one takes minutes.
+- The air converges on the hole: the flow potential of a compartment expanding uniformly
+  (∇²φ = −1/τ, φ = 0 outside the hole) is solved, so the air is slow in the far corners,
+  faster where the way narrows (a doorway) and fastest in the hole (the jet, up to the speed
+  of sound). It carries the smoke out, and drags what is loose with it: ½·ρ·Cd·A·|u−v|·(u−v)
+  against the thing's weight and its friction on the floor. Crates, a gas cylinder, debris,
+  bodies and soldiers (who hold on harder) slide and tumble to the hole, go through it and
+  drift on in space (no air, no gravity out there). Something bigger than the hole is
+  pressed into it and plugs it: the leak almost stops until the pressure behind it (p·A,
+  tonnes) crushes it through. What is strapped down or bolted stays.
+- The oxygen goes too, so fires die. The gas cools as it expands (T ∝ p^((γ−1)/γ)) and
+  its vapour condenses: a fog flash in the compartment, a white plume out of the hole.
+- Interior doors close themselves once their compartment loses pressure (unless something
+  is in the doorway; *Doors close themselves* in the spaceship's parameters). A closed door
+  holds the difference: you cannot open it against it (18 t on a door); its equalising valve
+  lets the air through first (subsonic or choked by the pressure ratio) and it opens once
+  the two sides are level, the air shared out by volume. A door burnt or blown half away
+  bursts when the difference is more than it can take.
+
+The sea's breach works the same way round: the jet of sea water coming in through the hole
+(√(2 g Δh)) shoves loose things away from it, deeper into the ship, the flood floats what
+floats, and soldiers in its way are knocked over.
 
 For you: the suction pulls you towards the hole, and below a third of cabin pressure you get
 hurt. Your breathing apparatus gives you air but not pressure, so get behind a closed door.
-The HUD shows the cabin pressure, and the sound is a roar of escaping air.
+The HUD shows the cabin pressure, and the sound is a roar of escaping air, doors slamming.
 
 ### A world of places: boxes from afar, the scenery close up
 
@@ -502,11 +550,16 @@ fire scenes):
 | Lake house: tea on the veranda (the lake island) | 240, 1.8, 150 | 22 × 19 × 7 m | 10 cm | 1× |
 | Washing line & barbecue (the lawn east of the island, across ~1 m of water) | 263, 3, 159 | 7 × 5 × 3 m | 5 cm | 15× |
 | Meadow: grass fire (on the shore south of the lake island) | 258, 2.85, 170.5 | 24 × 14 × 9 m | 20 cm | 3× |
+| Car fire by a house (the street, east of the meadow; the old Car fire next to a house) | 284, 2.9, 172 | 14 × 11 × 8 m | 15 cm | 10× |
+| Garden on a dry day (the street, east of the garden; the old scene of that name) | 272, 2.85, 150 | 22 × 18 × 9 m | 20 cm | 10× |
 
 The lake house and its garden share one weather (the garden's `weatherOf: 'lake'`): a mild
 early-autumn afternoon (19 °C, 45 % humidity, 2.5 m/s, the lake open), so the wash can dry and
 catch and the tea still steams; Weather › Presets › Cold snap (or `?scenario=winterTea`) freezes
 the lake over. The meadow keeps the old grass fire's hot, dry, windy spell (28 °C, 25 %, 4 m/s).
+The two street places keep their old scenes' weather too: the car fire 15 °C with 1.5 m/s of
+wind blowing from the car onto the house, the dry garden 25 °C, 30 % humidity, 2 m/s; both are
+neighbours of the lake house (group `lake`).
 Places inside or under another have no `origin` (the jet, the boats and the stand-ins do not go
 by them) but a schematic `box` for the overview: below deck and the lower decks in the hull, the
 catacombs under the church. Zoomed out, each place is
@@ -848,26 +901,36 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 |---|---|
 | Tree | species: **oak** (heavy forking limbs, leaf clusters), **weeping willow** (arching limbs, hanging whips), **pine** (whorls, needle clusters, dead lower branches); height, trunk and crown radius, foliage density, foliage and wood moisture, main branches, seed |
 | Grass patch | size, height, density, moisture (dry vs green), rectangle/ellipse, bare circle in the middle |
-| Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, fire starts in engine or interior |
-| House | size, wall height and thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, windows, furnished, door open, chimney |
+| Car | length, width, height, paint and seat colour, fuel litres, plastic or steel tank, tank vent working or blocked, fire starts in engine or interior. Steel body, glass, foam seats, plastic dashboard and engine parts, rubber tyres, the fuel tank a pressure vessel of petrol |
+| House | size, storeys (1–3, wooden floors with a stairwell), storey height and wall thickness, walls (brick/wood/concrete), roof (tiles/wood shingles/metal), roof pitch, fascia and soffits (wood/uPVC/open), gutter (uPVC/metal/none), windows per side, window width, window frames (wood/uPVC/aluminium), furnished (living room downstairs, bedrooms upstairs), curtains, front door open, back door, chimney |
+| Hedge | kind (conifer: thuja or leylandii, privet, beech, dead), length, height, thickness, drought, seed. Living stems inside a clipped skin of foliage; a dried-out conifer hedge burns like a torch |
+| Living room furniture | room width and depth, sofa and carpet colour, bookshelf, bed. A foam sofa, a coffee table, a bookshelf full of books and a carpet, without walls: the house's living room, to put anywhere. Lit, the sofa burns |
 | Candle | height, radius, paraffin or beeswax, colour, wick length, holder. In a coarse scene (voxels larger than the candle) it is drawn, and burns as a small flame that gives light |
 | Underground church (crypt chapel) | nave length and width, passage to the catacombs, rows of benches. A barrel-vaulted nave cut in the limestone, pillars, benches, a dais and an altar under a cross in a round apse, torches |
-| Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power and position, supports |
+| Metal bar on burner | steel/aluminium/copper, length, thickness, elevation, burner power, position and flame radius, supports |
 | Wood pile / campfire | log cabin / teepee / stack, number, length and radius of logs, moisture, kindling, stone ring |
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
 | Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
-| Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
+| Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power, loose stores. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
 | Catacombs | passages along x and z (default 4 × 4), spacing, width and height, flat or vaulted ceiling, share of masonry walls, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
-| Carrier flight deck | length, width, deck height, waterline. Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
+| Aircraft carrier | an object of objects: the flight deck's params, and in it its 16 jets, the flight of four overhead, a tow tractor, gas bottles and drums, and the places *Below deck* (with *Lower decks* in it). See *Objects of objects* below |
+| Carrier flight deck | length, width, deck height, waterline, where the hatch leads (`hatchTo`). Hull at sea, deck markings, the island with a glazed bridge and door, a hatch below deck |
+| Group | nothing of its own: the objects in it, moved and turned as one |
+| Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
-| Spaceship | length, width, hull height, engine-room cable fire delay, windows. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
+| Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
+| Camp island | size, sea level, ground and pad heights, how far east the pad reaches, ridge height, place and width, where the landing ground is, pier length, the zone the boat goes to, seed. A height field like the island: the level camp pad in the west, the ridge across the middle, the landing ground (its walk-in start) and a pier with a boat in the east |
+| Drone camp | bastion ring radius, which way the gate faces, drones on launch pads, monitors on the desk, jammers, operations and floodlight loads (kW), the grid it runs on, tent canvas moisture. HESCO bastions, the command tent with the operations desk (a monitor per drone, the tactical map), crew tents, launch pads with quadcopters, a radio mast, jammers, floodlights, the power panel |
+| Solar panel park | rows, panels in a row, tilt, facing (compass), row spacing, panel peak power, battery (kWh) and its charge at the start, the grid it feeds, where its cable runs. Panels on steel frames, an inverter/battery container |
+| Wind turbine (windmill) | hub height, rotor radius, rated power, cut-in, rated and cut-out wind, restart speed after a cut-out, yaw rate, the grid it feeds, where its cable runs. Tower, nacelle, three blades turning with the weather's wind |
+| Soldier squad on patrol | soldiers, the round's radius and corners, clockwise, call sign, expertise, body armour, ground height, recoil |
 
 Models are made of simple shapes (box, cylinder, capsule, sphere, ellipsoid, cone, gable
 roof) in their own frame. These are voxelised at any position, rotation and resolution.
@@ -875,6 +938,40 @@ Each shape has a material, optional fill probability (foliage, grass), moisture,
 and an **effective density**. The density lets a 15 cm voxel stand for a 1.5 mm car
 panel, a 6 mm glass pane or a 24 mm roof tile with the right mass, heat capacity and
 fuel, so results do not depend on the voxel size.
+
+### Objects of objects
+
+Any object can hold objects (`models/composite.js`): its `children`, each placed in its frame
+(x, z and a numeric y in metres from the parent's origin; its turn and tilts on top of the
+parent's), so they move and turn with it, and each stays an object of its own: its own params,
+voxels, animations (the jets fly, the rig opens them), selectable and editable. They are numbered
+depth first (a parent, then what is in it): the voxels' owner, `world.origins` and
+`world.objectTree` (each one's record in the world and its pose).
+
+A child of type `place` is a place: a world of its own (its `world`, `view`, `indoor`…) with its
+own `objects`, which may hold places again. `liftPlaces` (run on every scenario, on
+`cloneScene` and when a scene loads) makes each place a zone of the scene: `scene.zones[key]`
+is the place object itself (editing the zone edits the object), with its schematic `box` where
+it lies in the world and `within`: the place it is in (a portal `to: '..'` leads there). A
+scene of one world with a place put in it becomes a world of places (its world the zone
+`main`).
+
+The **aircraft carrier** (`carrier`, `models/carrier.js`) is one: the hull and flight deck, and
+in it the 16 jets, the flight of four, a tow tractor, gas bottles and drums, and **Below deck**
+(a place: corridors, server room, guards) with the **Lower decks** in it (a place again). The
+carrier scenario is built from it (the deck zone holds one object; below deck and the lower
+decks are its places). Put it into any world from *+ Add › Places › Aircraft carrier*: it comes
+with all of it, its places named apart from any already there (`below2`, … and its hatch and
+ladders pointing at them).
+
+In **Edit world** the outliner shows the objects as a tree (what is in an object under it,
+indented; a place in it as ⌂, a click goes there). The gizmo moves and turns the selected object
+with all that is in it; a child picked in the view or the list is moved on its own, in its
+parent's frame (its X, Z and height in the properties are in that frame). *⇥ Into the one
+above* puts the selected object into the object above it in the list, *⇤ Out* takes it out
+(both keep it where it is in the world); in *+ Add*, *Put it inside …* places the new object
+into the selected one; Duplicate and Delete take what is in an object along. A *Group* (nothing
+of its own) moves things as one; a *Place* adds a room of its own to an object or a world.
 
 ### Adding a model
 
@@ -904,10 +1001,17 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
 
 1. **Heat transfer in solids.** Conduction between touching voxels uses the harmonic mean
    conductivity. Exposed faces exchange heat with the gas in front of them: natural
-   convection, plus wind, plus flame contact at about 1100 °C. Radiation goes both ways:
+   convection, plus wind, plus flame contact at about 1100 °C (a gas burner's premixed flame,
+   as under the metal bars, at about 1500 °C). Radiation goes both ways:
    hot surfaces emit εσ(T⁴−T∞⁴), and flames and embers feed a blurred, inverse-square
    calibrated radiation field. Absorption can never exceed emission, and irradiance is
-   capped at flame black-body level.
+   capped at flame black-body level. The blurred field reaches about a metre; further out
+   (`src/sim/farRadiation.js`) a big fire's radiant power is gathered into ~1 m blocks and
+   every surface that can see a block takes P cosθ / (4π d²) from it: the line to it is
+   marched through the air grid (walls and unbroken window panes shade it) and only faces
+   turned towards the fire take it in. This is how a burning car sets the house next to it
+   alight: its windows crack and fall out, the curtains behind them catch, the fascia, gutter,
+   wooden frames and doors char and burn.
 2. **Two-node voxels.** Bulk materials have a few-millimetre **skin** that exchanges heat
    with the gas and radiation, coupled to the **core** that conducts to neighbours. Both
    are solved together implicitly, which is unconditionally stable. This is what makes
@@ -1037,7 +1141,7 @@ Calibration targets used during development (`npm run headless`):
 | Candle flame | ~60–100 W | ~25 W while the wax is solid, ~70–100 W with a melt pool |
 | Campfire, 8 logs | 20–60 kW, logs catch from kindling in a few minutes | ~15–60 kW |
 | Grass fire, 2 m/s wind | ~0.1–0.3 m/s spread | ~0.08 m/s from a point ignition, accelerating |
-| Car fire | slow growth over ~10 min, spreads to nearby buildings | ~0.1 → 0.6 MW in 11 min, then the house next to it |
+| Car fire | engine fire into the cabin in 3–10 min, 2–4 MW at its height, spreads to nearby buildings | ~0.2 MW in the engine bay, in the cabin after ~4 min, 2 MW at 6 min (a fuel-tank pool fire briefly more); the wooden house 2 m off catches ~7.5 min in (gutter, fascia, wall, shingles) at 10–25 kW/m² on its wall |
 | Metal bars | copper spreads heat furthest, steel keeps a steep gradient | yes |
 | Campfire in 50 mm/h rain | dies down, core keeps glowing | −55 % in 4 min, still dropping |
 | 11 kg propane cylinder in a fire | relief valve opens around 17.5 bar; blocked valve: overfill and burst within minutes | vents at 17.5 bar after ~1.5 min; bursts at ~90 bar after ~2 min |
@@ -1081,13 +1185,83 @@ Big scenes are split twice over:
 voxel faces; ossuary bones are drawn only in the chunks near you. The resolution is the same
 everywhere in a zone: a coarser grid far from you is not done.
 
+### Impacts: force, damage, shockwaves
+
+`sim/impact.js` is one model for every collision: a kick, a punch, a judo throw, a soldier
+landing from a drop or a roll, a body falling, the dragon coming down from the sky or stamping, a
+loose drum it threw hitting the ground, a jet crashing, a car door slamming, a fragment hitting a
+wall. From the masses (reduced mass μ), the closing speed v and the two materials it works out
+the impulse J = μ(1+e)v (e, the restitution, from the materials' hardness and damping), the
+energy ½μv², the contact time (Hertz contact of the two materials: tens of µs steel on steel,
+~0.1 s flesh on soil; a roll spreads a landing over ~0.35 s) and the mean force F = J / t. What it
+does follows from those: blunt trauma to a person (logarithmic in the energy taken, more to the
+head, less through armour and in a long contact; a landing on your feet is harmless up to
+~6.5 m/s), a stagger or a knock-down by the change of speed it gives him (0.6 / 1.5 m/s), loose
+objects knocked flying, voxels crushed (`sim/crush.js`) and, from ~4 kJ on, a **shockwave**
+through the ground of radius 0.25·E^⅓ m (a dragon landing ~10 m, a jet crash ~60 m): a ring of
+dust and clods kicked up (drawn by `render/debris.js`), people near it staggered (close in,
+knocked down), loose things jumping (`render/loose.js`), the camera shaking with the distance
+(`shakeAt`). Every impact is an event (`{ type: 'impact', force, impulse, energy, materials,
+db, ... }`) and, when big, a `shockwave`.
+
+    impact(simOrWorld, { pos, normal, mass, velocity, massB, materials: ['flesh', 'soil'], scale, contactTime, source, target, zone, kind, effects })
+    computeImpact(o)                                   // the physics only (the rig's readout)
+
+**Force ×**: every impact's closing speed is multiplied by its act's and its object's Force ×
+(so the impulse and force ×, the energy ײ). Each act with a contact declares it in
+`rig/objects.js` `ACT_IMPACTS` (`{ t, part, material, target, v }`: when as a fraction of the
+act, which body part, what it hits); the Rig stage measures the part's speed off the animation,
+takes its share of the body's mass (`PART_MASS`: a fist ~5 %, a foot ~12 %, a landing body all of
+it) and shows a **force indicator**: the force in N on a bar, the impulse, energy, contact time,
+damage, knock-down, shockwave radius and the dB, an arrow at the contact and a ring for the
+shockwave, the Force × of the act and of the object as sliders, and (Sound on) the sound. The
+dragon's come from the simulation's own code (`ai/dragon.js impactOf`: landing, stamp, crash,
+falling dead), the jet's crash when it reaches the ground, a car door when it slams. In the
+world editor the dragon, the squad and the enemies have a *Force ×* parameter. Wired in the
+world: the dragon's landings, stamps and crashes, the jet crash (`sim/jetDamage.js`), parkour
+drops, vaults and rolls (`ai/squad.js`, `ai/enemies.js`, your own in the walk-through), a man
+falling dead, debris hitting people (`ai/enemies.js`) and walls (`sim/vessels.js`), and
+whatever the dragon throws (`ai/dragonAir.js`).
+
+### Sound from physics
+
+The sounds are synthesised, not recorded, and take their parameters from the state of their
+source (`audio/physics.js`, used by `audio/sound.js`):
+
+- **Struck solids** (modal synthesis): each body rings at modes set by its material's stiffness
+  and density (c = √(E/ρ)) and its size and shape (flexural f ∝ c·t/L², solid f = c/2L: bigger
+  is lower, stiffer is higher), each decaying with the material's loss factor (τ = 1/(π f η):
+  steel clangs for seconds, wood knocks, flesh only thuds). The contact time decides how high
+  they are excited (hard on hard: bright). The level is 10·log10 of the radiated energy (a share
+  of the impact's, by material). Glass and ice shatter into ringing shards, water splashes with
+  bubbles at their Minnaert frequency (3.3 kHz at 1 mm), a very big impact adds a ground boom.
+  Mechanical and acoustic properties per material: `sim/materials.js mechanics()` (also flesh,
+  scales, feathers, a ceramic plate, kevlar, ice).
+- **Fire**, per burning region of the simulation (`sim/fireAudio.js`, gathered in the solid pass
+  only while the sound runs): the roar is turbulent combustion noise (~2·10⁻⁶ of the heat
+  release, louder in wind), its spectrum peaking at ~160/√D Hz (a bigger fire rumbles lower),
+  puffing at 1.5/√D Hz; the crackle is a pulse train per material whose rate comes from its
+  moisture (steam pockets bursting: most at ~20 %, less when soaked), resin (pine pops more than
+  oak) and grain (grass crackles fast and small, logs seldom and loud); paper flutters, books
+  smoulder quietly, plastics and fuels whoosh; water on hot surfaces hisses by the steam made;
+  metals tick as they heat and cool (thermal expansion); a region flaring up all at once whoomps.
+- **Flows**: the jet engine from its thrust (exhaust velocity, Lighthill's V⁸, Strouhal 0.2, the
+  turbine whine from the spool speed), a breach in the hull from the pressure across it, a gas
+  leak from its mass flow, wind (Aeolian tones), rain (drop rate, bubbles), the dragon's and the
+  phoenix's wings from their area and beat, gunshots from the cartridge's energy, explosions
+  from theirs.
+- **Propagation**: inverse-square, the air absorbing the highs with distance, the speed of sound
+  (a far crash comes late and dull), muffled through walls (line of sight) and under water.
+- **CPU**: at most 28 one-shots at a time (a quiet one is dropped for a louder), three fire voices
+  (the loudest regions, the rest merged), less detail with distance.
+
 ### Limitations
 
 This is a real-time, approximate model, not a CFD fire code like FDS. The air flow is not
 pressure-projected, so the exchange through a doorway or a broken window is too weak: a room
 fire becomes short of oxygen sooner than a real one, and a house fire with the door open
-levels off at a few hundred kW where a real one would reach a few MW. Radiation is a blurred field without real shadowing, corrected by a
-view factor. A voxel stands for its material, so geometry finer than the voxel size is
+levels off at a few hundred kW where a real one would reach a few MW. Radiation close in is a blurred field without real shadowing, corrected by a
+view factor; further out it comes from a few point sources, shaded along one line each. A voxel stands for its material, so geometry finer than the voxel size is
 represented through effective density and surface factors. Results are qualitatively
 right and of the right order of magnitude, but should not be used for engineering.
 
@@ -1125,7 +1299,9 @@ the simulation itself to the GPU (WebGPU compute) for larger scenes.
 ```
 
 Objects can stand on something with `"y"` (metres above the ground, e.g. the jet on the
-flight deck). A scene can be split into **zones** instead of having one `world` and
+flight deck), and hold objects of their own (`"children"`, in their frame; a child
+`{ "type": "place", "key", "name", "world", "view", "objects", "x", "y", "z" }` is a place of its
+own: *Objects of objects*). A scene can be split into **zones** instead of having one `world` and
 `objects`:
 
 ```jsonc
@@ -1155,7 +1331,7 @@ src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, pa
                 volumetric smoke/steam, rain, extinguisher spray, debris, view
 src/ai/         enemies: senses, path finding around fire, luring with fire
 src/walk/       first-person walk-through (firefighter), flying the jet
-src/audio/      procedural sound
+src/audio/      procedural sound, synthesised from physics (physics.js: modes, flows, propagation)
 src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library
 src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
 src/camp/       the drone operations camp stage (stage.js; opened from the editor)
@@ -1205,7 +1381,7 @@ the stairs (`host.path3d`, the guards' path finder over floors and stairs).
 
 
 **Character rig** (`src/rig/stage.js`, the editor's *Rig* mode; `rig.html` mounts it on a page of
-its own): the soldiers on an empty field, with every clip, the loadouts (rifle, flame gun), the
+its own): the soldiers on an empty field, with every clip, the loadouts (rifle, shotgun, pistol, machine gun, flame gun), the
 weapon in hand, armour, reload speed and look, the hit areas (shown, resized, damage multipliers:
 `operator/rig.js` `ZONES` itself, so edits apply in the world too), damage on click, the gear
 (dropped or knocked off as rigid bodies, re-equipped), grenades and flash-bangs, and an FPS
@@ -1239,6 +1415,66 @@ them on their patrol (in file, through doors, on their round); once the team see
 something or notices a lamp, the squad AI has them, and gives them back afterwards. Heat, fire
 and the dragon still make them run, and one may still slip off to light a lure.
 
+### Senses: sight and hearing for every agent; peeking; flashlights
+
+**Perception** (`ai/perception.js`) is one set of rules for everyone who senses: the squads and the
+guards (`ai/squad.js`, `ai/enemies.js`), the dragons (`ai/dragon.js`), the phoenix (`ai/phoenix.js`),
+a jet's pilot (a profile, `SENSES.pilot`).
+- **Parameters per agent**: `sightRange` (m, in clear daylight), `fov` (degrees; 360: all round,
+  a team watching its sectors), `hearing` (× how far a sound carries), `nightSight`; the defaults
+  per kind keep what each did before (the squads as far as the weather lets them, up to 400 m; a
+  guard alone 22 m; the dragon 45 m, 13 m dozing; the phoenix 9 m). The models' params (squad,
+  enemies, dragon: *Sight*, *Field of view*, *Hearing*) and the rig's Gear tab (*Senses*) set them;
+  **experience** scales them (`SKILL_SENSES`: an elite man sees further and notices sooner).
+- **Sight**: from his eye (standing, crouched, prone, peeking: `eyeOf`), in his field of view
+  (slower at its edge), through the voxels (walls and roofs block it; glass and foliage dim it;
+  smoke builds up and blocks it). **Noticing builds up** (`perceive`): close and plain a fraction
+  of a second; far, in the dark, through smoke, half behind cover, still, camouflaged: seconds or
+  never. Seen a moment ago, or where the threat is known to be: at once.
+- **Light**: the world's light level if it has one (a time of day: `world.lightAt(p)`,
+  `world.light.level`, `world.lightLevel`, `world.ambient`, `world.sun.light`), else its `dark`
+  flag. Darkness shortens sight (by `nightSight`); a beam (a flashlight) lights what it falls on, so
+  the man with the light sees there; and **a light carried on gives its carrier away** from far off
+  (further for whoever looks into it).
+- **Hearing**: sounds are events `{ pos, loudness_dB, kind, source }` (`emitSound(world, ...)`, for
+  the impact and sound modules too) in `world.noises`. A sound carries to the threshold of hearing,
+  spreading and absorbed on the way (`rangeFromDb`: a rifle shot ~3 km, a walk on stone ~20 m);
+  each wall between takes 12 dB off (a low wall it goes over does not); a keen ear hears further.
+  Where it came from is uncertain (the further, the less sure): that is where they go to look, if it
+  is near enough to bother (`investigate`: soldiers 250 m, guards 120 m). Gunshots (per weapon),
+  grenades and explosions, flash-bangs, rockets, the bow, and your footsteps (by pace and ground:
+  running on stone is loud, a crawl on grass hardly) are sounds; older noises with a range in metres
+  are the same thing (`dbFromRange`).
+
+**Peeking** (`ai/peek.js`; the rig's *Peek* group): **over a low wall** (`peekWall`: from the crouch
+he rises just enough for his eyes to clear the top, looks left and right, drops back), **round a
+corner** (`leanLeft` / `leanRight`: the weight onto that leg, the spine rolled over it, the head
+level; a right-handed shooter leans out right more naturally, further to the left; with a pistol
+one-handed, the other hand on the wall) and **slicing the pie** (`sliceLeft` / `sliceRight`). A squad
+man in cover who has lost sight of the enemy (seen before, gone a few seconds) peeks to find him:
+over the wall in front of him, round its edge, or slicing where there is room. The more experienced,
+the shorter (`PEEK_T`: 2.6 s a recruit, 1.1 s elite) and the less predictable (another place or side,
+irregular waits). His eye is where the peek puts it, so the peek finds what is there, and **his
+head shows** while it lasts (others see it: `headOf`). In the walk-through: **Z / X** held lean you
+out left / right (as far as there is room), and low behind a low wall **Z and X together** raise you
+just enough to look over it.
+
+**Flashlights** (`ai/flashlight.js`): a **weapon light** is an attachment (the rifle, carbine and
+shotgun have one by default; the models' *Weapon lights*: standard, all, none; per weapon
+`m.weaponLight`), shining along the muzzle where he aims. Without one, the **hand torch** from the
+pouch on the left of his belt (the models' *A hand torch on the belt*), **only with a hand free**:
+the knife, the pistol (held one-handed; the torch under the wrist, the **Harries** hold, or out to
+the side and high, the **FBI** hold) or bare hands. With a two-handed weapon and no light on it he
+cannot, unless he switches weapons. Drawn and put back by hand (`drawTorch` / `stowTorch`); the
+left arm holds it by its own inverse kinematics over whatever clip plays, pointing it where he looks.
+The team switches lights on in the dark once in contact (not while stealthy, on patrol), and the men
+searching (a last known position, a blast, clearing a building) use theirs. The lights themselves
+are a small pool (`render/flashlights.js`: three spot lights, given each frame to the biggest on the
+screen, `render/lod.js`'s budget `flashlight`); every light has its lens's glow and a faint beam in
+the air. In the walk-through **N** is your flashlight: the rifle's light, or with a hand free (bare
+hands, the fire torch, a grenade) the torch from your belt; not with two hands on the hose, the bow
+or the extinguisher. Your light (and the helmet lamp, L) shows you to the guards in the dark.
+
 ### Soldiers: expertise, ammunition, armour, the knife
 
 Each soldier (`ai/soldier.js`) has an **expertise**: recruit, regular, veteran or elite (the
@@ -1249,11 +1485,88 @@ belt), reloading with the animation; dry, he goes to the compact secondary, then
 says so on the radio. Your rifle has 30 rounds and 4 spare magazines. **Body armour** (plates,
 helmet; the model's *Body armour*) stops most rounds to the torso (a heavy round more often gets
 through, a knife never) and the helmet turns some. **Damage depends on the weapon and where it
-hits** (`sim/wounds.js` `WEAPONS`): rifle, the gunner's heavier round, the secondary's pistol
+hits** (`sim/wounds.js` `WEAPONS`): rifle, the gunner's heavier round, buckshot, a pistol, the secondary's pistol
 calibre, the knife, fragments, arrows; rifle rounds hit the dragon's zones too. **Close
 combat**: an enemy within ~2 m and the rifle goes away, the knife comes out (an animation each
 way); he closes in and stabs. A man **badly hit** is called in by the nearest of his team
 ("Medic!"); under **heavy fire from one side** someone throws a grenade that way and shouts it.
+
+### Weapons: how each is held, and what it lets a man do
+
+The weapon in a man's hands changes his animations and his moves (`ai/weapons.js` `HANDLING`, one
+profile per weapon; `operator/rig.js` `WEAPON_STYLE` holds them on the figure). Primaries: the
+**rifle**, a **pump shotgun** (12 gauge, 7 shells), a **pistol** (9 mm), the gunner's **machine
+gun** and the **flame gun** (its tanks on his back); the carbine is everyone's secondary.
+
+| Weapon | Grip | Carry / aim | Not with it (what he does instead) |
+|---|---|---|---|
+| Rifle, carbine | pistol grip; foregrip (the carbine: magazine well) | low ready / at the shoulder, bladed | everything allowed |
+| Pump shotgun | grip; the left hand on the pump, worked back and forward after every round | muzzle lower / shoulder, weight forward | everything allowed (sprint ×0.97) |
+| Pistol | one hand on the move; aimed, the left cupping the right | compressed ready at the chest / arms out, square to the target | everything allowed |
+| Machine gun | left hand over the top of the handguard | hip carry / shoulder, leaning in | no roll (a dive flat into cover, or a crouched side step), no speed vault (side vault ×1.25), no jump climb, mantle ×1.3, no landing roll, no slide; crawl ×0.7, sprint ×0.85 |
+| Flame gun | trigger grip and the wand's grip | hip carry / from the hip, the nozzle raised | no roll or dive (a crouched side step), no crawling or going prone, no climbing or mantling, side or step-over vaults ×1.4 only, drops up to 1.6 m, no slide; sprint ×0.72 |
+
+- **Clips per weapon**, baked once each and shared (as the firing clips are per recoil): every
+  armed clip held that weapon's way (grip offsets along the weapon, carry, aim, stance), its
+  own reload (the shotgun's shells one at a time from the belt, the pistol's magazine), and
+  the firing clips from its recoil (`ai/recoil.js`: the shotgun's heavy single kick, then the
+  pump stroke; the pistol's muzzle rise). The figure swaps them as the weapon in his hands
+  changes (drawing the carbine, back to the primary); the shotgun's pump slides with the hand.
+- **The AI respects them**: `ai/evade.js` picks a crouched **side step** (`sidestepLeft` /
+  `sidestepRight`) or a **dive into cover** where the weapon rules a roll out; `ai/parkour.js`
+  `ability()` leaves out the moves it rules out (the route planner goes round), slows the rest;
+  the squad's pace follows it (`gaitK`). Guards and the dragon's victims too.
+- **The player**: the rifle and the hand-held fire torch have profiles of their own (the fire
+  torch: no roll or dive while lit, a side step instead; slower climbs).
+- **Models**: the squad's *Riflemen carry* (rifle, shotgun, pistol, mixed) and the guards'
+  *Weapon* (rifle, shotgun, pistol, mixed).
+- **Rig**: the Gear tab's *Primary* select shows each weapon's poses (Animate tab), lists its
+  grip, carry, aim and what it rules out, and greys out the acts it does not allow.
+
+### Hand-to-hand: boxing and judo
+
+A man with no weapon (loadout *unarmed*: the squad's *Riflemen carry*, the guards' *Weapon*; or
+out of ammunition with the knife gone) fights with his fists, feet and throws (`ai/melee.js`). Unarmed is the most
+agile profile (`ai/weapons.js` `unarmed`: every move allowed, a little quicker). From a **boxing
+guard** (left fist forward, the right by the chin, light on his feet) he closes in and picks by
+the distance and his man's state: **jab, cross, hook, uppercut**, a **front kick, roundhouse kick,
+low kick** further out, the **clinch** close in, and from the clinch (or with his man dazed) a
+**hip throw** (o-goshi), **shoulder throw** (seoi-nage) or **foot sweep** (de-ashi-barai). Each
+move lands at its time if the other man is still within its reach (out of it: a miss) for its
+damage and a daze; a **block** takes three quarters off, a **slip** makes a punch to the head miss.
+Hard blows can **knock him down**; a thrown man lands on his back over the thrower (the throws and
+the clinch are paired clips, the thrower's and the thrown man's, in step), lies there, and
+**gets back up**. In the walk-through: **G** punch, **V** kick, **B** throw the man in front of
+you. The rig's Animate tab has a *Hand-to-hand* group: each strike against a sparring partner
+who takes it, the throws and the clinch with the partner in the other half of the pair.
+
+### Gear: carrying, switching, dropping, picking up; experience
+
+- **Where each weapon rides** (`ai/weapons.js` `HANDLING[k].slot`): the rifle, shotgun and machine gun
+  slung across the back, the carbine across the back on the other diagonal, the pistol in a holster
+  on the right hip, the knife in its sheath on the right thigh, the flame gun's wand clipped at the
+  right side (its tanks on his back). **Switching** puts the one in his hands away to its place (the
+  right hand's own path: over the shoulder, down to the hip) and draws the next from its place;
+  `carried(m)` lists what a man has (his primary, the carbine, the knife, bare hands), and the rig's
+  Gear tab shows them as buttons; the AI picks among them by the situation (dry: the carbine; close
+  in: the knife; no knife: the fists). In the walk-through, 8 is bare hands.
+- **Drop weapon** (`OperatorFigure.dropWeapon`): whatever is in his hands (rifle, shotgun, pistol,
+  machine gun, carbine, knife, the flame gun's wand) falls as a rigid body; he is bare-handed after
+  (fists up). On death the same.
+- **Pack off** (`dropPack`): the chest and waist buckles, the right shoulder strap, then the left,
+  the pack swung round to the front and lowered to the ground in front of him; a flame trooper's
+  tanks (and the wand) come off with it, and with them what the tanks ruled out.
+- **Pick up** (`pickUp`): he goes to what he dropped, bends down and takes it (both hands for a long
+  gun or the pack, one for a pistol, the knife, the helmet), or takes it up in a forward roll over it
+  (`rollPickup`). The AI's disarmed men already go and pick their rifle up.
+- **Experience** (`ai/soldier.js` `SKILL`, `SKILL_INFO`): recruit, regular, veteran, elite, per man
+  and per squad / guard group (the models' *Experience*; the rig's Gear tab per soldier): aim
+  (scatter), recoil control (`ai/recoil.js`), reaction (and blocking a blow), reload, switch, drop
+  and pick-up speed, nerve under fire (how readily he flinches into a roll), hand-to-hand (how hard
+  and how well he picks his move).
+- **Contacts for the impact model**: `ai/melee.js` `IMPACTS` declares, as plain data, when and with
+  what each strike, throw landing, knock-down, dropped weapon and lowered pack touches what
+  (`{ t, part, material, target }`); `meleeDamage` is the one place the damage is computed.
 
 ### Team tactics: formations, files, splitting, rooms, floors
 
@@ -1293,3 +1606,41 @@ drone (its camera and status: leader, battery, GNSS, link to the camp) and a tac
 each drone last reported. Jammers (from the drones repo) cut GNSS or the radio link to the camp;
 place more with *Place jammer*. `node scripts/build-rig-artifact.mjs out.html camp` builds it as
 one file.
+
+### The camp island (in the carrier's world)
+
+Another island of the carrier's world (the place **Camp island: drone camp**, `src/campIsland.js`;
+`?scenario=campIsland`), out on its own south-west of the lake house: a drone camp
+(models/droneCamp.js: the camp page's tents, operations desk, launch pads with drones, radio mast
+and jammers, as objects of the voxel world) inside a ring of bastions on a level pad in the west,
+powered by a **solar park** (models/solarPark.js) and a **wind turbine** (models/windTurbine.js)
+beside it, their cables laid on the ground to the camp's power panel. Across the middle of the
+island runs a **ridge** (11 m), and behind it, in the east, a grassy **landing ground** with a pier
+(a boat to the island).
+
+- **Power** (sim/power.js, every heat step): the turbine takes the weather's wind at its hub (the
+  wind at 2 m by the 1/7 power law), turns into it at 6°/s, idles below cut-in (3 m/s), makes
+  ½ρAv³·Cp up to its rating (30 kW at 11 m/s), and above cut-out (25 m/s: a storm) is feathered
+  and braked to a stop, starting again only below 20 m/s; its rotor spins up and down with
+  inertia at a tip-speed ratio of ~6.5. The panels take the weather's sunlight (the season's sun
+  through clouds, rain and fog) by how high the sun stands and the angle it meets them at
+  (beam and sky light), less 0.4 %/K for hot cells and the inverter's 4 %. The sun's direction
+  comes from a time-of-day sky if the simulation has one (`sim.sky.sunDir`, `world.sunDir`,
+  `weather.sunDir` or an hour `weather.timeOfDay`), else a midday sun of the season from a
+  little east of south. A small battery (1 kWh) in the park's container evens it out. Short of
+  power the floodlights (on at night) go out first, then the operations: the monitors, the map,
+  the drones' and jammers' lights go dark. A panel blown away or burnt gives nothing (and is
+  not drawn); the turbine's nacelle or the park's inverter gone, nothing at all.
+- **The patrol** (models/campPatrol.js): a squad of four soldiers (call sign Kilo: a commander,
+  a gunner, two riflemen, in armour) walks a round of eight corners about the camp, outside the
+  bastions, in file (ai/enemies.js), and is a fire team the moment it sees or hears you
+  (ai/squad.js: cover, bounding overwatch, radio, parkour only once alerted). Soldiers, not
+  guards: they do not light fires to lure you.
+- **Deploy**: Play › *Deploy: the camp island, behind the ridge*, the *🪂 Deploy here* entry
+  under the place in Edit world's places list, or `?deploy=camp` (or `?scenario=campIsland&walk=1`)
+  puts you down walking on the landing ground, the island's walk-in start, out of sight of the
+  camp and its patrol (the ridge is between: test/campIsland.test.js traces every line of sight).
+  Like every place it is also a box in the overview (click it), and the jet can fly there.
+- **Level of detail** (render/campPower.js): the rotor, the panels (one instanced mesh) and the
+  camp's screens and lights by their size on the screen; frames, cables, drones and antennas go
+  first; the soldiers are the characters' own (render/enemies.js).

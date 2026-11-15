@@ -11,6 +11,8 @@ export const F_ANCHOR = 4; // always considered supported (e.g. bolted down)
 export const F_BURNING = 8; // flaming combustion
 export const F_SMOLDER = 16; // pyrolysing / smoking without flame
 export const F_HIDDEN = 64; // drawn as a mesh (a wall torch), not as a voxel
+/** world.tmax holds the hottest a surface has been in steps of this many °C (0..1020 °C in a byte) */
+export const TMAX_STEP = 4;
 export const F_BROKEN = 32; // has broken away once (a fallen branch, a dropped tile): does not break again
 
 /**
@@ -41,6 +43,7 @@ export class World {
     this.moist = new Float32Array(N); // kg water / kg dry material
     this.melt = new Float32Array(N); // melted fraction 0..1
     this.char = new Float32Array(N); // visual charring / oxidation 0..1
+    this.tmax = new Uint8Array(N); // hottest the surface has been, in TMAX_STEP °C (lasting heat tint: temper colours, scorching)
     this.flags = new Uint8Array(N);
     this.hrr = new Float32Array(N); // current heat release rate, W
     this.dE = new Float32Array(N); // per step energy accumulator, J
@@ -211,6 +214,7 @@ export class World {
     this.mat[i] = id;
     this.temp[i] = o.temp ?? this.ambient;
     this.skin[i] = this.temp[i];
+    this.tmax[i] = Math.min(255, Math.max(0, this.temp[i] / TMAX_STEP));
     this.wetSkin[i] = 1;
     this.dens[i] = o.density ?? 1;
     this.skinMelt[i] = 0;
@@ -284,6 +288,7 @@ export class World {
     this.moist[j] = this.moist[i];
     this.melt[j] = this.melt[i];
     this.char[j] = this.char[i];
+    this.tmax[j] = this.tmax[i];
     this.flags[j] = this.flags[i];
     this.hrr[j] = this.hrr[i];
     this.owner[j] = this.owner[i];

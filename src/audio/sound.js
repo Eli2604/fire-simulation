@@ -8,7 +8,27 @@
  *  - gas jet: high hiss at a burst pipe
  *  - hose / extinguisher spray
  *  - low-air warning whistle, heartbeat under heat stress, explosion booms
+ *
+ * Physically driven (audio/physics.js): the parameters come from the state of the source.
+ *  - fire: per burning region of the simulation (sim/fireAudio.js: state.fireSources), the roar
+ *    from its heat release and flame size (bigger: louder and lower), puffing at 1.5/√D Hz, swelling
+ *    with the wind; the crackle per material from its moisture, resin and grain; the hiss of water
+ *    flashing to steam; metal ticking as it heats and cools; a whoomp when a region flares up.
+ *    Distant regions are merged into few voices (aggregate), with less detail the further (lodFor).
+ *  - impacts (sim/impact.js events): modal synthesis of the two bodies (strike()), loud by the
+ *    energy, bright by the contact time, ringing by the materials; bubbles for a splash, shards
+ *    for glass, a ground boom for a big one.
+ *  - wind, rain, explosions, gunshots (cartridge energy), wings (area, beat), decompression (the
+ *    pressure across the breach), the gas jet (its mass flow).
+ *  - propagation for every positioned sound: inverse-square, air absorption of the highs, the
+ *    speed-of-sound delay, muffled through walls (state.lineOfSight) and under water.
+ *  - CPU: a voice budget (MAX_VOICES one-shots at a time; quieter ones are dropped).
  */
+import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
+
+const MAX_VOICES = 28;
+const FIRE_VOICES = 3;
+
 export class SoundScape {
   constructor() {
     this.ctx = null;
@@ -23,7 +43,20 @@ export class SoundScape {
     this.running = true;
     this.master = ctx.createGain();
     this.master.gain.value = 0.8;
-    this.master.connect(ctx.destination);
+    // under water everything comes through muffled (the master's low-pass)
+    this.muffle = ctx.createBiquadFilter();
+    this.muffle.type = 'lowpass';
+    this.muffle.frequency.value = 20000;
+    this.master.connect(this.muffle).connect(ctx.destination);
+    // loud one-shots (impacts, booms) through a limiter
+    this.limiter = ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -10;
+    this.limiter.knee.value = 6;
+    this.limiter.ratio.value = 8;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.25;
+    this.limiter.connect(this.master);
+    this.voiceEnds = [];
     // 2 s of white noise shared by all noise voices
     const len = ctx.sampleRate * 2;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -31,9 +64,37 @@ export class SoundScape {
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
 
     // continuous voices
-    this.fire = this.loop([{ type: 'lowpass', frequency: 380, Q: 0.6 }], true);
-    this.fireHigh = this.loop([{ type: 'bandpass', frequency: 1200, Q: 0.7 }], true, this.fire.panner);
-    this.jet = this.loop([{ type: 'highpass', frequency: 2200, Q: 0.7 }, { type: 'peaking', frequency: 6000, Q: 1, gain: 8 }], true);
+    // the fire: a few roar voices (the loudest regions, the rest merged), each turbulence noise
+    // through a low-pass at its cutoff and a peak at its spectrum's peak, its level puffing at the
+    // flame's flicker frequency (an LFO on a gain)
+    this.fireVoices = [];
+    for (let k = 0; k < FIRE_VOICES; k++) {
+      const v = this.loop([{ type: 'lowpass', frequency: 600, Q: 0.6 }, { type: 'peaking', frequency: 200, Q: 0.8, gain: 9 }], true);
+      v.lp = v.filters[0];
+      v.pk = v.filters[1];
+      v.panner.rolloffFactor = 0; // (the level is set here: propagate())
+      v.panner.distanceModel = 'linear';
+      v.puff = ctx.createGain();
+      v.puff.gain.value = 1;
+      v.gain.disconnect();
+      v.gain.connect(v.puff).connect(v.panner);
+      v.lfo = ctx.createOscillator();
+      v.lfo.frequency.value = 2;
+      v.lfoDepth = ctx.createGain();
+      v.lfoDepth.gain.value = 0;
+      v.lfo.connect(v.lfoDepth).connect(v.puff.gain);
+      v.lfo.start();
+      v.hiss = this.loop([{ type: 'bandpass', frequency: 4000, Q: 0.8 }], false, v.panner); // steam, fine fuel
+      v.hissF = v.hiss.filters[0];
+      v.popAcc = 0;
+      v.tickAcc = 0;
+      this.fireVoices.push(v);
+    }
+    this.fire = this.fireVoices[0];
+    this.wind = this.loop([{ type: 'lowpass', frequency: 400, Q: 0.5 }, { type: 'bandpass', frequency: 300, Q: 6 }], false);
+    this.windTone = this.wind.filters[1];
+    this.rainV = this.loop([{ type: 'highpass', frequency: 1200, Q: 0.5 }, { type: 'peaking', frequency: 3000, Q: 1, gain: 6 }], false);
+    this.jet =this.loop([{ type: 'highpass', frequency: 2200, Q: 0.7 }, { type: 'peaking', frequency: 6000, Q: 1, gain: 8 }], true);
     this.hose = this.loop([{ type: 'bandpass', frequency: 2800, Q: 0.5 }], false);
     this.leak = this.loop([{ type: 'highpass', frequency: 4000, Q: 0.7 }], false); // broken mask hissing
     this.burning = this.loop([{ type: 'bandpass', frequency: 600, Q: 0.5 }], false); // your gear on fire
@@ -67,6 +128,7 @@ export class SoundScape {
     src.loop = true;
     src.loopStart = Math.random();
     let node = src;
+    const made = [];
     for (const f of filters) {
       const b = ctx.createBiquadFilter();
       b.type = f.type;
@@ -75,6 +137,7 @@ export class SoundScape {
       if (f.gain !== undefined) b.gain.value = f.gain;
       node.connect(b);
       node = b;
+      made.push(b);
     }
     const gain = ctx.createGain();
     gain.gain.value = 0;
@@ -90,7 +153,7 @@ export class SoundScape {
     }
     gain.connect(panner ?? this.master);
     src.start();
-    return { src, gain, panner };
+    return { src, gain, panner, filters: made };
   }
 
   /** One-shot filtered noise burst. */
@@ -183,20 +246,26 @@ export class SoundScape {
       } else p.setPosition(...v);
     };
 
-    // fire roar and crackle, louder with the heat release
-    const f = state.fire;
-    const loud = f ? Math.min(1.2, Math.sqrt(f.hrr / 2e5)) : 0;
-    if (f) setPos(this.fire.panner, f.pos);
-    this.fire.gain.gain.setTargetAtTime(loud * 0.9, t, 0.3);
-    this.fireHigh.gain.gain.setTargetAtTime(loud * 0.25, t, 0.3);
-    if (f && loud > 0.02 && t >= this.nextCrackle) {
-      this.burst(t, 0.01 + Math.random() * 0.04, 'bandpass', 1500 + Math.random() * 4000, 2, 0.15 + Math.random() * 0.5 * loud, this.fire.panner);
-      this.nextCrackle = t + (0.02 + Math.random() * 0.25) / Math.max(0.1, loud);
-    }
-    // gas jet hiss
+    const dtF = Math.min(0.1, Math.max(0, t - (this.lastT ?? t)));
+    this.lastT = t;
+    this.state = state;
+    this.muffle.frequency.setTargetAtTime(state.underwater ? 450 : 20000, t, 0.1);
+    // the fire: roar, crackle, hiss, ticks, per region (physics: audio/physics.js)
+    this.updateFire(state, t, dtF, setPos);
+    // wind and rain (the weather's own numbers)
+    const wn = windNoise(state.wind?.speed ?? 0);
+    this.wind.gain.gain.setTargetAtTime(state.indoors ? wn.gain * 0.15 : wn.gain, t, 0.5);
+    this.wind.filters[0].frequency.setTargetAtTime(state.indoors ? Math.min(250, wn.cutoff) : wn.cutoff, t, 0.5);
+    this.windTone.frequency.setTargetAtTime(wn.tone * (0.9 + 0.2 * Math.sin(t * 0.7)), t, 0.3);
+    const rn = rainSound(state.rain ?? 0, !!state.onWater);
+    this.rainV.gain.gain.setTargetAtTime(state.indoors ? rn.gain * 0.25 : rn.gain, t, 0.5);
+    this.rainV.filters[1].frequency.setTargetAtTime(rn.bubble, t, 0.5);
+    // gas jet hiss: the gas leaving the burst pipe (its mass flow from the power: ~46 MJ/kg), sonic
     const j = state.jet;
     if (j) setPos(this.jet.panner, j.pos);
-    this.jet.gain.gain.setTargetAtTime(j ? Math.min(1, Math.sqrt(j.power / 1.5e5)) * 0.7 : 0, t, 0.2);
+    const jd = j ? decompression({ dP: 3e5, area: j.power / 46e6 / (1.8 * 343) }) : null;
+    this.jet.gain.gain.setTargetAtTime(jd ? Math.min(1, jd.gain) * 0.7 : 0, t, 0.2);
+    if (jd) this.jet.filters[1].frequency.setTargetAtTime(Math.min(9000, jd.whistle), t, 0.2);
     // hose / extinguisher
     this.hose.gain.gain.setTargetAtTime(state.spraying ? 0.35 : 0, t, 0.08);
     this.leak.gain.gain.setTargetAtTime(state.maskLeak ? 0.25 : 0, t, 0.1);
@@ -222,11 +291,12 @@ export class SoundScape {
       for (const f of d.footfalls ?? []) {
         if (f.t <= (d.heardStep ?? -1)) continue;
         d.heardStep = f.t;
-        this.stomp(f.p, Math.min(1.6, 0.35 + 0.5 * (f.weight ?? 1)));
+        this.stomp(f.p, f.weight ?? 1, f.material);
       }
       if ((d.beats ?? 0) > (d.heardBeat ?? 0)) {
         d.heardBeat = d.beats;
-        this.whoosh(d.chest ?? d.p, Math.min(1.2, 0.4 + 0.5 * (d.flapAmp ?? 1)));
+        const k = d.k ?? 1;
+        this.whoosh(d.chest ?? d.p, wingBeat({ area: 40 * k * k, span: 15 * k, flapHz: 1.2 / Math.sqrt(k), amplitude: 0.6 + 0.5 * (d.flapAmp ?? 1) }));
       }
     }
     // the phoenix: soft wingbeats, and the hiss of the fire it is made of when close
@@ -235,7 +305,7 @@ export class SoundScape {
       const beats = Math.floor((f.flap ?? 0) / (Math.PI * 2));
       if (beats > (f.heardBeat ?? 0)) {
         f.heardBeat = beats;
-        if (f.wing > 0.3) this.whoosh(f.pos, 0.22 * f.wing);
+        if (f.wing > 0.3) this.whoosh(f.pos, wingBeat({ area: 1.2 * f.wing, span: 2.4, flapHz: 2.5, amplitude: 1 }));
       }
     }
     // breathing
@@ -279,27 +349,44 @@ export class SoundScape {
       } else if (e.type === 'pipeBurst' || e.type === 'waterBurst') {
         this.burst(t, 0.4, 'bandpass', 900, 0.8, 0.8);
       } else if (e.type === 'decompression') {
-        // the roar of air rushing out, then (in the vacuum) silence
-        this.burst(this.ctx.currentTime, 3, 'lowpass', 500, 0.5, 1.2);
-        this.burst(this.ctx.currentTime, 1.5, 'bandpass', 2500, 0.7, 0.5);
+        // the roar of air rushing out (Lighthill, from the pressure across the breach and its
+        // size), a whistle at the edge tone, then (in the vacuum) silence
+        const dc = decompression({ dP: e.dP ?? P_ATM, area: e.area ?? 0.05 });
+        this.burst(this.ctx.currentTime, 3, 'lowpass', Math.min(900, dc.cutoff / 6), 0.5, 1.2 * dc.gain);
+        this.burst(this.ctx.currentTime, 1.5, 'bandpass', dc.whistle, 4, 0.5 * dc.gain);
+      } else if (e.type === 'doorClose' && e.slam) {
+        // a pressure door slamming shut on its own
+        this.thump(t, 1.0);
+        this.burst(t, 0.3, 'lowpass', 300, 0.7, 0.8);
+      } else if (e.type === 'plugged' || e.type === 'doorHeld') {
+        // something stuck in the hole (the whistle of the air past it); a door's valve hissing
+        this.thump(t, e.type === 'plugged' ? 0.8 : 0.2);
+        this.burst(t, e.type === 'plugged' ? 2 : 3, 'bandpass', 3200, 6, 0.25);
+      } else if (e.type === 'blownOut') {
+        this.thump(t, 0.9);
+      } else if (e.type === 'impact') {
+        // sim/impact.js (and fragments landing: sim/vessels.js): the two bodies, struck
+        if (!e.silent) this.impact(e);
+      } else if (e.type === 'treeFall') {
+        this.impact({ pos: e.pos, materials: ['oak', 'soil'], energy: 4e4, mass: 800, speed: 10, size: 6, radius: 0.4, delay: 2.2 });
+      } else if (e.type === 'flashover' || e.type === 'vaporIgnition') {
+        this.whoomp(e.pos, e.energy ?? 5e5);
       } else if (e.type === 'roar') {
         this.roar(e.pos);
       } else if (e.type === 'gulp' || e.type === 'dragonSnap') {
-        this.stomp(e.pos, 0.5);
-        this.burst(t, 0.12, 'bandpass', 900, 1.5, 0.5);
+        // the jaws snapping shut: teeth on teeth (bone, a ~0.1 m tooth row)
+        this.impact({ pos: e.pos, materials: ['bone', 'bone'], energy: 300, mass: 40, speed: 4, size: 0.3, sizeA: 0.3, radius: 0.02 });
       } else if (e.type === 'iceBreak') {
         this.iceBreak(false, e.pos);
       } else if (e.type === 'dragonStamp') {
-        // its weight coming down on a roof: the thud, and what breaks under it
-        this.stomp(e.pos, 2.2);
+        // its weight coming down on a roof: the thud (an impact event: sim/impact.js), what breaks under it
         if (e.broke) {
           const out = this.at(e.pos, 6);
           this.noiseTo(out, t, 0.9, 'lowpass', 900, 0.7, Math.min(1.4, 0.5 + e.broke * 0.05));
           for (let n = 0; n < Math.min(14, e.broke); n++) this.noiseTo(out, t + 0.05 + Math.random() * 0.9, 0.05, 'bandpass', 1200 + Math.random() * 3000, 3, 0.3);
         }
       } else if (e.type === 'dragonDown' || e.type === 'dragonCrash') {
-        this.stomp(e.pos, 2);
-        this.burst(t, 1.2, 'lowpass', 250, 0.7, 1.0);
+        // (the thud and the boom are its impact event: sim/impact.js, from its mass and speed)
       } else if (['phoenixCry', 'phoenixCalls', 'phoenixFreed', 'phoenixReborn', 'phoenixEscape', 'phoenixFree', 'phoenixHurt'].includes(e.type)) {
         this.cry(e.pos, e.type === 'phoenixHurt' ? 0.7 : 1);
       } else if (e.type === 'phoenixBurns') {
@@ -311,7 +398,8 @@ export class SoundScape {
       } else if (e.type === 'shout' || e.type === 'lightSeen') {
         this.shout(e.pos); // "who's there?"
       } else if (e.type === 'glass') {
-        this.glass(e.pos);
+        // a pane breaking (heat, a blow): glass struck past its strength: shards
+        this.impact({ pos: e.pos, materials: ['glass', 'glass'], energy: 40, mass: 2, speed: 6, size: 0.8, sizeA: 0.05, radius: 0.01 });
       } else if (e.type === 'spall') {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       }
@@ -375,33 +463,273 @@ export class SoundScape {
     src.stop(t + dur + 0.05);
   }
 
-  /** A dragon's foot coming down: a deep thud through the ground, and the crunch of what is under it. */
-  stomp(p, level = 1) {
+  /**
+   * A dragon's foot coming down (footfall weight ~0.5-2 × k²): a foot of ~a quarter of its mass
+   * meeting the ground at ~1-2 m/s, as an impact of scales on what is there (soil by default).
+   */
+  stomp(p, weight = 1, material = 'soil') {
     if (!this.running) return;
-    const ctx = this.ctx;
-    const t = ctx.currentTime;
-    const out = this.at(p, 4);
-    const o = ctx.createOscillator();
-    o.frequency.setValueAtTime(58, t);
-    o.frequency.exponentialRampToValueAtTime(28, t + 0.25);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.9 * level, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-    o.connect(g).connect(out);
-    o.start(t);
-    o.stop(t + 0.4);
-    this.noiseTo(out, t, 0.18, 'lowpass', 380, 0.8, 0.45 * level);
-    this.noiseTo(out, t + 0.01, 0.08, 'bandpass', 2200, 1.2, 0.08 * level); // claws on stone, gravel
+    const w = Math.max(0.1, weight);
+    const mass = 750 * Math.max(1, w / 2) ** 1.5;
+    const speed = 0.8 + 0.7 * Math.min(2, w);
+    this.impact({ pos: p, materials: ['scales', material], energy: 0.5 * mass * speed * speed, mass, speed, radius: 0.35, size: 2, sizeA: 0.8 });
   }
 
-  /** A downstroke of the wings: a deep whoosh of air. */
-  whoosh(p, level = 1) {
+  /** A downstroke of the wings: a whoosh of air (audio/physics.js wingBeat: its level, pitch, length; or a level 0..1). */
+  whoosh(p, wb = 1) {
     if (!this.running) return;
-    const t = this.ctx.currentTime;
-    const out = this.at(p, 6);
-    this.noiseTo(out, t, 0.55, 'lowpass', 260, 0.6, 0.7 * level);
-    this.noiseTo(out, t + 0.05, 0.35, 'bandpass', 700, 0.8, 0.15 * level);
+    const W = typeof wb === 'number' ? { gain: wb, peak: 260, dur: 0.55 } : wb;
+    const pl = this.place(p, W.gain, W.dur + 0.1);
+    if (!pl) return;
+    this.noiseTo(pl.out, pl.t0, W.dur, 'lowpass', W.peak, 0.6, 0.8 * pl.gain);
+    this.noiseTo(pl.out, pl.t0 + 0.05, W.dur * 0.65, 'bandpass', W.peak * 2.6, 0.8, 0.18 * pl.gain);
+  }
+
+  /**
+   * Where a one-shot sound at p goes: a panner (direction only) behind a low-pass and a gain set
+   * by propagate() (inverse square, air absorption, the speed of sound, a wall between: state.
+   * lineOfSight, under water: state.underwater), into the limiter. Returns { out, t0, gain,
+   * dist } or null when it is not worth a voice (too quiet, or the budget is full of louder ones).
+   */
+  place(p, level = 1, dur = 1, o = {}) {
+    if (!this.running) return null;
+    const ctx = this.ctx;
+    const st = this.state ?? {};
+    const lp = st.listener?.pos;
+    const d = lp && p ? Math.hypot(p[0] - lp[0], p[1] - lp[1], p[2] - lp[2]) : 3;
+    const occluded = !!(lp && p && st.lineOfSight && d > 2 && d < 120 && !st.lineOfSight(lp, p));
+    const pr = propagate(d, { ref: o.ref ?? 3, occluded, underwater: !!st.underwater && !o.underwater, bothUnderwater: !!st.underwater && !!o.underwater });
+    const gain = level * pr.gain;
+    if (gain < 0.004 || !this.budget(gain, dur + pr.delay)) return null;
+    const pan = ctx.createPanner();
+    pan.panningModel = d < 40 ? 'HRTF' : 'equalpower';
+    pan.distanceModel = 'linear';
+    pan.rolloffFactor = 0;
+    if (pan.positionX && p) {
+      pan.positionX.value = p[0];
+      pan.positionY.value = p[1];
+      pan.positionZ.value = p[2];
+    }
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = 'lowpass';
+    lpf.frequency.value = pr.cutoff;
+    lpf.Q.value = 0.5;
+    pan.connect(lpf).connect(this.limiter);
+    return { out: pan, t0: ctx.currentTime + (o.noDelay ? 0 : pr.delay), gain, dist: d, cutoff: pr.cutoff };
+  }
+
+  /** The voice budget: at most MAX_VOICES one-shots at a time; a quiet one is dropped when it is full. */
+  budget(gain, dur) {
+    const now = this.ctx.currentTime;
+    this.voiceEnds = this.voiceEnds.filter((v) => v.end > now);
+    if (this.voiceEnds.length >= MAX_VOICES) {
+      let q = 0;
+      for (let i = 1; i < this.voiceEnds.length; i++) if (this.voiceEnds[i].gain < this.voiceEnds[q].gain) q = i;
+      if (this.voiceEnds[q].gain >= gain) return false;
+      this.voiceEnds.splice(q, 1);
+    }
+    this.voiceEnds.push({ end: now + Math.min(dur, 8), gain });
+    return true;
+  }
+
+  /**
+   * An impact (a sim/impact.js event, or the same fields): { pos, materials: [striker, struck],
+   * energy (J), mass, speed, radius, size, sizeA, footprint, delay }: synthesised from the physics
+   * (audio/physics.js impactSound): modes of both bodies, the contact noise, bubbles, shards, boom.
+   */
+  impact(e) {
+    if (!this.running) return;
+    const S = impactSound({ materials: e.materials, energy: (e.dissipated ?? e.energy ?? 1) + 0.1 * (e.energy ?? 0), mass: e.mass, speed: e.speed, radius: e.radius, size: e.size, sizeA: e.sizeA, footprint: e.footprint });
+    this.strike(S, e.pos, e.delay ?? 0, e.underwater);
+    return S;
+  }
+
+  /** Modal synthesis of an impactSound() result at p. */
+  strike(S, p, delay = 0, underwater = false) {
+    const ctx = this.ctx;
+    // (a big one is heard from further: its reference distance grows with it)
+    const pl = this.place(p, S.gain, S.dur, { ref: S.boom ? 6 : 2, underwater });
+    if (!pl) return;
+    const t0 = pl.t0 + delay;
+    const out = pl.out;
+    const G = pl.gain;
+    const far = lodFor(pl.dist, S.gain);
+    // the ringing modes: decaying sines
+    if (far !== 'far' && far !== 'off')
+      for (const m of S.partials.slice(0, far === 'mid' ? 3 : 8)) {
+        if (m.f > pl.cutoff * 1.5) continue;
+        const o = ctx.createOscillator();
+        o.frequency.value = m.f * (0.995 + Math.random() * 0.01);
+        const g = ctx.createGain();
+        const dur = Math.min(6, m.tau * 5);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.5 * G * m.amp), t0 + 0.002);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g).connect(out);
+        o.start(t0);
+        o.stop(t0 + dur + 0.05);
+      }
+    // the contact: a burst as long and as bright as the contact
+    this.noiseTo(out, t0, S.noise.dur, 'lowpass', Math.min(S.noise.cutoff, pl.cutoff), 0.7, Math.max(0.001, G * S.noise.amp));
+    // a splash: bubbles ringing at their Minnaert frequency, rising as they reach the surface
+    if (S.bubbles && far !== 'off')
+      for (let n = 0; n < Math.min(far === 'near' ? S.bubbles.n : 4, 20); n++) {
+        const tb = t0 + Math.random() * S.bubbles.spread;
+        const f = S.bubbles.f * (0.6 + Math.random() * 0.9);
+        const o = ctx.createOscillator();
+        o.frequency.setValueAtTime(f, tb);
+        o.frequency.exponentialRampToValueAtTime(f * 1.6, tb + 0.06);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, tb);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.25 * G), tb + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, tb + 0.07);
+        o.connect(g).connect(out);
+        o.start(tb);
+        o.stop(tb + 0.08);
+      }
+    // glass: the shards, each a small high ringing piece landing
+    if (S.shards && far !== 'far' && far !== 'off') {
+      this.noiseTo(out, t0, 0.12, 'highpass', 3000, 0.7, G);
+      for (let n = 0; n < S.shards.n; n++) {
+        const ts = t0 + 0.03 + Math.random() * S.shards.spread;
+        const o = ctx.createOscillator();
+        o.frequency.value = Math.min(16000, S.shards.f * (0.4 + Math.random() * 1.2));
+        const g = ctx.createGain();
+        const dur = Math.min(0.4, S.shards.tau * 3);
+        g.gain.setValueAtTime(0.0001, ts);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, (0.08 + Math.random() * 0.12) * G), ts + 0.001);
+        g.gain.exponentialRampToValueAtTime(0.0001, ts + dur);
+        o.connect(g).connect(out);
+        o.start(ts);
+        o.stop(ts + dur + 0.02);
+      }
+    }
+    // the ground boom of a very big one: felt more than heard
+    if (S.boom) {
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(S.boom.f * 1.4, t0);
+      o.frequency.exponentialRampToValueAtTime(Math.max(12, S.boom.f * 0.6), t0 + S.boom.dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.9 * G * S.boom.amp), t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + S.boom.dur);
+      o.connect(g).connect(out);
+      o.start(t0);
+      o.stop(t0 + S.boom.dur + 0.05);
+      this.noiseTo(out, t0 + 0.05, S.boom.dur * 1.5, 'lowpass', S.boom.f * 4, 0.7, 0.6 * G * S.boom.amp);
+    }
+  }
+
+  /** Fuel vapour or hot smoke igniting all at once: a deep whoomp of the gas expanding. */
+  whoomp(p, energy = 5e5) {
+    const g = gainOf(dbOf(1e-5 * energy), 112, 2);
+    const pl = this.place(p, g, 1.5);
+    if (!pl) return;
+    const f = Math.max(25, 90 * (1e6 / Math.max(1e4, energy)) ** (1 / 3));
+    const o = this.ctx.createOscillator();
+    o.frequency.setValueAtTime(f * 0.6, pl.t0);
+    o.frequency.exponentialRampToValueAtTime(f * 1.3, pl.t0 + 0.25);
+    o.frequency.exponentialRampToValueAtTime(f * 0.5, pl.t0 + 1.2);
+    const gg = this.ctx.createGain();
+    gg.gain.setValueAtTime(0.0001, pl.t0);
+    gg.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.8 * pl.gain), pl.t0 + 0.12);
+    gg.gain.exponentialRampToValueAtTime(0.0001, pl.t0 + 1.3);
+    o.connect(gg).connect(pl.out);
+    o.start(pl.t0);
+    o.stop(pl.t0 + 1.4);
+    this.noiseTo(pl.out, pl.t0, 1.4, 'lowpass', f * 8, 0.6, 0.9 * pl.gain);
+  }
+
+  /**
+   * The fire, per frame: state.fireSources (sim/fireAudio.js regions) or the one state.fire
+   * ({ pos, hrr }); merged into FIRE_VOICES voices by how loud they are here.
+   */
+  updateFire(state, t, dt, setPos) {
+    const lp = state.listener.pos;
+    let src = state.fireSources;
+    if (!src?.length) src = state.fire && state.fire.hrr > 0 ? [{ pos: state.fire.pos, hrr: state.fire.hrr, count: Math.max(1, state.fire.hrr / 2e4), mats: [{ name: state.fire.material ?? 'wood', count: Math.max(1, state.fire.hrr / 2e4), moisture: 0.12, temp: 700 }], steam: state.fire.steam ?? 0, metal: null, power: fireRoar({ hrr: state.fire.hrr }).power }] : [];
+    // a region flaring up between two looks (fuel vapour, hot smoke igniting): the whoomp
+    if (state.fireSources && this.fireSeen !== state.fireVersion) {
+      const before = this.fireHrr ?? new Map();
+      const now = new Map();
+      for (const s of src) {
+        const key = s.pos.map((v) => Math.round(v / 3)).join(',');
+        now.set(key, s.hrr);
+        const was = before.get(key) ?? 0;
+        if (this.fireSeen !== undefined && s.hrr > 2e5 && s.hrr > 4 * was + 1.5e5) this.whoomp(s.pos, (s.hrr - was) * 0.5);
+      }
+      this.fireHrr = now;
+      this.fireSeen = state.fireVersion;
+    }
+    const voices = aggregate(src.filter((s) => s.power > 0 || s.steam > 0), lp, FIRE_VOICES);
+    const wind = state.wind?.speed ?? 0;
+    for (let k = 0; k < FIRE_VOICES; k++) {
+      const v = this.fireVoices[k];
+      const s = voices[k];
+      if (!s) {
+        v.gain.gain.setTargetAtTime(0, t, 0.4);
+        v.hiss.gain.gain.setTargetAtTime(0, t, 0.3);
+        v.lfoDepth.gain.setTargetAtTime(0, t, 0.3);
+        continue;
+      }
+      setPos(v.panner, s.pos);
+      const d = Math.hypot(s.pos[0] - lp[0], s.pos[1] - lp[1], s.pos[2] - lp[2]);
+      // (whether a wall is between: looked up now and then, not every frame)
+      if (state.lineOfSight && (!v.losT || t - v.losT > 0.5)) {
+        v.losT = t;
+        v.occluded = d > 2 && d < 120 && !state.lineOfSight(lp, s.pos);
+      }
+      const R = fireRoar({ hrr: s.hrr, diameter: s.diameter, wind });
+      const pr = propagate(d, { ref: Math.max(1.5, s.diameter ?? 1), occluded: v.occluded, underwater: state.underwater });
+      const lod = lodFor(d, R.gain);
+      v.gain.gain.setTargetAtTime(R.gain * pr.gain * 0.9, t, 0.3);
+      v.lp.frequency.setTargetAtTime(Math.min(R.cutoff, pr.cutoff), t, 0.3);
+      v.pk.frequency.setTargetAtTime(R.peak, t, 0.3);
+      v.lfo.frequency.setTargetAtTime(R.flicker * (0.9 + 0.2 * Math.random()), t, 0.5);
+      v.lfoDepth.gain.setTargetAtTime(lod === 'off' ? 0 : 0.3, t, 0.5);
+      // the crackle: each material its own pulse train
+      let hiss = 0;
+      let band = 4000;
+      if (lod === 'near' || lod === 'mid')
+        for (const m of (s.mats ?? []).slice(0, 3)) {
+          const C = crackle({ material: m.name, moisture: m.moisture, count: m.count, temp: m.temp });
+          hiss = Math.max(hiss, C.hiss);
+          v.popAcc += Math.min(lod === 'mid' ? 15 : 60, C.rate) * dt * (0.4 + Math.random() * 1.2);
+          while (v.popAcc >= 1) {
+            v.popAcc -= 1;
+            const at = t + Math.random() * Math.max(dt, 0.016);
+            const amp = C.amp * (0.3 + Math.random() * 0.9) * pr.gain * Math.min(1.5, 0.4 + R.gain);
+            if (amp < 0.004) continue;
+            if (C.kind === 'flutter') this.burst(at, 0.06, 'bandpass', 600 + Math.random() * 600, 0.8, amp * 0.6, v.panner);
+            else this.burst(at, 0.004 + Math.random() * 0.02 * Math.sqrt(C.amp), 'bandpass', Math.min(pr.cutoff, C.band * (0.6 + Math.random() * 0.8)), 2, amp, v.panner);
+          }
+          band = C.band;
+        }
+      // water on hot surfaces: the steam's hiss; fine fuel's own hiss
+      const H = steamHiss(s.steam ?? 0);
+      v.hiss.gain.gain.setTargetAtTime((H.gain + hiss * R.gain * 0.5) * pr.gain, t, 0.15);
+      v.hissF.frequency.setTargetAtTime(Math.min(pr.cutoff, H.gain > hiss * R.gain ? H.band : band), t, 0.2);
+      // metal heating or cooling: ticks and pings at its modes
+      if (s.metal && lod === 'near') {
+        const T = metalTick({ material: s.metal.material, dTdt: s.metal.dTdt, count: s.metal.count });
+        v.tickAcc += T.rate * dt * (0.5 + Math.random());
+        while (v.tickAcc >= 1 && T.f.length) {
+          v.tickAcc -= 1;
+          const at = t + Math.random() * Math.max(dt, 0.016);
+          const f = T.f[Math.floor(Math.random() * T.f.length)] * (2 + Math.random() * 4);
+          const o = this.ctx.createOscillator();
+          o.frequency.value = Math.min(12000, f);
+          const g = this.ctx.createGain();
+          const dur = Math.min(0.6, T.tau[0]);
+          g.gain.setValueAtTime(0.0001, at);
+          g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.05 * pr.gain), at + 0.001);
+          g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+          o.connect(g).connect(v.panner);
+          o.start(at);
+          o.stop(at + dur + 0.02);
+        }
+      }
+    }
   }
 
   /**
@@ -559,6 +887,9 @@ export class SoundScape {
       this.boomBus = c;
     }
     const d = lp ? Math.max(1, Math.hypot(e.pos[0] - lp[0], e.pos[1] - lp[1], e.pos[2] - lp[2])) : 10;
+    // (through walls, under water: muffled; the air takes the highs: propagate())
+    const st = this.state ?? {};
+    const pr = propagate(d, { occluded: !!(lp && st.lineOfSight && d < 120 && !st.lineOfSight(lp, e.pos)), underwater: !!st.underwater });
     const size = Math.max(0.4, Math.min(3, Math.cbrt((e.energy ?? 8e5) / 8e5)));
     const k = Math.min(2.2, size * (1.6 / (1 + d / 18)));
     const far = Math.min(1, d / 400);
@@ -573,7 +904,13 @@ export class SoundScape {
       pan.positionY.value = e.pos[1];
       pan.positionZ.value = e.pos[2];
     }
-    pan.connect(this.boomBus);
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = 'lowpass';
+    lpf.frequency.value = pr.cutoff;
+    pan.connect(lpf);
+    const att = ctx.createGain();
+    att.gain.value = pr.lossDb > 0 ? Math.min(1, pr.gain * d) : 1; // (only the wall / water loss: k has the distance)
+    lpf.connect(att).connect(this.boomBus);
     // the crack of the shock front (gone at a distance)
     if (far < 0.5) {
       this.noiseTo(pan, t0, 0.09, 'highpass', 1400, 0.7, 2.2 * k * (1 - far * 2));
@@ -700,14 +1037,19 @@ export class SoundScape {
     this.burst(t + 0.05, 0.04, 'highpass', 2600, 0.7, 0.1);
   }
 
-  /** A rifle shot: the crack and the report off the walls. */
-  shot() {
+  /**
+   * A shot: the muzzle blast from the cartridge's energy (J: 5.56 mm ~1700, 7.62 ~3500, pistol
+   * ~500), the supersonic crack when the round is faster than sound, the report off the walls.
+   */
+  shot(energy = 1700, velocity = 900) {
     if (!this.running) return;
     const t = this.ctx.currentTime;
-    this.burst(t, 0.05, 'highpass', 2500, 0.7, 1.1);
-    this.burst(t, 0.14, 'bandpass', 1500, 1.0, 1.0);
-    this.thump(t, 0.5);
-    this.burst(t + 0.06, 0.5, 'lowpass', 600, 0.7, 0.3);
+    const G = gunshot({ energy, velocity });
+    const k = G.gain / 1.6;
+    if (G.crack) this.burst(t, 0.05, 'highpass', 2500, 0.7, 1.1 * k);
+    this.burst(t, 0.14, 'bandpass', G.cutoff / 2, 1.0, 1.0 * k);
+    this.thump(t, 0.5 * k);
+    this.burst(t + 0.06, 0.5, 'lowpass', 600, 0.7, 0.3 * k);
   }
 
   thump(t, level) {

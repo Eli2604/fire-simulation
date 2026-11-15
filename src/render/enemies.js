@@ -5,6 +5,7 @@ import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 import { driveFromAI } from '../operator/drive.js';
 import { lod, updateEvery } from './lod.js';
+import { FlashlightPool } from './flashlights.js';
 
 /**
  * The soldiers' level of detail (render/lod.js), by their size on the screen (radius ~0.9 m):
@@ -451,6 +452,14 @@ export class EnemyRenderer {
       this.ops.push(f);
     }
     list.forEach((e, k) => this.driveOperator(this.ops[k], e, world, time, dt, k));
+    // weapon lights and hand torches: the pool's few spot lights to the ones that matter most
+    this.flashPool ??= new FlashlightPool(this.scene);
+    this.flashPool.update(list.map((e, k) => {
+      const f = this.ops[k];
+      const s = f.group.visible && !e.dead ? f.lightSource() : null;
+      if (s) s.key = f;
+      return s;
+    }));
     this.physics.step(dt);
     // the squads: routes, trails, tags, signals, threats; radio traffic
     const threats = [...new Set(list.filter((e) => e.squad && e.aimAt).map((e) => e.aimAt))];
@@ -499,6 +508,7 @@ export class EnemyRenderer {
       name = e.dead ? 'die' : 'swim'; // (struggling; limp once dead)
     } else if (e.dead) name = 'die';
     else if (sq) name = e.anim ?? 'crouchAim';
+    else if (e.trav?.roll) name = e.trav.kind; // a combat roll (ai/evade.js), the guard AI's or the dragon's snatch's
     else if (e.crawling) name = 'crawl';
     else if (e.state === 'lure') name = 'crouch';
     else if (e.aiming) name = (e.flashUntil ?? -1) > (world.time ?? 0) - 0.4 ? 'shoot' : 'aim';
@@ -510,6 +520,11 @@ export class EnemyRenderer {
     if (sq && !e.held) {
       // the squad AI's member: clip, weapon switches, reload speed, armour (operator/drive.js)
       driveFromAI(f, e, (f.aiState ??= {}));
+    } else if (!sq && e.trav?.roll && !e.dead && !e.held) {
+      if (f.rollT !== e.animT) {
+        f.rollT = e.animT;
+        f.play(name, { restart: true, fade: 0.12, speed: f.A.clips[name].duration / e.trav.dur });
+      }
     } else if (ONCE[f.shown] && f.shown !== 'die' && f.current?.isRunning() && !(sq && ONCE[name] && e.animT !== f.animT) && !e.dead) {
       // let a draw, a throw or a radio call finish
     } else if (sq && ONCE[name] && e.animT !== f.animT) {
@@ -522,7 +537,8 @@ export class EnemyRenderer {
       f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (sq ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
     if (!sq) f.setAim(null);
-    f.setGear({ thermal: !!e.thermal, light: !!e.light });
+    // the weapon light (ai/flashlight.js: e.lightSrc 'weapon'); the hand torch is the figure's left hand (drive.js)
+    f.setGear({ thermal: !!e.thermal, light: e.lightSrc !== undefined ? !!e.lightOn && e.lightSrc === 'weapon' : !!e.light });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;
     // the level of detail: the animation less often further off (the time it skipped made up)

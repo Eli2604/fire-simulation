@@ -16,6 +16,7 @@
  *  - ability(m): what a man can do with his wounds and his load (wounded: no climbing, slower
  *    vaults, shorter drops; a heavy load: lower climbs, or none).
  */
+import { handKind, allows, paceOf, dropMax } from './weapons.js';
 
 /** Rises he simply steps up (stairs, a kerb) and drops he steps down. */
 export const STEP = 0.45;
@@ -136,6 +137,7 @@ export function surface(solid, x, z, y0, up = 2.6, down = 3.6) {
 }
 /** Free air from y + from to y + to (m) at (x, z)? */
 export function clear(solid, x, z, y, from = 0.1, to = 1.7) {
+  if (!Number.isFinite(y)) return false; // (no surface there: a drop with no floor, say an open hatch into space)
   for (let a = y + from; a <= y + to; a += 0.2) if (solid(x, a, z)) return false;
   return true;
 }
@@ -198,22 +200,31 @@ export function probe(solid, p, dir, { range = 1.6 } = {}) {
 
 /**
  * What a man can do: m.wounds (legL / legR), m.health, m.bleed, m.crawling; m.carry (kg of
- * kit; default by role: the gunner's MG and ammunition is the heaviest).
+ * kit; default by role: the gunner's MG and ammunition is the heaviest); the weapon in his hands
+ * (ai/weapons.js handKind: m.handling, m.weapon, m.primary, m.loadout): what it allows (no jump
+ * climb with a machine gun or the flame gun's tanks, slower vaults, no speed vault, shorter drops).
  */
 export function ability(m = {}) {
   if (m.crawling || m.dead) return { none: true };
   const legs = (m.wounds?.legL ?? 0) + (m.wounds?.legR ?? 0);
   const wounded = legs > 0 || (m.health ?? 100) < 45 || (m.bleed ?? 0) > 2.5;
   const carry = m.carry ?? (m.squad === 'MG' ? 30 : m.squad === 'UAV' ? 27 : 22);
+  const wk = handKind(m);
+  const no = {};
+  for (const k of ['vaultSpeed', 'vaultSide', 'vaultStep', 'slideCover']) if (!allows(wk, k)) no[k] = true;
   return {
     wounded,
     carry,
+    weapon: wk,
     // wounded: no climbing at all; loaded: the jump climb only so high, very heavy none
-    climb: wounded || carry > 38 ? 0 : carry > 28 ? 1.9 : LIMITS.climb[1],
-    mantle: !wounded && carry <= 38,
-    vaultK: wounded ? 1.6 : carry > 28 ? 1.1 : 1, // how much slower his vaults are
-    drop: wounded ? 1.5 : LIMITS.drop[1],
-    roll: !wounded,
+    climb: wounded || carry > 38 || !allows(wk, 'climbJump') ? 0 : carry > 28 ? 1.9 : LIMITS.climb[1],
+    mantle: !wounded && carry <= 38 && allows(wk, 'mantle'),
+    vaultK: (wounded ? 1.6 : carry > 28 ? 1.1 : 1) * paceOf(wk, 'vaultSide'), // how much slower his vaults are
+    mantleK: paceOf(wk, 'mantle'),
+    climbK: paceOf(wk, 'climbJump'),
+    drop: Math.min(wounded ? 1.5 : LIMITS.drop[1], dropMax(wk)),
+    roll: !wounded && allows(wk, 'dropRoll'),
+    no, // moves the weapon rules out
   };
 }
 
@@ -231,8 +242,11 @@ export function moveFor(geo, a = ability(), mode = 'run') {
   const h = geo.h;
   if (geo.thin) {
     if (!geo.over || !(geo.land >= -1.6 && geo.land <= STEP) || h > LIMITS.vault[1]) return null;
-    if (h < LIMITS.stepOver[1]) return 'vaultStep';
-    return mode === 'run' && !a.wounded ? 'vaultSpeed' : 'vaultSide';
+    const no = a.no ?? {};
+    if (h < LIMITS.stepOver[1]) return no.vaultStep ? null : 'vaultStep';
+    // (the weapon may rule the speed vault out: then the side vault, slower)
+    const k = mode === 'run' && !a.wounded && !no.vaultSpeed ? 'vaultSpeed' : 'vaultSide';
+    return no[k] ? null : k;
   }
   if (!geo.standable || h < LIMITS.mantle[0]) return null;
   if (h <= LIMITS.mantle[1] && a.mantle && (mode !== 'run' || h <= LIMITS.vault[1] || h > a.climb)) return 'mantle';
@@ -249,7 +263,7 @@ export function geoFor(kind, geo) {
   return { ...n, pre: geo.face, h: geo.h };
 }
 /** How long it takes (s) for a man of ability a. */
-export const durFor = (kind, a = ability()) => MOVES[kind].dur * (kind.startsWith('vault') ? a.vaultK ?? 1 : 1);
+export const durFor = (kind, a = ability()) => MOVES[kind].dur * (kind.startsWith('vault') ? a.vaultK ?? 1 : kind === 'mantle' ? a.mantleK ?? 1 : kind === 'climbJump' ? a.climbK ?? 1 : 1);
 /** Where it ends: [forward, up] from the start. */
 export const endOf = (kind, g) => rootEnd(kind, g);
 /**

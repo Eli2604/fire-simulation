@@ -82,7 +82,16 @@
  */
 import { analyse, openGround, moveGroup, endGroup, stepGroups, clearTo, stepClearing, joinUp, doorOnPath, startBreach, breachStep } from './tactics.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, rootEnd, costOf, surface, clear, MOVES as PK_MOVES, STEP, DROP_MIN } from './parkour.js';
-import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES } from './soldier.js';
+import { pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
+import { kit, manage, aimPoint, canShoot, spend, weaponKind, casualties, heavyFire, ARMS, TIMES, recoilOf, skillOf } from './soldier.js';
+import { stepClimb } from './recoil.js';
+import { gaitK } from './weapons.js';
+import { stepKnocked } from './melee.js';
+import { stepStrategy, rethink, exposedTo } from './strategy.js';
+import { stepCasualties } from './casualty.js';
+import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
+import { stepLight } from './flashlight.js';
+import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
@@ -306,7 +315,8 @@ export class SquadAI {
       return;
     }
     // (the drone operator talks through his headset: his hands stay on the controller)
-    if (m.squad !== 'UAV' && (!this.busy(m) || m.anim === 'crouchAim')) this.setAnim(m, 'radio');
+    // (a man down, dragging one or covering: no hand free for the radio, he speaks into the mic)
+    if (m.squad !== 'UAV' && !m.down && !m.rescueRole && (!this.busy(m) || m.anim === 'crouchAim')) this.setAnim(m, 'radio');
     m.signal = { text: text.toUpperCase(), until: this.time + 3 };
     this.host.radio?.(m, text, kind);
     this.status = 'Radio: ' + text;
@@ -315,15 +325,17 @@ export class SquadAI {
   /** Forget the current bound (after the range changed). */
   replan() {
     for (const m of this.members()) {
-      if (m.path && !m.goingFor) {
+      // (a strategy's moves, a rescue: theirs to redo, ai/strategy.js rethink, ai/casualty.js)
+      if (m.path && !m.goingFor && this.phase !== 'strategy' && !m.rescueRole) {
         m.path = null;
         m.arrived = true;
       }
       m.coverCell = -1;
     }
     this.assigned = false;
-    if (this.phase === 'hold') this.phase = 'bound';
+    if (this.phase === 'hold' && !this.strategy) this.phase = 'bound';
     this.navAge = Infinity;
+    rethink(this); // (the leader's strategy: looked at again, ai/strategy.js)
   }
 
   /* ---------- the grid ---------- */
@@ -554,9 +566,11 @@ export class SquadAI {
 
   /**
    * A* from p0 to p1: world points, hugging walls; over, up and down obstacles where m (if given:
-   * his wounds and load, ai/parkour.js ability) can do the move.
+   * his wounds and load, ai/parkour.js ability) can do the move. The parkour links only in action
+   * (alert(): a threat, something to look into, a building to clear): on a routine move (no threat,
+   * a lookout, a patrol) they walk round obstacles; opts.links overrides.
    */
-  route(p0, p1, m) {
+  route(p0, p1, m, { links: useLinks = this.alert(), avoid = null } = {}) {
     if (!this.blocked) this.rebuildNav(); // (before any contact it may not be built yet)
     // to another level (the deck, down from it): the grid is one level, so by the stairs (hosts
     // with lookouts; elsewhere ai/tactics.js clearTo takes the team between floors)
@@ -576,7 +590,7 @@ export class SquadAI {
     }
     const { nx, nz } = this;
     const s = this.nearestFree(p0[0], p0[2], p0[1]), g = this.nearestFree(p1[0], p1[2], p1[1]);
-    const ab = ability(m), links = this.links, via = new Map();
+    const ab = ability(m), links = useLinks ? this.links : null, via = new Map();
     if (s < 0 || g < 0) return [p1.slice()];
     const G = new Float32Array(nx * nz).fill(1e9), from = new Int32Array(nx * nz).fill(-1), closed = new Uint8Array(nx * nz);
     const gi = g % nx, gj = (g / nx) | 0;
@@ -631,7 +645,8 @@ export class SquadAI {
           // a plain step: no more than a stair up (a steep slope down); higher needs a move
           const dh = this.fy[kk] - this.fy[k];
           if (dh > PLAIN_UP || dh < -PLAIN_DOWN) continue;
-          const c = G[k] + (di && dj ? 1.414 : 1) * this.cost[kk];
+          // (opts.avoid: an enemy at that point; the cells it sees cost more: a covered way)
+          const c = G[k] + (di && dj ? 1.414 : 1) * this.cost[kk] + (avoid && exposedTo(this, avoid, this.cellPos(kk)) ? 4 : 0);
           if (c < G[kk]) {
             G[kk] = c;
             from[kk] = k;
@@ -683,6 +698,11 @@ export class SquadAI {
     return pts;
   }
 
+  /** In action: a threat, something to look into, a building being cleared, a breach (not routine). */
+  alert() {
+    return !!(this.threat || this.inv || this.clearing || this.breach);
+  }
+
   /* ---------- per member ---------- */
   setAnim(m, a, dur) {
     if (m.trav && a !== m.trav.kind) return; // over a wall, up a ledge: that first
@@ -724,6 +744,7 @@ export class SquadAI {
   move(m, dt) {
     m.moving = false;
     m.speed = 0;
+    if (m.trav?.ext) return; // (a roll the dragon's snatch carries him through: ai/dragonAir.js)
     if (m.trav) return this.traverse(m, dt);
     if (!m.path || this.busy(m)) return;
     const mode = m.crawling ? 'crawl' : m.moveMode;
@@ -767,9 +788,12 @@ export class SquadAI {
     let dy = Math.atan2(dx, dz) - (m.yaw ?? 0);
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
-    let sp = SPEED[mode] * (m.speedFactor ?? 1) * Math.max(0, Math.cos(dy)) ** 2;
-    // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop)
-    if (mode !== 'crawl' && sp > 0.05 && Math.abs(dy) < 0.5) {
+    // (the weapon he carries sets his pace too, ai/weapons.js: a machine gun or the flame gun's tanks slow his run)
+    let sp = SPEED[mode] * (m.speedFactor ?? 1) * gaitK(m, mode) * Math.max(0, Math.cos(dy)) ** 2;
+    // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop); only in
+    // action (a threat, something to look into): on a routine move they walk round, as on patrol
+    const alert = this.alert();
+    if (mode !== 'crawl' && sp > 0.05 && Math.abs(dy) < 0.5 && alert) {
       const pk = this.parkourAhead(m, mode, dist);
       if (pk === 'go') return;
       // up to where the move starts, not past it (it starts there next step)
@@ -807,10 +831,13 @@ export class SquadAI {
     if (fy != null && m.p[1] - fy > DROP_MIN && mode !== 'crawl' && this.host.solid) {
       const dir = [Math.sin(m.yaw), Math.cos(m.yaw)];
       const geo = probe((x, y, z) => this.host.solid(x, y, z), m.p, dir, { range: sp * dt + 0.3 });
+      if (!alert) return; // (on a routine move: no jumping down, he keeps to the plain way)
       const kind = geo?.type === 'down' ? moveFor(geo, ability(m), mode) : null;
       if (kind) return this.startMove(m, kind, geo, dir);
       if (geo?.type === 'down' && geo.room && geo.h > ability(m).drop) return; // too deep for him: he stays up here
     }
+    // (on a routine move nothing higher than a stair is stepped onto: that would be a climb)
+    if (!alert && fy != null && fy - m.p[1] > PLAIN_UP) return;
     m.p = [nx, fy ?? m.p[1], nz];
     m.moving = sp > 0.05;
     m.speed = sp;
@@ -841,6 +868,25 @@ export class SquadAI {
     this.startMove(m, kind, geo, dir);
     return 'go';
   }
+  /**
+   * Threatened (host.dangers(m): a grenade by him, a rocket coming, rounds cracking past, a dragon
+   * diving on him or its fire): a combat roll out of it (ai/evade.js), if he can and it is worth it.
+   */
+  dodge(m) {
+    if (m.dead || m.down || m.rescueRole === 'rescuer' || m.trav || !this.host.dangers) return false;
+    const H = this.host;
+    const rand = H.rand ?? Math.random;
+    for (const t of H.dangers(m)) {
+      if (!worthRolling(m, t, rand, this.time)) continue;
+      const pick = pickRoll(m, t, { solid: H.solid, floor: H.floor });
+      if (!pick) continue;
+      if (m.throwAt != null || m.switching) continue; // (the grenade leaving his hand, a weapon half drawn)
+      startRoll(m, pick, this.time, { why: t.kind });
+      if (t.kind === 'grenade') m.signal = { text: 'GRENADE!', until: this.time + 2 };
+      return true;
+    }
+    return false;
+  }
   /** Start a parkour move (ai/parkour.js) along dir: m.trav, his clip. */
   startMove(m, kind, geo, dir) {
     const g = geoFor(kind, geo), dur = durFor(kind, ability(m));
@@ -859,6 +905,15 @@ export class SquadAI {
       m.trav = null;
       return;
     }
+    if (T.roll) {
+      // a combat roll (ai/evade.js): along its path on the floor; then down in a crouch (or flat), aiming
+      if (!stepRoll(m, dt, (x, z, who) => this.host.floor(x, z, who))) return;
+      // (the body meeting the ground through the roll: sim/impact.js, the host's)
+      if (!m.dead) this.host.landing?.(m, { speed: T.kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'a roll' });
+      if (T.kind === 'diveProne') this.setAnim(m, 'proneAim', 1.6);
+      else this.setAnim(m, 'crouchAim', 0.5);
+      return;
+    }
     T.t += dt;
     const u = Math.min(1, T.t / T.dur);
     const [f, up] = rootAt(T.kind, u, T.geo);
@@ -872,6 +927,9 @@ export class SquadAI {
     m.animUntil = 0;
     const fy = this.host.floor(m.p[0], m.p[2], m);
     if (fy != null) m.p[1] = fy;
+    // a drop (or a vault down the far side): he lands from its height (a roll spreads it: sim/impact.js)
+    const fall = T.kind.startsWith('drop') ? T.geo?.h ?? 1 : Math.max(0, T.geo?.drop ?? 0) + (T.kind.startsWith('vault') ? 0.5 : 0);
+    if (fall > 0.3) this.host.landing?.(m, { height: fall, roll: T.kind === 'dropRoll', name: T.kind });
     if (!m.path) return;
     // past the points the move took him over (its start, the top of the wall)
     while (m.pathI < m.path.length) {
@@ -893,7 +951,7 @@ export class SquadAI {
    */
   slideIn(m, mode, dist, dy) {
     if (mode !== 'run' || !this.contacted || m.coverCell == null || m.coverCell < 0 || m.pathI !== m.path.length - 1) return false;
-    if (dist < 1.9 || dist > 3.0 || Math.abs(dy) > 0.25 || m.slidT === m.coverCell || ability(m).wounded) return false;
+    if (dist < 1.9 || dist > 3.0 || Math.abs(dy) > 0.25 || m.slidT === m.coverCell || ability(m).wounded || ability(m).no?.slideCover) return false;
     const H = this.host, c = m.path[m.path.length - 1], T = this.threat;
     if (!H.solid || !T) return false;
     const tx = T[0] - c[0], tz = T[2] - c[2], tl = Math.hypot(tx, tz) || 1;
@@ -972,7 +1030,7 @@ export class SquadAI {
   }
 
   assignBound() {
-    const al = this.members().filter((m) => !m.dead);
+    const al = this.members().filter((m) => !m.dead && !m.down && !m.rescueRole);
     const movers = al.filter((m) => teamOf(m) === this.moving && !m.goingFor), over = al.filter((m) => teamOf(m) !== this.moving);
     this.assigned = true;
     this.t = 0;
@@ -1066,6 +1124,26 @@ export class SquadAI {
     }
   }
 
+  /**
+   * A peek (ai/peek.js): in cover, the enemy out of sight a while (seen before, lost since), behind
+   * a low wall (over it) or at the edge of a wall (round it, or slicing the pie): up or out for a
+   * moment, his eye where the peek puts it (ai/perception.js), so the senses find the enemy again
+   * if he is there, and he shows his head while it lasts. The experienced: shorter, irregular.
+   */
+  tryPeek(m, T) {
+    if (!this.host.solid || !T || m.crawling || m.loadout === 'torch' || !m.arrived || m.squad === 'UAV') return false;
+    if (!(this.lastSeen > -Infinity) || this.time - this.lastSeen < 2.5) return false;
+    if (this.time < (m.peekNext ?? 0)) return false;
+    const opts = peekOptions((x, y, z) => !!this.host.solid(x, y, z), m.p, T);
+    const c = choosePeek(m, opts);
+    if (!c) {
+      m.peekNext = this.time + 1.5; // (looked for a place to peek from: none; again in a while)
+      return false;
+    }
+    startPeek(m, c, this.time);
+    this.setAnim(m, c.clip, c.dur);
+    return true;
+  }
   /** How far the team can see (m), with the gear they have on. */
   sight() {
     const v = this.host.visibility?.() ?? 60;
@@ -1128,14 +1206,31 @@ export class SquadAI {
     const H = this.host;
     const al = this.members().filter((m) => !m.dead);
     if (!al.length) return;
-    // sightings
+    // sightings (ai/perception.js): each man from his eye (crouched, standing, peeking), as far as
+    // the weather and the dark let him (lights: his own beam on it, or the enemy's light on), his
+    // field of view, noticing it over a moment (sooner close and plain)
     const range = this.sight();
+    const now = this.time;
+    const dark = !!H.dark?.();
+    for (const m of al) if (m.peek) peeking(m, now);
     let seen = null, nSeen = 0;
     this.seen = [];
     for (const h of H.hostiles?.() ?? []) {
       if (h.dead) continue;
-      const spot = al.find((m) => dist2(m.p, h.p) < range && (H.lineOfSight?.(m.p, h.p) ?? true));
+      let spot = null;
+      for (const m of al) {
+        const eye = eyeOf(m, now), at = headOf(h, now);
+        let R = range;
+        if (dark && !this.gear.thermal) {
+          if (h.lightOn) R = Math.max(R, h.beam && lightAt([{ ...h.beam, range: BEAM.into, cone: (h.beam.cone ?? BEAM.cone) * 1.6 }], eye) > 0 ? BEAM.into : BEAM.glow);
+          if (m.lightOn && m.beam && lightAt([m.beam], at) > 0) R = Math.max(R, m.beam.range ?? BEAM.range);
+        }
+        const los = H.sightLine ? (a, b) => H.sightLine(a, b) : () => H.lineOfSight?.(m.p, h.p) ?? true;
+        const r = perceive(m, h, dt, { now, range: R, los, light: 1, eye, at, expect: this.threat, prof: senseProfile(m, 'soldier') });
+        if (r.seen && (!spot || r.d < spot.d)) spot = { m, d: r.d };
+      }
       if (!spot) continue;
+      spot = spot.m;
       nSeen++;
       this.seen.push(h);
       h.marked = true;
@@ -1169,12 +1264,18 @@ export class SquadAI {
     for (const n of H.noises?.() ?? []) {
       if (n.time <= this.heardT) continue;
       this.heardT = Math.max(this.heardT, n.time);
-      if (n.squad === this.unit) continue;
+      if (n.squad === this.unit || (n.source && n.source.unit === this.unit)) continue;
+      // heard (ai/perception.js): as far as it carries to the commander's ears, less through walls;
+      // where it came from only roughly; too far off to go and look: they note it and stay
       const c = centroid(al);
-      if (dist2(c, n.p) > n.loud) continue;
+      const ear = this.radioMan() ?? al[0];
+      const prof = senseProfile(ear, 'soldier');
+      const heard = hears(ear, n, { at: [c[0], n.p[1], c[2]], prof, solid: H.hearWalls === false ? null : H.solid });
+      if (!heard) continue;
       if (this.threat) continue; // busy with the threat they have
-      if (n.kind === 'explosion' && !this.inv?.urgent) this.investigate(n.p, 'explosion', { urgent: true });
-      else if (!this.inv) this.investigate(n.p, 'noise');
+      if (heard.d > prof.investigate) continue;
+      if (n.kind === 'explosion' && !this.inv?.urgent) this.investigate(heard.p, 'explosion', { urgent: true });
+      else if (!this.inv) this.investigate(heard.p, 'noise');
     }
     // the investigators: look round where they got to; nothing there, come back
     if (this.inv?.urgent && this.time < this.inv.searchUntil) {
@@ -1212,10 +1313,21 @@ export class SquadAI {
         m.thermal = wantT && m.squad !== 'UAV';
         m.light = wantL;
       }
+      this.searchLights = !!H.dark?.() && !wantT;
       if (calls.length && cmd) {
         if (this.time < this.silentUntil) this.setAnim(cmd, 'signalDown');
         else this.say(cmd, `${this.unit}, ${calls.join(', ')}`, 'order');
       }
+    }
+    // each man's light (ai/flashlight.js): the weapon's, or the hand torch from his belt if he has a
+    // hand free; on when the team has lights on, and for the men searching in the dark (a last
+    // known position, a blast) though the team keeps dark; the torch drawn and put away by hand
+    const searching = this.inv && (this.inv.urgent || this.inv.why === 'last known position' || this.inv.clearing);
+    for (const m of al) {
+      if (m.squad === 'UAV') continue;
+      const want = !!m.light || (this.searchLights && !!searching && this.inv.men.includes(m));
+      const act = stepLight(m, want, dt, 1 / Math.max(0.5, skillOf(m).reload));
+      if (act && !this.busy(m) && !m.path && !m.trav) this.setAnim(m, act, 0.7);
     }
     // backup: two men down, or more of them than of us standing
     const down = this.members().filter((m) => m.dead).length;
@@ -1267,6 +1379,7 @@ export class SquadAI {
         kit(m);
         this.release(m, null);
         if (!this.busy(m)) manage(this, m, dt, this.host.hostiles?.() ?? []);
+        this.dodge(m);
         this.move(m, dt);
         if (!m.path && !this.busy(m) && !this.inv?.men.includes(m) && !m.group) {
           if (this.inv) this.face(m, this.inv.p, dt);
@@ -1301,6 +1414,7 @@ export class SquadAI {
       m.squadInit ??= (m.yaw = Math.atan2(this.threat[0] - m.p[0], this.threat[2] - m.p[2]), m.arrived = true, m.grenades = 2, m.coverCell = -1, m.track = [], true);
       m.track ??= [];
       kit(m);
+      this.dodge(m);
       this.move(m, dt);
       // the trail behind them
       const last = m.track[m.track.length - 1];
@@ -1310,6 +1424,8 @@ export class SquadAI {
       }
     }
     casualties(this, al);
+    // a man down: go and get him, one covering (ai/casualty.js)
+    if (this.on) stepCasualties(this, al, dt);
     for (const m of ms)
       if (m.dead && !m.reportedDown) {
         m.reportedDown = true;
@@ -1350,6 +1466,8 @@ export class SquadAI {
       this.orderT = 3;
       this.command();
     }
+    // the leader's fighting strategy (ai/strategy.js): flank, envelop, bound, defend or withdraw
+    if (this.on && this.useStrategy !== false && !this.goal) stepStrategy(this, dt);
     if (this.pursuit) {
       // run after it, spread out; close enough: bound again
       const c = centroid(al);
@@ -1369,6 +1487,13 @@ export class SquadAI {
     const cmd = al.find((m) => m.squad === 'CMD') ?? al[0];
     for (const m of al) {
       if (this.host.ownMove?.(m)) continue;
+      // down wounded, or in a rescue (fetching him, covering): ai/casualty.js has him
+      if (m.down || m.rescueRole) continue;
+      // thrown or knocked down hand-to-hand (ai/melee.js): on his back, then up again
+      if (stepKnocked(m, this.time)) {
+        m.path = null;
+        continue;
+      }
       // blinded and deafened by a flashbang: he can do nothing for a few seconds
       if (m.stunnedUntil && m.stunnedUntil > (this.host.now?.() ?? this.time)) {
         m.path = null;
@@ -1426,7 +1551,7 @@ export class SquadAI {
           const d = [r[0] - m.p[0], r[2] - m.p[2]], l = Math.hypot(...d) || 1;
           this.follow(m, this.route(m.p, [r[0] - (d[0] / l) * 0.45, r[1], r[2] - (d[1] / l) * 0.45], m), 'run', (q) => {
             this.face(q, r, 1, 10);
-            this.setAnim(q, 'pickup');
+            this.setAnim(q, 'pickup', 1.3 * skillOf(q).reload); // (an old hand is quicker about it)
           });
         }
       }
@@ -1437,7 +1562,9 @@ export class SquadAI {
         this.setAnim(m, m.crawling ? 'proneAim' : 'crouch');
         continue;
       }
-      const covering = teamOf(m) !== this.moving || this.phase === 'hold';
+      // lost sight of the enemy, in cover behind a low wall or at a corner: a peek to find him again
+      if (this.tryPeek(m, T)) continue;
+      const covering = teamOf(m) !== this.moving || this.phase === 'hold' || this.phase === 'strategy';
       // the flame trooper: up on his feet and flame when it is close enough; otherwise he covers
       if (m.loadout === 'torch') {
         const near = dist2(m.p, T) < 9 && !m.crawling;
@@ -1454,18 +1581,24 @@ export class SquadAI {
       const lie = m.crawling;
       const AIM = lie ? 'proneAim' : 'crouchAim', SHOOT = lie ? 'proneShoot' : 'crouchShoot';
       m.fireT = (m.fireT ?? 1) - dt;
+      // his weapon's recoil (ai/recoil.js): the fire mode's rounds at its rate, the climb between them
+      const R = recoilOf(m);
+      stepClimb(m, R, dt, false, skillOf(m).control);
       if (m.anim === SHOOT) {
         m.shotT = (m.shotT ?? 0) - dt;
         if (m.shotT <= 0 && m.rounds > 0 && canShoot(m)) {
           m.rounds--;
-          m.shotT = m.squad === 'MG' ? 0.09 : 0.12;
+          m.shotT = R.gap;
           spend(m);
           const aim = this.seen?.length ? this.seen.reduce((a, h) => (dist2(h.p, m.p) < dist2(a.p, m.p) ? h : a)).p : T;
           this.host.fire?.(m, aimPoint(m, aim), weaponKind(m));
+          stepClimb(m, R, 0, true);
         }
         if (m.fireT <= 0) {
           this.setAnim(m, AIM);
-          m.fireT = m.squad === 'MG' ? 1.4 + Math.random() : 3 + Math.random() * 2.5;
+          // the base of fire suppressing (ai/strategy.js): hardly a pause between bursts
+          const suppress = this.phase === 'strategy' && ['suppressFlank', 'withdraw'].includes(this.strategy?.kind) && teamOf(m) !== this.moving;
+          m.fireT = suppress ? 0.5 + Math.random() * 0.5 : m.squad === 'MG' ? 1.4 + Math.random() : 3 + Math.random() * 2.5;
         }
       } else {
         if (m.anim !== AIM) this.setAnim(m, AIM);
@@ -1473,7 +1606,7 @@ export class SquadAI {
           if (covering) {
             this.setAnim(m, SHOOT);
             m.fireT = m.squad === 'MG' ? 1.3 : 0.7;
-            m.rounds = (m.weapon === 'secondary' ? ARMS.secondary : ARMS[m.primary ?? 'rifle']).burst;
+            m.rounds = R.rounds;
             m.shotT = 0;
           } else m.fireT = 0.5;
         }
@@ -1515,6 +1648,8 @@ export class SquadAI {
     if (u && !u.scouting && u.scoutOrdered && this.phase !== 'hold') u.scoutOrdered = false;
     if (this.pursuit || this.holdOff === true || this.holdOff === 'asked-continue') {
       // in pursuit, or told to hold off: no bounds
+    } else if (this.phase === 'strategy') {
+      // the leader's strategy has them (ai/strategy.js: a flank, an envelopment, a withdrawal, a defence)
     } else if (this.phase === 'formation') {
       this.formT = (this.formT ?? 0) - dt;
       if (this.formT <= 0) {

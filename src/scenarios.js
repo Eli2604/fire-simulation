@@ -1,4 +1,7 @@
 import { defaultWeather } from './sim/weather.js';
+import { carrierObject } from './models/carrier.js';
+import { liftPlaces } from './models/composite.js';
+import { campIslandZone, CAMP_ISLAND_SEA } from './campIsland.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -36,6 +39,9 @@ export const SCENARIO_ALIASES = {
   winterTea: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_WINTER' },
   grassFire: { scenario: 'carrier', zone: 'meadow' },
   catacombs: { scenario: 'carrier', zone: 'catacombs' },
+  campIsland: { scenario: 'carrier', zone: 'camp' },
+  carHouse: { scenario: 'carrier', zone: 'carHouse' },
+  neighbourhood: { scenario: 'carrier', zone: 'dryGarden' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -158,14 +164,72 @@ function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryL
   ];
 }
 
+/**
+ * The street by the lake house (places of the carrier's world, in the lake house's group):
+ *  carHouse   a car parked by a wooden house: an engine fire spreads to the cabin, the tyres and
+ *             the fuel tank; the burning car radiates onto the house (sim/farRadiation.js): its
+ *             windows crack and fall out, the curtains and the room behind catch, the fascia,
+ *             the gutter and the shingles go up (the old Car fire next to a house)
+ *  dryGarden  a brick house with a furnished living room, a car in the drive, trees, a conifer
+ *             hedge, a woodpile and a fence on a hot dry day; the fire starts on the sofa (the
+ *             old Garden on a dry day)
+ * Each keeps the old scene's weather and time scale. (Their lawns level with the garden's and
+ * the meadow's, a quarter of a metre above the lake.)
+ */
+function streetPlaces() {
+  const water = { color: '#2c5d78' };
+  return {
+    carHouse: {
+      name: 'Street: car fire next to a house',
+      label: 'Car fire by a house',
+      group: 'lake',
+      origin: [284, 2.9, 172],
+      world: { size: [14, 8, 11], h: 0.15 },
+      view: { camera: [8, 7, 11], around: { y: -0.1, ...water } },
+      proxy: { sea: 0, color: '#7a8a5a', height: 3.5, fill: 0.5, cell: 0.2 },
+      timeScale: 10,
+      weather: w({ windSpeed: 1.5, windDir: 90 }),
+      objects: [
+        { type: 'house', params: { width: 7, depth: 5, wallMaterial: 'wood', roofMaterial: 'wood shingles' }, x: 7, z: 7.5 },
+        { type: 'car', params: { bodyColor: '#a8322f' }, x: 6.5, z: 2.6, ignite: true },
+        { type: 'tree', params: { height: 5, crownRadius: 1.5 }, x: 12, z: 3 },
+      ],
+    },
+    dryGarden: {
+      name: 'Street: garden on a dry day',
+      label: 'Garden on a dry day',
+      group: 'lake',
+      origin: [272, 2.85, 150],
+      world: { size: [22, 9, 18], h: 0.2 },
+      view: { camera: [-6, 12, 20], around: { y: -0.05, ...water } },
+      proxy: { sea: 0, color: '#8a9a4a', height: 3, fill: 0.6, cell: 0.2 },
+      timeScale: 10,
+      weather: w({ windSpeed: 2, windDir: 30, humidity: 0.3, ambient: 25 }),
+      objects: [
+        { type: 'grass', params: { width: 21, depth: 17, height: 0.2, density: 0.7, moisture: 0.12 }, x: 11, z: 9 },
+        { type: 'house', params: { width: 8, depth: 6, windowsPerSide: 3 }, x: 9, z: 8, ignite: true },
+        { type: 'car', params: { bodyColor: '#e0e0e0' }, x: 9, z: 2.3, rotation: 0 },
+        { type: 'woodPile', params: { arrangement: 'stack', logs: 15, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 15, z: 11.5, rotation: 90 },
+        { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.4 }, x: 17, z: 5 },
+        { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 4 }, x: 3.5, z: 4.5 },
+        { type: 'tree', params: { species: 'pine', height: 7, crownRadius: 1.4 }, x: 3, z: 14 },
+        { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.2, seed: 5 }, x: 18.5, z: 14 },
+        { type: 'fence', params: { length: 14 }, x: 11, z: 16.5 },
+        // a conifer hedge along the east side of the garden, dried out in the dry spell
+        { type: 'hedge', params: { kind: 'conifer', length: 10, height: 1.8, thickness: 0.8, dryness: 0.6 }, x: 21, z: 9, rotation: 90 },
+      ],
+    },
+  };
+}
+
 export const SCENARIOS = {
   metalBars: {
     name: 'Metal bars on burners',
-    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt.',
+    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt. Steel takes temper colours (straw, brown, purple, blue, grey) that spread out from the burner and glows dull red over it; copper tarnishes and darkens. Switch the view to thermal to see the temperatures.',
     world: { size: [1.4, 0.6, 0.7], h: 0.02 },
     weather: w({ ambient: 20 }),
     timeScale: 20,
-    view: { mode: 'thermal', camera: [0.2, 0.8, 1.1] },
+    view: { camera: [0.2, 0.8, 1.1] },
     objects: [
       { type: 'metalBar', params: { material: 'steel', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.15 },
       { type: 'metalBar', params: { material: 'aluminium', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.35 },
@@ -185,38 +249,6 @@ export const SCENARIOS = {
       { type: 'tree', params: { species: 'oak', height: 8, crownRadius: 3 }, x: 8, z: 6 },
       { type: 'tree', params: { species: 'willow', height: 7, crownRadius: 2.6, seed: 2 }, x: 13.5, z: 6 },
       { type: 'tree', params: { species: 'pine', height: 9, crownRadius: 2.2, seed: 3 }, x: 18.5, z: 6 },
-    ],
-  },
-  carHouse: {
-    name: 'Car fire next to a house',
-    description: 'An engine fire spreads to the cabin, the tyres and the fuel tank, then radiates onto the wooden house next to it.',
-    world: { size: [14, 8, 11], h: 0.15 },
-    weather: w({ windSpeed: 1.5, windDir: 90 }),
-    timeScale: 10,
-    view: { camera: [8, 7, 11] },
-    objects: [
-      { type: 'house', params: { width: 7, depth: 5, wallMaterial: 'wood', roofMaterial: 'wood shingles' }, x: 7, z: 7.5 },
-      { type: 'car', params: { bodyColor: '#a8322f' }, x: 6.5, z: 2.6, ignite: true },
-      { type: 'tree', params: { height: 5, crownRadius: 1.5 }, x: 12, z: 3 },
-    ],
-  },
-  neighbourhood: {
-    name: 'Garden on a dry day',
-    description: 'A brick house with a furnished living room, a car, trees, a hedge of grass, a woodpile and a fence. The fire starts on the sofa.',
-    world: { size: [22, 9, 18], h: 0.2 },
-    weather: w({ windSpeed: 2, windDir: 30, humidity: 0.3, ambient: 25 }),
-    timeScale: 10,
-    view: { camera: [-6, 12, 20] },
-    objects: [
-      { type: 'grass', params: { width: 21, depth: 17, height: 0.2, density: 0.7, moisture: 0.12 }, x: 11, z: 9 },
-      { type: 'house', params: { width: 8, depth: 6, windowsPerSide: 3 }, x: 9, z: 8, ignite: true },
-      { type: 'car', params: { bodyColor: '#e0e0e0' }, x: 9, z: 2.3, rotation: 0 },
-      { type: 'woodPile', params: { arrangement: 'stack', logs: 15, logLength: 1.2, logRadius: 0.1, stones: false, kindling: false }, x: 15, z: 11.5, rotation: 90 },
-      { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.4 }, x: 17, z: 5 },
-      { type: 'tree', params: { species: 'willow', height: 6, crownRadius: 2.2, seed: 4 }, x: 3.5, z: 4.5 },
-      { type: 'tree', params: { species: 'pine', height: 7, crownRadius: 1.4 }, x: 3, z: 14 },
-      { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.2, seed: 5 }, x: 18.5, z: 14 },
-      { type: 'fence', params: { length: 14 }, x: 11, z: 16.5 },
     ],
   },
   foggyForest: {
@@ -285,7 +317,7 @@ export const SCENARIOS = {
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     // a late-summer morning, 09:48 on 28 August at 51.5° N (sim/sky.js): the sun from the south-east,
     // 40° up (the island's old fixed sun, view.sun below: within half a degree)
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8, day: 240, time: 9.8 }),
@@ -305,6 +337,7 @@ export const SCENARIOS = {
         { box: [107, -28, 171, 30], floor: -1.7 }, // the island's voxel terrain (its zone is 2 m larger all round)
         { box: [310.5, -404.5, 319.5, -396.5], floor: -1.6 }, // the islet's
         { box: [241, 151, 261, 168], floor: -1.6 }, // the lake island's
+        CAMP_ISLAND_SEA, // the camp island's (src/campIsland.js)
       ],
       // the carrier lies at anchor over a sandy bank, ~12 m down under and round the ship (its
       // keel ~4 m down: the bottom is seen through the clear water beside it)
@@ -334,48 +367,14 @@ export const SCENARIOS = {
         view: { camera: [-40, 45, 85], walk: true },
         proxy: { shape: 'carrier', length: 210, beam: 48, deck: 11, draft: 4, at: [106, 0, 26], color: '#6d7175', height: 8, fill: 0.9, sea: 4 },
         objects: [
-          { type: 'carrierDeck', params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' }, x: 106, z: 26 },
-          // on the catapults: two at the bow, two in the waist (each one's run clear of the parked
-          // ones' wings; their tails overhang the deck edge, as they do on a carrier)
-          ...[[145, 20], [145, 30], [85, 10.4], [85, 21.2]].map(([x, z], k) => ({ type: 'jet', params: { color: k % 2 ? '#7a8590' : '#6f7b86' }, x, z, y: 11, rotation: 0 })),
-          // parked along the bow, both sides, tails to the deck edge
-          ...[150, 161, 172, 183].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 42.5, y: 11, rotation: 90 })),
-          ...[160, 171, 182, 193].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 7.4, y: 11, rotation: -90 })),
-          // and aft of the island (the "corral")
-          ...[62, 73, 84, 95].map((x) => ({ type: 'jet', params: { rockets: 0, fuelLiters: 800 }, x, z: 42.5, y: 11, rotation: 90 })),
-          // a flight of four overhead (ai/flight.js): in formation round the ship, its leader calling the moves
-          { type: 'jetFlight', params: { count: 4, altitude: 160, orbitRadius: 600 }, x: 106, z: 26 },
-          // a tow tractor, oxygen and propane bottles by the island
-          { type: 'car', params: { length: 2.8, width: 1.6, height: 1.1, bodyColor: '#d8b21c', fuelLiters: 30, tankMaterial: 'steel' }, x: 104.5, z: 39.5, y: 'auto', rotation: 90 },
-          { type: 'gasCylinder', params: { capacity: 40, fill: 0.9, color: '#2f6b3a' }, x: 107.6, z: 48.2, y: 'auto' },
-          { type: 'gasCylinder', params: { capacity: 11, fill: 0.8 }, x: 108.3, z: 48.3, y: 'auto' },
-          // two oil drums by the island (models/scannedProp.js)
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 109.4, z: 48.1, y: 'auto' },
-          { type: 'scannedProp', params: { asset: 'drum' }, x: 110.1, z: 48.2, y: 'auto', rotation: 40 },
+          // the carrier: one object (models/carrier.js), its jets, deck equipment and the flight
+          // overhead objects in it, and its places below deck (below deck, the lower decks under it:
+          // zones of this world, models/composite.js)
+          carrierObject({ x: 106, z: 26, params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' } }),
         ],
       },
-      below: {
-        name: 'Below deck',
-        indoor: true,
-        box: [-70, 5.6, 7.5], // (for the overview: in the hull under the flight deck, which is at 9.4 m)
-        world: { size: [32, 3.6, 17], h: 0.2, ground: 'none' },
-        view: { camera: [16, 14, -8], walk: true },
-        objects: [
-          { type: 'carrierBelow', params: { downTo: 'lower' }, x: 16, z: 8.5 },
-          { type: 'enemy', params: { count: 2, spread: 1, level: 0.2, patrol: 'route', patrolWidth: 18, patrolDepth: 1, patrolOffsetX: -4 }, x: 24, z: 8.5 },
-          { type: 'enemy', params: { count: 2, spread: 1.5, level: 0.2, seed: 2 }, x: 8, z: 4.5 },
-        ],
-      },
-      // the lower decks, below the waterline: corridors, cabins, watertight doors; the fuel line
-      // bursts against the hull after 30 s, holes it, and the sea pours in (the ship settles and lists)
-      lower: {
-        name: 'Lower decks (below the waterline)',
-        indoor: true,
-        box: [-63, -1.6, 11.4], // (for the overview: under that, down to the keel)
-        world: { size: [18, 7.2, 9.2], h: 0.2, ground: 'none' },
-        view: { camera: [-3, 10, 14], walk: true },
-        objects: [{ type: 'shipSection', params: { upTo: 'below' }, x: 9, z: 4.5 }],
-      },
+      // below deck and the lower decks are places in the carrier (lifted into zones below:
+      // liftPlaces; their schematic boxes where they lie in its hull)
       // a small islet out on the reef: a log-cabin campfire in a stone ring on dry grass
       // (the old Campfire scene), a boat back to the island
       islet: {
@@ -454,6 +453,11 @@ export const SCENARIOS = {
           { type: 'fence', params: { length: 8 }, x: 20, z: 7, rotation: 90 },
         ],
       },
+      // the street on the shore east of the lake house: a car parked in a drive burning next to
+      // a wooden house (the old Car fire next to a house, ?scenario=carHouse), and a garden on a
+      // dry day where the fire starts on the sofa of a brick house (the old Garden on a dry day,
+      // ?scenario=neighbourhood). Each keeps its own weather and time scale.
+      ...streetPlaces(),
       island: {
         name: 'Island',
         origin: [105, 0, -30],
@@ -518,6 +522,9 @@ export const SCENARIOS = {
         view: { dark: true, camera: [12, 16, -5], walk: true },
         objects: catacombObjects('island'),
       },
+      // the camp island: a drone camp on a solar park and a wind turbine, a squad on its round about it,
+      // a ridge, and behind it the landing ground where you are put down (src/campIsland.js)
+      camp: campIslandZone(),
     },
   },
   squadRange: {
@@ -568,6 +575,10 @@ export const SCENARIOS = {
   },
 };
 
+// the places in objects (below deck in the carrier) as zones of their scenes
+for (const sc of Object.values(SCENARIOS)) liftPlaces(sc);
+
+/** A copy of a scene to edit (its places in objects zones again: models/composite.js). */
 export function cloneScene(s) {
-  return JSON.parse(JSON.stringify(s));
+  return liftPlaces(JSON.parse(JSON.stringify(s)));
 }

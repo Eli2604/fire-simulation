@@ -19,7 +19,7 @@ const countOwned = (world, owner) => {
 test('every model builds voxels with its default parameters', () => {
   for (const type of Object.keys(MODELS)) {
     const { world } = buildScene({ world: { size: [10, 8, 10], h: 0.1 }, objects: [{ type, x: 5, z: 5 }] });
-    if (type === 'enemy' || type === 'squad') {
+    if (type === 'enemy' || type === 'squad' || type === 'campPatrol') {
       assert.ok(world.enemies.length > 0, 'enemies are characters, not voxels');
       continue;
     }
@@ -39,6 +39,11 @@ test('every model builds voxels with its default parameters', () => {
     }
     if (type === 'waterVortex' || type === 'windHose' || type === 'windJet') {
       assert.equal(world.stirrers.length, 1, 'a whirlpool, a wind hose or a jet stirs the water or the air (sim/stirrers.js), not voxels');
+      continue;
+    }
+    if (type === 'group' || type === 'place') {
+      // (objects of objects, models/composite.js: a group is what is in it, a place a world of its own)
+      assert.equal(countOwned(world, 0), 0, 'nothing of its own');
       continue;
     }
     if (type === 'jetFlight') {

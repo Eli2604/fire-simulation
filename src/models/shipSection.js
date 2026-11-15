@@ -6,7 +6,9 @@
  *
  * A gas / fuel line runs along the lower corridor and bursts after a delay
  * (or by fire or a blast). Below the waterline, any hole in the hull plating
- * lets the sea pour in (see water.js) and the corridors flood.
+ * lets the sea pour in (see water.js) and the corridors flood. The jet of sea water pushes
+ * what is loose in the way (the stores in the aft cross corridor) away from the hole, into
+ * the ship, and the flood floats what floats (sim/breach.js).
  *
  * Local frame: origin at the keel, centre of the footprint; x along the ship.
  */
@@ -24,6 +26,7 @@ export default {
     burstPower: { value: 200000, min: 20000, max: 1000000, step: 10000, label: 'Burning jet (W)' },
     burstBlast: { value: 1e6, min: 0, max: 6e6, step: 1e5, label: 'Vapour explosion at the burst (J; 0: none)' },
     upTo: { value: '', label: 'Zone the ladder at the aft end leads up to (empty: none)' },
+    cargo: { value: true, label: 'Loose stores in the aft cross corridor (the sea pushes them in)' },
   },
   build(p, { h }) {
     const L = p.length;
@@ -137,8 +140,16 @@ export default {
     if (p.sprinklers)
       for (const y of [floor1 + deckH - 0.05, deck2 + deckH - 0.05]) for (let x = -hx + 2; x < hx - 1; x += 3) sprinklers.push({ p: [x, y, 0] });
 
+    // loose stores in the aft cross corridor, lower deck, between the hull and the long corridor
+    const loose = p.cargo
+      ? [
+          { kind: 'crate', p: [-L / 4 - 0.2, floor1 + 0.3, -hz + 1.7] },
+          { kind: 'drum', p: [-L / 4 + 0.2, floor1 + 0.44, -cw - 0.4], mass: 40 },
+        ]
+      : [];
     return {
       prims,
+      loose,
       heaters: bursts,
       sprinklers,
       // floating: its weight is what it displaces at its draft; water aboard sinks it deeper

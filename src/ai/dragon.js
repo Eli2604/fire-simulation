@@ -1,11 +1,14 @@
 import { traceVoxels } from './sight.js';
 import { crush } from '../sim/crush.js';
+import { impact as hitImpact, groundMaterial } from '../sim/impact.js';
 import { iceBears } from '../sim/ice.js';
 import { splatter } from '../sim/wounds.js';
 import { stepSnatch, stepFight, stepThrown, startSnatch, startFight, rival, holdCarried, BLOWS } from './dragonAir.js';
+import { sense as senseEvade, stepEvade, evadeRollHit } from './dragonEvade.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
+import { perceive, senses, hears, headOf, SENSES, beamsIn } from './perception.js';
 
 /**
  * A dragon: a big predator on the island, built on real animals.
@@ -878,10 +881,14 @@ export class DragonAI {
       d.senseT = 0.3;
       this.sense(d, w);
     }
-    for (const n of noises) {
-      if (n.kind === 'dragon') continue;
-      const dd = dist(n.p, d.chest);
-      if (dd > n.loud * 1.6 + 8) continue;
+    // what it hears (ai/perception.js: its hearing is keen, 1.6 times as far, and 8 m more; walls
+    // muffle; far off it does not bother); it goes to where it thinks the noise was
+    const prof = senses(d, 'dragon');
+    for (const n0 of noises) {
+      if (n0.kind === 'dragon') continue;
+      const heard = hears(d, n0, { at: d.chest, prof, solid: (x, y, z) => this.solidAt([x, y, z]) });
+      if (!heard || heard.d > prof.investigate) continue;
+      const n = { ...n0, p: heard.p };
       // the same place again (an eruption rumbling on): it is already on its way, or has had a look
       if (d.investigate && dist(n.p, d.investigate) < 10) continue;
       if (d.lastLook && dist(n.p, d.lastLook) < 10 && (d.time ?? 0) - d.lastLookT < 60) continue;
@@ -948,6 +955,9 @@ export class DragonAI {
         stepFight(this, d, w, dt);
         break;
     }
+    // something coming at it (an arrow, a rocket, a jet's run): a roll, a wing-over, a dive, a hop (ai/dragonEvade.js)
+    if (d.state !== 'snatch' || d.snatch?.phase !== 'dive') senseEvade(d, w);
+    stepEvade(d, w, dt);
     this.breath(d, w, dt);
     this.animate(d, dt);
     this.updateTrail(d);
@@ -962,11 +972,19 @@ export class DragonAI {
     const eye = d.eye ?? d.chest;
     let best = null;
     let bs = Infinity;
-    const consider = (kind, ref, p, head) => {
+    // its senses (ai/perception.js): 45 m by default (d.sightRange), dozing in its lair only what
+    // comes close (13 m, as much nearer for a keener eye); noticing builds up (sooner close), and
+    // a light carried at night shows from further off
+    const prof = senses(d, 'dragon');
+    const range = d.state === 'rest' && !(d.anger > 0) ? prof.restRange * (prof.sightRange / SENSES.dragon.sightRange) : prof.sightRange;
+    const beams = beamsIn(w);
+    const dt = Math.max(0.05, (d.time ?? 0) - (d.sensedAt ?? (d.time ?? 0) - 0.3));
+    d.sensedAt = d.time ?? 0;
+    const consider = (kind, ref, p, head, tgt) => {
       const dd = dist(eye, head);
-      // dozing in its lair it only notices what comes close
-      if (dd > (d.state === 'rest' && !(d.anger > 0) ? 13 : 45)) return;
-      const seen = this.sees(eye, head);
+      if (dd > Math.max(range, tgt.lightOn ? range * 1.5 : 0)) return;
+      const r = perceive(d, tgt, dt, { now: d.time ?? 0, eye, at: head, prof: { ...prof, sightRange: range }, los: (a, b) => this.sees(a, b, Infinity), world: w, beams });
+      const seen = r.seen;
       const old = d.target && d.target.ref === ref;
       if (!seen && !old) return;
       const score = dd * (kind === 'player' ? 0.8 : 1) * (seen ? 1 : 2.5) * (old ? 0.7 : 1);
@@ -975,8 +993,8 @@ export class DragonAI {
         best = { kind, ref, p: p.slice(), head: head.slice(), seen, lastSeen: seen ? w.time : d.target?.lastSeen ?? w.time };
       }
     };
-    if (pl && !w.playerHeld) consider('player', 'player', pl.p, pl.head);
-    for (const e of w.enemies) if (!e.dead && !e.held) consider('enemy', e, e.p, [e.p[0], e.p[1] + 1.6, e.p[2]]);
+    if (pl && !w.playerHeld) consider('player', 'player', pl.p, pl.head, pl);
+    for (const e of w.enemies) if (!e.dead && !e.held) consider('enemy', e, e.p, headOf(e), e);
     // a hungry dragon goes for anyone it sees; a sated one only for whoever hurt it
     if (best && d.sated > 0 && !(d.anger > 0 && best.kind === 'player')) best = null;
     if (best) {
@@ -1344,6 +1362,8 @@ export class DragonAI {
       hits.push([C[0] + F[0] * (reach + 0.5 * k), stand + 0.8 * k, C[2] + F[2] * (reach + 0.5 * k)]);
       let broke = 0;
       for (const p of hits) broke += crush(this.sim, p, 1.15 * k, 1.1, C);
+      // the stamp itself: its forefeet (a quarter of its weight) driven down at ~4.5 m/s
+      this.impactOf(d, w, 'stomp', [F[0] * 1.5, -4.5 * Math.sqrt(k), F[2] * 1.5], hits[0], 0.25);
       d.stampMiss = broke ? 0 : (d.stampMiss ?? 0) + 1;
       if (d.stampMiss >= 3) {
         d.stampMiss = 0;
@@ -1468,6 +1488,7 @@ export class DragonAI {
       d.fold = approach(d.fold, 0.4, 1, dt);
       const g = groundAt(w, d.p[0], d.p[2], d.p[1] + 1).y;
       if (d.p[1] <= g + 0.6 * d.k) {
+        this.impactOf(d, w, 'fall', [Math.sin(d.yaw) * d.speed, Math.min(-1, d.vy), Math.cos(d.yaw) * d.speed], [d.p[0], g, d.p[2]]);
         d.mode = 'dead';
         d.p[1] = g + 0.6 * d.k;
         w.events.push({ type: 'dragonDown', pos: d.p.slice(), time: w.time, name: 'the dragon' });
@@ -1728,6 +1749,18 @@ export class DragonAI {
     w.noises.push({ p: d.chest.slice(), loud: (heavy ? 30 : 10 + 4 * d.speed) * k, time: w.time, kind: 'dragon' });
   }
 
+  /**
+   * Its weight (× massK: a stamp is its forefeet) coming down at `at` with velocity vel
+   * (sim/impact.js): the force, the shockwave (people near it stagger, loose things jump, a ring of
+   * dust), the sound from its scales on what is there. The damage and crushing stay its own code's.
+   */
+  impactOf(d, w, kind, vel, at = d.p, massK = 1) {
+    const k = d.k ?? 1;
+    const g = groundAt(w, at[0], at[2], at[1] + 1);
+    const pos = [at[0], Math.max(g.y, Math.min(at[1], g.y + 3)), at[2]];
+    return hitImpact(this.sim ?? w, { pos, normal: [0, 1, 0], mass: DRAGON_KG * k ** 3 * massK, velocity: vel, materials: ['scales', groundMaterial(w, pos, g.water)], radius: 0.6 * k, size: 3 * k, sizeA: 2 * k, footprint: 2 * k, source: d, kind, name: 'the dragon', noiseKind: 'dragon', effects: { damage: false, crush: false } });
+  }
+
   /** Into the air: a crouch, a leap and hard wingbeats. */
   takeoff(d, w, dt) {
     if (d.mode === 'air') {
@@ -1811,6 +1844,10 @@ export class DragonAI {
       // the impact: its weight coming down on all four feet at once (harder the faster it came
       // in): on a roof, tiles and boards break and stone cracks; land on it often and it gives
       const impact = 0.55 + 0.06 * d.speed + 0.12 * Math.abs(d.vy ?? 0);
+      // (its weight and speed: the force, a shockwave, the sound: sim/impact.js)
+      // (it comes down the last of its height at once: v² = vy² + 2 g h)
+      const drop = Math.max(0, d.p[1] - (here + 0.6 * k));
+      this.impactOf(d, w, 'landing', [Math.sin(d.yaw) * d.speed, -Math.max(1.5, Math.sqrt((d.vy ?? 0) ** 2 + 2 * G * drop)), Math.cos(d.yaw) * d.speed]);
       d.mode = 'ground';
       d.speed = Math.min(d.speed, 1.5);
       d.vy = 0;
@@ -1974,6 +2011,7 @@ export class DragonAI {
     if (d.p[1] > g + 0.6 * k) return;
     // the crash
     const v = Math.abs(d.vy);
+    this.impactOf(d, w, 'crash', [Math.sin(d.yaw) * d.speed, -v, Math.cos(d.yaw) * d.speed], [d.p[0], g, d.p[2]]);
     d.p[1] = g + 0.6 * k;
     d.mode = 'ground';
     d.speed = 0;
@@ -2005,6 +2043,13 @@ export class DragonAI {
       if (!d.spine || d.health <= 0) continue;
       const hz = dragonHitZone(d, p, this.world);
       if (!hz) continue;
+      // evading: it may slip it (once for each projectile: then it flies on past)
+      if (g?.dodged?.includes(d)) continue;
+      if (!evadeRollHit(d)) {
+        if (g) (g.dodged ??= []).push(d);
+        this.world.events.push({ type: 'dragonDodged', pos: p.slice(), time: this.world.time, name: 'the dragon' });
+        continue;
+      }
       const v = g?.v;
       this.strike(d, hz, type, p, v ? (Array.isArray(v) ? v : [v.x, v.y, v.z]) : sub(p, hz.q));
       return true;
@@ -2021,7 +2066,7 @@ export class DragonAI {
     for (const d of this.world.dragons ?? []) {
       if (!d.spine || d.health <= 0) continue;
       const h = dragonRayHit(d, from, dir, max, this.world);
-      if (h && (!best || h.s < best.s)) best = { ...h, dragon: d };
+      if (h && (!best || h.s < best.s) && evadeRollHit(d)) best = { ...h, dragon: d };
     }
     if (best) this.strike(best.dragon, best, type, best.p, dir);
     return best;

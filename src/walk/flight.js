@@ -5,6 +5,7 @@ import { placeObject } from '../models/voxelizer.js';
 import { MAT } from '../sim/materials.js';
 import { deriveWeather } from '../sim/weather.js';
 import { jetImpact, JetDamage } from '../sim/jetDamage.js';
+import { jetEngine } from '../audio/physics.js';
 import { ejectionEnvelope, Chute } from '../sim/ejection.js';
 import { PilotFigure } from '../render/pilotFigure.js';
 
@@ -65,7 +66,12 @@ const NO_KEYS = new Set();
  *
  * Rockets are flown here too, in the shared sea: they hit terrain, buildings,
  * ships in whatever zone they reach (building it if needed) and explode there
- * (sim/explosions.js: debris, broken glass, fire), or splash into the sea.
+ * (sim/explosions.js: debris, broken glass, fire), or splash into the sea. A
+ * flight's jet sees them coming (ai/flight.js warn: it breaks, rolls, drops
+ * flares) and one that is manoeuvring may be missed (its hitChance).
+ *
+ * F drops flares: two at a time from under the tail, burning white-hot as they
+ * fall away on smoke trails (flaresOut: what a missile tracking you could take).
  */
 export class Flight {
   constructor(walk, sim, vehicle) {
@@ -90,6 +96,9 @@ export class Flight {
     this.rollIn = 0;
     this.rockets = vehicle.rockets ?? 0;
     this.flying = []; // rockets in the air
+    this.flares = vehicle.flares ?? 30; // flares left (F)
+    this.flaresOut = []; // burning in the air: { p (global), v, age }
+    this.flareCool = 0;
     this.cool = 0;
     this.onGround = true;
     this.fireRequested = false;
@@ -489,8 +498,45 @@ export class Flight {
       if (this.dmg.fuel > 0.8 && this.fuelLeft > 50 && !this.outOfControl && Math.random() < dt * 0.15) this.loseControl('The fuel tank exploded');
     }
     this.fireRockets(dt, q, f, f.clone().multiplyScalar(this.speed).add(new THREE.Vector3(0, this.vy, 0)));
+    this.dropFlares(dt, q, f.clone().multiplyScalar(this.speed).add(new THREE.Vector3(0, this.vy, 0)));
     this.stepRockets(dt, q);
     this.draw(dt, q, f, u, ground);
+  }
+
+  /** F: a pair of flares from under the tail, thrown out and down; they burn ~4 s, trailing smoke. */
+  dropFlares(dt, q, vel) {
+    this.flareCool -= dt;
+    if (this.flaresRequested && this.flareCool <= 0) {
+      this.flaresRequested = false;
+      if (this.flares <= 0) this.walk.say('No flares left', 1.5);
+      else {
+        this.flareCool = 0.4;
+        for (const s of [-1, 1]) {
+          if (this.flares <= 0) break;
+          this.flares--;
+          const p = this.at(q, [-6.5, 0.8, s * 1.2]);
+          const out = this.at(q, [0, -1, s]).sub(this.at(q, [0, 0, 0])).normalize();
+          this.flaresOut.push({ p, v: vel.clone().multiplyScalar(0.55).addScaledVector(out, 20), age: 0 });
+        }
+        this.walk.say(`Flares (${this.flares} left)`, 1);
+      }
+    }
+    this.flaresRequested = false;
+    const keep = [];
+    for (const F of this.flaresOut) {
+      F.age += dt;
+      F.v.multiplyScalar(Math.exp(-0.9 * dt));
+      F.v.y -= this.gravity(F.p.y) * dt;
+      F.p.addScaledVector(F.v, dt);
+      if (F.age > 4.5 || F.p.y < this.seaLevel) continue;
+      // white-hot, and a trail of smoke behind it
+      const l = this.local(F.p);
+      const k = 1 - F.age / 4.5;
+      for (let n = 0; n < 2; n++) this.view.flames.spawn(l.x, l.y, l.z, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, 0.35 * k + 0.1, 0.25, 0, 1);
+      this.puff(F.p, 0.3);
+      keep.push(F);
+    }
+    this.flaresOut = keep;
   }
 
   /** Space or click: a rocket from under the wings, launched with the jet's own velocity. */
@@ -541,6 +587,7 @@ export class Flight {
     if (this.docked) return;
     this.environment(dt, q);
     this.fireRockets(dt, q, f, this.vel);
+    this.dropFlares(dt, q, this.vel);
     this.stepRockets(dt, q);
     this.draw(dt, q, f, u, { y: -1e9, sea: false });
   }
@@ -623,8 +670,12 @@ export class Flight {
     }
   }
 
-  /** A rocket at global p near a flight's jet: that jet is hit (on the part nearest). */
-  hitFlightJet(p) {
+  /**
+   * A rocket g (at global p) near a flight's jet: that jet is hit (on the part nearest), unless it
+   * is manoeuvring and the rocket goes wide (ai/flight.js rollHit: its manoeuvre's chance). Every
+   * step, the flights see it coming (warn).
+   */
+  hitFlightJet(p, g = null) {
     const flights = this.sim?.world?.flights;
     if (!flights?.length) return false;
     const l = this.local(p);
@@ -632,7 +683,18 @@ export class Flight {
       for (const m of fl.ai?.members ?? []) {
         if (!m.alive) continue;
         const d = [l.x - m.p[0], l.y - m.p[1], l.z - m.p[2]];
+        if (g && !((g.warned ??= new Map()).get(fl) > g.age - 0.2) && Math.hypot(...d) < 400) {
+          g.warned.set(fl, g.age);
+          fl.ai.warn({ kind: 'rocket', p: [l.x, l.y, l.z], v: [g.v.x, g.v.y, g.v.z] });
+        }
         if (Math.hypot(...d) > 9) continue;
+        // (one chance per jet: a miss goes on past it)
+        if (g?.passed?.has(m)) continue;
+        if (g && !fl.ai.rollHit(m.i, 'rocket')) {
+          (g.passed ??= new Set()).add(m);
+          this.walk.say(`${m.call} jinks: missed!`, 2);
+          continue;
+        }
         // in the jet's frame (nose +x, right +z)
         const c = Math.cos(m.h), sn = Math.sin(m.h);
         fl.ai.hit(m.i, JetDamage.nearest([d[0] * c - d[2] * sn, d[1] + 1.6, d[0] * sn + d[2] * c]), 350);
@@ -669,7 +731,7 @@ export class Flight {
           }
         }
         // a jet of a flight (ai/flight.js) in the zone shown: hit on the part nearest
-        if (!done && this.hitFlightJet(g.p)) {
+        if (!done && this.hitFlightJet(g.p, g)) {
           done = true;
           break;
         }
@@ -743,10 +805,13 @@ export class Flight {
     if (this.engine) {
       const t = this.walk.sound.ctx.currentTime;
       const run = this.fuelLeft > 0 ? 1 - D.engine * 0.6 : 0;
-      this.engine.o.frequency.setTargetAtTime((45 + this.throttle * 70 + this.speed * 0.3) * (1 - D.engine * 0.3), t, 0.1);
-      this.engine.o2.frequency.setTargetAtTime(90 + this.throttle * 160 + (D.engine > 0.3 ? Math.random() * 60 * D.engine : 0), t, 0.05);
-      this.engine.f.frequency.setTargetAtTime(400 + this.throttle * 1800, t, 0.1);
-      this.engine.g.gain.setTargetAtTime((0.04 + this.throttle * 0.22 + (this.boosting ? 0.25 : 0)) * run * (0.3 + 0.7 * Math.min(1, this.rho() * 4)), t, 0.1);
+      // from the thrust (audio/physics.js jetEngine: the exhaust velocity, Lighthill's V⁸, the
+      // jet noise peaking at Strouhal 0.2, the turbine whine from the spool speed); ~10 t of jet
+      const J = jetEngine({ thrust: Math.max(0.05, this.throttle) * THRUST * 1e4 * run * (this.boosting ? 1.6 : 1), afterburner: !!this.boosting, nozzle: 0.9, maxThrust: THRUST * 1e4 });
+      this.engine.o.frequency.setTargetAtTime(Math.max(30, J.peak * 0.5 + this.speed * 0.3) * (1 - D.engine * 0.3), t, 0.1);
+      this.engine.o2.frequency.setTargetAtTime(J.whine * 0.12 + (D.engine > 0.3 ? Math.random() * 60 * D.engine : 0), t, 0.05);
+      this.engine.f.frequency.setTargetAtTime(J.cutoff, t, 0.1);
+      this.engine.g.gain.setTargetAtTime((0.04 + 0.4 * J.gain) * run * (0.3 + 0.7 * Math.min(1, this.rho() * 4)), t, 0.1);
     }
     const alt = this.pos.y - this.seaLevel;
     // the sky darkens and the stars come out as you climb
@@ -766,7 +831,7 @@ export class Flight {
     if (Math.max(D.wingL, D.wingR) >= 1) warn.push('⚠ WING LOST');
     this.hud.textContent =
       `JET  throttle ${Math.round(this.throttle * 100)}%${this.boosting ? ' +BOOST' : ''}   speed ${Math.round(this.speed * 3.6)} km/h   alt ${Math.round(alt)} m   vs ${this.vy.toFixed(1)} m/s\n` +
-      `pitch ${deg(this.pitch)}°  bank ${deg(this.roll)}°  heading ${(360 + deg(-this.heading)) % 360}°   rockets ${this.rockets}   fuel ${Math.round(this.fuelLeft)} l\n` +
+      `pitch ${deg(this.pitch)}°  bank ${deg(this.roll)}°  heading ${(360 + deg(-this.heading)) % 360}°   rockets ${this.rockets}   flares ${this.flares} (F)   fuel ${Math.round(this.fuelLeft)} l\n` +
       `damage: ${this.damageText()}` +
       (this.onGround ? (this.speed < 1 ? '   [E] climb out' : this.speed < V_LIFT * 0.85 ? '   full throttle: catapult' : '   pull up (mouse)') : '') +
       (warn.length ? `\n${warn.join('   ')}` : '');

@@ -1,4 +1,5 @@
 import { MATERIALS } from './materials.js';
+import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
 
 /**
@@ -39,7 +40,10 @@ export const WEAPONS = {
   rifle: { dmg: 1, pen: 0.3, penHelmet: 0.7, bleed: 1 }, // 5.56 mm
   mg: { dmg: 1.25, pen: 0.55, penHelmet: 0.8, bleed: 1.15 }, // the gunner's 7.62 mm
   carbine: { dmg: 0.7, pen: 0.05, penHelmet: 0.4, bleed: 0.9 }, // the compact secondary, pistol calibre
+  shotgun: { dmg: 1.5, pen: 0.02, penHelmet: 0.15, bleed: 1.3 }, // 12 gauge buckshot: hard close in, no use against plates
+  pistol: { dmg: 0.65, pen: 0.03, penHelmet: 0.35, bleed: 0.85 }, // 9 mm from a pistol
   knife: { dmg: 0.75, pen: 0, penHelmet: 0, bleed: 1.7 },
+  fist: { dmg: 0.2, pen: 0, penHelmet: 0, bleed: 0.1 }, // hand-to-hand (ai/melee.js): bruises, no bleeding to speak of
   fragment: { dmg: 0.5, pen: 0.1, penHelmet: 0.25, bleed: 1 },
   arrow: { dmg: 1, pen: 0.05, penHelmet: 0.2, bleed: 1.2 },
 };
@@ -184,9 +188,9 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
       }
     }
     if (best) break;
-    const bird = sim.phoenixAI?.at(p);
+    const bird = sim.phoenixAI?.hitAt(p);
     if (bird) {
-      best = { phoenix: bird, p };
+      best = { phoenix: bird.f, zone: bird.k, mult: bird.zone.mult, p };
       break;
     }
     if (player) {
@@ -203,7 +207,20 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   const tNear = best ? Math.hypot(best.p[0] - from[0], best.p[1] - from[1], best.p[2] - from[2]) : maxT;
   const dr = sim.dragonAI?.shot?.(from, d, tNear, 'bullet');
   if (dr) best = { dragon: dr.dragon, zone: dr.k, p: dr.p };
-  w.noises.push({ p: from.slice(), loud: 70, time: w.time, kind: shooter ? 'enemy' : 'gunshot' });
+  // the report (ai/perception.js): a rifle's crack carries kilometres (who hears it goes to look only nearer)
+  emitSound(w, { pos: from, loudness_dB: LOUDNESS[weapon] ?? LOUDNESS.rifle, kind: shooter ? 'enemy' : 'gunshot', source: shooter ?? player ?? null });
+  // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
+  // (your rounds: they are all on the other side)
+  if (!shooter) {
+    const end = best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range];
+    const L = Math.hypot(end[0] - from[0], end[1] - from[1], end[2] - from[2]);
+    for (const e of w.enemies) {
+      if (e.dead || e === best?.enemy) continue;
+      const r = [e.p[0] - from[0], e.p[1] + 1.1 - from[1], e.p[2] - from[2]];
+      const t = Math.max(0, Math.min(L, r[0] * d[0] + r[1] * d[1] + r[2] * d[2]));
+      if (Math.hypot(r[0] - d[0] * t, r[1] - d[1] * t, r[2] - d[2] * t) < 1.5) e.shotAt = { time: w.time, from: from.slice(), dir: d.slice() };
+    }
+  }
   w.tracers.push({ a: from.slice(), b: best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range], t: w.time });
   if (w.tracers.length > 40) w.tracers.shift();
   if (best?.enemy) {
@@ -216,7 +233,7 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
     return best;
   }
   if (best?.phoenix) {
-    sim.phoenixAI.wound(best.phoenix, 22);
+    sim.phoenixAI.wound(best.phoenix, 22 * (best.mult ?? 1)); // (by its hit zone: ai/phoenix.js PHOENIX_ZONES)
     return best;
   }
   if (wall) {

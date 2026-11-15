@@ -353,8 +353,20 @@ export function stepGroups(sq, dt) {
       if (sq.busy(m)) return;
       const off = d2(m.p, p);
       if (off > 0.35) {
-        m.path = [p];
-        m.pathI = 0;
+        // in action, his place across a wall or up on a ledge: a route there with the parkour moves
+        // (ai/squad.js route: vault, climb, drop); else straight to it, walking round as he goes
+        // (on one level: a file up the stairs, clearing a building, go by the floors' own way)
+        const level = g.type !== 'file' && !sq.clearing && Math.abs((p[1] ?? m.p[1]) - m.p[1]) < 0.5;
+        const R = level && sq.alert?.() && !straightOk(sq, m.p, p) ? formRoute(sq, m, p) : null;
+        if (R) {
+          if (m.path !== R.pts) {
+            m.path = R.pts;
+            m.pathI = 0;
+          }
+        } else {
+          m.path = [p];
+          m.pathI = 0;
+        }
         m.moveMode = off > 3.5 ? 'run' : 'aimWalk';
         m.then = null;
       } else {
@@ -364,6 +376,36 @@ export function stepGroups(sq, dt) {
       }
     });
   }
+}
+
+/**
+ * Can a man go straight from a to b on the grid: every cell on the way one he can walk, no step
+ * up or down more than a stair (not over a wall, onto a ledge, off one)?
+ */
+export function straightOk(sq, a, b) {
+  if (!sq.walk || !sq.fy) return true;
+  const L = d2(a, b), n = Math.ceil(L / (sq.cs * 0.5));
+  let py = null;
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, x = a[0] + (b[0] - a[0]) * t, z = a[2] + (b[2] - a[2]) * t;
+    const k = sq.cellOf(x, z);
+    if (k < 0) return false;
+    // (the first stretch: he may be standing in a cell kept off a wall)
+    if (!sq.walk[k]) {
+      if (t * L < 0.5) continue;
+      return false;
+    }
+    if (py != null && Math.abs(sq.fy[k] - py) > 0.6) return false;
+    py = sq.fy[k];
+  }
+  return true;
+}
+/** A man's own route to his place in the formation (replanned when the place moves on, or done). */
+function formRoute(sq, m, p) {
+  const F = m.formRoute;
+  if (F && d2(F.to, p) < 1.2 && sq.time - F.t < 2 && m.path === F.pts) return F;
+  m.formRoute = { to: p.slice(), t: sq.time, pts: sq.route(m.p, p, m) };
+  return m.formRoute;
 }
 
 /* ------------------------------------------------------------------ doors and flashbangs */

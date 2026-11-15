@@ -650,6 +650,7 @@ class FirePatch extends Patch {
       B.temp[i] = A.temp[j];
       B.skin[i] = A.skin[j];
       B.char[i] = A.char[j];
+      B.tmax[i] = A.tmax[j];
       B.moist[i] = A.moist[j];
       B.fuel[i] = Math.min(B.fuel[i], A.fuel[j]);
       if (A.flags[j] & F_BURNING) B.flags[i] |= F_BURNING;
@@ -782,6 +783,7 @@ function resample(old, p) {
         B.moist[i] = A.moist[j];
         B.melt[i] = A.melt[j];
         B.char[i] = A.char[j];
+        B.tmax[i] = A.tmax[j];
         B.flags[i] = A.flags[j];
         B.owner[i] = A.owner[j];
         for (let c = 0; c < 3; c++) B.tint[i * 3 + c] = A.tint[j * 3 + c];

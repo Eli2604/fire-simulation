@@ -26,17 +26,30 @@
  * ?pk=vaultSpeed|climbJump|… &pkh=<obstacle height m> (a parkour act over its prop),
  * ?obj=soldier|squad|dragon|car|jet|boat (&vact= &vzones=1 &vhits=engine,fuel for a vehicle),
  * and the dragon's (?dragon=1 ?dact= ?dzones=1 ?dhits= ?dsteps= ?dspeed= ?dfollow=1: rig/dragon.js).
+ * The phoenix (rig/phoenix.js): ?phoenix=1 ?pact= ?pzones=1 ?pspan= ?pheat= ?psize= ?pfly= ?phits= ?psteps= ?pspeed= ?pfollow=1 ?pdark=0.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OperatorFigure, loadOperatorAssets, PhysicsWorld, ZONES, showZones, placeZone, LABELS, MOVING, ONCE } from '../operator/rig.js';
 import { flashBang } from '../audio/radio.js';
 import { DragonRig } from './dragon.js';
+import { PhoenixRig } from './phoenix.js';
 import { VehicleRig } from './vehicles.js';
-import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight } from './objects.js';
+import { RIG_OBJECTS, VEHICLE_STAGE, rigKind, PARKOUR_ACTS, parkourHeight, EVADE_ACTS, CASUALTY_ACTS, MELEE_ACTS, PEEK_ACTS } from './objects.js';
+import { lightSource, hasWeaponLight, LIGHT_MOUNT } from '../ai/flashlight.js';
+import { senses as senseProfile, SENSES } from '../ai/perception.js';
+import { FlashlightPool } from '../render/flashlights.js';
+import { DRAG_OFF } from '../operator/rig.js';
 import { rootAt, MOVES as PK_MOVES } from '../ai/parkour.js';
+import { ROLLS, rollPoint } from '../ai/evade.js';
+import { recoilSpec, GUNS } from '../ai/recoil.js';
+import { HANDLING, PRIMARIES, whyNot, carried } from '../ai/weapons.js';
+import { SKILL, SKILL_INFO } from '../ai/soldier.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
+import { BODY_MASS, impactsOf } from './objects.js';
+import { impact, computeImpact, actImpactArgs, ACT_FORCE, actForce } from '../sim/impact.js';
+import { SoundScape } from '../audio/sound.js';
 
 /* Layout: full-bleed field; tabbed control panel docked left; FPS readout top-right; build progress centered */
 const CSS = `
@@ -93,6 +106,15 @@ const CSS = `
 .rigst .toast{position:absolute;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);
   border-radius:4px;padding:8px 14px;font-family:var(--display);letter-spacing:.06em;text-transform:uppercase;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none}
 @media (max-width:640px){.rigst .panel{top:auto;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-height:48%}.rigst .fps{min-width:0}}
+/* the force indicator (impacts: sim/impact.js) */
+.rigst .forcebox{position:absolute;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));width:min(300px,calc(100vw - 32px));
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px;display:grid;gap:7px;font-size:13px}
+.rigst .forcebox .fbar{height:8px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden}
+.rigst .forcebox .fbar i{display:block;height:100%;width:0;background:var(--ok);transition:width .15s,background .15s}
+.rigst .forcebox .fread{font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap}
+.rigst .forcebox .fbig{font-family:var(--display);font-size:22px;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+.rigst .forcebox label.sl{grid-template-columns:70px 1fr 44px}
+@media (max-width:640px){.rigst .forcebox{top:calc(16px + env(safe-area-inset-top,0px));bottom:auto;width:min(230px,calc(100vw - 32px))}}
 `;
 
 const HTML = `
@@ -105,6 +127,15 @@ const HTML = `
 </div>
 <div class="fps" data-id="fps" aria-label="Performance"><b data-id="fpsN" class="g">--</b> fps<div data-id="fpsD">-- ms</div><div data-id="fpsT">--</div><canvas data-id="fpsG" width="150" height="28"></canvas></div>
 <div class="toast" data-id="toast" role="status" aria-live="polite"></div>
+
+<div class="forcebox" data-id="forceBox" aria-label="Force indicator" aria-live="polite">
+  <div class="selrow"><b class="lab" data-id="fAct">Force</b><span class="fbig" data-id="fN">– N</span></div>
+  <div class="fbar"><i data-id="fBar"></i></div>
+  <div class="fread" data-id="fRead">Play an act with a contact (a landing, a kick, a stamp, a crash).</div>
+  <label class="sl"><span>Force ×</span><input type="range" data-id="fAx" min="0" max="4" step="0.05" value="1" aria-label="Force multiplier of this act"><output data-id="fAxO">×1.00</output></label>
+  <label class="sl"><span>Object ×</span><input type="range" data-id="fOx" min="0" max="4" step="0.05" value="1" aria-label="Force multiplier of this object"><output data-id="fOxO">×1.00</output></label>
+  <div class="row"><button data-id="tgFSound" type="button" aria-pressed="false">Sound</button><button data-id="tgFShow" type="button" aria-pressed="true">Arrow</button></div>
+</div>
 
 <aside class="panel" data-id="panel" aria-label="Character controls">
   <button type="button" class="back" data-id="back" hidden>← Back to the world</button>
@@ -129,6 +160,14 @@ const HTML = `
     <div class="grid" data-id="anims"></div>
     <div class="lab">Parkour (over its own wall or ledge)</div>
     <div class="grid" data-id="pkActs"></div>
+    <div class="lab">Evade (combat rolls: out of a line of fire, a grenade, a dive)</div>
+    <div class="grid" data-id="evActs"></div>
+    <div class="lab">Casualty (a man down, dragged out, first aid, cover fire)</div>
+    <div class="grid" data-id="casActs"></div>
+    <div class="lab">Hand-to-hand (boxing and judo: strikes, kicks, defence, the clinch, throws with a partner)</div>
+    <div class="grid" data-id="melActs"></div>
+    <div class="lab">Peek (over a low wall, round a corner, slicing the pie; the hand torch, with a hand free)</div>
+    <div class="grid" data-id="peekActs"></div>
     <label class="sl"><span>Obstacle</span><input type="range" data-id="pkH" min="0.45" max="3.3" step="0.05" value="0.9"><output data-id="pkHo">0.90 m</output></label>
     <div class="row">
       <button data-id="tgAll" type="button" aria-pressed="false">Apply to all</button>
@@ -158,16 +197,33 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
   <section data-pane="gear" hidden>
     <div class="lab">Selected soldier's separate objects</div>
     <div class="grid">
-      <button type="button" data-det="rifle">Drop rifle</button>
+      <button type="button" data-id="dropWpn" title="Whatever is in his hands (rifle, shotgun, pistol, machine gun, carbine, knife, the flame gun's wand): he is bare-handed after">Drop weapon</button>
       <button type="button" data-det="helmet">Knock helmet</button>
-      <button type="button" data-det="pack">Drop pack</button>
+      <button type="button" data-id="dropPack" title="Unbuckled, one shoulder strap, then the other, lowered to the ground in front of him (a flame trooper's tanks with it)">Pack off</button>
     </div>
-    <div class="row"><button data-id="reequip" type="button">Re-equip</button><button data-id="swapLoad" type="button">Rifle ⇄ flame gun</button><button data-id="tgDrop" type="button" aria-pressed="true">Drop rifle on death</button></div>
+    <div class="row"><button data-id="reequip" type="button" title="He goes to what he dropped, bends down and picks it up">Pick up</button><button data-id="rollPick" type="button" title="A forward roll over it, taking it up on the way">Roll pick-up</button><button data-id="tgDrop" type="button" aria-pressed="true">Drop weapon on death</button></div>
+    <label class="sl"><span>Experience</span><select data-id="skillSel" style="grid-column:2/4" aria-label="Experience"><option value="recruit">Recruit</option><option value="regular" selected>Regular</option><option value="veteran">Veteran</option><option value="elite">Elite</option></select></label>
+    <p class="hint" data-id="skillInfo"></p>
+    <label class="sl"><span>Primary</span><select data-id="primarySel" style="grid-column:2/4" aria-label="Primary weapon"></select></label>
+    <p class="hint" data-id="handlingInfo"></p>
     <div class="lab">Weapon in hand</div>
-    <div class="grid" data-id="weapons"><button type="button" data-w="rifle">Rifle</button><button type="button" data-w="secondary">Carbine</button><button type="button" data-w="knife">Knife</button></div>
+    <div class="grid" data-id="weapons"></div>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
+    <div class="lab">Lights (ai/flashlight.js): on the weapon, or the hand torch from the belt</div>
+    <div class="row"><button data-id="tgWLight" type="button" aria-pressed="false" title="A light on the weapon in his hands (an attachment: rifle, carbine and shotgun by default)">Light on this weapon</button><button data-id="tgLight" type="button" aria-pressed="false">Light on</button></div>
+    <label class="sl"><span>Torch grip</span><select data-id="torchGrip" style="grid-column:2/4" aria-label="Torch grip with a pistol"><option value="harries">Harries (wrists back to back under the pistol)</option><option value="fbi">FBI (out to the side, high)</option></select></label>
+    <p class="hint" data-id="lightInfo"></p>
+    <div class="lab">Senses (ai/perception.js; experience scales them)</div>
+    <label class="sl"><span>Sight</span><input type="range" data-id="sightS" min="10" max="1000" step="5" value="400"><output data-id="sightO">400 m</output></label>
+    <label class="sl"><span>Field of view</span><input type="range" data-id="fovS" min="60" max="360" step="5" value="360"><output data-id="fovO">360°</output></label>
+    <label class="sl"><span>Hearing ×</span><input type="range" data-id="hearS" min="0" max="3" step="0.05" value="1"><output data-id="hearO">×1.00</output></label>
+    <p class="hint" data-id="senseInfo"></p>
     <label class="sl"><span>Reload ×</span><input type="range" data-id="reloadS" min="0.7" max="1.5" step="0.05" value="1"><output data-id="reloadO">×1.00</output></label>
     <label class="sl"><span>Look</span><input type="range" data-id="lookS" min="-1.1" max="1.1" step="0.05" value="0"><output data-id="lookO">0°</output></label>
+    <div class="lab">Weapon recoil (ai/recoil.js: from the cartridge and the weapon's mass)</div>
+    <label class="sl"><span>Recoil ×</span><input type="range" data-id="recoilS" min="0" max="3" step="0.05" value="1"><output data-id="recoilO">×1.00</output></label>
+    <label class="sl"><span>Fire mode</span><select data-id="fireMode" style="grid-column:2/4"><option value="single">Single</option><option value="burst" selected>Burst (3)</option><option value="auto">Auto</option></select></label>
+    <p class="hint" data-id="recoilInfo"></p>
     <p class="hint">Switching puts the weapon in his hands away (the rifle onto his back, the carbine over the shoulder, the knife into its sheath on the right thigh), then draws the other. Without armour he fights in his shirt. Look bends the head and upper body, the rifle with them, over any clip.</p>
     <p class="hint">The person, rifle (with magazine), helmet and backpack are separate, closed objects on their own bones (without the helmet you see his hair). Drop the rifle and he draws the compact carbine from his back. The flame trooper fires only standing. Detached, each becomes a rigid body with gravity, bounce and friction that collides with the ground.</p>
   </section>
@@ -187,6 +243,26 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <label class="sl"><span>Damage ×</span><input type="range" data-id="dzM" min="0.1" max="5" step="0.1"><output data-id="dzMo"></output></label>
     <div class="row"><button data-id="dRevive" type="button">Revive</button><button data-id="dClean" type="button">Wash the blood away</button></div>
     <p class="hint" data-id="dLastHit">The simulation's own dragon (ai/dragon.js moves and poses it; render/dragon.js draws it). Its hit zones follow the pose; the same zones decide where arrows, bullets and rockets land in the simulation. A wound bleeds: health drains, blood drips where it goes (a trail of drops, in flight too), sprays onto the ground behind the hit and stains its scales. Click it to see a zone; with Damage on click, to hit it there.</p>
+  </section>
+
+  <section data-pane="phoenix" hidden>
+    <div class="sel">
+      <div class="selrow"><b>Phoenix</b><span data-id="pState">perch · 100 HP</span></div>
+      <div class="hp"><i data-id="pHp"></i></div>
+    </div>
+    <div class="grid" data-id="pAnims"></div>
+    <label class="sl"><span>Speed</span><input type="range" data-id="pSpeed" min="0" max="2" step="0.05" value="1"><output data-id="pSpeedO"></output></label>
+    <label class="sl"><span>Wing span</span><input type="range" data-id="pSpan"><output data-id="pSpanO"></output></label>
+    <label class="sl"><span>Flames</span><input type="range" data-id="pHeat"><output data-id="pHeatO"></output></label>
+    <label class="sl"><span>Size</span><input type="range" data-id="pSize"><output data-id="pSizeO"></output></label>
+    <label class="sl"><span>Flight m/s</span><input type="range" data-id="pFly"><output data-id="pFlyO"></output></label>
+    <div class="row"><button data-id="tgPZones" type="button" aria-pressed="false">Show hit areas</button><button data-id="tgPFire" type="button" aria-pressed="false">Damage on click</button><button data-id="tgPFollow" type="button" aria-pressed="false">Follow</button><button data-id="tgPDark" type="button" aria-pressed="true">Dusk</button></div>
+    <label class="sl"><span>Weapon</span><select data-id="pWeapon" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Zone</span><select data-id="pZoneSel" style="grid-column:2/4"></select></label>
+    <label class="sl"><span>Radius</span><input type="range" data-id="pzR" min="0.03" max="0.5" step="0.01"><output data-id="pzRo"></output></label>
+    <label class="sl"><span>Damage ×</span><input type="range" data-id="pzM" min="0.1" max="5" step="0.1"><output data-id="pzMo"></output></label>
+    <div class="row"><button data-id="pRevive" type="button">Revive</button></div>
+    <p class="hint" data-id="pLastHit">The simulation's own phoenix (ai/phoenix.js flies it; render/phoenix.js draws it), on a stone perch like the one in its cell in the catacombs. It watches you (the camera) from its perch. Its hit zones follow the pose (the wings only when spread); the same zones decide what the guards' bullets do to it. Fire does not hurt it. Killed, it bursts into flame, lies as glowing ash and is born again from it. Click it to see a zone; with Damage on click, to hit it there.</p>
   </section>
 
   <section data-pane="vehicle" hidden>
@@ -256,6 +332,7 @@ export function mountRig(root, opts = {}) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   stage.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
+  let flashPool = null;
   {
     const c = document.createElement('canvas');
     c.width = 4;
@@ -338,13 +415,20 @@ export function mountRig(root, opts = {}) {
   let A = null;
   let dropOnDeath = true;
   const soldiers = [];
-  const GEAR = { armour: true, reload: 1, look: 0 };
+  const GEAR = { armour: true, reload: 1, look: 0, recoil: 1, fireMode: 'burst' };
   /** The settings on a (new) figure. */
-  function applyGear(f) {
+  function applyGear(f, skill = 'regular') {
+    const K = SKILL[skill] ?? SKILL.regular;
     f.setArmour(GEAR.armour);
-    f.setClipSpeed('reload', GEAR.reload);
+    f.setClipSpeed('reload', GEAR.reload / K.reload);
+    // (switching, dropping and picking up go at his pace too)
+    for (const n of ['holsterRifle', 'drawRifle', 'holsterSecondary', 'drawSecondary', 'drawKnife', 'sheathKnife', 'fistsUp', 'dropWeapon', 'pickup', 'pickupOne']) f.setClipSpeed(n, 1 / K.reload);
     f.setLook(GEAR.look);
+    const gun = gunOf(f);
+    if (gun) f.setRecoil(recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode }), K.control);
   }
+  /** The gun (ai/recoil.js GUNS) in a figure's hands, or null (the flame gun, the knife). */
+  const gunOf = (f) => (GUNS[f.handling] ? f.handling : null);
   /** The parkour props: a brick wall to vault, a concrete ledge to climb or drop off, low cover. */
   const PROP_MAT = {
     wall: new THREE.MeshStandardMaterial({ color: '#a8735a', roughness: 0.9 }),
@@ -366,6 +450,27 @@ export function mountRig(root, opts = {}) {
     grp.rotation.y = yaw;
     return grp;
   }
+  /** What a roll is shown getting out of (EVADE_ACTS from): a grenade at his feet, tracer through where he stood. */
+  function makeThreat(what, from, yaw, kind) {
+    const grp = new THREE.Group();
+    const f = [Math.sin(yaw), Math.cos(yaw)], l = [Math.cos(yaw), -Math.sin(yaw)];
+    if (what === 'grenade') {
+      // behind him, where he dives away from
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 8), new THREE.MeshStandardMaterial({ color: '#3d4a32', roughness: 0.7 }));
+      m.position.set(from[0] - f[0] * 0.7, 0.06, from[2] - f[1] * 0.7);
+      grp.add(m);
+    } else if (what === 'fire') {
+      // a burst along a line through where he stood (from ahead), the side he rolls to clear of it
+      const s = kind === 'rollRight' ? 1 : -1;
+      for (const k of [-1, 0, 1]) {
+        const off = 0.12 * k + 0.05 * s;
+        const a = new THREE.Vector3(from[0] + f[0] * 25 + l[0] * off, 1.1 + 0.08 * k, from[2] + f[1] * 25 + l[1] * off);
+        const b = new THREE.Vector3(from[0] - f[0] * 8 + l[0] * off, 1.0 + 0.08 * k, from[2] - f[1] * 8 + l[1] * off);
+        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0.85 })));
+      }
+    } else return null;
+    return grp;
+  }
   /** Where his grenades (and his drone) go: 9 m in front of him. */
   const aheadOf = (e) => [e.d.p[0] + Math.sin(e.d.yaw) * 9, 0, e.d.p[2] + Math.cos(e.d.yaw) * 9];
   class Soldier {
@@ -385,7 +490,7 @@ export function mountRig(root, opts = {}) {
       f.onRelease = (p) => throwGrenade(p.toArray(), aimVel(p.toArray(), aheadOf(this)));
       f.onFlashRelease = (p) => throwGrenade(p.toArray(), aimVel(p.toArray(), aheadOf(this)), 'flash');
       f.onFinished = (name) => name === 'pickup' && f.reequip(['rifle']);
-      applyGear(f);
+      applyGear(f, this.skill);
       scene.add(f.group);
       old?.dispose();
     }
@@ -396,7 +501,15 @@ export function mountRig(root, opts = {}) {
       if (this.d.dead) return this;
       this.patrol = null;
       this.endParkour();
+      // the weapon in his hands may rule the act out (ai/weapons.js: no roll with the flame gun's tanks...)
+      if (!this.fig.allows(name)) {
+        toast(`${this.name}: ${whyNot(this.fig.handling, name).replace('Not with', 'not with')}`);
+        return this;
+      }
       if (PARKOUR_ACTS[name]) return this.parkour(name);
+      if (EVADE_ACTS[name]) return this.evade(name);
+      if (CASUALTY_ACTS[name]?.partner) return this.casualty(name);
+      if (MELEE_ACTS[name]?.d) return this.spar(name);
       if (MOVING[name]) return this.startPatrol(name);
       if (name === 'deployDrone') {
         this.fig.droneTarget = V(aheadOf(this));
@@ -428,8 +541,95 @@ export function mountRig(root, opts = {}) {
       this.pkStep(0);
       return this;
     }
+    /**
+     * A roll (rig/objects.js EVADE_ACTS): from his home along the roll's root path (ai/evade.js),
+     * with what he gets out of shown (a grenade by his feet, a burst of tracer past him); again
+     * after a pause.
+     */
+    evade(kind) {
+      const yaw = this.d.yaw;
+      const from = this.home.slice();
+      this.pk = { kind, t: 0, dur: ROLLS[kind].dur, from, yaw, wait: 0, roll: true };
+      this.pkProp = makeThreat(EVADE_ACTS[kind].from, from, yaw, kind);
+      if (this.pkProp) scene.add(this.pkProp);
+      this.fig.play(kind, { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
+    /**
+     * A casualty act with its second man (rig/objects.js CASUALTY_ACTS partner): dragging him back
+     * 5 m by the collar, his body in the rescuer's hands (DRAG_OFF ahead, both facing the same way),
+     * then again; or kneeling by him for the first aid.
+     */
+    casualty(kind) {
+      const act = CASUALTY_ACTS[kind];
+      const yaw = this.d.yaw;
+      const c = new Soldier({ name: 'casualty', position: this.home.slice(), facing: yaw });
+      c.fig.play(act.partner, { fade: 0 });
+      this.pk = { kind, t: 0, dur: kind === 'dragCasualty' ? 6.5 : 1e9, from: this.home.slice(), yaw, wait: 0, cas: c };
+      this.fig.play(kind, { fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
+    /**
+     * A hand-to-hand act with a sparring partner (rig/objects.js MELEE_ACTS): unarmed, d m in front,
+     * facing him; he takes the strike (his reaction at its hit time), is thrown or held (the other
+     * half of the pair), or throws the punch this one blocks or slips; again after a pause.
+     */
+    spar(kind) {
+      const act = MELEE_ACTS[kind];
+      const yaw = this.d.yaw;
+      const c = new Soldier({ name: 'sparring partner', position: this.home.slice(), facing: yaw + Math.PI, loadout: 'unarmed' });
+      this.pk = { kind, t: 0, dur: this.fig.A.clips[kind].duration, from: this.home.slice(), yaw, wait: 0, cas: c, mel: act };
+      this.fig.play(kind, { restart: true, fade: 0 });
+      c.fig.play(act.partner ?? 'guard', { restart: true, fade: 0 });
+      this.pkStep(0);
+      return this;
+    }
     pkStep(dt) {
       const P = this.pk;
+      if (P.mel) {
+        const A = P.mel;
+        P.t += dt;
+        if (A.react && !P.reacted && P.t >= A.at) {
+          P.reacted = true;
+          P.cas.fig.play(A.react, { restart: true, fade: 0.05 });
+        }
+        if (P.t > P.dur + 1.0) {
+          P.t = 0;
+          P.reacted = false;
+          this.fig.play(P.kind, { restart: true, fade: 0 });
+          P.cas.fig.play(A.partner ?? 'guard', { restart: true, fade: 0 });
+        }
+        const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
+        this.d.p = P.from.slice();
+        this.d.yaw = P.yaw;
+        P.cas.d.p = [P.from[0] + f[0] * A.d, 0, P.from[2] + f[1] * A.d];
+        P.cas.d.yaw = P.yaw + Math.PI;
+        const g = P.cas.fig.group;
+        g.position.set(...P.cas.d.p);
+        g.rotation.y = P.cas.d.yaw;
+        P.cas.fig.update(dt);
+        return;
+      }
+      if (P.cas) {
+        // the rescuer walks backwards (away from where he faces) 0.8 m/s; the casualty follows his hands
+        P.t += dt;
+        if (P.t > P.dur) P.t = 0;
+        const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
+        const back = P.kind === 'dragCasualty' ? 0.8 * P.t : 0;
+        this.d.p = [P.from[0] - f[0] * back, 0, P.from[2] - f[1] * back];
+        this.d.yaw = P.yaw;
+        const off = P.kind === 'dragCasualty' ? DRAG_OFF : 0.75;
+        // (first aid: he lies across in front of the kneeling man)
+        P.cas.d.yaw = P.kind === 'dragCasualty' ? P.yaw : P.yaw + Math.PI / 2;
+        P.cas.d.p = [this.d.p[0] + f[0] * off, 0, this.d.p[2] + f[1] * off];
+        const g = P.cas.fig.group;
+        g.position.set(...P.cas.d.p);
+        g.rotation.y = P.cas.d.yaw;
+        P.cas.fig.update(dt);
+        return;
+      }
       if (P.wait > 0) {
         // the pause at the end, then again from the start
         if ((P.wait -= dt) <= 0) {
@@ -439,13 +639,22 @@ export function mountRig(root, opts = {}) {
       }
       P.t += dt;
       const u = Math.min(1, P.t / P.dur);
-      const [f, up] = rootAt(P.kind, u, P.geo);
-      this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      if (P.roll) this.d.p = rollPoint(P.kind, u, P.from, P.yaw);
+      else {
+        const [f, up] = rootAt(P.kind, u, P.geo);
+        this.d.p = [P.from[0] + P.dir[0] * f, P.from[1] + up, P.from[2] + P.dir[1] * f];
+      }
       this.d.yaw = P.yaw;
+      if (u >= 1 && P.once) {
+        // (a pick-up roll: once, and he stays where it took him)
+        this.pk = null;
+        return;
+      }
       if (u >= 1) P.wait = 0.9;
     }
     endParkour() {
       if (!this.pk) return;
+      if (this.pk.cas) this.pk.cas.dispose();
       this.d.yaw = this.pk.yaw;
       this.d.p = this.home.slice();
       this.pk = null;
@@ -496,8 +705,42 @@ export function mountRig(root, opts = {}) {
       this.makeFigure();
       return this;
     }
-    reequip() {
-      this.fig.reequip();
+    /** Bare-handed: whatever he holds dropped (operator/rig.js dropWeapon), as a rigid body. */
+    dropWeapon() {
+      if (!this.d.dead && !this.fig.dropWeapon(physics, scene)) toast(`${this.name}: nothing in his hands`);
+      return this;
+    }
+    /** The pack unstrapped and lowered in front of him (else knocked off as a rigid body). */
+    dropPack() {
+      if (!this.d.dead && !this.fig.dropPack()) this.detach('pack');
+      return this;
+    }
+    /**
+     * Pick up what he dropped: he goes to it (the first weapon lying about, else the rest), bends
+     * down and takes it (both hands, or one: operator/rig.js pickUp); roll: a forward roll over it.
+     */
+    reequip(roll = false) {
+      const f = this.fig;
+      const names = ['rifle', 'secondary', 'torch', 'knife', 'helmet', 'pack'].filter((n) => f.parts[n]?.userData.pivot || (n === 'pack' && f.parts.pack.userData.onGround));
+      if (!names.length || this.d.dead) {
+        if (!names.length) toast(`${this.name}: nothing lying about`);
+        return this;
+      }
+      const first = names.find((n) => n !== 'pack' && n !== 'helmet') ?? names[0];
+      const at = f.partAt(first) ?? f.parts[first].getWorldPosition(new THREE.Vector3());
+      this.patrol = null;
+      if (this.pk) this.endParkour();
+      const dx = at.x - this.d.p[0], dz = at.z - this.d.p[2], dist = Math.hypot(dx, dz) || 1;
+      const yaw = Math.atan2(dx, dz), back = roll ? 1.2 : 0.55;
+      this.d.p = [at.x - (dx / dist) * back, 0, at.z - (dz / dist) * back];
+      this.d.yaw = yaw;
+      // the ones within reach of where he bends down (the rest another time)
+      const near = names.filter((n) => {
+        const q = f.partAt(n) ?? f.parts[n].getWorldPosition(new THREE.Vector3());
+        return Math.hypot(q.x - at.x, q.z - at.z) < 1.2;
+      });
+      if (roll) this.pk = { kind: 'rollPickup', t: 0, dur: ROLLS.rollPickup.dur, from: this.d.p.slice(), yaw, wait: 0, roll: true, once: true };
+      f.pickUp(near, { roll, speed: 1 / (SKILL[this.skill ?? 'regular']?.reload ?? 1) });
       return this;
     }
     dispose() {
@@ -527,7 +770,7 @@ export function mountRig(root, opts = {}) {
       f.update(dt);
       if (this.dropT != null && (this.dropT -= dt) <= 0) {
         this.dropT = null;
-        this.detach('rifle');
+        this.detach({ secondary: 'secondary', knife: 'knife', torch: 'torch' }[this.fig.weapon] ?? 'rifle'); // (whatever was in his hands)
       }
     }
   }
@@ -688,7 +931,27 @@ export function mountRig(root, opts = {}) {
     const hp = $('selHp');
     hp.style.width = e.hp + '%';
     hp.style.background = e.hp > 50 ? 'var(--ok)' : e.hp > 25 ? 'var(--accent)' : 'var(--hurt)';
-    root.querySelectorAll('[data-a]').forEach((b) => b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown));
+    root.querySelectorAll('[data-a]').forEach((b) => {
+      b.classList.toggle('on', !e.d.dead && b.dataset.a === e.fig.shown);
+      // greyed out: what the weapon in his hands does not allow (ai/weapons.js)
+      const no = !e.fig.allows(b.dataset.a);
+      b.disabled = no;
+      b.title = no ? whyNot(e.fig.handling, b.dataset.a) : '';
+    });
+    showHandling(e);
+    showWeapons(e);
+    showLights(e);
+    if (document.activeElement !== $('skillSel')) $('skillSel').value = e.skill ?? 'regular';
+  }
+  /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
+  function showHandling(e) {
+    const sel = $('primarySel');
+    if (sel && document.activeElement !== sel) sel.value = e.loadout === 'torch' || e.loadout === 'unarmed' ? e.loadout : e.fig.primaryKind;
+    const H = HANDLING[e.fig.handling];
+    if (!H || !$('handlingInfo')) return;
+    const no = Object.keys(LABELS).filter((k) => !e.fig.allows(k)).map((k) => LABELS[k]);
+    const slow = Object.entries(H.moves).filter(([, v]) => typeof v === 'number').map(([k, v]) => (k === 'drop' ? `drops up to ${v} m` : ['sprint', 'walk', 'crawl'].includes(k) ? `${k} ×${v}` : `${LABELS[k] ?? k} ×${v} slower`));
+    $('handlingInfo').textContent = `${H.label}, ${H.mass} kg. Grip: ${H.grip}. Carry: ${H.carry}; aim: ${H.aim}.` + (no.length ? ` Not with it: ${no.join(', ')}.` : ' Every move allowed.') + (slow.length ? ` ${slow.join('; ')}.` : '');
   }
   function openTab(t) {
     $$('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
@@ -714,7 +977,23 @@ export function mountRig(root, opts = {}) {
       }
       onChange();
     };
-    (PARKOUR_ACTS[k] ? $('pkActs') : animBox).appendChild(b);
+    if (k === 'dragged' || k.endsWith('_d')) return; // (the other man's half of a pair: shown with the act)
+    if (PEEK_ACTS[k]?.torch)
+      b.onclick = () => {
+        // the torch only with a hand free (the knife, a pistol, bare hands): ai/flashlight.js
+        for (const e of allMode ? soldiers : [selected]) {
+          if (!e || e.d.dead) continue;
+          const s = lightSource({ handling: e.fig.handling, weaponLight: false });
+          if (k === 'drawTorch' && s.src !== 'hand') {
+            toast(`${e.name}: ${s.why}`);
+            continue;
+          }
+          e.fig.drawTorch(k === 'drawTorch');
+          e.fig.setTorch(k === 'drawTorch', k === 'drawTorch', $('torchGrip').value);
+        }
+        onChange();
+      };
+    (PARKOUR_ACTS[k] ? $('pkActs') : EVADE_ACTS[k] ? $('evActs') : CASUALTY_ACTS[k] ? $('casActs') : MELEE_ACTS[k] ? $('melActs') : PEEK_ACTS[k] ? $('peekActs') : animBox).appendChild(b);
   });
   // the Obstacle slider: the selected act's range; moving it replays the act over the new height
   let pkLast = null;
@@ -734,7 +1013,7 @@ export function mountRig(root, opts = {}) {
     pkHeight = +pkSlider.value;
     $('pkHo').textContent = pkHeight.toFixed(2) + ' m';
     if (!pkLast) return;
-    for (const e of allMode ? soldiers : [selected]) if (e?.pk) e.play(pkLast);
+    for (const e of allMode ? soldiers : [selected]) if (e?.pk && !e.pk.roll) e.play(pkLast);
   };
   const tg = (id, fn) => {
     const b = $(id);
@@ -758,15 +1037,122 @@ export function mountRig(root, opts = {}) {
   tg('tgDrop', (v) => (dropOnDeath = v));
   $$('[data-det]').forEach((b) => (b.onclick = () => selected?.detach(b.dataset.det)));
   $('reequip').onclick = () => selected?.reequip();
-  $('swapLoad').onclick = () => selected && (selected.setLoadout(selected.loadout === 'torch' ? 'rifle' : 'torch'), onChange());
+  $('rollPick').onclick = () => selected?.reequip(true);
+  $('dropWpn').onclick = () => {
+    for (const e of gearTargets()) e.dropWeapon();
+    onChange();
+  };
+  $('dropPack').onclick = () => {
+    for (const e of gearTargets()) e.dropPack();
+  };
+  // experience (ai/soldier.js SKILL): his reload, switch and pick-up speed and his recoil control here; aim, nerve, hand-to-hand in the world
+  $('skillInfo').textContent = SKILL_INFO;
+  $('skillSel').title = SKILL_INFO;
+  $('skillSel').onchange = () => {
+    for (const e of gearTargets()) {
+      e.skill = $('skillSel').value;
+      applyGear(e.fig, e.skill);
+    }
+    onChange();
+  };
+  // the primary: each weapon its grips, carry, aim and firing (operator/rig.js WEAPON_STYLE), and what it allows
+  for (const k of PRIMARIES) {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = HANDLING[k].label;
+    $('primarySel').appendChild(o);
+  }
+  $('primarySel').onchange = () => {
+    const k = $('primarySel').value;
+    for (const e of gearTargets()) {
+      if (k === 'torch' || e.loadout === 'torch' || k === 'unarmed' || e.loadout === 'unarmed') e.setLoadout(k);
+      else {
+        e.loadout = k;
+        e.fig.setPrimary(k);
+        applyGear(e.fig, e.skill);
+      }
+    }
+    recoilChanged();
+    onChange();
+  };
   /* ---------- weapon in hand, armour, reload speed, look up / down ---------- */
   const gearTargets = () => (allMode ? soldiers : [selected]).filter((e) => e && !e.d.dead);
-  $('weapons').querySelectorAll('button').forEach((b) => (b.onclick = () => {
-    for (const e of gearTargets()) {
-      const s = e.fig.switchWeapon(b.dataset.w);
-      toast(s ? `${b.textContent} in ${s.toFixed(1)} s` : `${e.name}: already in hand, or gone`);
+  // weapon in hand: what he carries (ai/weapons.js carried: the primary, the carbine, the knife, bare hands), each from its place on him
+  const SWITCH_TO = { carbine: 'secondary', knife: 'knife', unarmed: 'fists' };
+  let weaponsShown = '';
+  function showWeapons(e) {
+    const list = carried({ loadout: e.loadout, primary: e.fig.primaryKind });
+    const key = list.join() + '|' + e.fig.handling;
+    if (key === weaponsShown) return;
+    weaponsShown = key;
+    const box = $('weapons');
+    box.textContent = '';
+    for (const k of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = k === 'unarmed' ? 'Bare hands' : HANDLING[k].label.replace(/ \(.*\)$/, '');
+      b.title = HANDLING[k].slot ? `Carried ${HANDLING[k].slot}` : 'Fists up: hand-to-hand';
+      b.classList.toggle('on', e.fig.handling === k);
+      b.onclick = () => {
+        for (const t of gearTargets()) {
+          const s = t.fig.switchWeapon(SWITCH_TO[k] ?? 'rifle');
+          toast(s ? `${b.textContent} in ${s.toFixed(1)} s` : `${t.name}: already in hand, or gone`);
+        }
+      };
+      box.appendChild(b);
     }
-  }));
+  }
+  /* ---------- lights and senses (ai/flashlight.js, ai/perception.js) ---------- */
+  function lightKind(e) {
+    return e.fig.handling ?? 'rifle';
+  }
+  function showLights(e) {
+    if (!e) return;
+    const k = lightKind(e);
+    const on = hasWeaponLight({ weaponLight: e.weaponLight }, k);
+    $('tgWLight').setAttribute('aria-pressed', String(on));
+    $('tgLight').setAttribute('aria-pressed', String(!!(e.fig.lightOn || e.fig.torchOn)));
+    const s = lightSource({ handling: k, weaponLight: e.weaponLight });
+    $('lightInfo').textContent = s.src === 'weapon' ? `The light on the ${HANDLING[k]?.label ?? k} shines along the muzzle, where he aims.` : s.src === 'hand' ? 'A hand free: the torch from the pouch on the left of his belt, in the left hand' + (k === 'pistol' ? ' (with the pistol: under the wrist, Harries; or out to the side, FBI).' : '.') : s.why;
+    const P = senseProfile({ skill: e.skill, ...(e.senses ?? {}) }, 'soldier');
+    $('senseInfo').textContent = `As ${e.skill ?? 'regular'}: picks up an enemy in clear sight to ${Math.round(P.sightRange)} m in daylight (less in fog, smoke and the dark; his light or the enemy's helps), sees ${P.fov}° round, notices something plain and close in ${P.react.toFixed(2)} s, hears ${P.hearing.toFixed(2)}× as far (a rifle shot ~3 km, a walk ~10 m).`;
+  }
+  tg('tgWLight', (v) => {
+    for (const e of gearTargets()) {
+      e.weaponLight = { ...(typeof e.weaponLight === 'object' ? e.weaponLight : {}), [lightKind(e)]: v };
+      if (!v) e.fig.setGear({ thermal: e.fig.thermal.visible, light: false });
+      showLights(e);
+    }
+  });
+  tg('tgLight', (v) => {
+    for (const e of gearTargets()) {
+      const s = lightSource({ handling: lightKind(e), weaponLight: e.weaponLight });
+      if (v && !s.src) toast(`${e.name}: ${s.why}`);
+      e.fig.setGear({ thermal: e.fig.thermal.visible, light: v && s.src === 'weapon' });
+      if (s.src === 'hand') {
+        if (v && !e.fig.torchOut) e.fig.drawTorch(true);
+        e.fig.setTorch(v || e.fig.torchOut, v, $('torchGrip').value);
+      }
+      showLights(e);
+    }
+  });
+  $('torchGrip').onchange = () => {
+    for (const e of gearTargets()) e.fig.setTorch(e.fig.torchOut, e.fig.torchOn, $('torchGrip').value);
+  };
+  const senseSlider = (id, out, key, fmt) => {
+    $(id).oninput = () => {
+      const v = +$(id).value;
+      $(out).textContent = fmt(v);
+      for (const e of gearTargets()) {
+        e.senses = { ...(e.senses ?? {}), [key]: v };
+        showLights(e);
+      }
+    };
+  };
+  senseSlider('sightS', 'sightO', 'sightRange', (v) => v + ' m');
+  senseSlider('fovS', 'fovO', 'fov', (v) => v + '°');
+  senseSlider('hearS', 'hearO', 'hearing', (v) => '×' + v.toFixed(2));
+  void SENSES; void LIGHT_MOUNT;
   tg('tgArmour', (v) => {
     GEAR.armour = v;
     for (const e of soldiers) e.fig.setArmour(v);
@@ -774,13 +1160,32 @@ export function mountRig(root, opts = {}) {
   $('reloadS').oninput = () => {
     GEAR.reload = +$('reloadS').value;
     $('reloadO').textContent = '×' + GEAR.reload.toFixed(2);
-    for (const e of soldiers) e.fig.setClipSpeed('reload', GEAR.reload);
+    for (const e of soldiers) e.fig.setClipSpeed('reload', GEAR.reload / (SKILL[e.skill] ?? SKILL.regular).reload);
   };
   $('lookS').oninput = () => {
     const v = +$('lookS').value;
     GEAR.look = v;
     $('lookO').textContent = Math.round((v * 180) / Math.PI) + '°';
     for (const e of gearTargets()) e.fig.setLook(v);
+  };
+  // recoil: the override factor and the fire mode; the firing clips (Shoot, Crouch fire, Prone fire) rebaked
+  const recoilChanged = () => {
+    const gun = (selected && gunOf(selected.fig)) ?? 'rifle';
+    const R = recoilSpec(gun, { recoil: GEAR.recoil, mode: GEAR.fireMode });
+    $('recoilO').textContent = '×' + GEAR.recoil.toFixed(2);
+    $('recoilInfo').textContent = `${GUNS[gun].label}: ${R.energy.toFixed(1)} J free recoil ×${GEAR.recoil.toFixed(2)}: kick ${(R.kick * 100).toFixed(1)} cm, muzzle rise ${((R.rise * 180) / Math.PI).toFixed(1)}° a round, recovery ${R.recovery.toFixed(2)} s; ${R.rounds} round${R.rounds > 1 ? 's' : ''} a pull${R.rpm ? ` at ${R.rpm} rounds/min (the climb piles up in a burst or on auto)` : ''}${R.pump ? `, then the pump worked (${R.pump} s)` : ''}.`;
+    for (const e of soldiers) {
+      const g = gunOf(e.fig);
+      if (g) e.fig.setRecoil(recoilSpec(g, { recoil: GEAR.recoil, mode: GEAR.fireMode }), (SKILL[e.skill] ?? SKILL.regular).control);
+    }
+  };
+  $('recoilS').oninput = () => {
+    GEAR.recoil = +$('recoilS').value;
+    recoilChanged();
+  };
+  $('fireMode').onchange = () => {
+    GEAR.fireMode = $('fireMode').value;
+    recoilChanged();
   };
   function setRange(id, v) {
     $(id).value = v;
@@ -838,9 +1243,10 @@ export function mountRig(root, opts = {}) {
 
   /* ================= the dragon (rig/dragon.js, built the first time it is picked) and the vehicles ================= */
   let dragonRig = null;
+  let phoenixRig = null; // (rig/phoenix.js, built the first time it is picked)
   const vehicleRig = new VehicleRig({ scene, camera, controls, renderer, toast, $, qs });
   /** The soldiers are on the stage (not the dragon or a vehicle). */
-  const people = () => !dragonRig?.active && !vehicleRig.active;
+  const people = () => !dragonRig?.active && !phoenixRig?.active && !vehicleRig.active;
 
   /* ================= the squad: a fire team in formation (models/squad.js's roles) ================= */
   const ROLE = { CMD: 'commander', MG: 'gunner', R1: 'rifleman', R2: 'rifleman', UAV: 'drone operator' };
@@ -884,6 +1290,7 @@ export function mountRig(root, opts = {}) {
   objSel.onchange = () => setKind(objSel.value);
   const STATS = {
     dragon: 'The simulation’s dragon · ai/dragon.js',
+    phoenix: 'The simulation’s phoenix · ai/phoenix.js · render/phoenix.js',
     car: 'models/car.js, drawn · 4 wheels, 2 doors',
     jet: 'render/jetMesh.js · gear, flaps, afterburner, damage and crash',
     pilot: 'render/pilotFigure.js · sim/ejection.js · seat, canopy, PLF',
@@ -897,11 +1304,16 @@ export function mountRig(root, opts = {}) {
     const man = kind === 'soldier' || kind === 'squad';
     // off first (each puts the camera back), then on
     if (kind !== 'dragon') dragonRig?.setActive(false);
+    if (kind !== 'phoenix') phoenixRig?.setActive(false);
     const vehicle = VEHICLE_STAGE.includes(kind);
     if (!vehicle) vehicleRig.setKind(null);
     if (kind === 'dragon') {
       dragonRig ??= new DragonRig({ scene, camera, controls, renderer, toast, $, qs, root });
       dragonRig.setActive(true);
+    }
+    if (kind === 'phoenix') {
+      phoenixRig ??= new PhoenixRig({ scene, camera, controls, renderer, toast, $, qs });
+      phoenixRig.setActive(true);
     }
     if (vehicle) vehicleRig.setKind(kind, what.params ?? null);
     $('tabs').hidden = !man;
@@ -920,7 +1332,7 @@ export function mountRig(root, opts = {}) {
           }
       }
       arrange(kind);
-    } else openTab(kind === 'dragon' ? 'dragon' : 'vehicle');
+    } else openTab(kind === 'dragon' || kind === 'phoenix' ? kind : 'vehicle');
   }
   const soldierStats = () => (A ? `Skinned sculpt · ${Math.round(A.tris / 1000)}k tris · 21 bones · ${Object.keys(LABELS).length} clips` : 'Skinned sculpt · 21 bones');
 
@@ -973,10 +1385,20 @@ export function mountRig(root, opts = {}) {
     if (qs.get('armour') === '0') $('tgArmour').click();
     if (qs.get('reload')) setRange('reloadS', qs.get('reload'));
     if (qs.get('look')) setRange('lookS', qs.get('look'));
+    // ?recoil=<factor> ?fire=single|burst|auto
+    if (qs.get('recoil')) setRange('recoilS', qs.get('recoil'));
+    if (qs.get('fire')) {
+      $('fireMode').value = qs.get('fire');
+      $('fireMode').onchange();
+    }
     if (qs.get('weapon')) for (const e of soldiers) e.fig.switchWeapon(qs.get('weapon'));
     // ?play=stab&at=2.2: a clip later on (after a switch), for stills with ?t=
     if (qs.get('play')) LATER.push({ at: +(qs.get('at') ?? 2), fn: () => soldiers.forEach((e) => e.play(qs.get('play'))) });
     if (qs.get('zones') === '1') $('tgZones').click();
+    // ?ev=rollLeft|rollRight|rollForward|diveProne (a roll, over and over)
+    if (qs.get('ev') && EVADE_ACTS[qs.get('ev')]) for (const e of soldiers) e.play(qs.get('ev'));
+    // ?cas=woundedDown|dragCasualty|firstAid|coverFire
+    if (qs.get('cas') && CASUALTY_ACTS[qs.get('cas')]) for (const e of soldiers) e.play(qs.get('cas'));
     if (qs.get('pk') && PARKOUR_ACTS[qs.get('pk')]) {
       if (qs.get('pkh')) pkHeight = +qs.get('pkh');
       pkShow(qs.get('pk'));
@@ -991,11 +1413,243 @@ export function mountRig(root, opts = {}) {
   // ?tab=anim|hit|gear|dragon (the dragon's own options: rig/dragon.js), ?obj=car|jet|boat|squad|… (&vact= &vzones=1 &vhits=)
   if (['anim', 'hit', 'gear'].includes(qs.get('tab'))) clickTab(qs.get('tab'));
   if (qs.get('dragon') || qs.get('tab') === 'dragon') setKind('dragon');
+  else if (qs.get('phoenix') || qs.get('tab') === 'phoenix') setKind('phoenix');
   else if (qs.get('obj')) setKind(qs.get('obj'));
   if (vehicleRig.active) {
     if (qs.get('vact')) vehicleRig.play(qs.get('vact'));
     if (qs.get('vzones') === '1') $('tgVZones').click();
     for (const k of (qs.get('vhits') ?? '').split(',').filter(Boolean)) vehicleRig.hit(k, 350);
+  }
+
+  /* ================= impacts: the force indicator (sim/impact.js; rig/objects.js ACT_IMPACTS) ================= */
+  // Every act with a contact declares it (ACT_IMPACTS: when, which part, what it hits); here the
+  // force is worked out from the contact speed measured off the animation (the part's bone, frame
+  // to frame) and the body's mass, times the act's and the object's Force ×; it is applied (the
+  // opponent hurt, staggered, knocked down), shown (an arrow at the contact, the readout, a ring
+  // for the shockwave) and heard (audio/sound.js, Sound on). The dragon's come from the
+  // simulation's own code (ai/dragon.js impactOf: its events); the jet's crash and a car door
+  // slamming from what the vehicle does.
+  const forceSound = new SoundScape();
+  const FBONE = { feet: ['footL', 'footR'], body: ['hips'], hips: ['hips'], back: ['chest'], shoulder: ['upperArmR'], knee: ['shinR'], elbow: ['foreArmR'], head: ['head'], fist: ['handR'], weapon: ['handR'], shinR: ['footR'], shinL: ['footL'] };
+  const fArrow = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(), 1, 0xffb347, 0.22, 0.14);
+  fArrow.visible = false;
+  const fRing = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffd28a', transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  scene.add(fArrow, fRing);
+  const F = { show: true, flash: 0, ring: 0, ringR: 0, seenDragon: 0, track: new WeakMap(), veh: null, act: null, kind: null };
+  const fmt = (n, u) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' M' : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + ' k' : n.toFixed(n >= 10 ? 0 : 1) + ' ') + u;
+  /** The act on the stage now: { kind, act, u (0..1 through it, or null) }. */
+  function actNow() {
+    if (kind === 'soldier' || kind === 'squad') {
+      const e = selected ?? soldiers[0];
+      const a = e?.fig.current;
+      return { kind: 'soldier', act: e?.fig.shown ?? 'idle', u: a ? (a.time % a.getClip().duration) / a.getClip().duration : null };
+    }
+    if (kind === 'dragon') return { kind: 'dragon', act: dragonRig?.stage.act ?? 'rest', u: null };
+    return { kind: vehicleRig.kind ?? kind, act: vehicleRig.act ?? 'idle', u: null };
+  }
+  const fAx = $('fAx'), fOx = $('fOx');
+  function forceSliders() {
+    const { kind: k, act } = actNow();
+    if (k === F.kind && act === F.act) return;
+    F.kind = k;
+    F.act = act;
+    fAx.value = ACT_FORCE[`${k}:${act}`] ?? 1;
+    fOx.value = ACT_FORCE[k] ?? 1;
+    $('fAxO').textContent = '×' + (+fAx.value).toFixed(2);
+    $('fOxO').textContent = '×' + (+fOx.value).toFixed(2);
+    preview();
+  }
+  fAx.oninput = () => {
+    ACT_FORCE[`${F.kind}:${F.act}`] = +fAx.value;
+    $('fAxO').textContent = '×' + (+fAx.value).toFixed(2);
+    preview();
+  };
+  fOx.oninput = () => {
+    ACT_FORCE[F.kind] = +fOx.value;
+    $('fOxO').textContent = '×' + (+fOx.value).toFixed(2);
+    preview();
+  };
+  tg('tgFSound', (v) => (v ? forceSound.start() : forceSound.stop()));
+  tg('tgFShow', (v) => (F.show = v));
+  /** What the act's first contact will do (its declared speed): before it happens, and as Force × moves. */
+  function preview() {
+    const decl = impactsOf(F.kind, F.act)[0];
+    if (!decl) {
+      $('fAct').textContent = `Force · ${F.act}`;
+      $('fRead').textContent = 'No contact in this act. Play one that has (a landing, a roll, a kick, a stamp, a crash).';
+      $('fN').textContent = '– N';
+      $('fBar').style.width = '0';
+      return;
+    }
+    if (decl.sim || decl.trigger) {
+      $('fAct').textContent = `Force · ${decl.label ?? decl.part}`;
+      $('fRead').textContent = `Measured when it happens (${decl.sim ? 'the simulation’s own ' + F.kind : decl.trigger === 'ground' ? 'when it hits the ground' : 'when it shuts'}): × ${actForce(F.kind, F.act).toFixed(2)}.`;
+      return;
+    }
+    const r = computeImpact({ ...actImpactArgs(decl, { bodyMass: BODY_MASS[F.kind], speed: decl.fromHeight ? Math.sqrt(2 * 9.81 * (parkourHeight(F.act, pkHeight) ?? 1)) : decl.v, scale: actForce(F.kind, F.act) }), targetIsPerson: decl.target === 'opponent' });
+    readout(r, `${decl.label ?? decl.part} (expected)`);
+  }
+  function readout(r, label) {
+    $('fAct').textContent = `Force · ${label}`;
+    $('fN').textContent = fmt(r.force, 'N');
+    const lv = Math.min(1, Math.max(0, Math.log10(Math.max(1, r.force)) / 6.5));
+    const bar = $('fBar');
+    bar.style.width = (lv * 100).toFixed(0) + '%';
+    bar.style.background = r.force < 2e3 ? 'var(--ok)' : r.force < 2e4 ? 'var(--accent)' : 'var(--hurt)';
+    $('fRead').textContent =
+      `v ${r.speed.toFixed(1)} m/s · m ${fmt(r.mu, 'kg')} · ×${(r.scale ?? 1).toFixed(2)}\n` +
+      `impulse ${fmt(r.impulse, 'N·s')} · contact ${(r.contactTime * 1000).toFixed(0)} ms\n` +
+      `energy ${fmt(r.energy, 'J')} · peak ${fmt(r.peakForce, 'N')}\n` +
+      `damage ${r.damage.toFixed(0)} HP${r.knock !== 'none' ? ' · ' + r.knock : ''}${r.shock ? ` · shockwave ${r.shock.radius.toFixed(1)} m` : ''}\n` +
+      `sound ${r.sound.db.toFixed(0)} dB (${r.materials.join(' on ')})`;
+  }
+  /** Show an impact that happened at p (scene coordinates). */
+  function showImpact(r, p, label) {
+    readout(r, label);
+    if (F.show && p) {
+      const dir = new THREE.Vector3(...(r.dir ?? [0, -1, 0])).normalize();
+      const L = 0.35 + 0.3 * Math.log10(1 + r.force / 100);
+      fArrow.position.set(p[0] - dir.x * L, p[1] - dir.y * L, p[2] - dir.z * L);
+      fArrow.setDirection(dir);
+      fArrow.setLength(L, Math.min(0.5, L * 0.3), Math.min(0.3, L * 0.18));
+      fArrow.setColor(r.force < 2e3 ? 0x8fb36a : r.force < 2e4 ? 0xd9a441 : 0xd4553b);
+      fArrow.visible = true;
+      F.flash = 1.2;
+      if (r.shock) {
+        fRing.position.set(p[0], 0.03, p[2]);
+        F.ringR = r.shock.radius;
+        F.ring = 1;
+      }
+    }
+    if (forceSound.running && p) forceSound.impact({ ...r.event, pos: p });
+  }
+  function soundListener() {
+    if (!forceSound.running) return;
+    const L = forceSound.ctx.listener;
+    const fw = new THREE.Vector3();
+    camera.getWorldDirection(fw);
+    const pos = camera.position;
+    if (L.positionX) {
+      L.positionX.value = pos.x;
+      L.positionY.value = pos.y;
+      L.positionZ.value = pos.z;
+      L.forwardX.value = fw.x;
+      L.forwardY.value = fw.y;
+      L.forwardZ.value = fw.z;
+    }
+    forceSound.state = { listener: { pos: [pos.x, pos.y, pos.z] } };
+  }
+  const rigWorld = { time: 0, events: [], enemies: soldiers, noises: null };
+  const partPos = (e, part) => {
+    const names = FBONE[part] ?? [part];
+    const v = new THREE.Vector3();
+    let n = 0;
+    for (const b of names) {
+      const bone = e.fig.bones?.[b];
+      if (!bone) continue;
+      v.add(bone.getWorldPosition(new THREE.Vector3()));
+      n++;
+    }
+    return n ? v.divideScalar(n) : new THREE.Vector3(e.d.p[0], e.d.p[1] + 1, e.d.p[2]);
+  };
+  function soldierContacts(dt) {
+    rigWorld.time = now;
+    for (const e of soldiers) {
+      if (!e.fig) continue;
+      const a = e.fig.current;
+      const act = e.fig.shown;
+      const u = a ? (a.time % a.getClip().duration) / a.getClip().duration : 0;
+      const decls = impactsOf('soldier', act).filter((x) => x.t != null);
+      let T = F.track.get(e);
+      if (!T) F.track.set(e, (T = { act, u, pos: {} }));
+      for (const decl of decls) {
+        const p = partPos(e, decl.part);
+        const was = T.pos[decl.part];
+        const vel = was && dt > 0 ? p.clone().sub(was).divideScalar(dt) : null;
+        T.pos[decl.part] = p;
+        if (T.act !== act || dt <= 0) continue;
+        const crossed = u >= T.u ? T.u < decl.t && decl.t <= u : T.u < decl.t || decl.t <= u;
+        if (!crossed) continue;
+        // the contact: its speed off the animation (the part's bone), else as declared
+        const measured = vel && vel.length() > 0.8 && !decl.fromHeight ? vel.length() : null;
+        const speed = measured ?? (decl.fromHeight ? Math.sqrt(2 * 9.81 * (parkourHeight(act, pkHeight) ?? 1)) : decl.v);
+        let target = null;
+        if (decl.target === 'opponent') {
+          let best = 1.6;
+          for (const o of soldiers) {
+            if (o === e || o.d.dead) continue;
+            const d = Math.hypot(o.d.p[0] - p.x, o.d.p[2] - p.z);
+            if (d < best) {
+              best = d;
+              target = o;
+            }
+          }
+        }
+        const args = actImpactArgs(decl, { bodyMass: BODY_MASS.soldier, speed, dir: measured && decl.target !== 'ground' ? vel.clone().normalize().toArray() : null, pos: [p.x, decl.target === 'ground' ? 0 : p.y, p.z], scale: actForce('soldier', act), target });
+        const r = impact(rigWorld, { ...args, targetIsPerson: decl.target === 'opponent', effects: { crush: false } });
+        showImpact(r, args.pos, `${decl.label ?? decl.part}${target ? ' → ' + target.name : decl.target === 'opponent' ? ' (no one in reach)' : ''}`);
+      }
+      T.act = act;
+      T.u = u;
+    }
+    rigWorld.events.length = 0;
+  }
+  function dragonContacts() {
+    const st = dragonRig?.stage;
+    if (!st) return;
+    st.dragon.forceScale = actForce('dragon', st.act);
+    const ev = st.world.events;
+    if (F.seenDragon > ev.length) F.seenDragon = 0;
+    for (; F.seenDragon < ev.length; F.seenDragon++) {
+      const e = ev[F.seenDragon];
+      if (e.type !== 'impact') continue;
+      const o = dragonRig.group.position;
+      const p = [e.pos[0] + o.x, e.pos[1] + o.y, e.pos[2] + o.z];
+      const r = computeImpact({ mass: e.mass, massB: Infinity, velocity: e.speed, materials: e.materials, radius: e.radius, footprint: e.footprint, kind: e.kind });
+      showImpact({ ...r, event: e }, p, `${e.name} · ${e.kind}`);
+    }
+  }
+  function vehicleContacts(dt) {
+    const v = vehicleRig.v;
+    if (!vehicleRig.kind || !v?.group || dt <= 0) return (F.veh = null);
+    const k = vehicleRig.kind;
+    const p = v.group.getWorldPosition(new THREE.Vector3());
+    const doors = vehicleRig.s?.doors ?? 0;
+    const was = F.veh;
+    F.veh = { p, doors };
+    if (!was) return;
+    const vel = p.clone().sub(was.p).divideScalar(dt);
+    for (const decl of impactsOf(k, vehicleRig.act)) {
+      let speed = null;
+      let at = null;
+      if (decl.trigger === 'ground' && was.p.y > 0.35 && p.y <= 0.35 && vel.y < -1) {
+        speed = vel.length();
+        at = [p.x, 0, p.z];
+      } else if (decl.trigger === 'doorsShut' && was.doors > 0.1 && doors <= 0.03) {
+        speed = Math.max(1, ((was.doors - doors) / dt) * 1.2);
+        at = [p.x, 0.9, p.z];
+      }
+      if (speed == null) continue;
+      const args = actImpactArgs({ ...decl, mass: decl.mass ?? BODY_MASS[k] }, { bodyMass: BODY_MASS[k], speed, dir: decl.trigger === 'ground' ? vel.clone().normalize().toArray() : null, pos: at, scale: actForce(k, vehicleRig.act) });
+      const r = impact({ time: now, events: [] }, { ...args, effects: { crush: false } });
+      showImpact(r, at, decl.label ?? decl.part);
+    }
+  }
+  function forceTick(dt) {
+    forceSliders();
+    if (kind === 'soldier' || kind === 'squad') soldierContacts(dt);
+    else if (kind === 'dragon') dragonContacts();
+    else vehicleContacts(dt);
+    soundListener();
+    // the arrow fades, the shockwave's ring runs out to its radius
+    F.flash = Math.max(0, F.flash - dt);
+    fArrow.visible = F.show && F.flash > 0;
+    if (F.ring > 0) {
+      F.ring = Math.max(0, F.ring - dt * 1.4);
+      const s = Math.max(0.05, F.ringR * (1 - F.ring));
+      fRing.scale.set(s, 1, s);
+      fRing.material.opacity = 0.7 * F.ring;
+    } else fRing.material.opacity = 0;
   }
 
   /* ================= loop + FPS ================= */
@@ -1025,6 +1679,13 @@ export function mountRig(root, opts = {}) {
     now += dt;
     for (let i = LATER.length - 1; i >= 0; i--) if (now >= LATER[i].at) LATER.splice(i, 1)[0].fn();
     for (const e of soldiers) e.update(dt);
+    // their lights: the pool's few spot lights (render/flashlights.js)
+    flashPool ??= new FlashlightPool(scene);
+    flashPool.update(soldiers.map((e) => {
+      const s = e.fig.group.visible ? e.fig.lightSource() : null;
+      if (s) s.key = e;
+      return s;
+    }));
     physics.step(dt);
     stepGrenades(dt);
   }
@@ -1044,6 +1705,8 @@ export function mountRig(root, opts = {}) {
     }
     if (soldiers.length && Math.random() < 0.08) onChange();
     dragonRig?.update(dt);
+    phoenixRig?.update(dt);
+    forceTick(frozen ? 0 : dt);
     vehicleRig.update(dt);
     controls.update();
     renderer.render(scene, camera);
@@ -1105,6 +1768,7 @@ export function mountRig(root, opts = {}) {
     clearTimeout(toast.h);
     for (const e of soldiers) e.dispose();
     vehicleRig.dispose();
+    forceSound.stop();
     soldiers.length = 0;
     controls.dispose();
     renderer.dispose();
@@ -1127,6 +1791,10 @@ export function mountRig(root, opts = {}) {
     /** The dragon's rig (rig/dragon.js), once the dragon has been picked. */
     get dragon() {
       return dragonRig;
+    },
+    /** The phoenix's rig (rig/phoenix.js), once the phoenix has been picked. */
+    get phoenix() {
+      return phoenixRig;
     },
     /** The car / jet / boat (rig/vehicles.js). */
     vehicles: vehicleRig,

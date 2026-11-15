@@ -23,6 +23,7 @@
  */
 import { VEHICLE_ZONES, hitPart, integrity, vehicleZones } from '../models/vehicleZones.js';
 import { explode } from './explosions.js';
+import { impact, groundMaterial } from './impact.js';
 
 export const JET_PARTS = VEHICLE_ZONES.jet.map((z) => z.k);
 /** The flight model's parts (walk/flight.js PARTS) for each hit part. */
@@ -179,6 +180,12 @@ export function jetImpact(sim, p, opts = {}) {
   const boom = opts.explodeFn ?? explode;
   const w = sim.world;
   w?.events?.push({ type: 'jetCrash', pos: p.slice(), time: w.time, name: opts.name ?? 'A jet' });
+  // the wreck itself hitting (sim/impact.js): ~10 t at its speed (default 50 m/s, 30° down): the
+  // ground shakes, people near it are knocked over, the boom; the blast below does the harm
+  if (w) {
+    const sp = opts.speed ?? 50;
+    impact(sim, { pos: p.slice(), normal: [0, 1, 0], mass: opts.mass ?? 1e4, velocity: [sp * 0.87, -sp * 0.5, 0], materials: ['aluminium', opts.water ? 'water' : groundMaterial(w, p)], radius: 1.5, size: 8, sizeA: 12, footprint: 6, kind: 'crash', name: opts.name ?? 'A jet', effects: { damage: false, crush: false } });
+  }
   if (opts.water) {
     // the fuel burns on the water briefly, then the wreck sinks
     boom(sim, [p[0], p[1] + 0.5, p[2]], E * 0.3, { name: 'jet crash' });

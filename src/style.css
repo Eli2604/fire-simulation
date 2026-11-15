@@ -467,6 +467,28 @@ body[data-mode] #hud {
 #outliner .list.places .facts .tag {
   margin-left: 0;
 }
+/* objects in objects: a place in an object (a world of its own), with a delete button */
+#outliner .list .row {
+  display: flex;
+}
+#outliner .list .row button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+#outliner .list .row .x {
+  width: auto;
+  flex: none;
+  color: var(--muted);
+}
+#outliner .list .row.place button:first-child {
+  font-style: italic;
+}
+/* the palette: put the new object inside the selected one */
+#palette label.inside {
+  display: block;
+  margin: 2px 6px 6px;
+  font-size: 12px;
+}
 #outliner .list button.on {
   background: rgba(255, 154, 74, 0.25);
 }

@@ -748,6 +748,8 @@ export class View {
     this.time += dt;
     if (this.controls.enabled) this.controls.update();
     this.beginLod();
+    // the places you are not in, as they look (render/scenery.js; set by main.js)
+    if (this.scenery && this.proxies) this.scenery.update(this.proxies, this, dt);
     this.markers.update(this.time, this.world);
     const smooth = this.surfaceMode === 'smooth';
     const volumetric = this.smokeMode === 'volumetric';

@@ -29,6 +29,7 @@ import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf, WATER_SETTINGS
 import { skyFolder } from '../skyGui.js';
 import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
+import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } from '../models/composite.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -36,14 +37,18 @@ const CHARACTERS = { squad: 'soldier', enemy: 'soldier', dragon: 'dragon' };
 // no voxels either: a whirlpool, a wind hose, a jet (sim/stirrers.js) are picked within 3 m
 const STIRRERS = { waterVortex: 1, windHose: 1, windJet: 1 };
 /** The palette, by kind (a model not named here goes under Other). */
-const GROUPS = [
+export const GROUPS = [
   ['Cover & buildings', ['wall', 'crate', 'deck', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
   ['Characters', ['squad', 'enemy', 'dragon']],
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
-  ['Furniture & props', ['couch', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp', 'car']],
-  ['Nature', ['tree', 'grass', 'volcano']],
+  ['Vehicles', ['car']],
+  ['Furniture & props', ['couch', 'livingRoom', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp']],
+  ['Nature', ['tree', 'grass', 'hedge', 'volcano']],
   ['Water & air', ['waterVortex', 'windHose', 'windJet']],
-  ['Places', ['island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
+  ['Camp & power', ['droneCamp', 'solarPark', 'windTurbine', 'campPatrol', 'campIsland']],
+  ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
+  // objects of objects (models/composite.js): a group to move things as one; a place inside an object or a world
+  ['Groups & rooms', ['group', 'place']],
 ];
 
 const el = (tag, attrs = {}, ...kids) => {
@@ -257,7 +262,35 @@ export class Editor {
 
   /** What the rig should show: the character or vehicle selected in the world, if one is (rig/objects.js). */
   rigTarget() {
-    return rigTargetFor(this.ctx.scene.objects[this.sel]);
+    return rigTargetFor(this.node());
+  }
+
+  /*
+   * Objects in objects (models/composite.js): the selection (sel) is an object's number in the
+   * world as the voxelizer numbers them, depth first (a parent, then what is in it); the same as
+   * its voxels' owner and its world.origins entry. A child's x, z, y, turn and tilts are in its
+   * parent's frame; the gizmo shows and moves it in the world (world.objectTree: its record there
+   * and its parent's pose).
+   */
+  /** The current world's objects, numbered. */
+  entries() {
+    return flattenObjects(this.ctx.scene.objects);
+  }
+  /** The selected object's entry ({ node, parent, list, at, end, depth }), or null. */
+  cur() {
+    return this.sel >= 0 ? this.entries()[this.sel] ?? null : null;
+  }
+  node() {
+    return this.cur()?.node ?? null;
+  }
+  /** The pose (in the world, as built) of the object an entry is in; null at the top. */
+  parentPose(e = this.cur()) {
+    return e && e.parent >= 0 ? this.ctx.sim.world.objectTree?.[e.parent]?.pose ?? null : null;
+  }
+  /** Select an object by itself (its number changes when objects go in or out of others). */
+  selectNode(n) {
+    this.sel = this.entries().findIndex((e) => e.node === n);
+    return this.sel;
   }
 
   toggleMenu(show = this.menu.hidden) {
@@ -335,7 +368,8 @@ export class Editor {
   refresh() {
     if (this.mode !== 'edit') return;
     const C = this.ctx, S = C.scene;
-    if (this.sel >= S.objects.length) this.sel = -1;
+    const entries = this.entries();
+    if (this.sel >= entries.length) this.sel = -1;
     const o = this.outliner;
     o.replaceChildren();
     o.append(el('h3', {}, S.name ?? 'Scene'));
@@ -355,16 +389,39 @@ export class Editor {
             el('span', { class: 'facts' }, el('span', { class: 'tag' }, f.where), el('span', { class: 'tag' }, f.size), el('span', { class: 'tag' }, f.voxels)),
           ),
         );
+        // a place you can be put down in (the camp island's landing ground): walking, from its deploy point
+        if (z.deploy && C.deploy) places.append(el('button', { class: 'deploy', title: 'Into Play, walking, from where you are put down there', onclick: () => C.deploy(k) }, el('span', { class: 'pname' }, `🪂 ${z.deploy.label ?? 'Deploy here'}`)));
       }
       o.append(places);
       o.append(el('h4', { class: 'muted' }, 'Objects here'));
     }
-    const list = el('div', { class: 'list' });
-    S.objects.forEach((ob, i) => {
+    // the objects as a tree: what is in an object under it, indented; a place in an object (below
+    // deck in the carrier) is a world of its own: a click goes there, to its objects
+    const list = el('div', { class: 'list tree' });
+    const index = new Map(entries.map((e, i) => [e.node, i]));
+    const row = (ob, depth) => {
+      const pad = depth ? `padding-left:${6 + depth * 14}px` : null;
+      if (isPlace(ob)) {
+        const n = ob.objects?.length ?? 0;
+        const go = () => (C.goToPlace ? C.goToPlace(ob.key) : (this.select(-1), C.activateZone(ob.key), this.refresh()));
+        list.append(
+          el(
+            'div',
+            { class: 'row place' },
+            el('button', { style: pad, title: `${ob.name ?? ob.key}: a place of its own, ${n} object${n === 1 ? '' : 's'} in it. Click: go there`, onclick: go }, el('span', { class: 'n' }, '⌂'), ob.label ?? ob.name ?? ob.key, el('span', { class: 'tag' }, 'place')),
+            el('button', { class: 'x', title: 'Delete this place and everything in it', onclick: () => this.removePlace(ob) }, '✕'),
+          ),
+        );
+        return;
+      }
+      const i = index.get(ob);
       const M = MODELS[ob.type];
-      const tag = CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : '';
-      list.append(el('button', { class: i === this.sel ? 'on' : '', onclick: () => this.select(i, true) }, el('span', { class: 'n' }, String(i + 1)), M?.label?.replace(/ \(.*\)$/, '') ?? ob.type, tag ? el('span', { class: 'tag' }, tag) : null));
-    });
+      const kids = kidsOf(ob).length;
+      const tag = CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : kids ? `${kids} in it` : '';
+      list.append(el('button', { style: pad, class: i === this.sel ? 'on' : '', onclick: () => this.select(i, true) }, el('span', { class: 'n' }, String(i + 1)), M?.label?.replace(/ \(.*\)$/, '') ?? ob.type, tag ? el('span', { class: 'tag' }, tag) : null));
+      for (const k of ob.children ?? []) row(k, depth + 1);
+    };
+    for (const ob of S.objects) row(ob, 0);
     if (!S.objects.length) list.append(el('p', { class: 'muted' }, 'No objects yet.'));
     o.append(list);
     o.append(
@@ -377,6 +434,18 @@ export class Editor {
       ),
       el('div', { class: 'tools' }, el('button', { disabled: !this.undo.length, onclick: () => this.doUndo() }, '↶ Undo'), el('button', { disabled: !this.redo.length, onclick: () => this.doRedo() }, '↷ Redo')),
     );
+    // in and out of other objects (it stays where it is in the world)
+    const e = this.cur();
+    const above = e && e.list[e.at - 1];
+    if (e)
+      o.append(
+        el(
+          'div',
+          { class: 'tools' },
+          el('button', { disabled: !above || isPlace(above), title: 'Put it into the object above it in the list (it moves and turns with that one)', onclick: () => this.moveIn() }, '⇥ Into the one above'),
+          el('button', { disabled: e.parent < 0, title: 'Take it out of the object it is in', onclick: () => this.moveOut() }, '⇤ Out'),
+        ),
+      );
     if (this.sel >= 0) {
       const gm = (m, label, key) => el('button', { class: (this.gizmoMode ?? 'translate') === m ? 'on' : '', title: `${label} (${key})`, onclick: () => ((this.gizmoMode = m), this.placeGizmo(), this.refresh()) }, label);
       o.append(el('div', { class: 'tools gm' }, gm('translate', '✥ Move', 'W'), gm('rotate', '⟳ Turn', 'T')));
@@ -391,7 +460,8 @@ export class Editor {
     const gui = (this.propsGui = new GUI({ container: this.props, title: 'Properties', width: 300 }));
     // the scene before any change made here: what undo goes back to
     this.pending = JSON.stringify(sceneJson(S, C.weather()));
-    const ob = S.objects[this.sel];
+    const e = this.cur();
+    const ob = e?.node;
     const change = () => this.commit();
     if (!ob) {
       // nothing selected: the world itself
@@ -409,13 +479,26 @@ export class Editor {
       return;
     }
     const M = MODELS[ob.type];
-    gui.title(`${this.sel + 1}. ${M?.label ?? ob.type}`);
+    // (in another object: where it is in that one's frame)
+    const pp = this.parentPose(e);
+    const parentNode = e.parent >= 0 ? this.entries()[e.parent].node : null;
+    gui.title(`${this.sel + 1}. ${M?.label ?? ob.type}${parentNode ? ` (in ${e.parent + 1}. ${MODELS[parentNode.type]?.label?.replace(/ \(.*\)$/, '') ?? parentNode.type})` : ''}`);
     const ws = S.world;
-    gui.add(ob, 'x', 0, ws.size[0], 0.01).name('X (m)').onFinishChange(change);
-    gui.add(ob, 'z', 0, ws.size[2], 0.01).name('Z (m)').onFinishChange(change);
-    // the height: metres above the ground layer, or sitting on what is under it ('auto'); the
-    // slider shows where a sitting object rests, and moving it lifts the object off ('auto' off)
-    const rest = () => +Math.max(0, (C.sim.world.origins?.[this.sel]?.[1] ?? C.sim.world.h) - C.sim.world.h).toFixed(2);
+    const lim = Math.max(...ws.size);
+    if (pp) {
+      ob.x ??= 0;
+      ob.z ??= 0;
+    }
+    gui.add(ob, 'x', pp ? -lim : 0, pp ? lim : ws.size[0], 0.01).name(pp ? 'X in its parent (m)' : 'X (m)').onFinishChange(change);
+    gui.add(ob, 'z', pp ? -lim : 0, pp ? lim : ws.size[2], 0.01).name(pp ? 'Z in its parent (m)' : 'Z (m)').onFinishChange(change);
+    // the height: metres above the ground layer (in another object: above its origin), or sitting
+    // on what is under it ('auto'); the slider shows where a sitting object rests, and moving it
+    // lifts the object off ('auto' off)
+    const base = pp ? pp.oy : C.sim.world.h;
+    const rest = () => {
+      const v = +((C.sim.world.origins?.[this.sel]?.[1] ?? base) - base).toFixed(2);
+      return pp ? v : Math.max(0, v);
+    };
     const hy = {
       get auto() { return typeof ob.y !== 'number'; },
       set auto(on) { ob.y = on ? 'auto' : rest(); },
@@ -423,7 +506,7 @@ export class Editor {
       set height(v) { ob.y = v; },
     };
     gui.add(hy, 'auto').name('Sit on the ground (auto height)').onFinishChange(change);
-    gui.add(hy, 'height', 0, ws.size[1], 0.01).name('Height (m)').onFinishChange(change);
+    gui.add(hy, 'height', pp ? -ws.size[1] : 0, ws.size[1], 0.01).name(pp ? 'Height in its parent (m)' : 'Height (m)').onFinishChange(change);
     ob.rotation ??= 0;
     gui.add(ob, 'rotation', 0, 360, 1).name('Turn (°)').onFinishChange(change);
     // a tilt (about the model's own x and z), as the turn gizmo's red and blue rings make one
@@ -433,6 +516,7 @@ export class Editor {
     ob.ignite ??= false;
     if (!CHARACTERS[ob.type]) gui.add(ob, 'ignite').name('Burning at start').onFinishChange(change);
     const fp = gui.addFolder('Parameters');
+    ob.params ??= {};
     for (const [key, spec] of Object.entries(M?.params ?? {})) {
       ob.params[key] ??= spec.value;
       let c;
@@ -443,7 +527,7 @@ export class Editor {
       else c = fp.add(ob.params, key, spec.min, spec.max, spec.step);
       c.name(spec.label ?? key).onFinishChange(change);
     }
-    if (RIG_TYPES[ob.type]) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
+    if (RIG_TYPES[ob.type] && rigTargetFor(ob)) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
   }
 
   /**
@@ -514,6 +598,16 @@ export class Editor {
     p.hidden = !p.hidden;
     if (p.hidden) return;
     p.replaceChildren(el('h3', {}, 'Add an object', el('button', { class: 'x', onclick: () => (p.hidden = true) }, '✕')));
+    const sel = this.node();
+    if (sel)
+      p.append(
+        el(
+          'label',
+          { class: 'inside', title: 'The new object goes into the selected one: it moves and turns with it' },
+          el('input', { type: 'checkbox', checked: !!this.placeInside, onchange: (ev) => (this.placeInside = ev.target.checked) }),
+          ` Put it inside ${this.sel + 1}. ${MODELS[sel.type]?.label?.replace(/ \(.*\)$/, '') ?? sel.type}`,
+        ),
+      );
     const seen = new Set();
     const add = (title, keys) => {
       const g = el('div', { class: 'grp' });
@@ -546,29 +640,46 @@ export class Editor {
       const type = this.placing;
       this.placing = null;
       C.view.renderer.domElement.style.cursor = '';
-      const o = { type, params: defaultParams(type), x: +hit.point[0].toFixed(2), z: +hit.point[2].toFixed(2), rotation: 0, ignite: false };
+      const M = MODELS[type];
+      let o = { type, params: defaultParams(type), x: +hit.point[0].toFixed(2), z: +hit.point[2].toFixed(2), rotation: 0, ignite: false };
       // on a deck, a roof or a hill: stand on what you clicked
       if (hit.point[1] > C.sim.world.h * 1.5) o.y = +hit.point[1].toFixed(2);
+      // a place (a room of its own) is made by its model; an object of objects comes with what
+      // is in it (the carrier: its jets, its below deck), its places named apart from the others
+      if (M.create) o = M.create(o);
+      if (M.children) o.children = M.children(o.params);
+      uniquifyPlaces(o, placeKeys(C.scene));
       this.snapshot();
-      C.scene.objects.push(o);
-      this.sel = C.scene.objects.length - 1;
+      // inside the selected object: in its frame
+      const into = this.placeInside ? this.cur() : null;
+      const pose = into && C.sim.world.objectTree?.[this.sel]?.pose;
+      if (pose) {
+        const l = toLocal(pose, { x: o.x, z: o.z, oy: C.sim.world.h + (typeof o.y === 'number' ? o.y : 0), rotation: 0 });
+        Object.assign(o, { x: l.x, z: l.z, y: l.y, rotation: l.rotation });
+        if (l.tiltX) o.tiltX = l.tiltX;
+        if (l.tiltZ) o.tiltZ = l.tiltZ;
+        (into.node.children ??= []).push(o);
+      } else C.scene.objects.push(o);
+      this.selectNode(o);
       this.rebuild();
       this.setHint('Placed. Drag the arrows to move it, the ring to turn it.');
       return;
     }
     if (!hit) return this.select(-1);
     const w = C.sim.world;
+    const entries = this.entries();
     let k = hit.voxel >= 0 ? w.owner[hit.voxel] : -1;
     // characters have no voxels: the nearest one to the spot clicked, within a metre and a half
-    if (k < 0 || !C.scene.objects[k]) {
+    if (k < 0 || !entries[k]) {
       let best = 1.5;
-      C.scene.objects.forEach((o, i) => {
+      entries.forEach(({ node: o }, i) => {
         if (!CHARACTERS[o.type] && !STIRRERS[o.type]) return;
-        const d = Math.hypot(o.x - hit.point[0], o.z - hit.point[2]) - (STIRRERS[o.type] ? 1.5 : 0);
+        const at = w.objectTree?.[i]?.rec ?? o;
+        const d = Math.hypot(at.x - hit.point[0], at.z - hit.point[2]) - (STIRRERS[o.type] ? 1.5 : 0);
         if (d < best) (best = d), (k = i);
       });
     }
-    this.select(C.scene.objects[k] ? k : -1, true);
+    this.select(entries[k] ? k : -1, true);
   }
 
   select(i, fromUser = false) {
@@ -583,25 +694,27 @@ export class Editor {
 
   /** The stand-in at the selected object, and the box round its voxels. */
   placeGizmo() {
-    const C = this.ctx, o = C.scene.objects[this.sel];
+    const C = this.ctx, e = this.cur(), o = e?.node;
     if (!o) return;
     const w = C.sim.world;
-    // its voxels' extent
+    // (where it is in the world: a child's record there, from its parent's)
+    const rec = w.objectTree?.[this.sel]?.rec ?? o;
+    // its voxels' extent (and those of what is in it)
     const b = this.box.box.makeEmpty();
     const own = w.owner, N = own.length;
     let n = 0;
     for (let i = 0; i < N; i++)
-      if (own[i] === this.sel && w.mat[i] !== 0) {
+      if (own[i] >= this.sel && own[i] < e.end && w.mat[i] !== 0) {
         const [x, y, z] = w.coords(i);
         const c = w.center(x, y, z);
         b.expandByPoint(new THREE.Vector3(c[0], c[1], c[2]));
         n++;
       }
-    if (!n) b.setFromCenterAndSize(new THREE.Vector3(o.x, (typeof o.y === 'number' ? o.y : 0) + 0.9, o.z), new THREE.Vector3(1.2, 1.8, 1.2));
+    if (!n) b.setFromCenterAndSize(new THREE.Vector3(rec.x, (w.origins?.[this.sel]?.[1] ?? (typeof rec.y === 'number' ? rec.y : 0)) + 0.9, rec.z), new THREE.Vector3(1.2, 1.8, 1.2));
     else b.expandByScalar(w.h / 2);
     // at the model's origin, where the voxelizer put it (on what it sits on, or at its height),
     // turned and tilted as the voxelizer turns it
-    const pose = recordToPose(o, { h: w.h, originY: w.origins?.[this.sel]?.[1] });
+    const pose = recordToPose(rec, { h: w.h, originY: w.origins?.[this.sel]?.[1] });
     this.pivot.position.set(pose.x, pose.y, pose.z);
     this.pivot.rotation.set(pose.rx, pose.ry, pose.rz, 'YXZ');
     this.pivot.updateMatrixWorld();
@@ -620,10 +733,21 @@ export class Editor {
   }
 
   applyGizmo() {
-    const C = this.ctx, o = C.scene.objects[this.sel];
+    const C = this.ctx, e = this.cur(), o = e?.node;
     if (!o) return;
-    const fields = poseToRecord(o, this.pivotPose(), { start: this.dragStart, size: C.scene.world.size, h: C.sim.world.h });
+    const w = C.sim.world;
+    const rec = w.objectTree?.[this.sel]?.rec ?? o;
+    let fields = poseToRecord(rec, this.pivotPose(), { start: this.dragStart, size: C.scene.world.size, h: w.h });
     this.dragStart = null;
+    // in another object: back into its parent's frame
+    const pp = this.parentPose(e);
+    if (pp) {
+      const climbed = fields.y !== rec.y;
+      const oy = typeof fields.y === 'number' ? fields.y + w.h : w.origins?.[this.sel]?.[1] ?? pp.oy;
+      const l = toLocal(pp, { x: fields.x, z: fields.z, oy, rotation: fields.rotation, tiltX: fields.tiltX, tiltZ: fields.tiltZ });
+      fields = { x: l.x, z: l.z, y: o.y === 'auto' && !climbed ? 'auto' : l.y, rotation: l.rotation, tiltX: l.tiltX, tiltZ: l.tiltZ };
+      if (o.y === undefined && !climbed && Math.abs(l.y) < 1e-3) fields.y = undefined;
+    }
     if (Object.entries(fields).every(([k, v]) => (k === 'rotation' ? o[k] ?? 0 : o[k]) === v)) return;
     this.snapshot();
     applyRecord(o, fields);
@@ -653,7 +777,7 @@ export class Editor {
     if (C.scene.zones) d.zone = C.scene.zone;
     C.load(d, false);
     C.state.running = this.mode === 'play';
-    this.select(Math.min(this.sel, C.scene.objects.length - 1));
+    this.select(Math.min(this.sel, this.entries().length - 1));
   }
   doUndo() {
     const C = this.ctx;
@@ -674,22 +798,94 @@ export class Editor {
     this.select(this.sel);
   }
   duplicate() {
-    const C = this.ctx, o = C.scene.objects[this.sel];
-    if (!o) return;
+    const C = this.ctx, e = this.cur();
+    if (!e) return;
     this.snapshot();
-    const c = JSON.parse(JSON.stringify(o));
-    c.x = +Math.min(C.scene.world.size[0], c.x + 1).toFixed(2);
-    c.z = +Math.min(C.scene.world.size[2], c.z + 1).toFixed(2);
-    C.scene.objects.push(c);
-    this.sel = C.scene.objects.length - 1;
+    // (with what is in it; its places under names of their own)
+    const c = JSON.parse(JSON.stringify(e.node));
+    const [sx, , sz] = C.scene.world.size;
+    if (e.parent < 0) {
+      c.x = +Math.min(sx, (c.x ?? sx / 2) + 1).toFixed(2);
+      c.z = +Math.min(sz, (c.z ?? sz / 2) + 1).toFixed(2);
+    } else {
+      c.x = +((c.x ?? 0) + 1).toFixed(2);
+      c.z = +((c.z ?? 0) + 1).toFixed(2);
+    }
+    uniquifyPlaces(c, placeKeys(C.scene));
+    e.list.splice(e.at + 1, 0, c);
+    this.selectNode(c);
     this.rebuild();
   }
   remove() {
-    const C = this.ctx;
-    if (!C.scene.objects[this.sel]) return;
+    const e = this.cur();
+    if (!e) return;
     this.snapshot();
-    C.scene.objects.splice(this.sel, 1);
+    // (and what is in it)
+    e.list.splice(e.at, 1);
     this.sel = -1;
+    this.rebuild();
+  }
+  /** Delete a place in an object (and all in it). */
+  removePlace(pl) {
+    const find = (list) => {
+      for (const n of list ?? []) {
+        if (n === pl) return list;
+        const r = find(kidsOf(n));
+        if (r) return r;
+      }
+      return null;
+    };
+    const list = find(this.ctx.scene.objects);
+    if (!list || !confirm(`Delete "${pl.name ?? pl.key}" and everything in it?`)) return;
+    this.snapshot();
+    list.splice(list.indexOf(pl), 1);
+    this.sel = -1;
+    this.rebuild();
+  }
+  /**
+   * An object's record put into another frame, where it is in the world staying as it is: rec its
+   * record in the world (world.objectTree), originY its origin's height there; pose the frame of
+   * the object it goes into (null: the world's own).
+   */
+  reframe(n, rec, originY, pose) {
+    const h = this.ctx.sim.world.h;
+    const r3 = (v) => +v.toFixed(3);
+    let f;
+    if (!pose) f = { x: r3(rec.x), z: r3(rec.z), y: n.y === 'auto' ? 'auto' : r3(originY - h), rotation: rec.rotation ?? 0, tiltX: rec.tiltX, tiltZ: rec.tiltZ };
+    else {
+      const l = toLocal(pose, { x: rec.x, z: rec.z, oy: originY, rotation: rec.rotation, tiltX: rec.tiltX, tiltZ: rec.tiltZ }, 3);
+      f = { ...l, y: n.y === 'auto' ? 'auto' : l.y };
+    }
+    applyRecord(n, f);
+  }
+  /** Put the selected object into the one above it in the list (it moves and turns with that one from now on). */
+  moveIn() {
+    const C = this.ctx, e = this.cur();
+    const into = e && e.list[e.at - 1];
+    if (!into || isPlace(into)) return;
+    const w = C.sim.world;
+    const pose = w.objectTree?.[this.entries().findIndex((q) => q.node === into)]?.pose;
+    const rec = w.objectTree?.[this.sel]?.rec;
+    this.snapshot();
+    e.list.splice(e.at, 1);
+    if (pose && rec) this.reframe(e.node, rec, w.origins[this.sel][1], pose);
+    (into.children ??= []).push(e.node);
+    this.selectNode(e.node);
+    this.rebuild();
+  }
+  /** Take the selected object out of the one it is in (to after it, in the one that one is in). */
+  moveOut() {
+    const C = this.ctx, e = this.cur();
+    if (!e || e.parent < 0) return;
+    const w = C.sim.world;
+    const pe = this.entries()[e.parent];
+    const rec = w.objectTree?.[this.sel]?.rec;
+    this.snapshot();
+    e.list.splice(e.at, 1);
+    if (rec) this.reframe(e.node, rec, w.origins[this.sel][1], this.parentPose(pe));
+    if (!e.list.length && e.list === pe.node.children) delete pe.node.children;
+    pe.list.splice(pe.list.indexOf(pe.node) + 1, 0, e.node);
+    this.selectNode(e.node);
     this.rebuild();
   }
 

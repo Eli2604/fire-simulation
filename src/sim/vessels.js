@@ -1,5 +1,7 @@
 import { MATERIALS } from './materials.js';
 import { airStirAt } from './stirrers.js';
+import { breachFlowAt } from './breach.js';
+import { inHull } from './vacuum.js';
 import { F_BURNING, F_LIQUID, F_FALLING, F_ANCHOR } from './world.js';
 
 /**
@@ -323,9 +325,11 @@ function impact(sim, d, x, y, z, M) {
   const m = M.density * d.dens * w.h ** 3;
   const E = 0.5 * m * (d.v[0] ** 2 + d.v[1] ** 2 + d.v[2] ** 2);
   d.impactE = E;
+  let hitName = 'soil';
   if (y >= 0 && y < w.ny && x >= 0 && z >= 0 && x < w.nx && z < w.nz) {
     const j = w.idx(x, y, z);
     const T = MATERIALS[w.mat[j]];
+    if (w.mat[j]) hitName = T.name;
     if (w.mat[j] && !(w.flags[j] & F_ANCHOR)) {
       if (T.shatterTemp !== Infinity && E > 5) {
         w.flags[j] |= F_FALLING;
@@ -340,7 +344,8 @@ function impact(sim, d, x, y, z, M) {
   if (d.flags & F_BURNING && M.combustible) sim.ignite(d.p, w.h * 1.2);
   if (E > 50 && !d.silent) {
     w.noises.push({ p: d.p.slice(), loud: Math.min(40, 5 + Math.sqrt(E) * 0.5), time: w.time, kind: 'impact' });
-    if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label });
+    // (its sound: the fragment's material on what it hit, from its mass and speed: audio/physics.js)
+    if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label, materials: [M.name, hitName], mass: m, speed: Math.hypot(d.v[0], d.v[1], d.v[2]), size: 1, sizeA: w.h, radius: w.h * 0.3, kind: 'debris' });
   }
 }
 
@@ -359,6 +364,7 @@ export function launchVoxel(w, i, vel) {
     moist: w.moist[i],
     melt: w.melt[i],
     char: w.char[i],
+    tmax: w.tmax[i],
     flags: w.flags[i] & ~F_FALLING & ~64, // (no longer hidden: debris is drawn as what it is)
     dens: w.dens[i],
     owner: w.owner[i],
@@ -390,17 +396,35 @@ export function stepDebris(sim, dt) {
     let landed = false;
     let gone = false;
     // (the drag is against the air: a wind hose or a jet carries the fragments with it, sim/stirrers.js)
-    const stir = w.stirrers.length ? airStirAt(w, d.p, AIR) : null;
+    let stir = w.stirrers.length ? airStirAt(w, d.p, AIR) : null;
+    // a hull breach (sim/breach.js): the air streaming out to a hole in space, the sea's jet
+    // coming in; in space itself nothing (no air to drag, no gravity outside the ship's own)
+    let rho = 1.2;
+    let space = false;
+    if (w.vacuum || w.sea?.ship) {
+      const u = [0, 0, 0];
+      rho = breachFlowAt(sim, d.p, u);
+      if (u[0] || u[1] || u[2]) stir = stir ? [stir[0] + u[0], stir[1] + u[1], stir[2] + u[2]] : u;
+      space = !!w.vacuum && !inHull(w, d.p);
+    }
+    const kk = (k * rho) / 1.2;
     for (let s = 0; s < steps && !landed && !gone; s++) {
-      const rv = stir ? [d.v[0] - stir[0], d.v[1] - stir[1], d.v[2] - stir[2]] : d.v;
+      if (w.vacuum && s > 0) space = !inHull(w, d.p);
+      const rv = stir ? [d.v[0] - stir[0], d.v[1] - stir[1], d.v[2] - stir[2]] : d.v.slice();
       const spd = Math.hypot(...rv);
-      for (let c = 0; c < 3; c++) d.v[c] -= k * spd * rv[c] * sdt;
-      d.v[1] -= 9.81 * sdt;
+      const f = Math.min(1, kk * spd * sdt); // (in the sea's jet: it takes the water's speed at once)
+      for (let c = 0; c < 3; c++) d.v[c] -= f * rv[c];
+      if (!space) d.v[1] -= 9.81 * sdt;
       const prev = d.p.slice();
       for (let c = 0; c < 3; c++) d.p[c] += d.v[c] * sdt;
       const x = Math.floor(d.p[0] / h);
       const y = Math.floor(d.p[1] / h);
       const z = Math.floor(d.p[2] / h);
+      if (space && (x < 0 || y < 1 || z < 0 || x >= w.nx || y >= w.ny || z >= w.nz)) {
+        // drifting off into space: kept (drawn) until it is far away
+        if (Math.hypot(d.p[0] - w.size[0] / 2, d.p[1] - w.size[1] / 2, d.p[2] - w.size[2] / 2) > 600) gone = true;
+        continue;
+      }
       if (x < 0 || z < 0 || x >= w.nx || z >= w.nz || y >= w.ny + 20) {
         gone = true; // left the simulated area
         break;
@@ -455,6 +479,7 @@ function place(w, j, d) {
   w.fuel[j] = d.fuel;
   w.melt[j] = d.melt;
   w.char[j] = d.char;
+  w.tmax[j] = d.tmax ?? 0;
   w.flags[j] = d.flags;
   w.tint[j * 3] = d.tint[0];
   w.tint[j * 3 + 1] = d.tint[1];

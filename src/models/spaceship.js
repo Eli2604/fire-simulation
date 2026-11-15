@@ -6,7 +6,11 @@
  *
  * Outside there is vacuum (`vacuum: true`, see sim/vacuum.js): breach the hull
  * (a grenade, a rocket, a window shot out, the outer airlock door opened) and
- * the air rushes out of every space connected to the hole. Closed doors hold.
+ * the air rushes out of every space connected to the hole. Closed doors hold, and the
+ * interior doors close themselves once their compartment loses pressure. What is loose
+ * (the crates and the drum in the cargo bay, a gas cylinder in the mess, the crew) is pulled
+ * to the hole and out into space, or stuck in it for a while if it is too big to pass
+ * (sim/breach.js); what is strapped down (the lab's gas cylinder) or bolted stays.
  * Artificial gravity keeps your feet on the floor.
  */
 const thinOf = (h) => (m) => Math.min(1, Math.max(0.003, m / h));
@@ -19,6 +23,8 @@ export default {
     height: { value: 4.4, min: 3.2, max: 6, step: 0.1, label: 'Hull height (m)' },
     fireAfter: { value: 40, min: 0, max: 600, step: 1, label: 'Engine room cable fire after (s, 0: none)' },
     windows: { value: true, label: 'Windows (bridge, mess, lab)' },
+    autoSeal: { value: true, label: 'Doors close themselves when a compartment loses pressure' },
+    cargo: { value: true, label: 'Loose cargo (crates, a drum, gas cylinders)' },
   },
   build(p, { h, rng }) {
     const thin = thinOf(h);
@@ -145,10 +151,23 @@ export default {
     );
     const heaters = [];
     if (p.fireAfter > 0) heaters.push({ pos: [e0 + 3, y1 - t - 0.5, -hz + t + 0.9], power: 15000, radius: 0.2, height: 0.4, igniteRadius: 0.5, start: p.fireAfter, until: p.fireAfter + 90, label: 'engine room cables', event: 'rackFire' });
+    // loose things: crates and an (empty) drum in the cargo bay, a gas cylinder in the mess;
+    // the lab's cylinder is strapped to the wall
+    const loose = [];
+    if (p.cargo) {
+      loose.push(
+        { kind: 'crate', p: [c.x0 + 1.6, fl + 0.3, c.z0 + 0.8] },
+        { kind: 'crate', p: [c.x0 + 3.8, fl + 0.3, c.z0 + 0.8] },
+        { kind: 'drum', p: [c.x1 - 2.4, fl + 0.44, c.z0 + 0.8], mass: 40 },
+        { kind: 'cylinder', p: [m.x0 + 0.5, fl + 0.32, (m.z0 + m.z1) / 2 - 1.3] },
+        { kind: 'cylinder', p: [lb.x1 - 0.4, fl + 0.32, lb.z0 + 0.4], secured: true },
+      );
+    }
     const dockP = [ax, fl, hz + 3];
     return {
       prims,
-      vacuum: true,
+      vacuum: p.autoSeal === false ? { autoSeal: false } : true,
+      loose,
       heaters,
       vessels: { propellant: { burstPressure: 2.5e6, ventPressure: 1.2e6, ventRate: 0.02, ullage: 0.1, volume: 1.4 * 1.8 * 1.4 * 0.4 } },
       docks: [{ p: dockP, dir: [0, 0, 1], label: 'Docking port', arrive: [ax, fl, (al.z0 + al.z1) / 2] }],

@@ -17,23 +17,11 @@ const IGNITION_SECONDS = 40;
  * replace the defaults. `sim.markers` lists every fire start and pending
  * source (e.g. a gas pipe that will burst) for display.
  */
-export function createSimulation(scene) {
-  // a scene split into zones: build the current (or starting) zone only
-  if (scene.zones && !scene.world) {
-    const z = scene.zones[scene.zone ?? scene.startZone ?? Object.keys(scene.zones)[0]];
-    scene = { ...scene, world: z.world, objects: z.objects, view: z.view ?? scene.view, walkStart: z.walkStart };
-  }
-  // the voxel size: the scene's own (each zone has its own), times a factor chosen for the
-  // hardware (coarser: faster; finer: more detail, ~16x the work for half the size)
-  if (scene.voxelScale && scene.voxelScale !== 1) scene = { ...scene, world: { ...scene.world, h: scene.world.h * scene.voxelScale } };
-  const zone = scene.zones?.[scene.zone ?? scene.startZone];
-  // where it is: outdoors the weather (the scene's, or the zone's own); indoors, underground, in a
-  // sealed cabin only its own air (no wind, rain, sun, snow: sim/weather.js)
-  const exposure = exposureOf(zone ?? scene);
-  const own = zone ? zone.weather ?? scene.zones[zone.weatherOf]?.weather : null; // (its own, or the one it shares)
-  const settings = { ...defaultWeather(), ...(exposure === 'outdoor' || !zone ? scene.weather ?? {} : INSIDE_AIR[exposure]), ...(own ?? {}) };
-  const weather = liveWeather({}, settings, exposure);
-  const { world, ignitions, spawn } = buildScene({ ...scene, weather });
+export function createSimulation(scene, prebuilt = null) {
+  const { scene: sc, zone, exposure, weather } = prepareScene(scene);
+  scene = sc;
+  // (a world built ahead, in the background: sim/prebuild.js, from the same description)
+  const { world, ignitions, spawn } = prebuilt ?? buildScene({ ...scene, weather });
   world.dark = !!scene.view?.dark; // underground: a light where there should be none is noticed
   world.indoor = !!(scene.indoor ?? zone?.indoor) || exposure !== 'outdoor'; // no sky over it: no snow
   if (weather.snowCover > 0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors)
@@ -68,6 +56,37 @@ export function createSimulation(scene) {
     if (ht.start !== undefined) sim.markers.push({ p: ht.pos, label: `${ht.label ?? 'source'} (after ${ht.start} s)`, kind: 'pending', heater: ht });
   }
   return sim;
+}
+
+/**
+ * What a scene builds from: the zone to build (of a scene split into zones), its voxel size, where
+ * it is (exposure) and its weather. Shared with the background builds (sim/prebuild.worker.js).
+ */
+export function prepareScene(scene) {
+  // a scene split into zones: build the current (or starting) zone only
+  if (scene.zones && !scene.world) {
+    const z = scene.zones[scene.zone ?? scene.startZone ?? Object.keys(scene.zones)[0]];
+    scene = { ...scene, world: z.world, objects: z.objects, view: z.view ?? scene.view, walkStart: z.walkStart };
+  }
+  // the voxel size: the scene's own (each zone has its own), times a factor chosen for the
+  // hardware (coarser: faster; finer: more detail, ~16x the work for half the size)
+  if (scene.voxelScale && scene.voxelScale !== 1) scene = { ...scene, world: { ...scene.world, h: scene.world.h * scene.voxelScale } };
+  const zone = scene.zones?.[scene.zone ?? scene.startZone];
+  // (a place in another place: its portals up ('..') lead there; models/composite.js)
+  if (zone?.within && !scene.within) scene = { ...scene, within: zone.within };
+  // where it is: outdoors the weather (the scene's, or the zone's own); indoors, underground, in a
+  // sealed cabin only its own air (no wind, rain, sun, snow: sim/weather.js)
+  const exposure = exposureOf(zone ?? scene);
+  const own = zone ? zone.weather ?? scene.zones[zone.weatherOf]?.weather : null; // (its own, or the one it shares)
+  const settings = { ...defaultWeather(), ...(exposure === 'outdoor' || !zone ? scene.weather ?? {} : INSIDE_AIR[exposure]), ...(own ?? {}) };
+  const weather = liveWeather({}, settings, exposure);
+  return { scene, zone, exposure, weather };
+}
+
+/** The world of a scene, built as createSimulation builds it (without the simulation). */
+export function buildWorld(scene) {
+  const { scene: sc, weather } = prepareScene(scene);
+  return buildScene({ ...sc, weather });
 }
 
 /** No start point in the scene: at the edge of the world, halfway along, on top of whatever is there. */

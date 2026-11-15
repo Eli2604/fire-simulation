@@ -4,14 +4,14 @@ import { VEHICLE_ZONES, VEHICLE_DIMS, VEHICLE_WEAPONS, vehicleZones, zoneAt, ray
 import { RIG_OBJECTS, RIG_KINDS, VEHICLES, VEHICLE_ACTS, rigKind, rigTargetFor, RIG_BUTTON } from '../src/rig/objects.js';
 import { MODELS } from '../src/models/index.js';
 
-test('the Object drop-down: soldier, squad, dragon, car, jet, boat; every vehicle has its acts', () => {
-  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'car', 'jet', 'jetFlight', 'pilot', 'boat']);
+test('the Object drop-down: soldier, squad, dragon, phoenix, car, jet, boat; every vehicle has its acts', () => {
+  assert.deepEqual(RIG_KINDS, ['soldier', 'squad', 'dragon', 'phoenix', 'car', 'jet', 'jetFlight', 'pilot', 'boat']);
   assert.ok(RIG_OBJECTS.every((o) => o.label && RIG_BUTTON[o.kind]));
-  for (const k of ['squad', 'car', 'jet', 'boat', 'dragon', 'soldier']) assert.equal(rigKind({ kind: k }), k);
+  for (const k of ['squad', 'car', 'jet', 'boat', 'dragon', 'phoenix', 'soldier']) assert.equal(rigKind({ kind: k }), k);
   assert.equal(rigKind({ kind: 'tank' }), 'soldier', 'an unknown kind: the soldier');
   assert.equal(rigKind(undefined), 'soldier');
   assert.deepEqual(Object.keys(VEHICLE_ACTS.car), ['idle', 'drive', 'steer', 'doors', 'burning']);
-  assert.deepEqual(Object.keys(VEHICLE_ACTS.jet), ['idle', 'taxi', 'gearUp', 'gearDown', 'flaps', 'afterburner', 'bank', 'eject', 'hit', 'burning', 'critical', 'crash']);
+  assert.deepEqual(Object.keys(VEHICLE_ACTS.jet), ['idle', 'taxi', 'gearUp', 'gearDown', 'flaps', 'afterburner', 'bank', 'eject', 'hit', 'burning', 'critical', 'crash', 'evadeBreak', 'evadeRoll']);
   assert.deepEqual(Object.keys(VEHICLE_ACTS.boat), ['idle', 'cruise', 'turn', 'rough']);
   for (const v of VEHICLES) assert.ok(VEHICLE_ZONES[v] && VEHICLE_DIMS[v], v);
 });
@@ -20,13 +20,16 @@ test('a scene object opens the rig on its kind (the editor: Rig the …, R)', ()
   assert.deepEqual(rigTargetFor({ type: 'squad', params: { unit: 'Bravo', flameTrooper: true } }), { kind: 'squad', unit: 'Bravo', flameTrooper: true, droneOperator: false });
   assert.deepEqual(rigTargetFor({ type: 'enemy', params: {} }), { kind: 'soldier', loadout: 'rifle' });
   assert.deepEqual(rigTargetFor({ type: 'dragon' }), { kind: 'dragon' });
+  // the catacombs open the rig on their phoenix (unless they have none)
+  assert.deepEqual(rigTargetFor({ type: 'catacombs', params: {} }), { kind: 'phoenix' });
+  assert.equal(rigTargetFor({ type: 'catacombs', params: { phoenix: false } }), null);
   assert.deepEqual(rigTargetFor({ type: 'car', params: { bodyColor: '#a8322f' } }), { kind: 'car', params: { bodyColor: '#a8322f' } });
   assert.equal(rigTargetFor({ type: 'jet', params: { rockets: 4 } }).kind, 'jet');
   assert.equal(rigTargetFor({ type: 'boat' }).kind, 'boat');
   assert.equal(rigTargetFor({ type: 'wall' }), null);
   assert.equal(rigTargetFor(undefined), null);
   // the editor's types exist (the boat has no scene model yet)
-  for (const t of ['squad', 'enemy', 'dragon', 'car', 'jet']) assert.ok(MODELS[t], t);
+  for (const t of ['squad', 'enemy', 'dragon', 'car', 'jet', 'catacombs']) assert.ok(MODELS[t], t);
 });
 
 test('hit parts: each vehicle has the parts asked for, each found at its own centre', () => {

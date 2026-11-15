@@ -85,7 +85,8 @@ export class PlacesOverlay {
   }
 
   /**
-   * places: [{ name, label, offset: [x, y, z] in the view's frame, size, active, color, schematic }];
+   * places: [{ name, label, offset: [x, y, z] in the view's frame, size, active, color, schematic, real }]
+   * (real: its own scenery is drawn there, render/scenery.js: outlined, not filled);
    * cam: the camera's position in that frame. Returns name -> true for the places far enough
    * off to be drawn as their box (their stand-ins hidden).
    */
@@ -103,7 +104,8 @@ export class PlacesOverlay {
       // (the place you are in shows its outline and name sooner: what is where, zooming out)
       const isFar = boxDistance(cam, min, max) > (q.active ? Math.max(15, Math.hypot(...q.size)) : farDistance(q.size));
       far.set(q.name, isFar);
-      it.fill.visible = isFar && !q.active;
+      // (a place drawn as it looks far off, render/scenery.js: its outline and name, not the box)
+      it.fill.visible = isFar && !q.active && !q.real;
       it.edges.visible = isFar || this.editing;
       it.edges.material.color.set(q.active ? 0xffc64d : q.schematic ? 0x8cc8ff : 0xffffff);
       it.edges.material.opacity = q.active ? 1 : 0.85;

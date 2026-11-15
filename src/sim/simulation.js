@@ -1,5 +1,5 @@
 import { MATERIALS, TBL } from './materials.js';
-import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR } from './world.js';
+import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR, TMAX_STEP } from './world.js';
 import { deriveWeather } from './weather.js';
 import { skyState } from './sky.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
@@ -14,14 +14,20 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
+import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
+import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
+import { stepBreach } from './breach.js';
 import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
+import { stepPower } from './power.js';
+import { impact, bodyLanding } from './impact.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
+import { farRadiation } from './farRadiation.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
 const LV = 2.26e6; // latent heat of vaporisation of water, J/kg
@@ -185,14 +191,17 @@ export class Simulation {
     if (!w.ice && !w.noIce && (this.weather.ambient <= 0 || (this.weather.iceCover ?? 0) > 0) && !initIce(w, this.weather.iceCover ?? 0)) w.noIce = true;
     if (w.ice) stepIce(this, dt, D);
     stepCups(this, dt, D); // cups of tea: they cool, steam, freeze
+    stepPower(this, dt, D); // wind turbines, solar parks and the camps they power (sim/power.js)
     stepLightning(this, dt);
     stepVessels(this, dt);
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
+    this.fireAudio?.step(w, dt); // (only while something listens: sim/fireAudio.js)
     this.solidPassB(dt, D);
     stepVacuum(this, dt);
     stepAir(w, W, D, dt, this);
     blurRadiation(w, this.radGain);
+    farRadiation(w); // further out: what a burning car radiates onto the house next to it
     w.airG.fill(0);
     w.airGT.fill(0);
     w.airQ.fill(0);
@@ -217,6 +226,7 @@ export class Simulation {
     stepWater(this, dt);
     stepFlood(this, dt);
     stepLeaks(this, dt);
+    stepBreach(this, dt); // a hull breach: the sea pushes loose things in, the escaping air pulls them out
     // automatic inert-gas systems (server rooms): a heat detector under the ceiling
     // releases the gas once; it only works if the room is closed
     for (const s of w.inertSystems) {
@@ -528,6 +538,13 @@ export class Simulation {
     const w = this.world;
     const { anx, any, anz, ah } = w;
     w.heaters = w.heaters.filter((ht) => ht.until === undefined || ht.until > w.time);
+    // a gas burner's premixed flame is hotter than a fire's (heater.flameTemp, °C): the
+    // cells it fills say so for the flame contact in solidPassA (cleared each step)
+    const hot = w.hotFlameCells;
+    if (hot) {
+      for (const a of hot) w.flameT[a] = 0;
+      hot.length = 0;
+    }
     for (const ht of w.heaters) {
       if (!ht.on || ht.power <= 0) continue;
       // delayed sources (a pipe that bursts after some time)
@@ -582,6 +599,14 @@ export class Simulation {
             if (qx * qx + qy * qy + qz * qz <= rr * rr && w.occ[a] < 0.75) cells.push(a);
           }
       if (!cells.length) continue;
+      if (ht.flameTemp) {
+        w.flameT ??= new Float32Array(w.NA);
+        w.hotFlameCells ??= [];
+        for (const a of cells) {
+          if (w.flameT[a] < ht.flameTemp) w.flameT[a] = ht.flameTemp;
+          w.hotFlameCells.push(a);
+        }
+      }
       let wsum = 0;
       for (const a of cells) wsum += 1 - w.occ[a];
       for (const a of cells) {
@@ -610,6 +635,7 @@ export class Simulation {
     const { nx, ny, nz, h, mat, temp, dE, expo, faceAir, anx, any, flags, dens } = w;
     const { airT, airG, airGT, radSrc, radField, flame, vx, vy, vz, waterIn, coat, supp, sfac } = w;
     const contactScale = this.contactScale;
+    const radFar = w.farRad?.nv ? w.radFar : null; // a fire's radiation further out (sim/farRadiation.js)
     let contactDemand = 0;
     const A = h * h;
     const K = TBL.k;
@@ -625,7 +651,7 @@ export class Simulation {
     let radDemand = 0;
     let radEmit = 0;
 
-    const { gsum, dEs, gext, skin } = w;
+    const { gsum, dEs, gext, skin, flameT } = w;
     for (let k = 0; k < n; k++) {
       const i = solids[k];
       dE[i] = 0;
@@ -712,7 +738,7 @@ export class Simulation {
         airGT[a] += g * Ts;
         // Flame contact: the gas touching the surface is at flame temperature.
         // That heat comes out of the flames' heat release (global budget below).
-        const fT = FLAME_TEMP * fl;
+        const fT = (flameT !== undefined && flameT[a] > 0 ? flameT[a] : FLAME_TEMP) * fl;
         if (fT > Ta && fT > Ts) {
           const want = g * (fT - (Ta > Ts ? Ta : Ts));
           if (burningNow) dEx += want * sf * dt; // a burning surface sits inside its own flame
@@ -742,7 +768,7 @@ export class Simulation {
           radSrc[own] += P;
           radEmit += P;
         }
-        const absorb = eps * 0.5 * area * radField[own];
+        const absorb = eps * 0.5 * area * (radFar === null ? radField[own] : radField[own] + radFar[i]);
         radDemand += absorb;
         dEx += absorb * radScale * shield * dt;
       }
@@ -776,7 +802,7 @@ export class Simulation {
 
   solidPassB(dt, D) {
     const w = this.world;
-    const { nx, ny, h, mat, temp, fuel, moist, melt, char, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop, waterIn, coat, sfac } = w;
+    const { nx, ny, h, mat, temp, fuel, moist, melt, char, tmax, flags, hrr, dE, dEs, gext, skin, wetSkin, skinMelt, expo, faceAir, colTop, waterIn, coat, sfac } = w;
     const { airQ, radSrc, flameAcc, smoke, smokeR, smokeG, smokeB, steam } = w;
     const A = h * h;
     const V = A * h;
@@ -793,6 +819,7 @@ export class Simulation {
     (this.flakeList = this.flakeList ?? []).length = 0;
     let hrrTotal = 0;
     let burning = 0;
+    const fau = this.fireAudio ?? null; // the fire's sound sources (sim/fireAudio.js), while listened to
     let maxT = -Infinity;
     let liquids = 0;
 
@@ -875,6 +902,7 @@ export class Simulation {
           const evap = Math.min(water, ((Ts - 100) * Csurf) / per);
           Ts -= (evap * per) / Csurf;
           steam[fa] += evap;
+          if (fau) fau.steam(x, y, z, evap);
           rest -= evap;
         }
         if (rest > 0) {
@@ -1035,6 +1063,9 @@ export class Simulation {
       }
 
       // --- metals / paint / masonry discolour when hot
+      // (the hottest the surface has been stays on it: temper colours, scorching; render/heatColor.js)
+      const tq = Thot * (1 / TMAX_STEP);
+      if (tq > tmax[i]) tmax[i] = tq < 255 ? tq : 255;
       if (Thot > M.oxidizeTemp && char[i] < 1) char[i] = Math.min(1, char[i] + (dt * (Thot - M.oxidizeTemp)) / 4000);
 
       // --- combustion: driven by the surface temperature
@@ -1130,6 +1161,7 @@ export class Simulation {
             if (char[i] < ch) char[i] = ch;
             if (fuel[i] <= 1e-6) burnouts.push(i);
             burning++;
+            if (fau) fau.burn(x, y, z, q, m, mo, Ts);
           }
         }
         if (!(f & F_BURNING) && Ts > M.pyrolysisTemp && ex > 0) {
@@ -1160,6 +1192,7 @@ export class Simulation {
       if (Ts > maxT) maxT = Ts;
       if (T > maxT) maxT = T;
       if (f & F_LIQUID) liquids++;
+      if (fau && M.conductivity > 15) fau.metal(x, y, z, T - temp[i], m); // (metals tick as they heat and cool)
       temp[i] = T;
       skin[i] = ex > 0 ? Ts : T;
       wetSkin[i] = mo > 0 ? ws : 0;
@@ -1562,14 +1595,19 @@ export class Simulation {
       threat: squad[0].threat,
       // guards: the guard AI moves them on their patrol and when they run from fire (ai/enemies.js)
       ownMove: (m) => !!m.guardCtl,
+      // what threatens a man (a grenade by him, a rocket, rounds cracking past, a dragon): he rolls out of it (ai/evade.js)
+      dangers: (m) => dangers(w, m),
       // you: seen through doorways, not through walls or thick smoke
       hostiles: () => (pl() ? [pl()] : []),
       lineOfSight: (a, b) => this.ai.sees([a[0], a[1] + 1.6, a[2]], [b[0], b[1] + 1.5, b[2]]),
+      // from an eye to a point (ai/perception.js: crouched, standing, peeking over a wall or round a corner)
+      sightLine: (eye, at) => this.ai.sightLine(eye, at),
       unit,
       // fog, smoke and darkness: how far they can see; what they hear
-      visibility: () => (w.dark ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
-      dark: () => !!w.dark,
-      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, time: n.time, kind: n.kind, squad: n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit })),
+      // (the dark: the world's flag, or its light level when it has a time of day: ai/perception.js ambientLight)
+      visibility: () => (isDark(w) ? 12 : 30 + 600 * (1 - Math.min(1, this.weather?.fog ?? 0))),
+      dark: () => isDark(w),
+      noises: () => w.noises.map((n) => ({ p: n.p, loud: n.loud, dB: n.dB, time: n.time, kind: n.kind, source: n.source, squad: n.source?.unit ?? (n.kind === 'enemy' && w.enemies.find((e) => e.squad && Math.hypot(e.p[0] - n.p[0], e.p[2] - n.p[2]) < 1)?.unit) })),
       peers: () => this.squads ?? [],
       radio: (e, text, kind) => w.events.push({ type: 'radio', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text, kind }),
       fire: (e, target, weapon = 'rifle') => {
@@ -1579,10 +1617,18 @@ export class Simulation {
         if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle, weapon });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
+      // landing from a drop, a vault, a roll: the force and its sound (sim/impact.js)
+      landing: (e, o) => bodyLanding(this, e, o),
+      // a blow, a throw (rig/objects.js ACT_IMPACTS; sim/impact.js): impact(sim, { ... })
+      impact: (o) => impact(this, o),
       flashbang: (e, from, vel) => w.projectiles.push({ type: 'flash', p: from.slice(), v: vel.slice(), fuse: 1.5, by: e.unit, resting: false }),
       // the knife: into you (the torso, or the neck over the collar of your gear)
       stab: (e, h) => {
         if (h === pl()) w.playerHits.push({ zone: Math.random() < 0.3 ? 'head' : 'torso', time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'knife' });
+      },
+      // hand-to-hand (ai/melee.js): a punch, a kick or a throw into you
+      melee: (e, h, res) => {
+        if (h === pl()) w.playerHits.push({ zone: res.zone === 'legs' ? 'legs' : res.zone, time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'fist', melee: res.kind, down: res.down });
       },
       shout: (e, text) => w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text }),
       now: () => w.time,
@@ -1634,13 +1680,13 @@ export class Simulation {
   /** A fire arrow from p with velocity v (m/s). */
   shootArrow(from, vel) {
     this.world.projectiles.push({ type: 'arrow', p: from.slice(), v: vel.slice(), resting: false });
-    this.world.noises.push({ p: from.slice(), loud: 4, time: this.world.time, kind: 'bow' });
+    emitSound(this.world, { pos: from, loudness_dB: LOUDNESS.bow, kind: 'bow', source: this.ai?.player ?? null });
   }
 
   /** A rocket: motor for a few seconds, explodes on impact (energy J). */
   fireRocket(from, vel, energy = 1.5e6) {
     this.world.projectiles.push({ type: 'rocket', p: from.slice(), v: vel.slice(), resting: false, energy, burn: 3 });
-    this.world.noises.push({ p: from.slice(), loud: 60, time: this.world.time, kind: 'rocket' });
+    emitSound(this.world, { pos: from, loudness_dB: LOUDNESS.rocket, kind: 'rocket' });
   }
 
   /** A hand-held fire torch: a burning jet that follows the aim point while held. */

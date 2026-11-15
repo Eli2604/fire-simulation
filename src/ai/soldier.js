@@ -18,14 +18,21 @@
  *  - Under heavy fire from one side (several enemies close together over there, or men
  *    being hit), someone throws a grenade that way and shouts it ("Frag out!").
  */
+import { recoilSpec } from './recoil.js';
+import { FIGHT_D, pickMelee, startMelee, resolveMelee, applyMelee, defendAgainst } from './melee.js';
 
 /** Expertise: scatter (x a regular's), reload and weapon-switch time (x), reaction (x). */
+// (control: how long he takes to bring the muzzle back down after a round, x a regular's: ai/recoil.js)
+// (nerve: how readily he flinches into a roll under fire, x a regular's; melee: his hand-to-hand
+// (damage x, ai/melee.js); judgement: how well he picks his move in a fight, 0..1)
 export const SKILL = {
-  recruit: { aim: 1.8, reload: 1.35, react: 1.5 },
-  regular: { aim: 1.0, reload: 1.0, react: 1.0 },
-  veteran: { aim: 0.7, reload: 0.82, react: 0.8 },
-  elite: { aim: 0.5, reload: 0.7, react: 0.65 },
+  recruit: { aim: 1.8, reload: 1.35, react: 1.5, control: 1.4, nerve: 1.5, melee: 0.75, judgement: 0.55 },
+  regular: { aim: 1.0, reload: 1.0, react: 1.0, control: 1.0, nerve: 1.0, melee: 1.0, judgement: 0.75 },
+  veteran: { aim: 0.7, reload: 0.82, react: 0.8, control: 0.85, nerve: 0.75, melee: 1.15, judgement: 0.9 },
+  elite: { aim: 0.5, reload: 0.7, react: 0.65, control: 0.7, nerve: 0.55, melee: 1.3, judgement: 1.0 },
 };
+/** What the experience level does (the editor's and the rig's tooltip). */
+export const SKILL_INFO = 'Experience (recruit, regular, veteran, elite) sets: how far his rounds scatter (aim), how fast he pulls the muzzle back down after a round (recoil control, ai/recoil.js), how quickly he reacts (and blocks or slips a blow), how fast he reloads, switches weapons and picks things up, how readily he flinches into a roll under fire (nerve), and how hard and how well he fights hand-to-hand.';
 export const SKILLS = Object.keys(SKILL);
 
 /** What each carries: magazine size and spare magazines; the weapon's name in sim/wounds.js WEAPONS. */
@@ -33,6 +40,9 @@ export const ARMS = {
   rifle: { size: 30, mags: 5, kind: 'rifle', burst: 3 },
   mg: { size: 100, mags: 2, kind: 'mg', burst: 9 }, // the gunner's belt
   secondary: { size: 20, mags: 2, kind: 'carbine', burst: 2 },
+  // a pump shotgun: 7 shells in the tube, loaded one at a time (reload: x the magazine change)
+  shotgun: { size: 7, mags: 4, kind: 'shotgun', burst: 1, reload: 1.4 },
+  pistol: { size: 15, mags: 3, kind: 'pistol', burst: 1, reload: 0.65 },
 };
 
 // Base times (s) of the animations (operator/rig.js), scaled by the expertise
@@ -47,18 +57,33 @@ export function kit(m) {
   if (m.kitted) return;
   m.kitted = true;
   m.skill = SKILL[m.skill] ? m.skill : 'regular';
-  m.weapon = m.loadout === 'torch' ? 'torch' : 'rifle';
-  const A = ARMS[m.squad === 'MG' ? 'mg' : 'rifle'];
-  m.primary = m.squad === 'MG' ? 'mg' : 'rifle';
+  // (unarmed: no weapon at all, he fights hand-to-hand: ai/melee.js)
+  m.weapon = m.loadout === 'torch' ? 'torch' : m.loadout === 'unarmed' ? 'fists' : 'rifle';
+  // his primary: the gunner's MG, else what his loadout says (a shotgun, a pistol), else a rifle
+  m.primary = m.squad === 'MG' ? 'mg' : m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle';
+  const A = ARMS[m.primary];
   m.mag ??= A.size;
   m.mags ??= A.mags;
   m.secMag ??= ARMS.secondary.size;
   m.secMags ??= ARMS.secondary.mags;
   m.armour ??= false;
   m.helmet ??= !!m.armour; // the helmet comes with the armour kit
+  if (m.loadout === 'unarmed') m.mag = m.mags = m.secMag = m.secMags = 0;
 }
 
 export const skillOf = (m) => SKILL[m.skill] ?? SKILL.regular;
+
+/**
+ * The recoil of the weapon in his hands (ai/recoil.js): its kind (rifle, the gunner's MG, the
+ * carbine), m.recoil (the override factor, 1 = physical), m.fireMode (single, burst, auto).
+ */
+export function recoilOf(m) {
+  const wk = weaponKind(m);
+  const kind = ['mg', 'carbine', 'shotgun', 'pistol'].includes(wk) ? wk : 'rifle';
+  const key = `${kind}|${m.recoil ?? 1}|${m.fireMode ?? ''}`;
+  if (m.recoilSpec?.key !== key) m.recoilSpec = { ...recoilSpec(kind, { recoil: m.recoil, mode: m.fireMode }), key };
+  return m.recoilSpec;
+}
 
 /** Total rounds he has left (magazine + spares, primary and secondary). */
 export function roundsLeft(m) {
@@ -77,8 +102,15 @@ export function aimPoint(m, T, rand = Math.random) {
   if (m.wounds?.armL || m.wounds?.armR) s *= 2;
   if (m.weapon === 'secondary') s *= 1 + d / 25;
   if (m.squad === 'MG') s *= 1.3; // bursts from the bipod: a cone, not a point
+  // buckshot: a pattern that opens ~2.5 cm a metre (where its centre goes); a pistol at range
+  const wk = weaponKind(m);
+  if (wk === 'shotgun') s = Math.max(s, 0.025 * d) + 0.01 * d;
+  else if (wk === 'pistol') s *= 1 + d / 20;
+  // the muzzle still climbing from the rounds before (ai/recoil.js: a burst, a long string): wider, and high
+  const c = m.climb ?? 0;
+  s += 0.6 * c * d;
   const g = () => (rand() + rand() + rand() - 1.5) * 1.15; // ~gaussian
-  return [T[0] + g() * s, T[1] + 0.9 + g() * s * 0.8, T[2] + g() * s];
+  return [T[0] + g() * s, T[1] + 0.9 + g() * s * 0.8 + 0.5 * c * d, T[2] + g() * s];
 }
 
 /** The weapon in his hands and its magazine. */
@@ -89,7 +121,7 @@ function current(m) {
 
 /** Can he fire a round now? (a round in the magazine, the gun in his hands) */
 export function canShoot(m) {
-  if (m.weapon === 'knife' || m.weapon === 'torch' || m.switching) return false;
+  if (m.weapon === 'knife' || m.weapon === 'torch' || m.weapon === 'fists' || m.switching) return false;
   return m[current(m).mag] > 0;
 }
 
@@ -100,7 +132,7 @@ export function spend(m) {
 }
 
 /** The weapon kind for sim/wounds.js. */
-export const weaponKind = (m) => (m.weapon === 'secondary' ? 'carbine' : m.weapon === 'knife' ? 'knife' : ARMS[m.primary ?? 'rifle'].kind);
+export const weaponKind = (m) => (m.weapon === 'secondary' ? 'carbine' : m.weapon === 'knife' ? 'knife' : m.weapon === 'fists' ? 'fist' : ARMS[m.primary ?? 'rifle'].kind);
 
 /**
  * Each step for each member (not busy with another one-shot animation): reloading, running
@@ -130,6 +162,9 @@ export function manage(sq, m, dt, enemies) {
     const d = Math.hypot(h.p[0] - m.p[0], h.p[2] - m.p[2]);
     if (Math.abs((h.p[1] ?? 0) - m.p[1]) < 1.5 && d < nd) (nd = d), (near = h);
   }
+  // no weapon (unarmed, or dry with the knife gone): fists, feet and throws (ai/melee.js)
+  if (m.weapon !== 'fists' && m.noKnife && m.dry && near && nd < CLEAR) m.weapon = 'fists';
+  if (m.weapon === 'fists') return near && nd < HAND_RANGE ? handFight(sq, m, near, nd, dt) : false;
   if (near && nd < CLOSE && m.weapon !== 'knife' && !m.crawling && !(m.wounds?.armR)) {
     switchTo(sq, m, 'knife');
     return true;
@@ -152,7 +187,7 @@ export function manage(sq, m, dt, enemies) {
   if (m[c.mag] <= 0) {
     if (m[c.mags] > 0) {
       m[c.mags]--;
-      const dur = TIMES.reload * K.reload * (c.A === ARMS.mg ? 1.6 : 1);
+      const dur = TIMES.reload * K.reload * (c.A === ARMS.mg ? 1.6 : c.A.reload ?? 1);
       m.reloadUntil = t + dur;
       sq.setAnim(m, 'reload', dur);
       m.signal = { text: 'RELOADING', until: t + Math.min(2, dur) };
@@ -180,6 +215,63 @@ export function switchTo(sq, m, to) {
   m.switching = { to, from: m.weapon, until: sq.time + dur };
   m.reloadUntil = 0;
   sq.setAnim(m, to === 'knife' ? 'drawKnife' : to === 'secondary' ? 'drawSecondary' : m.weapon === 'knife' ? 'sheathKnife' : 'drawRifle', dur);
+}
+
+/** An unarmed man takes on an enemy within this (m). */
+export const HAND_RANGE = 9;
+/**
+ * Hand-to-hand (ai/melee.js): close in to fighting distance, then strikes, the clinch and throws
+ * picked by the distance and the state of his man; a move lands at its time if he is still in
+ * reach (host.melee(m, h, result), else applied to h itself); he blocks or slips what comes his way.
+ */
+function handFight(sq, m, h, d, dt) {
+  const t = sq.time;
+  sq.face(m, h.p, dt, 8);
+  if (m.meleeAt != null) {
+    if (t >= m.meleeAt) {
+      const kind = m.meleeKind;
+      m.meleeAt = null;
+      const dd = Math.hypot(h.p[0] - m.p[0], h.p[2] - m.p[2]);
+      const res = resolveMelee(m, h, kind, dd, { now: t });
+      res.dmg *= skillOf(m).melee; // (an old hand hits harder)
+      m.lastMelee = res;
+      if (res.hit) {
+        if (sq.host.melee) sq.host.melee(m, h, res);
+        else applyMelee(h, res, t, m);
+      }
+    }
+    return true;
+  }
+  if (sq.busy(m)) return true;
+  // what is coming his way: a block or a slip
+  const def = defendAgainst(m, h, t, Math.random, skillOf(m).react);
+  if (def) {
+    startMelee(m, def, t);
+    return true;
+  }
+  if (d > 1.45) {
+    // close in to fighting distance, fast
+    const ux = (h.p[0] - m.p[0]) / d, uz = (h.p[2] - m.p[2]) / d;
+    m.path = [[h.p[0] - ux * FIGHT_D, m.p[1], h.p[2] - uz * FIGHT_D]];
+    m.pathI = 0;
+    m.moveMode = 'run';
+    m.then = null;
+    m.clinchedBy = null;
+    return false; // the squad's move() takes him there
+  }
+  m.path = null;
+  m.meleeCd = (m.meleeCd ?? 0) - dt;
+  if (m.meleeCd <= 0) {
+    // (judgement: a poorer fighter now and then throws whatever reaches, not the right move)
+    const k = pickMelee(m, h, d, { now: t, judgement: skillOf(m).judgement });
+    if (k) {
+      startMelee(m, k, t);
+      m.meleeCd = 0.2 * skillOf(m).react;
+      return true;
+    }
+  }
+  if (!sq.busy(m)) sq.setAnim(m, 'guard');
+  return true;
 }
 
 /** With the knife: close in, stab when in reach. */

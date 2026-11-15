@@ -1,7 +1,9 @@
-import { traceVoxels } from './sight.js';
+import { sightLine, perceive, senses, hears, eyeOf, beamsIn } from './perception.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
+import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
+import { impact, groundMaterial, bodyLanding } from '../sim/impact.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -126,19 +128,25 @@ export class EnemyAI {
   }
 
   /** Line of sight from a to b, voxel by voxel (ai/sight.js): blocked by solids and thick smoke. */
-  sees(a, b) {
+  sees(a, b, range = 22) {
+    if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > range) return false;
+    return this.sightLine(a, b);
+  }
+
+  /** The line from an eye to a point: walls (not doors he could open, planning) and thick smoke block it (ai/perception.js). */
+  sightLine(a, b) {
     const w = this.world;
-    const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    if (d > 22) return false;
-    let tau = 0;
-    return !traceVoxels(w, a, b, (i, len, t) => {
-      if (i < 0) return false;
-      const m = w.mat[i];
-      if (m && MATERIALS[m].fluidity < 0.95 && !(this.passDoors && w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked)) return true;
-      const c = this.sim.airCellAt(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
-      if (c >= 0) tau += ((8700 * w.smoke[c]) / w.ah ** 3) * len;
-      return tau > 2.5;
-    });
+    return sightLine(w, a, b, { airCellAt: (x, y, z) => this.sim.airCellAt(x, y, z), door: this.passDoors ? (i) => w.doorTag[i] && !w.doors[w.doorTag[i] - 1].locked : null }).clear;
+  }
+
+  /**
+   * Does guard e notice the player (ai/perception.js: his eye, his senses: 22 m by default and his
+   * experience; over a moment, sooner close; a light on shows you from further in the dark)?
+   */
+  spots(e, pl, dt) {
+    const w = this.world;
+    const r = perceive(e, pl, dt, { now: w.time, eye: eyeOf(e), at: pl.head, prof: senses(e, 'guard'), los: (a, b) => this.sightLine(a, b), world: w, darkCounts: true, beams: beamsIn(w) });
+    return r.seen;
   }
 
   /**
@@ -231,6 +239,16 @@ export class EnemyAI {
     this.enlist();
     for (const e of w.enemies) {
       if (e.dead || (e.squad && !e.guard)) continue; // a soldiers' fire team has only its squad AI (ai/squad.js)
+      // a combat roll under way (ai/evade.js): carried along it (one the dragon's snatch started, it carries him itself)
+      if (e.trav && (!e.squad || e.guardCtl)) {
+        if (e.trav.ext) continue;
+        if (!e.trav.roll) e.trav = null; // (a vault the squad AI had him in when it let him go)
+        else {
+          const kind = e.trav.kind;
+          if (stepRoll(e, dt, (x, z) => this.floorAt(x, z, e.p[1] + 0.5)) && !e.dead) bodyLanding(this.sim, e, { speed: kind === 'diveProne' ? 3.2 : 2.4, roll: true, name: 'a roll' });
+          continue;
+        }
+      }
       e.timer = (e.timer ?? 0) - dt;
       e.lureCooldown = (e.lureCooldown ?? 10 + Math.random() * 10) - dt;
       e.repath = (e.repath ?? 0) - dt;
@@ -253,7 +271,7 @@ export class EnemyAI {
         continue;
       }
       // --- senses
-      const seesPlayer = pl && this.sees(head, pl.head);
+      const seesPlayer = pl && this.spots(e, pl, dt);
       if (seesPlayer) {
         e.lastSeen = pl.p.slice();
         if (!e.alerted) {
@@ -279,10 +297,13 @@ export class EnemyAI {
         }
       }
       for (const n of e.guard ? [] : noises) { // a guard team hears as a squad (ai/squad.js)
-        const d = Math.hypot(n.p[0] - e.p[0], n.p[1] - e.p[1], n.p[2] - e.p[2]);
-        if (d < n.loud && !['lure', 'retreat', 'flee'].includes(e.state) && n.kind !== 'enemy' && n.kind !== 'dragon') {
+        // heard (ai/perception.js): through walls less; where it was only roughly; far off, not worth a look
+        if (['lure', 'retreat', 'flee'].includes(e.state) || n.kind === 'enemy' || n.kind === 'dragon' || n.source === e) continue;
+        const prof = senses(e, 'guard');
+        const heard = hears(e, n, { at: [e.p[0], e.p[1] + 1.6, e.p[2]], prof, solid: (x, y, z) => this.solidAt(x, y, z) });
+        if (heard && heard.d <= prof.investigate) {
           e.state = 'investigate';
-          e.goal = n.p.slice();
+          e.goal = (this.blocked(heard.p[0], heard.p[2], e.p[1]) ? n.p : heard.p).slice();
           e.repath = 0;
           // an explosion: they run there, and search the place for a while
           if (n.kind === 'explosion') {
@@ -292,6 +313,9 @@ export class EnemyAI {
           }
         }
       }
+      // a grenade by him, a rocket coming, your rounds cracking past, a dragon on him: a roll out of it
+      if (!e.squad || e.guardCtl) this.dodge(e);
+      if (e.trav) continue;
       // --- danger first: get out of heat and smoke
       const hz = this.hazard(...e.p);
       let dragon = null;
@@ -500,6 +524,26 @@ export class EnemyAI {
       }
     }
     this.separate(dt);
+  }
+
+  /** Threatened (ai/evade.js dangers): roll out of it if he can (a guard on patrol, an enemy on his own). */
+  dodge(e) {
+    const w = this.world;
+    if (e.trav || e.dead || (e.stunnedUntil ?? 0) > w.time) return false;
+    for (const t of dangers(w, e)) {
+      if (!worthRolling(e, t, Math.random, w.time)) continue;
+      const pick = pickRoll(e, t, { solid: (x, y, z) => this.solidAt(x, y, z), floor: (x, z) => this.floorAt(x, z, e.p[1] + 0.5) });
+      if (!pick) continue;
+      startRoll(e, pick, w.time, { why: t.kind });
+      e.aiming = false;
+      if (t.kind === 'fire' && !e.alerted) {
+        // shot at: he knows someone is there
+        e.alerted = true;
+        w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + EYE, e.p[2]], time: w.time, name: 'enemy' });
+      }
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -753,6 +797,8 @@ export class EnemyAI {
       e.dead = true;
       e.health = 0;
       this.world.events.push({ type: 'enemyDown', pos: e.p.slice(), time: this.world.time, name: 'enemy' });
+      // his body falling: ~1 m for its middle, ~4.4 m/s onto what is there (sim/impact.js: the thud)
+      if (!e.held && !e.thrown) impact(this.sim ?? this.world, { pos: e.p.slice(), normal: [0, 1, 0], mass: 85, velocity: [0, -4.4, 0], materials: ['flesh', groundMaterial(this.world, e.p)], radius: 0.25, contactTime: 0.12, target: 'ground', kind: 'fall', name: 'a body falling', effects: { damage: false, crush: false } });
     }
   }
 
@@ -786,7 +832,7 @@ export class EnemyAI {
    */
   fireAt(e, pl, dt) {
     const w = this.world;
-    if (e.canFire === false || e.dead || ['lure', 'flee'].includes(e.state)) return false;
+    if (e.canFire === false || e.dead || e.loadout === 'unarmed' || e.weapon === 'fists' || ['lure', 'flee'].includes(e.state)) return false; // (unarmed: no gun to fire, ai/melee.js)
     const d = Math.hypot(pl.head[0] - e.p[0], pl.head[2] - e.p[2]);
     if (d > 28) return false;
     e.yaw = Math.atan2(pl.p[0] - e.p[0], pl.p[2] - e.p[2]);
@@ -826,6 +872,8 @@ export class EnemyAI {
           const m = MATERIALS[d.mat].density * d.dens * w.h ** 3;
           this.damage(e, Math.min(100, (0.5 * m * v * v) / 8));
           d.hitEnemy = true;
+          // (sim/impact.js: the blow staggers or knocks him down, and is heard: the fragment on flesh)
+          if (!e.dead) impact(this.sim ?? w, { pos: d.p.slice(), mass: m, velocity: d.v.slice(), materials: [MATERIALS[d.mat].name, 'flesh'], radius: w.h * 0.4, target: e, zone: 'torso', kind: 'debris', name: 'debris', effects: { damage: false, crush: false } });
         }
       }
     }

@@ -5,6 +5,7 @@ import { StatueDrawing } from './statue.js';
 import { loadPolyHavenModel } from './assets.js';
 import { ChurchDrawing } from './church.js';
 import { lod } from './lod.js';
+import { campPowerDrawing } from './campPower.js';
 
 /** Props' level of detail: the sizes on the screen (px) where they drop their shadow, and drop out. */
 export const PROP_LOD = [24, 1];
@@ -267,6 +268,14 @@ export class PropsRenderer {
       case 'church': {
         // the gothic church: everything that is more than its voxels (render/church.js)
         const d = new ChurchDrawing(pr.spec, this.world, pr, this.sunDir, this.sunLight);
+        this.drawings.push(d);
+        return d.group;
+      }
+      case 'windTurbine':
+      case 'solarPark':
+      case 'droneCamp': {
+        // the camp island's turbine, solar park and camp, with their power (render/campPower.js)
+        const d = campPowerDrawing(pr, this.world);
         this.drawings.push(d);
         return d.group;
       }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { F_BURNING } from '../sim/world.js';
 import { blackbody } from './colors.js';
+import { GLOW_EPS, GLOW_OX } from './heatColor.js';
 
 /** Fragments flying after an explosion, tumbling, glowing when hot. */
 export class DebrisRenderer {
@@ -43,11 +44,12 @@ export class DebrisRenderer {
       this.m.compose(this.p, this.q, this.s);
       this.mesh.setMatrixAt(k, this.m);
       blackbody(Math.max(d.temp, d.skin), this.c);
+      const ge = 0.6 * (GLOW_EPS[d.mat] + GLOW_OX[d.mat] * d.char); // bright metal glows less (render/heatColor.js)
       const burn = d.flags & F_BURNING ? 1.5 : 0;
       const ch = d.char * 0.8;
-      col[k * 3] = ((d.tint[0] / 255) ** 2) * (1 - ch) + this.c[0] * 0.6 + burn;
-      col[k * 3 + 1] = ((d.tint[1] / 255) ** 2) * (1 - ch) + this.c[1] * 0.6 + burn * 0.45;
-      col[k * 3 + 2] = ((d.tint[2] / 255) ** 2) * (1 - ch) + this.c[2] * 0.6 + burn * 0.1;
+      col[k * 3] = ((d.tint[0] / 255) ** 2) * (1 - ch) + this.c[0] * ge + burn;
+      col[k * 3 + 1] = ((d.tint[1] / 255) ** 2) * (1 - ch) + this.c[1] * ge + burn * 0.45;
+      col[k * 3 + 2] = ((d.tint[2] / 255) ** 2) * (1 - ch) + this.c[2] * ge + burn * 0.1;
     }
     this.mesh.count = n;
     this.mesh.instanceMatrix.needsUpdate = true;
