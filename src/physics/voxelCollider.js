@@ -64,6 +64,42 @@ export class VoxelGridCollider {
   cellIndex(x, y, z) {
     return x + this.nx * (y + this.ny * z);
   }
+  /**
+   * Whether the world box bb [x0, y0, z0, x1, y1, z1] holds nothing solid (no cell, no floor, no
+   * ground under it): a body inside it has no contacts with the grid. Scanned from the bottom up
+   * (the ground is what is usually there).
+   */
+  emptyBox(bb) {
+    const h = this.h, o = this.origin;
+    if (this.ground) {
+      // (the heightfield at the box's corners and middle: a plane or a gentle slope is caught)
+      const xs = [bb[0], bb[3], (bb[0] + bb[3]) / 2], zs = [bb[2], bb[5], (bb[2] + bb[5]) / 2];
+      let top = -Infinity;
+      for (const x of xs)
+        for (const z of zs) {
+          const g = this.ground(x, z);
+          if (g != null && g > top) top = g;
+        }
+      if (top > -Infinity && bb[1] <= top + 0.05) return false;
+    }
+    const x0 = Math.floor((bb[0] - o[0]) / h), x1 = Math.floor((bb[3] - o[0]) / h);
+    const y0 = Math.floor((bb[1] - o[1]) / h), y1 = Math.floor((bb[4] - o[1]) / h);
+    const z0 = Math.floor((bb[2] - o[2]) / h), z1 = Math.floor((bb[5] - o[2]) / h);
+    const { nx, ny, nz } = this;
+    const cx = Math.max(0, Math.min(nx - 1, x0)), cz = Math.max(0, Math.min(nz - 1, z0));
+    if (y0 < 0 && this.solid(cx, -1, cz)) return false; // (the floor)
+    if (y1 < 0 || y0 >= ny) return true;
+    const ya = Math.max(0, y0), yb = Math.min(ny - 1, y1);
+    // beside the grid (open, or a wall: the vehicles' world edge)
+    if ((x0 < 0 || z0 < 0 || x1 >= nx || z1 >= nz) && this.solid(x0 < 0 ? -1 : x1 >= nx ? nx : cx, ya, z0 < 0 ? -1 : z1 >= nz ? nz : cz)) return false;
+    const xa = Math.max(0, x0), xb = Math.min(nx - 1, x1), za = Math.max(0, z0), zb = Math.min(nz - 1, z1);
+    if (xa > xb || za > zb) return true;
+    const f = this.solidFn;
+    for (let y = ya; y <= yb; y++)
+      for (let z = za; z <= zb; z++)
+        for (let x = xa; x <= xb; x++) if (f(x, y, z)) return false;
+    return true;
+  }
   /** Solid at world point p. */
   solidAt(p) {
     const h = this.h, o = this.origin;
@@ -230,10 +266,29 @@ function gridCornersIn(C, S, p, R, emit, sub) {
   const z0 = Math.ceil((bb[2] - o[2]) / h), z1 = Math.floor((bb[5] - o[2]) / h);
   if (x1 < x0 || y1 < y0 || z1 < z0) return;
   if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > C.maxCorners) return;
+  // the cells round the corners, looked up once each (a corner has 8 of them): only an exposed
+  // corner (some of its cells solid, some open) can push, so the inside test is done for those only
+  const ox = x0 - 1, oy = y0 - 1, oz = z0 - 1;
+  const sx = x1 - x0 + 2, sy = y1 - y0 + 2, sz = z1 - z0 + 2;
+  const occ = occBuf(sx * sy * sz);
+  let nSolid = 0;
+  for (let z = 0, k = 0; z < sz; z++)
+    for (let y = 0; y < sy; y++)
+      for (let x = 0; x < sx; x++, k++) {
+        const s = C.solid(ox + x, oy + y, oz + z) ? 1 : 0;
+        occ[k] = s;
+        nSolid += s;
+      }
+  if (nSolid === 0) return;
+  const sxy = sx * sy;
   const w = T(), l = T();
   for (let z = z0; z <= z1; z++)
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
+        // exposed and solid: one of the 8 cells round it solid, one open
+        const k0 = x - ox + sx * (y - oy) + sxy * (z - oz);
+        const sol = occ[k0] + occ[k0 - 1] + occ[k0 - sx] + occ[k0 - sx - 1] + occ[k0 - sxy] + occ[k0 - sxy - 1] + occ[k0 - sxy - sx] + occ[k0 - sxy - sx - 1];
+        if (sol === 0 || sol === 8) continue;
         w[0] = o[0] + x * h;
         w[1] = o[1] + y * h;
         w[2] = o[2] + z * h;
@@ -276,21 +331,20 @@ function gridCornersIn(C, S, p, R, emit, sub) {
           }
           depth = -s;
         }
-        // exposed and solid: one of the 8 cells round it solid, one open
-        let sol = 0;
-        for (let d = 0; d < 8; d++) if (C.solid(x - (d & 1), y - ((d >> 1) & 1), z - ((d >> 2) & 1))) sol++;
-        if (sol === 0 || sol === 8) continue;
         // (the cell the push leaves from: the solid one round the corner most against n)
         let cx = x, cy = y, cz = z, bd = -Infinity;
         for (let d = 0; d < 8; d++) {
           const X = x - (d & 1), Y = y - ((d >> 1) & 1), Z = z - ((d >> 2) & 1);
-          if (!C.solid(X, Y, Z)) continue;
+          if (!occ[X - ox + sx * (Y - oy) + sxy * (Z - oz)]) continue;
           const v = -((X + 0.5 - x) * n[0] + (Y + 0.5 - y) * n[1] + (Z + 0.5 - z) * n[2]);
           if (v > bd) (bd = v), (cx = X), (cy = Y), (cz = Z);
         }
         emit(n, w.slice(), depth, sub, C.cellIndex(cx, Math.max(0, cy), cz), C.material(cx, cy, cz));
       }
 }
+
+let OCC = new Uint8Array(4096);
+const occBuf = (n) => (OCC.length >= n ? OCC : (OCC = new Uint8Array(n)));
 
 /** Raycast against the grid (3D DDA): → { t, point, normal, cell, material } or null. */
 export function rayGrid(C, from, dir, maxT) {

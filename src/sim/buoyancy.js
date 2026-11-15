@@ -6,7 +6,8 @@ import { dragAir } from './bodyAir.js';
 import { F_BURNING, F_SMOLDER } from './world.js';
 import { placeCrew } from './boatCrew.js';
 import { boatGround, rutAt } from './groundContact.js';
-import { isCore, vehicleWorld, stepExact } from '../physics/vehicleCore.js';
+import { isCore, vehicleWorld, stepVehicles } from '../physics/vehicleCore.js';
+import { shipsOf } from '../physics/shipCore.js';
 import { beginBoat, trackBoat, endBoat } from '../physics/boatCore.js';
 
 /**
@@ -824,6 +825,7 @@ export function stepFloats(sim, dt) {
   // (on the rigid-body core, physics/boatCore.js: each hull a body in the world's boat world, carried
   // to where its model puts it, what it meets (another boat, the shore, its painter) handed back)
   const PW = w.floats.some((f) => isCore(f, 'boat')) ? vehicleWorld(w, 'boat') : null;
+  if (PW) shipsOf(w, PW); // (the carrier's hull: a body the boats run against, physics/shipCore.js)
   const afloat = [];
   for (const f of w.floats) {
     if (!f.body) initFloat(sim, f);
@@ -870,10 +872,19 @@ export function stepFloats(sim, dt) {
     if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i) || (f.mb?.owner >= 0 && w.owner[i] === f.mb.owner), toWorld, level: f.water.level });
     if (core) trackBoat(f, dt);
   }
+  // the world's step (in a simulation's frame: once for every vehicle and the debris, at its end)
   if (PW) {
-    stepExact(PW, dt);
-    for (const f of afloat) if (isCore(f, 'boat')) endBoat(f, dt);
-  }
+    const core = afloat.filter((f) => isCore(f, 'boat'));
+    stepVehicles(w, PW, core.map((f) => f.core.body), dt, () => {
+      for (const f of core) endBoat(f, dt);
+      afterFloats(sim, afloat, dt);
+    });
+  } else afterFloats(sim, afloat, dt);
+}
+
+/** After the world's step: each boat's voxels where it is now, the air it drags, its crew, sunk or not. */
+function afterFloats(sim, afloat, dt) {
+  const w = sim.world;
   for (const f of afloat) {
     // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
     f.stampT = (f.stampT ?? 0) - dt;

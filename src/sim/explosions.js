@@ -11,6 +11,7 @@ import { boatBlast } from './boats.js';
 import { F_FALLING, F_ANCHOR } from './world.js';
 import { launchVoxel } from './vessels.js';
 import { fellTree } from './trees.js';
+import { blastVehicles } from '../physics/vehicleCore.js';
 
 /**
  * Explosions (hand grenades) and gas pipes.
@@ -206,6 +207,7 @@ export function explode(sim, center, E, opts = {}) {
   sim.heliAI?.blast(center, blastR);
   if (w.floats?.length) boatBlast(sim, center, blastR * 1.5); // (fragments hole the boats: sim/boats.js)
   sim.rigid?.explosion(center, E, blastR * 1.5); // rigid bodies (physics/simPhysics.js): debris chunks, loose things, ragdolls
+  blastVehicles(w, center, E, blastR * 1.5); // the cars, boats and helicopters' bodies pushed (physics/vehicleCore.js)
 }
 
 /** Distance from p to the segment a–b. */

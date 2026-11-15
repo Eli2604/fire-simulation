@@ -53,9 +53,11 @@ export class PhysicsWorld {
     this.slop = o.slop ?? 0.004;
     this.maxBias = o.maxBias ?? 3; // m/s: the fastest position correction pushes
     this.restitutionThreshold = o.restitutionThreshold ?? 0.5;
+    this.restitutionIterations = o.restitutionIterations ?? 16; // (relax passes when something bounces)
     this.minImpactSpeed = o.minImpactSpeed ?? 0.6;
     this.sleep = { linear: 0.06, angular: 0.12, time: 0.5, ...(o.sleep ?? {}) };
     this.maxBodies = o.maxBodies ?? 1000;
+    this.timing = o.timing ?? true; // (stats.ms: the last fixed step's time)
     this.rng = makeRng(o.seed ?? 1);
     this.bodies = [];
     this.joints = [];
@@ -144,7 +146,7 @@ export class PhysicsWorld {
   }
 
   stepFixed() {
-    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const t0 = this.timing ? (typeof performance !== 'undefined' ? performance.now() : Date.now()) : 0;
     this.impacts = [];
     for (const b of this.bodies) {
       b.prevPos[0] = b.pos[0];
@@ -166,15 +168,14 @@ export class PhysicsWorld {
     this.time += this.fixedDt;
     this.stepCount++;
     for (const ev of this.impacts) for (const fn of this.impactListeners) fn(ev);
-    const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this.stats.ms = t1 - t0;
+    if (this.timing) this.stats.ms = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
   }
 
   substep(h, first) {
     const g = this.gravity;
     // 1. forces
     for (const b of this.bodies) {
-      b.im = b.type === 'dynamic' && !b.sleeping ? b.invMass : 0;
+      b.im = b.type === 'dynamic' && !b.sleeping && !b.frozen ? b.invMass : 0;
       b.iIw = b.invIworld;
       if (b.type === 'kinematic' && b.kTarget && first) {
         const kt = b.kTarget;
@@ -221,8 +222,8 @@ export class PhysicsWorld {
     // (a joint from a moving body to a sleeping one wakes it)
     for (const j of this.joints) {
       if (!j.enabled || j.broken || !j.a || !j.b) continue;
-      if (j.a.sleeping && j.b.im && j.b.sleepTime === 0) (this.wakeBody(j.a), (j.a.im = j.a.invMass));
-      if (j.b.sleeping && j.a.im && j.a.sleepTime === 0) (this.wakeBody(j.b), (j.b.im = j.b.invMass));
+      if (j.a.sleeping && j.b.im && j.b.sleepTime === 0) (this.wakeBody(j.a), (j.a.im = j.a.frozen ? 0 : j.a.invMass));
+      if (j.b.sleeping && j.a.im && j.a.sleepTime === 0) (this.wakeBody(j.b), (j.b.im = j.b.frozen ? 0 : j.b.invMass));
     }
     const joints = this.joints.filter((j) => j.enabled && !j.broken && ((j.a && j.a.im) || (j.b && j.b.im)));
     for (const j of joints) j.prepare(h, this.beta, this.maxBias);
@@ -235,7 +236,7 @@ export class PhysicsWorld {
     }
     // 5. integrate positions
     for (const b of this.bodies) {
-      if (b.type === 'static' || (b.type === 'dynamic' && b.sleeping)) continue;
+      if (b.type === 'static' || b.frozen || (b.type === 'dynamic' && b.sleeping)) continue;
       b.ccdFrom = b.ccdFrom ?? [0, 0, 0];
       b.ccdFrom[0] = b.pos[0];
       b.ccdFrom[1] = b.pos[1];
@@ -244,10 +245,22 @@ export class PhysicsWorld {
       qintegrate(b.quat, b.angVel, h);
       b.updateDerived();
     }
-    // 6. relax, restitution
-    for (let it = 0; it < this.relaxIterations; it++) {
+    // 6. relax, restitution: a contact that closed faster than the threshold and is pressed (its
+    // normal impulse > 0) is driven to −e × the closing speed it had before the solve, all of a
+    // manifold's points together over the relax iterations (not one after the other in a single
+    // pass: a square hit stays square)
+    let bouncing = false;
+    for (const m of contacts) if ((m.bounce = this.bounceTargets(m))) bouncing = true;
+    // (first the bounce of each such manifold on its own, all its points from the same velocities
+    // each pass: a symmetric hit gets a symmetric push; then the usual passes for the rest)
+    if (bouncing)
+      for (let it = 0; it < this.restitutionIterations; it++)
+        for (const m of contacts) if (m.bounce) this.bounceJacobi(m);
+    const nRelax = bouncing ? Math.max(this.relaxIterations, this.restitutionIterations) : this.relaxIterations;
+    // (the points of a manifold taken forwards and backwards in turn: no side of a square hit first)
+    for (let it = 0; it < nRelax; it++) {
       for (const j of joints) for (const r of j.active) r.solve(true);
-      for (const m of contacts) this.solveManifold(m, true);
+      for (const m of contacts) this.solveManifold(m, true, bouncing && (it & 1) === 1);
     }
     for (const m of contacts) this.restitute(m);
     for (const j of joints) j.checkBreak();
@@ -271,7 +284,8 @@ export class PhysicsWorld {
   /** Broadphase (sweep and prune over x) and narrowphase → manifolds touched this substep. */
   findContacts(h) {
     const sap = this.sap;
-    for (const b of sap) if (b.type !== 'static' || !b.aabbDone) (this.updateAabb(b, h), (b.aabbDone = true));
+    // (a sleeping body has not moved: its box is the one it fell asleep with)
+    for (const b of sap) if (!b.aabbDone || (b.type !== 'static' && !(b.sleeping && b.type === 'dynamic'))) (this.updateAabb(b, h), (b.aabbDone = true));
     // insertion sort by min x (nearly sorted from the last step), ties by id: deterministic
     for (let i = 1; i < sap.length; i++) {
       const x = sap[i];
@@ -302,12 +316,20 @@ export class PhysicsWorld {
         if (m) out.push(m);
       }
     }
-    if (this.collider)
-      for (const b of this.bodies) {
-        if (!b.im || !b.collideWorld) continue;
-        const m = this.collideWithWorld(b, step);
-        if (m) out.push(m);
+    for (const b of this.bodies) {
+      b.worldFree = false;
+      if (!b.im || !b.collideWorld) continue;
+      const C = b.collider ?? this.collider;
+      if (!C) continue;
+      // nothing of the grid (or the ground) in its box: no contacts to look for (nor for its CCD)
+      if (this.worldFreeOf(b, C)) {
+        b.worldFree = true;
+        this.manifolds.delete(-b.id);
+        continue;
       }
+      const m = this.collideWithWorld(b, step, C);
+      if (m) out.push(m);
+    }
     // drop manifolds not touched this substep
     for (const [k, m] of this.manifolds) if (m.step !== step) this.manifolds.delete(k);
     this.stats.pairs = pairs;
@@ -327,9 +349,38 @@ export class PhysicsWorld {
     return this.toManifold(key, a, b, raw, step);
   }
 
-  collideWithWorld(b, step) {
+  /**
+   * Whether the body's (fattened) box holds nothing of the grid C: then it has no world contacts.
+   * A body with b.worldCache (the vehicles) keeps a larger free box round it for a short while
+   * (0.1 s, or worldCache s), so the grid is scanned again only when it leaves that box or the time
+   * is up (the grid round a vehicle seldom changes in a tenth of a second).
+   */
+  worldFreeOf(b, C) {
+    if (!C.emptyBox) return false;
+    const bb = b.aabb;
+    const F = b._free;
+    if (F && F[7] === C && this.time < F[6] && bb[0] >= F[0] && bb[1] >= F[1] && bb[2] >= F[2] && bb[3] <= F[3] && bb[4] <= F[4] && bb[5] <= F[5]) return true;
+    if (!b.worldCache) return C.emptyBox(bb);
+    const pad = Math.max(0.3, C.h * 2);
+    const box = [bb[0] - pad, bb[1] - pad, bb[2] - pad, bb[3] + pad, bb[4] + pad, bb[5] + pad];
+    const T = b.worldCache === true ? 0.1 : b.worldCache;
+    if (C.emptyBox(box)) {
+      b._free = [box[0], box[1], box[2], box[3], box[4], box[5], this.time + T, C];
+      return true;
+    }
+    // (just over the ground, a car on its wheels: room round it but little under it)
+    box[1] = bb[1] - 0.01;
+    if (C.emptyBox(box)) {
+      b._free = [box[0], box[1], box[2], box[3], box[4], box[5], this.time + T * 0.5, C];
+      return true;
+    }
+    b._free = null;
+    return false;
+  }
+
+  collideWithWorld(b, step, C = this.collider) {
     const raw = [];
-    collideWorld(this.collider, b.shape, b.shapePos(), b.R, b.margin ?? 0.01, (n, p, depth, sb, cell, mat) => raw.push({ n: n.slice(), p: p.slice(), depth, sa: -1, sb, cell, mat }));
+    collideWorld(C, b.shape, b.shapePos(), b.R, b.margin ?? 0.01, (n, p, depth, sb, cell, mat) => raw.push({ n: n.slice(), p: p.slice(), depth, sa: -1, sb, cell, mat }));
     if (!raw.length) {
       this.manifolds.delete(-b.id);
       return null;
@@ -363,8 +414,8 @@ export class PhysicsWorld {
     if (a && b) {
       if (a.sleeping && b.im && b.sleepTime === 0) this.wakeBody(a);
       if (b.sleeping && a.im && a.sleepTime === 0) this.wakeBody(b);
-      a.im = a.type === 'dynamic' && !a.sleeping ? a.invMass : 0;
-      b.im = b.type === 'dynamic' && !b.sleeping ? b.invMass : 0;
+      a.im = a.type === 'dynamic' && !a.sleeping && !a.frozen ? a.invMass : 0;
+      b.im = b.type === 'dynamic' && !b.sleeping && !b.frozen ? b.invMass : 0;
     }
     const m = old ?? { key, a, b, points: [], isNew: true, lastEvent: -Infinity };
     m.isNew = !old;
@@ -454,8 +505,10 @@ export class PhysicsWorld {
     }
   }
 
-  solveManifold(m, relax) {
-    for (const c of m.points) {
+  solveManifold(m, relax, reverse = false) {
+    const P = m.points, n = P.length;
+    for (let k = 0; k < n; k++) {
+      const c = P[reverse ? n - 1 - k : k];
       // friction first (bounded by the normal impulse of the last iteration), then the normal
       const lim = c.friction * c.rN.lambda;
       c.rT1.lo = c.rT2.lo = -lim;
@@ -476,17 +529,37 @@ export class PhysicsWorld {
     }
   }
 
-  restitute(m) {
+  /** One simultaneous (Jacobi) pass over a manifold's normal rows towards their relax targets, each share 1/n. */
+  bounceJacobi(m) {
+    const P = m.points, n = P.length;
+    const d = this._jd ?? (this._jd = []);
+    for (let k = 0; k < n; k++) {
+      const r = P[k].rN;
+      d[k] = r.m ? -r.m * (r.cdot() - r.biasRelax) / n : 0;
+    }
+    for (let k = 0; k < n; k++) {
+      const r = P[k].rN;
+      const nl = Math.max(0, r.lambda + d[k]);
+      const dd = nl - r.lambda;
+      r.lambda = nl;
+      if (dd) r.apply(dd);
+    }
+  }
+
+  /** A manifold's pressed, fast-closing points: their bounce as the relax pass's velocity target. → any */
+  bounceTargets(m) {
+    let any = false;
     for (const c of m.points) {
       if (c.vn0 > -this.restitutionThreshold || c.rN.lambda <= 0 || c.restitution <= 0) continue;
-      const r = c.rN;
-      const vn = r.cdot();
-      let d = -r.m * (vn + c.restitution * c.vn0);
-      const nl = Math.max(0, r.lambda + d);
-      d = nl - r.lambda;
-      r.lambda = nl;
-      if (d) r.apply(d);
+      const vb = -c.restitution * c.vn0;
+      if (vb > c.rN.biasRelax) c.rN.biasRelax = vb;
+      any = true;
     }
+    return any;
+  }
+
+  /** What the solve left on a manifold's points (warm starting next substep). */
+  restitute(m) {
     for (const c of m.points) {
       c.lambdaN = c.rN.lambda;
       c.fT = [c.t1[0] * c.rT1.lambda + c.t2[0] * c.rT2.lambda, c.t1[1] * c.rT1.lambda + c.t2[1] * c.rT2.lambda, c.t1[2] * c.rT1.lambda + c.t2[2] * c.rT2.lambda];
@@ -530,7 +603,7 @@ export class PhysicsWorld {
     if (b.ccd === 'auto' && L < r * 0.5) return;
     if (L < 1e-9) return;
     const dir = vscale(T(), d, 1 / L);
-    const hit = this.sphereCast(b.ccdFrom, dir, r, L, { ignore: b, ccd: true });
+    const hit = this.sphereCast(b.ccdFrom, dir, r, L, { ignore: b, ccd: true, world: !b.worldFree && b.collideWorld, collider: b.collider });
     if (!hit) return;
     // stop at the first touch (a little back from it); the next substep's contacts take it from there
     const back = Math.max(0, hit.t - 0.002);
@@ -541,10 +614,24 @@ export class PhysicsWorld {
   /* ---------- sleeping ---------- */
   updateSleep() {
     const S = this.sleep;
-    const awake = this.bodies.filter((b) => b.type === 'dynamic' && !b.sleeping);
+    const awake = this.bodies.filter((b) => b.type === 'dynamic' && !b.sleeping && !b.frozen);
+    if (!awake.length) {
+      this.stats.bodies = this.bodies.length;
+      this.stats.islands = 0;
+      this.stats.awake = 0;
+      this.stats.sleeping = this.bodies.reduce((n, b) => n + (b.sleeping ? 1 : 0), 0);
+      return;
+    }
     for (const b of awake) {
       if (b.canSleep && vlen2(b.vel) < S.linear * S.linear && vlen2(b.angVel) < S.angular * S.angular) b.sleepTime += this.fixedDt;
       else b.sleepTime = 0;
+    }
+    // (no body ready to sleep: no island can; a driven car, a carried boat cost nothing here)
+    if (!awake.some((b) => b.canSleep && b.sleepTime >= S.time)) {
+      this.stats.bodies = this.bodies.length;
+      this.stats.awake = awake.length;
+      this.stats.sleeping = this.bodies.length - awake.length - this.bodies.reduce((n, b) => n + (b.type !== 'dynamic' || b.frozen ? 1 : 0), 0);
+      return;
     }
     // islands: union–find over contacts and joints between awake dynamic bodies
     const parent = new Map();
@@ -603,21 +690,22 @@ export class PhysicsWorld {
     const l = vlen(dir);
     const d = vscale(T(), dir, 1 / (l || 1));
     let best = null;
-    if (opts.world !== false && this.collider) {
+    const C = opts.collider ?? this.collider;
+    if (opts.world !== false && C) {
       let hit = null;
-      if (r <= 0) hit = rayGrid(this.collider, from, d, maxDist);
+      if (r <= 0) hit = rayGrid(C, from, d, maxDist);
       else {
         // march at a fraction of the radius (and of a voxel), then refine by bisection
-        const stepL = Math.max(1e-3, Math.min(r, this.collider.h) * 0.5);
+        const stepL = Math.max(1e-3, Math.min(r, C.h) * 0.5);
         let t0 = 0;
-        if (sphereHitsGrid(this.collider, from, r)) hit = { t: 0 };
+        if (sphereHitsGrid(C, from, r)) hit = { t: 0 };
         for (let t = stepL; !hit && t0 < maxDist; t += stepL) {
           const tt = Math.min(t, maxDist);
-          if (sphereHitsGrid(this.collider, [from[0] + d[0] * tt, from[1] + d[1] * tt, from[2] + d[2] * tt], r)) {
+          if (sphereHitsGrid(C, [from[0] + d[0] * tt, from[1] + d[1] * tt, from[2] + d[2] * tt], r)) {
             let lo = t0, hi = tt;
             for (let k = 0; k < 10; k++) {
               const mid = (lo + hi) / 2;
-              if (sphereHitsGrid(this.collider, [from[0] + d[0] * mid, from[1] + d[1] * mid, from[2] + d[2] * mid], r)) hi = mid;
+              if (sphereHitsGrid(C, [from[0] + d[0] * mid, from[1] + d[1] * mid, from[2] + d[2] * mid], r)) hi = mid;
               else lo = mid;
             }
             hit = { t: lo };
@@ -628,7 +716,7 @@ export class PhysicsWorld {
         }
         if (hit) {
           const c = [from[0] + d[0] * hit.t, from[1] + d[1] * hit.t, from[2] + d[2] * hit.t];
-          const g = rayGrid(this.collider, c, d, r * 2 + this.collider.h);
+          const g = rayGrid(C, c, d, r * 2 + C.h);
           hit = { t: hit.t, point: g ? g.point : c, normal: g ? g.normal : vscale(T(), d, -1), cell: g?.cell ?? -1, material: g?.material ?? 0 };
         }
       }
@@ -675,11 +763,11 @@ export class PhysicsWorld {
    * (N·s at the centre, for a 1 kg reference), or { energy } (J: as sim/explosions.js throws
    * voxels, v0 = min(80, 8 + √(E/2000)) m/s, heavy things less: × min(1, √(2/m))).
    */
-  explosion(center, { energy = 0, impulse = 0, radius = 3 } = {}) {
+  explosion(center, { energy = 0, impulse = 0, radius = 3, skip = null } = {}) {
     const v0 = energy ? Math.min(80, 8 + Math.sqrt(energy / 2000)) : impulse;
     const hit = [];
     for (const b of this.bodies) {
-      if (b.type !== 'dynamic') continue;
+      if (b.type !== 'dynamic' || (skip && skip(b))) continue;
       const d = vsub(T(), b.pos, center);
       const dist = vlen(d);
       if (dist > radius) continue;

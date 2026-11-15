@@ -72,6 +72,15 @@ export class Body {
     this.island = -1;
     this.userData = o.userData ?? null;
     this.collideWorld = o.collideWorld ?? true;
+    // the grid it meets (null: the world's collider; a vehicle has its own view of the voxels)
+    this.collider = o.collider ?? null;
+    // a body out of this step (physics/vehicleCore.js steps one kind of vehicle on its own: the
+    // others held where they are, as obstacles)
+    this.frozen = false;
+    // (worldCache: keep a free box round it, physics/world.js worldFreeOf; worldFree: none this substep)
+    this.worldCache = o.worldCache ?? false;
+    this.worldFree = false;
+    this._free = null;
     this.prevPos = this.pos.slice();
     this.prevQuat = this.quat.slice();
     this.aabb = [0, 0, 0, 0, 0, 0];

@@ -35,7 +35,8 @@ import { Body } from './body.js';
 import { DistanceJoint } from './joints.js';
 import { PhysicsWorld } from './world.js';
 import { quatFromMat3 } from './math.js';
-import { setMassProps, trackPose, trackedChange, stepExact, vehicleOwners, VEHICLE_DT } from './vehicleCore.js';
+import { setMassProps, trackPose, trackedChange, vehicleOwners, vehicleFilter, vehicleColliderOf, stepVehicles, VEHICLE_DT } from './vehicleCore.js';
+import { shipBody } from './shipCore.js';
 import { framePose, toWorld } from '../sim/buoyancy.js';
 
 const SEEN = ['X', 'Y', 'Z', 'yaw', 'roll', 'pitch', 'vx', 'vy', 'vz', 'wy', 'wr', 'wp'];
@@ -81,7 +82,21 @@ function hullBodyOf(f, PW) {
     B.canSleep = false;
     B.restitution = 0.2;
     B.rollingResistance = 0;
-    B.userData = { boat: f, onImpact: (e) => (f.core.impacts ??= []).push(e) };
+    B.userData = {
+      boat: f,
+      onImpact: (e) => (f.core.impacts ??= []).push(e),
+      // a blast: into its model's velocities (surge, sway, heave; its rates about its own axes)
+      onBlast: (dv, dw) => {
+        const b = f.body, R = K.body.R;
+        b.vx = (b.vx ?? 0) + dv[0];
+        b.vy = (b.vy ?? 0) + dv[1];
+        b.vz = (b.vz ?? 0) + dv[2];
+        b.wy = (b.wy ?? 0) + dw[1];
+        b.wr = (b.wr ?? 0) + (dw[0] * R[0] + dw[1] * R[3] + dw[2] * R[6]);
+        b.wp = (b.wp ?? 0) + (dw[0] * R[2] + dw[1] * R[5] + dw[2] * R[8]);
+      },
+    };
+    vehicleFilter(B, 'boat');
     K.body = B;
     setBoatMass(f);
   }
@@ -117,6 +132,7 @@ export function beginBoat(f, PW, w = null) {
   // (its own voxels are not in its way: the world's vehicle owners again once it has them)
   if (w && f.mb?.owner >= 0 && !w._vehicleOwners?.has(f.mb.owner)) vehicleOwners(w);
   const B = hullBodyOf(f, PW);
+  B.collider = w?.mat ? vehicleColliderOf(w, 'boat') : null;
   const b = f.body, K = f.core;
   // written from outside since the last step (placed there, set going): the body takes it
   if (K.seen) {
@@ -213,10 +229,13 @@ export function stepBoatsCore(fs, dt, env, stepOne) {
     PW.openWater = true;
   }
   for (const f of fs) beginBoat(f, PW);
+  const e0 = typeof env === 'function' ? null : env;
+  if (e0?.ship) shipBody(PW, e0.ship);
   for (const f of fs) {
     stepOne(f, dt, typeof env === 'function' ? env(f) : env);
     trackBoat(f, dt);
   }
-  stepExact(PW, dt);
-  for (const f of fs) endBoat(f, dt);
+  stepVehicles(null, PW, fs.map((f) => f.core.body), dt, () => {
+    for (const f of fs) endBoat(f, dt);
+  });
 }
