@@ -1513,6 +1513,10 @@ export class Simulation {
     for (let k = 0; k < n; k++) {
       const i = solids[k];
       const f = flags[i];
+      // (a sealed vessel's contents stay in it: the vessel model holds them, sim/vessels.js; a leak
+      // or a burst clears their tag and they run. At coarse voxels a thin tank's shell does not
+      // always close round them: a 0.5 m truck's tank is one layer of petrol, no floor under it)
+      if (f & F_LIQUID && !(f & F_FALLING) && w.vesselTag[i] < 0) continue;
       if (f & (F_FALLING | F_LIQUID) || MATERIALS[mat[i]].granular) movers.push(k);
     }
     if (!movers.length) {

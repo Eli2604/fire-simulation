@@ -2057,11 +2057,21 @@ ragdolls and the voxel world through ordinary contacts:
 
 Cars, boats and the helicopter run on the engine (the default for all three; `v.physics =
 'legacy'` puts one back on its old model, `VEHICLE_PHYSICS=legacy` all of them for a headless run).
-Each kind of a sim World has its own `PhysicsWorld` (`vehicleWorld(w, kind)`, made on demand
-whether `sim.rigid` is on or not, fixed steps of 1/120 s) on the voxel grid as the vehicles meet it
-(`vehicleCollider`: not liquid, not grass / leaves / snow, not a vehicle's own stamped voxels, the
-world's edge a wall); a car or a boat stepped outside a simulation (the tests) gets one of its
-own on its `env.ground` as a heightfield, or open water. Their models drive the bodies two ways:
+A sim World has **one** `PhysicsWorld` for everything (`sharedWorld(w)`: `sim.rigid`'s when it is on,
+else one made on demand and taken over by `sim.rigid` if it is enabled later): the cars, the boats,
+the helicopters, the debris chunks, loose things, fragments and ragdolls, the people near a moving
+car and the carrier's hull. Each body has its own view of the grid (`body.collider`: the
+vehicles' `vehicleCollider`, not liquid, not grass / leaves / snow, not a vehicle's own stamped
+voxels, the world's edge a wall; the boats' only the hull's points; the debris' the grid without
+the vehicles' stamped voxels, so a chunk hits a car's body, not its voxels) and a collision group
+(`GROUP`, `MASK`: people meet cars only; the carrier's hull meets boats, helicopters and
+debris). In a simulation's frame (`motionStep`: `beginVehicleFrame` … `endVehicleFrame`) each kind
+does its part before the step as it comes (the boats' models, the drivers, the pilots, the debris
+captured), the world steps **once** for all of them at the end, then each takes what it did
+(`stepVehicles(w, PW, bodies, dt, post)`); outside a frame (a test stepping cars, boats or a
+helicopter alone) the world steps at once with only those bodies moving and the rest held where
+they are as obstacles (`stepAlone`). A car or a boat stepped outside a simulation gets a world of
+its own on its `env.ground` as a heightfield, or open water. Their models drive the bodies two ways:
 
 - **Cars, by forces** (`carCore.js`): the chassis is a convex box (bevelled underneath) from the
   old ground clearance to the roof, the mass `massOf(c)` (load and fuel: kept up to date), the
@@ -2070,7 +2080,7 @@ own on its `env.ground` as a heightfield, or open water. Their models drive the 
   normal at the wheels; the ground under each is `env.ground` as before (voxels, ruts, sinkage,
   per-wheel grip from `sim/groundContact.js`). Every substep the body's force generator runs
   carPhysics' `subStep` unchanged (drivetrains, EV / hybrid, ESP, steering, brakes, tyres) at
-  1/360 s over the body's velocity (`env.core`: it does not move the car), with the axles' loads
+  1/120 s (1/240 s below 4 m/s, where the tyres are stiffest; the old model ran at 1/300 s) over the body's velocity (`env.core`: it does not move the car), with the axles' loads
   the springs' (so a wheel in the air grips nothing and the load moves across in a turn); the
   velocity and yaw-rate change it makes, less the slope's pull (gravity's job now), is applied as a
   force at the ground under the centre of mass and a torque about the vertical. So it dives under
@@ -2096,20 +2106,54 @@ own on its `env.ground` as a heightfield, or open water. Their models drive the 
   before) lets go of it: a free body with the velocity and spin it hit with that lands on its
   skids or tips over a skid onto its side or roof; the wreck lies where the body comes to rest.
 
-Not yet: cars, boats and helicopters are separate worlds (a car does not meet a boat), and none of
-them is in `sim.rigid`'s world (debris and loose things hit their stamped voxels, one way); the
-boats' and the helicopter's own forces are not force generators (`HullBuoyancy`, `RotorForce` are
-unused by them: the old models' integrators carry them); the carrier's hull is not a body.
-Performance: the vehicle tests take about as long as before (a car's step costs its tyre model at
-1/360 s as before, plus one body's contacts).
+What meets what in the one world:
+
+- **Helicopters** meet each other, the cars, the boats and the carrier's hull: flown into one
+  another both crash (their models decide how hard) and tumble on as free bodies; one coming down
+  on a car presses it into its springs and dents it (the car's impact code: by the energy of the
+  hit) and the wreck lies on it; skids on another body (a car's roof, a boat) are the model's
+  ground there while they touch (`h.core.under`). The airframe's mass follows the fuel burnt
+  (`heliBodyMass`).
+- **Debris** (sim.rigid's chunks, fragments, loose things) hitting a car pushes it through the
+  contact and dents it (`c.dents`, `c.struck`, damage by the impact's energy, a knock heard);
+  a boat or a helicopter takes the push in its model's velocities (`trackedChange`).
+- **Explosions** push every vehicle body in range (`blastVehicles`: as debris, v0·k·√(2m), at the
+  point of its box nearest the blast and square to that face, so a charge under one side rolls a
+  car over); a car is damaged by it ((Δv / 5)²), a boat or a flying helicopter takes it in its
+  model's velocities.
+- **People** near a moving car are upright capsules of 85 kg (`physics/peopleCore.js`) held where
+  they stand: the car gives up his share of its momentum through the contact; above 2 m/s he is
+  knocked down and hurt (sim/impact.js; you: a hit) and thrown off its side, slower he is pushed
+  aside.
+- **The carrier's hull** (the whole ship round the deck's slice: `physics/shipCore.js`, a static
+  compound of convex sections from the drawn lines, `models/carrierLines.js`) stops a boat
+  against its side or transom (a knock on steel) and a helicopter flown into it.
+- **Cars and boats** meet each other on a ramp or a beach like any two bodies.
+
+The solver applies restitution as a velocity target per contact from its closing speed before the
+solve, all of a manifold's points together (simultaneous passes, then sweeps alternating in
+direction): two cars hit square bounce back square.
+
+Performance (ms of CPU per simulated second, old model → core): a car alone about equal (it was
+~2.8×: the tyres at 1/360 s inside the force generator, CCD and contact searches on the
+heightfield every substep); a car in a voxel street ~0.75–1.0× (it was 1.45×: the voxel-corner
+test scanned the car's whole box each substep); a boat ~1.0–1.2×; a helicopter ~1.4–2× of a
+tiny 0.1–0.3 ms (it was 4–11×: a world per helicopter, its four-part airframe against the grid
+every 1/120 s); parked cars asleep cost ~0.07 ms each. What did it: a vehicle keeps a free box
+round it (the grid is scanned again only when it leaves it, at most every 0.1 s: `worldFreeOf`),
+the grid's exposed corners are found from a one-pass occupancy of the box (`gridCornersIn`), a
+carried body with nothing in its way to its target is put there without the world's steps
+(`clearWay`), a world whose moving bodies all sleep is not stepped, no island search when no body
+is ready to sleep, the tyres at 1/120 s on the move, fewer allocations (inertia, AABBs, the car's
+scratch). test/vehicleWorld.test.js checks the budgets.
 
 **Limitations**: contacts are matched by position (no persistent features); polyhedron–world
 contacts sample corners (an edge crossing a voxel edge is caught a substep late);
 capsule–polyhedron uses a line search (fine for these shapes, not exact); restamping snaps a
 turned chunk to the grid (a voxel with no free cell is lost, counted in `sim.rigid.stats.lost`);
 a chunk's fire and the air round it pause while it flies; chunk impacts do not yet crack what
-they hit; ragdolls are drawn only (the sim's casualty stays where he fell); the vehicles are in
-worlds of their own (above).
+they hit; ragdolls are drawn only (the sim's casualty stays where he fell); boats and helicopters are carried by
+their own models (above).
 
 ## Why voxels?
 

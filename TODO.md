@@ -65,14 +65,13 @@ when it is decided or done.
 
 ## Vehicles on the shared physics engine: what is left
 
-- One physics world for all: today each vehicle kind (and each helicopter) has its own, so a car
-  never meets a boat, helicopters don't meet each other, and debris hits vehicles' voxels without
-  the vehicles feeling it. Vehicles don't feel explosions either.
-- Boats and the helicopter are carried by their own models (no HullBuoyancy / RotorForce force
-  generators yet); people in a car's way are still handled by the old code (people are not bodies).
-- Car–car impacts slightly lopsided (bounce applied in one pass in the solver).
-- The carrier hull is not a body; boats against it unchecked. The helicopter's mass ignores fuel burnt.
-- Cost: car stepping ~2–3× (alone), ~40 % in a voxel street; helicopter ~4×.
+- Boats and the helicopter are still carried by their own models (velocity tracking); the
+  HullBuoyancy / RotorForce force generators are unused by them. Jets (walk/flight.js) are not
+  bodies in the shared world.
+- People are bodies only for the cars (near a moving car, this frame); a helicopter or a boat
+  does not meet them.
+- A helicopter's step costs ~1.5–2× its old model's (~0.2 ms more per simulated second: the
+  carried body's bookkeeping; the old model is tiny); cars and boats are at or under 1.3×.
 
 ## Known limits of features already built
 

@@ -668,6 +668,15 @@ export function restamp(w, B, pose, opts = {}) {
       const c = B.cellList[j];
       D.set(w.vesselTag[c], (D.get(w.vesselTag[c]) ?? 0) + w.dens[c]);
     }
+    // (not synced since it was made: what its voxels hold, each counted once however many cells
+    // its copies are in now; without this a tank's contents doubled the first time a long vehicle
+    // was restamped across a seam, and the "overfilled" tank burst: sim/vessels.js)
+    for (const vt of D.keys())
+      if (!B.vesselSum.has(vt)) {
+        let s = 0;
+        for (let k = 0; k < B.n; k++) if (S.mat[k] && S.vesselTag[k] === vt) s += S.fuel[k] * S.dens[k];
+        B.vesselSum.set(vt, s);
+      }
     for (const j of contents) {
       const c = B.cellList[j];
       const vt = w.vesselTag[c];

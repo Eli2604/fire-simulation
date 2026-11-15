@@ -6,9 +6,13 @@
  *                               of its kind (VEHICLE_PHYSICS[kind]: 'core' for all three; the
  *                               environment variable VEHICLE_PHYSICS=legacy sets them back for a
  *                               headless run, to compare)
- *   vehicleWorld(w, kind)       the PhysicsWorld a sim World's vehicles of one kind live in (made on
- *                               demand, whether sim.rigid is on or not: the tests run headless):
- *                               fixed steps of 1/120 s on the voxel grid through vehicleCollider
+ *   sharedWorld(w)              the one PhysicsWorld of a sim World: every vehicle, sim.rigid's
+ *                               debris, the people near a car, the carrier's hull (vehicleWorld(w,
+ *                               kind) is the same); GROUP / MASK who meets whom, vehicleColliderOf
+ *                               each kind's view of the grid
+ *   beginVehicleFrame, endVehicleFrame, stepVehicles, stepAlone
+ *                               one step of it per simulation frame for everything (below)
+ *   blastVehicles(w, c, E, R)   an explosion's push on the vehicle bodies
  *   vehicleCollider(w, o)       the grid as the vehicles meet it: solid voxels that are not liquid,
  *                               not soft (grass, leaves, twigs, snow: a car drives through them) and
  *                               not a vehicle's own (a car's, a boat's moving-body voxels: they are
