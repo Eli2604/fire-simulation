@@ -471,3 +471,12 @@ test('drawn on the move: its mesh in its pose, the front wheels steered, the whe
   }
   assert.ok(!c.body.hidden && !R.items.has(c));
 });
+
+test('the film cameras find the cars (cinema subjectsOf: world.cars)', async () => {
+  const { subjectsOf } = await import('../src/cinema/rig.js');
+  const c = newCar({}, { x: 3, y: 1, z: 4, yaw: 0.5 });
+  const s = subjectsOf({ cars: [c] }).filter((q) => q.kind === 'car');
+  assert.equal(s.length, 1);
+  assert.deepEqual(s[0].p, [3, 1, 4]);
+  assert.equal(s[0].yaw, 0.5);
+});

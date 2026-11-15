@@ -33,6 +33,7 @@ import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } from '../models/composite.js';
 import { TerrainEditing } from './terrainPanel.js';
 import { PatrolEditing } from './patrolPanel.js';
+import { CinemaEditing } from './cinemaPanel.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -55,6 +56,8 @@ export const GROUPS = [
   ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
   // objects of objects (models/composite.js): a group to move things as one; a place inside an object or a world
   ['Groups & rooms', ['group', 'place']],
+  // film cameras for an in-game movie (models/camera.js; the 🎬 Movie panel: editor/cinemaPanel.js)
+  ['Cinema', ['camera']],
 ];
 
 const el = (tag, attrs = {}, ...kids) => {
@@ -161,6 +164,8 @@ export class Editor {
     this.terrain = new TerrainEditing(this);
     // a squad's patrol path and area: drawn on the ground, their handles, their panel (editor/patrolPanel.js)
     this.patrol = new PatrolEditing(this);
+    // film cameras: drawn with their view and path, their lens and keys, the movie (editor/cinemaPanel.js)
+    this.cinema = new CinemaEditing(this);
     // picking in the view (a click without a drag, so orbiting still works)
     const cv = v.renderer.domElement;
     cv.addEventListener('pointerdown', (e) => {
@@ -219,6 +224,7 @@ export class Editor {
     this.gizmoHelper.visible = this.gizmo.enabled;
     this.terrain.group.visible = editing;
     this.patrol.setMode(m);
+    this.cinema.setMode(m);
     this.box.visible = editing && this.sel >= 0;
     C.playGui.domElement.style.display = m === 'play' ? '' : 'none';
     if (editing) {
@@ -380,6 +386,7 @@ export class Editor {
   refresh() {
     if (this.mode !== 'edit') return;
     const C = this.ctx, S = C.scene;
+    this.cinema.ensureNames();
     const entries = this.entries();
     if (this.sel >= entries.length) this.sel = -1;
     const o = this.outliner;
@@ -429,7 +436,7 @@ export class Editor {
       const i = index.get(ob);
       const M = MODELS[ob.type];
       const kids = kidsOf(ob).length;
-      const tag = CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : kids ? `${kids} in it` : '';
+      const tag = ob.type === 'camera' ? ob.params?.name ?? '' : CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : kids ? `${kids} in it` : '';
       list.append(el('button', { style: pad, class: i === this.sel ? 'on' : '', onclick: () => this.select(i, true) }, el('span', { class: 'n' }, String(i + 1)), M?.label?.replace(/ \(.*\)$/, '') ?? ob.type, tag ? el('span', { class: 'tag' }, tag) : null));
       for (const k of ob.children ?? []) row(k, depth + 1);
     };
@@ -526,7 +533,9 @@ export class Editor {
     gui.add(tilt('tiltX'), 'v', -180, 180, 1).name('Tilt X (°)').onFinishChange(change);
     gui.add(tilt('tiltZ'), 'v', -180, 180, 1).name('Tilt Z (°)').onFinishChange(change);
     ob.ignite ??= false;
-    if (!CHARACTERS[ob.type]) gui.add(ob, 'ignite').name('Burning at start').onFinishChange(change);
+    if (!CHARACTERS[ob.type] && !M?.inert) gui.add(ob, 'ignite').name('Burning at start').onFinishChange(change);
+    // (a film camera: its parameters in folders, its keyframes: editor/cinemaPanel.js)
+    if (M?.paramGroups) return void this.cinema.folder(gui, ob);
     const fp = gui.addFolder('Parameters');
     ob.params ??= {};
     for (const [key, spec] of Object.entries(M?.params ?? {})) {
@@ -649,6 +658,8 @@ export class Editor {
     const C = this.ctx;
     // drawing a patrol: the click is a point of it (editor/patrolPanel.js)
     if (!this.placing && this.patrol.click(e)) return;
+    // a film camera (drawn, no voxels): picked by what is drawn
+    if (!this.placing && this.cinema.click(e)) return;
     // a world of places: a click on another place's box or name goes there
     if (!this.placing && C.pickPlace?.(e)) return;
     const hit = C.view.pick(e.clientX, e.clientY);
@@ -720,10 +731,12 @@ export class Editor {
     const on = this.mode === 'edit' && i >= 0;
     this.gizmo.enabled = on;
     this.gizmoHelper.visible = on;
-    this.box.visible = on;
+    // (a film camera is drawn as one: no box round it)
+    this.box.visible = on && this.node()?.type !== 'camera';
     if (on) this.placeGizmo();
     else this.terrain.drawOutlines();
     this.patrol.draw();
+    this.cinema.draw();
     if (fromUser || this.mode === 'edit') this.refresh();
   }
 
@@ -801,6 +814,16 @@ export class Editor {
     }
     this.pending = null;
     this.rebuild();
+  }
+  /** A change that needs no rebuild of the world (a camera's lens, the movie): undo kept, the drawing redone. */
+  commitLight() {
+    const C = this.ctx;
+    if (this.pending) {
+      this.undo.push(this.pending);
+      this.redo.length = 0;
+    }
+    this.pending = JSON.stringify(sceneJson(C.scene, C.weather()));
+    this.cinema.draw();
   }
   /** The scene as it is now, for undo (before a change). */
   snapshot() {

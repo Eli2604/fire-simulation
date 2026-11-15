@@ -219,7 +219,9 @@ test('the islet\'s red and blue boats are rowing boats afloat at the pier, and t
   }
   // burn a hole in the red one's bottom: the sea comes in
   const red = w.floats[0];
-  const low = red.voxLocal.map((p, k) => [p, red.voxels[k]]).filter(([p]) => p[1] < 0.06 && Math.abs(p[0]) < 1).map(([, i]) => i);
+  // (its voxels go with it, sim/movingBody.js: where each of its planks is now)
+  const mb = red.mb;
+  const low = [...Array(mb.n).keys()].filter((k) => mb.tag[k] === 1 && mb.at[k] >= 0 && mb.local[3 * k + 1] < 0.06 && Math.abs(mb.local[3 * k]) < 1).map((k) => mb.at[k]);
   assert.ok(low.length > 2, 'planking under the waterline');
   for (const i of low.slice(0, 6)) w.clearVoxel(i);
   for (let k = 0; k < 300; k++) sim.step(1 / 30);

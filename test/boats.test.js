@@ -163,7 +163,7 @@ test('a round fired into the boat from above holes its bottom; one over it misse
   assert.ok(Math.hypot(l[0] - 0.4, l[1] - 0.2, l[2] + 0.3) < 1e-9);
 });
 
-test('in the simulation: a boat cast off on a pond drifts downwind, leaves its voxels behind, and shots hole it', () => {
+test('in the simulation: a boat cast off on a pond drifts downwind, takes its voxels with it, and shots hole it', () => {
   const sim = createSimulation({
     world: { size: [24, 3, 10], h: 0.1, ground: 'soil' },
     objects: [{ type: 'rowBoat', params: { crew: 0, moored: false }, x: 6, z: 5, y: 0.9 }],
@@ -186,7 +186,9 @@ test('in the simulation: a boat cast off on a pond drifts downwind, leaves its v
   const x0 = f.body.X;
   for (let k = 0; k < 300; k++) stepFloats(sim, 0.1);
   assert.ok(f.body.X > x0 + 2, `drifted downwind ${(f.body.X - x0).toFixed(1)} m`);
-  assert.ok(f.detached && f.own.every((i) => w.mat[i] !== MAT.wood), 'its voxels taken out of where it was');
+  assert.ok(f.detached && f.own.every((i) => w.mat[i] !== MAT.wood || f.mb.cells.has(i)), 'its voxels gone from where it was');
+  // (where it is now: sim/movingBody.js)
+  assert.ok(f.mb.cells.size > 0.8 * f.own.length && [...f.mb.cells].every((i) => w.mat[i] === MAT.wood && Math.abs(w.center(...w.coords(i))[0] - f.body.X) < 2.5), 'its voxels where it is');
   assert.ok(!f.body.sunk && f.body.holes.length === 0, 'whole');
   // stopped at the pond's edge (the world's): it does not leave it
   for (let k = 0; k < 1200; k++) stepFloats(sim, 0.1);

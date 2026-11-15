@@ -93,6 +93,65 @@ old pages `rig.html` and `camp.html` only send you on to the editor (`?mode=rig`
 `?mode=camp`; `?mode=edit` opens Edit world). `node scripts/build-rig-artifact.mjs out.html`
 builds the whole editor as one file.
 
+### Film cameras and the in-game movie
+
+**Edit world › + Add › Cinema › Film camera** puts a camera in the world (`models/camera.js`): an
+object like the others (saved with the scene, in a place / zone, moved and turned with the gizmo:
+turn = pan, *Tilt X* = tilt down, *Tilt Z* = roll), drawn in Edit world as a camera with the
+frustum of its lens, its keyframed path and the focus plane, never in Play or in the movie.
+Its properties, in folders:
+
+- **Lens**: presets 14 / 24 / 35 / 50 / 85 / 135 / 200 mm, fisheye 8 mm (a wide view bent back by
+  strong barrel distortion), anamorphic 35 / 50 mm (2× squeeze: twice the width of view, oval
+  bokeh, blue horizontal streaks, a 2.39:1 frame) or any focal length on a sensor (Super 35, full
+  frame, APS-C, Super 16, Micro 4/3, large format, IMAX, 2/3"); the field of view is worked out
+  from them (`cinema/lens.js`); the frame (letterbox 1.33 … 2.76, or the lens's own).
+- **Focus & exposure**: depth of field from the aperture (f-stop), focal length and focus
+  distance by the thin lens (manual, on its aim point, or on the subject: a focus pull follows
+  it); shutter angle and frame rate (motion blur: 180° at 24 fps is 1/48 s); ISO and exposure
+  compensation (auto exposure, or the ISO / aperture / shutter triangle by hand); white balance
+  (K) and tint.
+- **Effects**: colour grade (neutral, warm, cool, teal & orange, bleach bypass, black & white,
+  vintage film, day for night, night vision, thermal — the voxels by their heat, as Play's
+  thermal camera), film grain, vignette, chromatic aberration, lens distortion, bloom / glare,
+  anamorphic streaks, handheld shake, a dutch angle.
+- **Move** (`cinema/rig.js`): static; keyframes; a dolly (forward / back), a truck (sideways), a
+  crane (up, still looking at what it looked at); an orbit round the point it looks at or a
+  subject; follow (behind) or track (alongside) a subject with a lag. The subject is one of the
+  world's moving things (the dragon, a helicopter, a soldier of a squad, a boat, a car, a jet,
+  the phoenix; *which one*: the first, the second…); *Look: subject* keeps it in the middle of the
+  frame whatever the move.
+- **Keyframes**: scrub the timeline, frame the view, **◆ Set key here** (the view's position and
+  aim, relative to the camera object, so moving it moves the whole path, and the focal length,
+  focus, aperture and roll; with *Keys record the effects too* also the grain, bloom, exposure,
+  white balance…). Each key has its easing to the next (linear, ease in / out / in-out, smooth,
+  hold); positions follow a Catmull-Rom spline (or straight lines). **📷 Camera from view**,
+  **⇢ View from camera**, **👁 Look through** (its picture with all its effects at the scrubbed
+  time; Esc: back), **▶ Preview** (its move played).
+
+**🎬 Movie** (the mode bar): the shot list of the place you are in (saved with it as `movie`):
+each shot a camera (by its name), its length, where in the camera's move it starts, and how it
+comes in — a cut, a dissolve (from the last picture of the shot before) or a fade through black;
+the world's speed while it plays, fades in and out, from the scene's start. **▶ Play movie**
+switches to Play, hides the UI, runs the simulation and cuts between the cameras (Esc stops and
+goes back); **⏺ Record** does the same and saves the picture as a video (WebM, MediaRecorder on
+the canvas, 30 fps, no sound) when it ends or on Esc.
+
+The picture's effects are post-processing (`render/cinePost.js`, three.js `EffectComposer`): the
+frame as the view drew it (any path: plain, ambient occlusion, volumetric smoke, the flames
+over it) through a depth-of-field gather blur (a depth pre-pass of the scene), `UnrealBloomPass`,
+a motion blur that mixes in the frames before by the shutter angle, and a final shader for
+exposure, white balance, grade, streaks, distortion, aberration, vignette, grain and the bars.
+None of it runs unless a camera is looked through or a movie plays. The sums (field of view,
+circle of confusion, exposure, white balance, grades, motion blur weight, easing, keyframes,
+moves, the shot list) are pure modules in `src/cinema/` (`test/cinema.test.js`).
+
+Limits: a dissolve fades from a still of the last picture (not two cameras rendered at once);
+motion blur is an accumulation over frames (a smear behind what moves, not per-object vectors);
+the fisheye is a wide perspective view bent round (up to 150°), not a true 180° fisheye; flames,
+sparks and spray take the depth of field of what is behind them; a movie uses the cameras of the
+place you are in.
+
 ## Using it
 
 - **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
@@ -1562,9 +1621,30 @@ oar: ~1.4 m/s. AI soldiers take seats with `boardSeat` / `leaveSeat`, and the on
 thwart rows it with `row` or `rowToward` (or `f.row.goal`); see the top of `sim/boats.js`.
 A rifle round through its planking (the ray against the hull's shape in its pose) or a blast's
 fragments hole it: below the waterline they let water in by Torricelli and it settles, swamps
-and, with people aboard, sinks; above it they do nothing until it settles that deep. Once it
-has left its berth its voxels are taken out of the grid (they would stay behind): from then on
-it no longer burns.
+and, with people aboard, sinks; above it they do nothing until it settles that deep.
+
+**Its voxels go with it** (`sim/movingBody.js`, a generic moving voxel body; `stampFloat` in
+`sim/buoyancy.js`). The hull, thwarts, floorboards and oars are kept in the boat's own frame
+with their material state (temperature, fuel, char, moisture, burning, colour) and stamped into
+the grid at its pose whenever it has moved half a voxel (at most ten times a second): the state
+is read back from the grid, the old cells emptied, the voxels placed again (a voxel with no
+room, rotated onto a neighbour, is held off the grid until the next pose). So a boat set alight
+at its berth and rowed away keeps burning where it is, one adrift catches from a fire where it
+drifts, and it burns down to its waterline (what is under the water is kept wet through); its
+burnt planking lets the water in and leaves less shell to float on. A pond's water is pushed out
+of its hull and closes in where it was. Limitations: the hot gas and flames over it stay where
+they were as it moves (the fire makes new ones where it is); each restamp makes the world
+rebuild its list of solids.
+
+**The people aboard** (`sim/boatCrew.js`, drawn by `render/boatCrew.js` and, for the squads'
+men, `render/enemies.js`) sit in their seats (their feet on the floorboards, tilted with the
+boat) and do their seat's work, in step with the boat: the rower pulls (`boatRow`, its phase the
+oars' stroke: catch, drive, recovery), paddlers paddle on their sides, the helmsman's hand
+follows the tiller or the outboard's handle, a sailing crew hike out over the windward side (and
+their weight really goes out: `hikeCrew` moves their loads, so the centre of mass, and that is
+what rights it), passengers sit, aim and fire over the side. The model's *people aboard* are
+drawn as boatmen; you are drawn whenever the camera is not at your eyes (V in the boat: from
+outside).
 
 **Kinds of boat.** The same hull and physics, driven differently (`sim/boats.js`, the model's
 *kind*): the **outboard dinghy**'s motor spins up against its propeller's torque (rpm from the
@@ -1685,6 +1765,8 @@ src/audio/      procedural sound, synthesised from physics (physics.js: modes, f
 src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library, terrain areas
 src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
 src/camp/       the drone operations camp stage (stage.js; opened from the editor)
+src/cinema/     film cameras and the movie: lenses, depth of field, the look, keyframes, moves,
+                shot list (pure), and the director that plays it (render/cinePost.js: effects)
 src/main.js     app, controls panel, HUD, tools, zones
 src/scenarios.js  built-in scenes
 scripts/        headless runner, profiler and tracing helpers

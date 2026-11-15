@@ -50,6 +50,11 @@ test('every model builds voxels with its default parameters', () => {
       assert.equal(world.helis.length, 1, 'a helicopter flies (ai/helicopter.js) and is drawn, not voxels');
       continue;
     }
+    if (type === 'camera') {
+      // (a film camera for the movie: drawn in Edit world only, models/camera.js)
+      assert.equal(countOwned(world, 0), 0, 'a film camera is no voxels');
+      continue;
+    }
     if (type === 'jetFlight') {
       assert.equal(world.flights.length, 1, 'a flight of jets flies (ai/flight.js), not voxels');
       continue;

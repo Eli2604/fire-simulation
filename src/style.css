@@ -712,3 +712,175 @@ body[data-mode='edit'] #toolhint {
 #props .patrolPanel .muted {
   margin: 4px 0 2px;
 }
+/* film cameras and the movie (editor/cinemaPanel.js, cinema/director.js) */
+#modebar button.movie.on,
+#props .cinemaKeys .add button.on {
+  background: rgba(255, 154, 74, 0.25);
+  border-color: var(--accent);
+}
+#props .cinemaKeys .timeline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#props .cinemaKeys .track {
+  position: relative;
+  flex: 1;
+}
+#props .cinemaKeys .scrub {
+  width: 100%;
+  margin: 10px 0 4px;
+}
+#props .cinemaKeys .marks {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 0;
+  height: 8px;
+  pointer-events: none;
+}
+#props .cinemaKeys .mark {
+  position: absolute;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  background: #6fd3ff;
+  transform: rotate(45deg);
+}
+#props .cinemaKeys .time {
+  min-width: 52px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+#props .cinemaKeys .row input,
+#props .cinemaKeys .row select,
+#moviePanel input,
+#moviePanel select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 1px 3px;
+  min-width: 0;
+}
+#props .cinemaKeys .row input {
+  width: 46px;
+}
+#props .cinemaKeys .row select {
+  width: 78px;
+}
+#moviePanel {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(700px, calc(100vw - 16px));
+  max-height: 46vh;
+  overflow-y: auto;
+  background: rgba(18, 18, 22, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 10px;
+  z-index: 25;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+#moviePanel[hidden],
+#cineBar[hidden] {
+  display: none;
+}
+#moviePanel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+#moviePanel h3 .x {
+  margin-left: auto;
+}
+#moviePanel .muted {
+  color: var(--muted);
+  font-weight: normal;
+}
+#moviePanel button {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+#moviePanel button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+#moviePanel button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#moviePanel .shot {
+  display: grid;
+  grid-template-columns: 22px minmax(70px, 1.4fr) 1fr 1fr 1fr 1fr auto;
+  gap: 4px;
+  align-items: center;
+  margin: 2px 0;
+}
+#moviePanel .shot.head {
+  color: var(--muted);
+  font-size: 11px;
+}
+#moviePanel .shot .btns {
+  display: flex;
+  gap: 2px;
+}
+#moviePanel .shot .btns button {
+  padding: 1px 6px;
+}
+#moviePanel .opts,
+#moviePanel .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+#moviePanel .opts input[type='number'] {
+  width: 52px;
+  margin-left: 4px;
+}
+#moviePanel .actions .play {
+  background: var(--accent);
+  color: #1a1208;
+  font-weight: 600;
+}
+#moviePanel .actions .rec {
+  color: #ff6b6b;
+}
+/* a movie playing: only the picture */
+body.cinema > *:not(#view):not(#cineBar) {
+  display: none !important;
+}
+body.cinema #view {
+  cursor: none;
+  pointer-events: none; /* (no tools while it plays) */
+}
+#cineBar {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #ddd;
+  font-size: 12px;
+  z-index: 40;
+  pointer-events: none;
+}
+#cineBar.keep {
+  color: #ff8a8a;
+}

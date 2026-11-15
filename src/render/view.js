@@ -767,6 +767,8 @@ export class View {
     const stats = sim.stats;
     this.governQuality();
     this.time += dt;
+    // a world camera looked through, a movie playing (cinema/director.js): the camera put there
+    if (this.cinema?.active) this.cinema.update(dt);
     if (this.controls.enabled) this.controls.update();
     this.beginLod();
     // the places you are not in, as they look (render/scenery.js; set by main.js)
@@ -824,7 +826,7 @@ export class View {
     this.trees.update(this.time, this.cameraLocal());
     this.volcanoes.update(this.time);
     this.waterworks.update(dt, this.world.time ?? this.time);
-    this.floats.update(dt);
+    this.floats.update(dt, this.camera);
     this.cars.update(dt);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
@@ -854,6 +856,8 @@ export class View {
     r.autoClear = false;
     r.render(this.overlay, this.camera);
     r.autoClear = true;
+    // ... and its lens and look over the frame (render/cinePost.js); nothing otherwise
+    if (this.cinema?.active) this.cinema.afterRender();
   }
 
   /** The nearest burning torches each light their surroundings, flickering. */

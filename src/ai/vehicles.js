@@ -44,6 +44,7 @@
 import { heliToWorld } from './helicopter.js';
 import { framePose, toWorld as hullToWorld } from '../sim/buoyancy.js';
 import { initBoat, boardSeat, leaveSeat, rower } from '../sim/boats.js';
+import { placeCrew } from '../sim/boatCrew.js';
 import { boardCar, leaveCar, carUsable, placeAboard } from '../sim/cars.js';
 import { carToWorld, startEngine } from '../sim/carPhysics.js';
 import { driveTo } from './carDriver.js';
@@ -217,6 +218,8 @@ function floatAdapter(x) {
       m.aboard = null;
       m.seat = null;
       m.frame = null;
+      m.boatSeated = false;
+      m.animPhase = null;
       m.squadInit = undefined;
     },
     go(to) {
@@ -234,18 +237,10 @@ function floatAdapter(x) {
     arrived: () => !!V.started && !V.dest,
     place() {
       if (!x.body) return;
-      const a = plainYaw();
-      x.seats.forEach((s, i) => {
-        const m = s.who;
-        if (!m || m.player) return;
-        const S = seats[i];
-        // (his feet on the floorboards under his seat; his front (sin yaw, cos yaw): the rower faces aft)
-        m.p = V.toWorld([s.x, Math.max(x.body.hull.keel(s.x) + 0.08, s.y - 0.42), s.z]);
-        m.yaw = S.shoot && S.side ? (S.side > 0 ? a : a + Math.PI) : s.role === 'rower' ? a - Math.PI / 2 : a + Math.PI / 2;
-        m.moving = false;
-        m.speed = 0;
-        if (!m.dead && !m.vehFiring) m.anim = m.down ? 'woundedDown' : S.shoot ? 'kneelAim' : 'deskSit';
-      });
+      // (in his seat, his feet on the floorboards, posed for what he does there: rowing in step with
+      // the oars, the tiller, hiking out, sitting, aiming or firing over the side: sim/boatCrew.js)
+      if (!x.row) initBoat(x);
+      placeCrew(x);
     },
   };
   V.free = () => freeSeats(V);
