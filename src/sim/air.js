@@ -131,7 +131,7 @@ function box1D(src, dst, nx, ny, nz, r, axis, B = [0, nx - 1, 0, ny - 1, 0, nz -
  * (indoors only what comes in through doors and windows moves the air), nothing
  * in a closed room. Recomputed when walls, roofs, doors or windows change.
  */
-function windShelter(w) {
+export function windShelter(w) {
   if (w.shelter && w.shelterHash === w.regionHash) return w.shelter;
   w.shelterHash = w.regionHash;
   const { anx, any, anz, passY, occ } = w;

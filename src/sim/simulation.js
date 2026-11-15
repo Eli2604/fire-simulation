@@ -36,7 +36,8 @@ import { stepSmithies } from './smithy.js';
 import { stepPower } from './power.js';
 import { impact, bodyLanding, shockwave } from './impact.js';
 import { stepLightning } from './lightning.js';
-import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
+import { radiationGain, FLAME_TEMP } from './air.js';
+import { AirSolver } from './solverBackend.js';
 import { farRadiation } from './farRadiation.js';
 
 const SIGMA = 5.670374e-8; // Stefan–Boltzmann
@@ -109,6 +110,8 @@ export class Simulation {
     this.seed = 12345;
     this.dt = this.computeDt();
     this.radGain = radiationGain(world);
+    // where the air model runs: the CPU (sim/air.js) unless the app opts in to the GPU (sim/solverBackend.js)
+    this.airSolver = new AirSolver();
     this.stats = { hrr: 0, burning: 0, maxT: world.ambient, smoke: 0, steam: 0, liquid: 0, falling: 0, steps: 0 };
     this.burnouts = [];
     this.movers = [];
@@ -144,8 +147,9 @@ export class Simulation {
     let done = 0;
     while (done + 1e-9 < simSeconds) {
       const dt = Math.min(this.dt, simSeconds - done);
-      this.step(dt);
+      const stalled = this.step(dt) === false;
       done += dt;
+      if (stalled) break; // (waiting for the GPU's air step: the rest next frame)
       if (performance.now() - t0 > budgetMs) break;
     }
     return done;
@@ -167,7 +171,10 @@ export class Simulation {
     // what moving things (a burning arrow, a rocket's exhaust, burning debris) add to the air's
     // heat and flames is a rate: it counts for its share of the time till the air next steps
     this.airShare = Math.min(1, dt * THERMO_HZ);
-    if (this.thermoAcc + 1e-9 >= 1 / THERMO_HZ || this.noSleep) {
+    // (with the air on the GPU: while its last step is still on the way back, the thermal step
+    // waits for it, up to MAX_GPU_WAIT s: sim/solverBackend.js)
+    let stalled = false;
+    if ((this.thermoAcc + 1e-9 >= 1 / THERMO_HZ || this.noSleep) && !(stalled = this.airSolver.wait(this.thermoAcc))) {
       const tdt = this.thermoAcc;
       this.thermoAcc = 0;
       this.thermoStep(tdt, W, D);
@@ -175,6 +182,7 @@ export class Simulation {
     this.motionStep(dt, D);
     w.time += dt;
     this.stats.steps++;
+    return !stalled;
   }
 
   /** The heat, the air, fire and smoke, the weather: dt is the time since they last stepped. */
@@ -210,8 +218,7 @@ export class Simulation {
     this.fireAudio?.step(w, dt); // (only while something listens: sim/fireAudio.js)
     this.solidPassB(dt, D);
     stepVacuum(this, dt);
-    stepAir(w, W, D, dt, this);
-    blurRadiation(w, this.radGain);
+    this.airSolver.step(w, W, D, dt, this); // sim/air.js stepAir + blurRadiation, on the CPU or the GPU
     farRadiation(w); // further out: what a burning car radiates onto the house next to it
     w.airG.fill(0);
     w.airGT.fill(0);
