@@ -2053,22 +2053,63 @@ ragdolls and the voxel world through ordinary contacts:
   axis at the hub, rotor reaction and tail-rotor yaw torque; `hoverCollective()`.
 - `HullBuoyancy(body, { cells, level })`: buoyancy from a hull's own displacement cells.
 
-Migration (after the car-power and vehicle-body work has landed; not in this pass): cars
-(`sim/carPhysics.js`) keep their drivetrain, EV and steering models and hand the tyre forces to a
-`RaycastVehicle`-style adapter (its tyre model replaced by carPhysics' and `sim/groundContact.js`'s
-grip, sinkage and rolling resistance per wheel), the chassis a box / hull body whose pose drives
-`movingBody.restamp` as now; boats (`sim/buoyancy.js`) give their displacement cells to
-`HullBuoyancy` and keep water aboard, waves and added mass as one more force generator; the
-helicopter (`ai/helicopter.js`) maps its thrust and torques onto `RotorForce` and keeps its AI and
-damage model. Each switch per vehicle, behind a flag, with the existing tests as the reference.
+### The vehicles on the core (physics/vehicleCore.js, carCore.js, boatCore.js, heliCore.js)
+
+Cars, boats and the helicopter run on the engine (the default for all three; `v.physics =
+'legacy'` puts one back on its old model, `VEHICLE_PHYSICS=legacy` all of them for a headless run).
+Each kind of a sim World has its own `PhysicsWorld` (`vehicleWorld(w, kind)`, made on demand
+whether `sim.rigid` is on or not, fixed steps of 1/120 s) on the voxel grid as the vehicles meet it
+(`vehicleCollider`: not liquid, not grass / leaves / snow, not a vehicle's own stamped voxels, the
+world's edge a wall); a car or a boat stepped outside a simulation (the tests) gets one of its
+own on its `env.ground` as a heightfield, or open water. Their models drive the bodies two ways:
+
+- **Cars, by forces** (`carCore.js`): the chassis is a convex box (bevelled underneath) from the
+  old ground clearance to the roof, the mass `massOf(c)` (load and fuel: kept up to date), the
+  centre of mass at carSpec's `cgX`, `cgH`. Four spring–dampers (~1.6 Hz, ζ 0.55, preloaded with
+  the static weight: at rest the model origin is on the ground, as before) push along the ground's
+  normal at the wheels; the ground under each is `env.ground` as before (voxels, ruts, sinkage,
+  per-wheel grip from `sim/groundContact.js`). Every substep the body's force generator runs
+  carPhysics' `subStep` unchanged (drivetrains, EV / hybrid, ESP, steering, brakes, tyres) at
+  1/360 s over the body's velocity (`env.core`: it does not move the car), with the axles' loads
+  the springs' (so a wheel in the air grips nothing and the load moves across in a turn); the
+  velocity and yaw-rate change it makes, less the slope's pull (gravity's job now), is applied as a
+  force at the ground under the centre of mass and a torque about the vertical. So it dives under
+  braking, leans in a turn and, with enough side force for its track and centre of mass, rolls
+  over (a jeep turned hard across a 20° slope; not a low car, not on the flat). What it hits is a
+  contact (voxels, the other cars' bodies): each impact (closing speed, point, normal, material)
+  goes to `sim/cars.js` for the damage, the crash sound, crushed cells and `sim/impact.js`; two
+  cars exchange momentum through the contact. A parked car's body sleeps; c.x … c.roll, c.vx …
+  are the body's (written from outside, they are taken over: placed, set moving).
+- **Boats and the helicopter, by tracking** (`boatCore.js`, `heliCore.js`): the model moves its
+  vehicle as before (Archimedes over the displacement cells on the waves, water aboard, added mass,
+  drift, wind, oars, outboard, sail; the pilot model and the failures' descents), the body is given
+  the velocities that take it there (`trackPose`) and the world steps; with nothing in the way it
+  arrives exactly (the old results are kept), and what a contact or a joint changed
+  (`trackedChange`) goes back into the model's velocities. A boat's hull is the convex hull of its
+  lines (mass, G, inertia from `updateMass` with the water aboard); boats bump each other; the
+  painter is a rope `DistanceJoint` from the stem to the ring (`f.mooring.taut`, `.tension` from
+  what it takes out); against the voxels only the hull's points, and soft beds (sand, mud, soil)
+  are left to `groundContact`'s furrow; a boat built touching a pier collides with nothing until
+  clear. The helicopter's airframe (cabin, tail boom, two skids; the centre of mass high in the
+  cabin) is carried while it flies or stands; flown or tumbled into something above the ground (a
+  wall, its boom into the ground) that is its crash; its crash (`crash()` decides how hard, as
+  before) lets go of it: a free body with the velocity and spin it hit with that lands on its
+  skids or tips over a skid onto its side or roof; the wreck lies where the body comes to rest.
+
+Not yet: cars, boats and helicopters are separate worlds (a car does not meet a boat), and none of
+them is in `sim.rigid`'s world (debris and loose things hit their stamped voxels, one way); the
+boats' and the helicopter's own forces are not force generators (`HullBuoyancy`, `RotorForce` are
+unused by them: the old models' integrators carry them); the carrier's hull is not a body.
+Performance: the vehicle tests take about as long as before (a car's step costs its tyre model at
+1/360 s as before, plus one body's contacts).
 
 **Limitations**: contacts are matched by position (no persistent features); polyhedron–world
 contacts sample corners (an edge crossing a voxel edge is caught a substep late);
 capsule–polyhedron uses a line search (fine for these shapes, not exact); restamping snaps a
 turned chunk to the grid (a voxel with no free cell is lost, counted in `sim.rigid.stats.lost`);
 a chunk's fire and the air round it pause while it flies; chunk impacts do not yet crack what
-they hit; ragdolls are drawn only (the sim's casualty stays where he fell); the existing vehicles
-are not on the core yet.
+they hit; ragdolls are drawn only (the sim's casualty stays where he fell); the vehicles are in
+worlds of their own (above).
 
 ## Why voxels?
 

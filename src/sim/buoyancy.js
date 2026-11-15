@@ -6,6 +6,8 @@ import { dragAir } from './bodyAir.js';
 import { F_BURNING, F_SMOLDER } from './world.js';
 import { placeCrew } from './boatCrew.js';
 import { boatGround, rutAt } from './groundContact.js';
+import { isCore, vehicleWorld, stepExact } from '../physics/vehicleCore.js';
+import { beginBoat, trackBoat, endBoat } from '../physics/boatCore.js';
 
 /**
  * Floating bodies: Archimedes for a rigid hull (a rowing boat, the aircraft carrier).
@@ -819,9 +821,16 @@ export function bodyFromSpec(spec, rho = RHO_SEA) {
 export function stepFloats(sim, dt) {
   const w = sim.world;
   if (!w.floats?.length) return;
+  // (on the rigid-body core, physics/boatCore.js: each hull a body in the world's boat world, carried
+  // to where its model puts it, what it meets (another boat, the shore, its painter) handed back)
+  const PW = w.floats.some((f) => isCore(f, 'boat')) ? vehicleWorld(w, 'boat') : null;
+  const afloat = [];
   for (const f of w.floats) {
     if (!f.body) initFloat(sim, f);
     if (!f.water) continue; // (on dry land: it stays as it was put)
+    afloat.push(f);
+    const core = PW && isCore(f, 'boat');
+    if (core) beginBoat(f, PW, w);
     // its planking: burnt or blown away below the sheer it lets the water in (every half second)
     f.check = (f.check ?? 0) - dt;
     if (f.check <= 0 && f.mb) {
@@ -859,6 +868,13 @@ export function stepFloats(sim, dt) {
     // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js). Its own
     // voxels and what they left in it (ash and char in the bilge) are not the bed it rests on.
     if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i) || (f.mb?.owner >= 0 && w.owner[i] === f.mb.owner), toWorld, level: f.water.level });
+    if (core) trackBoat(f, dt);
+  }
+  if (PW) {
+    stepExact(PW, dt);
+    for (const f of afloat) if (isCore(f, 'boat')) endBoat(f, dt);
+  }
+  for (const f of afloat) {
     // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
     f.stampT = (f.stampT ?? 0) - dt;
     if (f.mb && f.stampT <= 0) stampFloat(w, f);
