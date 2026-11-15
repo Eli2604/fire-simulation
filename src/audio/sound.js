@@ -22,8 +22,13 @@
  *    pressure across the breach), the gas jet (its mass flow).
  *  - propagation for every positioned sound: inverse-square, air absorption of the highs, the
  *    speed-of-sound delay, muffled through walls (state.lineOfSight) and under water.
+ *  - helicopters (audio/heliSound.js, audio/heliVoices.js: state.helis): the main rotor's thud at
+ *    its blade passage frequency, the blade slap, the tail rotor, the turbine, from each one's
+ *    rotor speed, load, descent and damage, with the Doppler shift; its hits, blades flying off, crash.
  *  - CPU: a voice budget (MAX_VOICES one-shots at a time; quieter ones are dropped).
  */
+import { HeliVoices } from './heliVoices.js';
+import { heliCrashSound, heliHitSound } from './heliSound.js';
 import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
 
 const MAX_VOICES = 28;
@@ -111,11 +116,13 @@ export class SoundScape {
     this.nextCrackle = ctx.currentTime;
     this.nextBeat = ctx.currentTime;
     this.seenEvents = 0;
+    this.heliVoices = new HeliVoices(this);
   }
 
   stop() {
     if (!this.running) return;
     this.running = false;
+    this.heliVoices = null;
     this.ctx.close();
     this.ctx = null;
   }
@@ -308,8 +315,11 @@ export class SoundScape {
         if (f.wing > 0.3) this.whoosh(f.pos, wingBeat({ area: 1.2 * f.wing, span: 2.4, flapHz: 2.5, amplitude: 1 }));
       }
     }
-    // breathing
-    if (t >= this.nextBreath - 0.05) {
+    // the helicopters (each one's rotor, tail rotor and turbine from its state: audio/heliSound.js)
+    if (state.helis) this.updateHelis(state.helis);
+    // breathing (not at the controls of a helicopter: no breathing set on)
+    if (state.flying) this.nextBreath = t + 1;
+    else if (t >= this.nextBreath - 0.05) {
       const effort = Math.min(1, state.effort + state.heat * 0.5 + (state.airFraction < 0.15 ? 0.3 : 0));
       const rate = 13 + effort * 15;
       if (state.maskOff) this.breatheFree(Math.max(t, this.nextBreath), rate, effort);
@@ -317,10 +327,10 @@ export class SoundScape {
       this.nextBreath = Math.max(t, this.nextBreath) + 60 / rate;
     }
     // low air warning whistle (real sets whistle at ~55 bar of 300)
-    const low = state.airFraction < 55 / 300 && !state.maskOff;
+    const low = state.airFraction < 55 / 300 && !state.maskOff && !state.flying;
     this.whistleGain.gain.setTargetAtTime(low ? 0.06 * (0.6 + 0.4 * Math.sin(t * 18)) : 0, t, 0.02);
     // heartbeat under heat stress
-    if (state.heat > 0.3 && t >= this.nextBeat) {
+    if (state.heat > 0.3 && !state.flying && t >= this.nextBeat) {
       const bpm = 90 + state.heat * 70;
       this.thump(t, 0.5 * state.heat);
       this.thump(t + 0.22, 0.35 * state.heat);
@@ -400,9 +410,73 @@ export class SoundScape {
       } else if (e.type === 'glass') {
         // a pane breaking (heat, a blow): glass struck past its strength: shards
         this.impact({ pos: e.pos, materials: ['glass', 'glass'], energy: 40, mass: 2, speed: 6, size: 0.8, sizeA: 0.05, radius: 0.01 });
+      } else if (e.type === 'heliHit' || e.type === 'heliShed' || e.type === 'heliCrash') {
+        this.heliEvent(e);
       } else if (e.type === 'spall') {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
       }
+    }
+  }
+
+  /**
+   * The helicopters heard from where the listener is (state.listener, or `listener` { pos, vel? }):
+   * audio/heliVoices.js. The listener's velocity (the Doppler) from how it moved since the last call.
+   */
+  updateHelis(helis, listener = null) {
+    if (!this.running) return;
+    const t = this.ctx.currentTime;
+    const pos = listener?.pos ?? this.state?.listener?.pos;
+    let vel = listener?.vel;
+    if (pos && !vel) {
+      const dt = t - (this.lastLT ?? t);
+      if (this.lastLP && dt > 1e-3 && dt < 0.5) {
+        const raw = [0, 1, 2].map((i) => (pos[i] - this.lastLP[i]) / dt);
+        const k = Math.min(1, dt * 6); // (smoothed: a camera's jitter is not a speed)
+        this.lVel = (this.lVel ?? raw).map((v, i) => v + (raw[i] - v) * k);
+      }
+      if (dt > 1e-3 || !this.lastLP) {
+        this.lastLP = pos.slice();
+        this.lastLT = t;
+      }
+      vel = this.lVel ?? [0, 0, 0];
+    }
+    this.heliVoices?.update(helis, { pos, vel, underwater: !!this.state?.underwater });
+  }
+
+  /** A helicopter's event (ai/helicopter.js): a round through its skin, its blades flying off, its crash. */
+  heliEvent(e) {
+    if (!this.running) return;
+    if (e.type === 'heliHit') {
+      this.impact({ pos: e.at ?? e.pos, ...heliHitSound({ damage: e.damage, part: e.zone }) });
+    } else if (e.type === 'heliShed') {
+      // a blade (or the tail rotor) torn off at speed: the crack, the debris whirring away
+      const pl = this.place(e.pos, 1.4, 1.5, { ref: 6 });
+      if (!pl) return;
+      this.noiseTo(pl.out, pl.t0, 0.25, 'bandpass', 1800, 0.8, 1.2 * pl.gain);
+      this.noiseTo(pl.out, pl.t0 + 0.05, 1.3, 'bandpass', 700, 3, 0.5 * pl.gain);
+    } else if (e.type === 'heliCrash') {
+      // (the blow itself is sim/impact.js's event): the metal grinding, the blades striking the ground
+      const C = heliCrashSound({ severity: e.severity, energy: e.energy, omega: e.omega, blades: e.blades });
+      const pl = this.place(e.pos, C.gain, C.grind + 0.5, { ref: 6 });
+      if (!pl) return;
+      this.noiseTo(pl.out, pl.t0, C.grind, 'bandpass', 900, 0.7, 0.6 * pl.gain);
+      this.noiseTo(pl.out, pl.t0, C.grind * 0.6, 'lowpass', C.boom * 3, 0.7, 0.8 * pl.gain);
+      for (let i = 0; i < C.strikes; i++) this.noiseTo(pl.out, pl.t0 + 0.05 + i * C.interval, 0.09, 'bandpass', 1400 + 300 * Math.random(), 1.2, Math.max(0.1, 0.9 - i * 0.08) * pl.gain);
+    }
+  }
+
+  /** Heli events from a world's list of its own (the rig stage, which has no update(state)). */
+  heliEvents(events) {
+    if (!this.running || !events) return;
+    if (events !== this.heliEvList || events.length < (this.heliEvSeen ?? 0)) {
+      if (events !== this.heliEvList) this.heliEvSeen = events.length;
+      else this.heliEvSeen = 0;
+      this.heliEvList = events;
+    }
+    for (; this.heliEvSeen < events.length; this.heliEvSeen++) {
+      const e = events[this.heliEvSeen];
+      if (e.type === 'heliHit' || e.type === 'heliShed' || e.type === 'heliCrash') this.heliEvent(e);
+      else if (e.type === 'impact' && /helicopter|touchdown/.test(e.name ?? '')) this.impact(e);
     }
   }
 

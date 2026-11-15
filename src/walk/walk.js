@@ -772,6 +772,44 @@ export class Walkthrough {
     }
   }
 
+  /**
+   * The rounds, blows and fragments that hit you since the last frame (sim world.playerHits): on
+   * foot, and flying a helicopter (`flying`: no mask to crack, the helmet takes it).
+   */
+  takeHits(w, flying = false) {
+    for (const hit of w.playerHits?.splice(0) ?? []) {
+      if (this.downed) continue;
+      // what hit you matters as much as where (sim/wounds.js WEAPONS)
+      const dmg = ({ head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20) * (WEAPONS[hit.weapon ?? 'rifle']?.dmg ?? 1);
+      this.hurt(dmg);
+      if (hit.zone === 'head' && hit.weapon !== 'fist' && !flying) this.damageMask(0.35, 0.5, 0.4);
+      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : hit.weapon === 'fist' ? (hit.down ? 'Thrown – you hit the ground' : `Struck – ${hit.zone}!`) : `You are hit – ${hit.zone}!${flying ? ' (through the cockpit)' : ''}`, 2);
+    }
+  }
+
+  /** Flying a helicopter: the sound from the chase camera (the helicopters, the fire, what happens: audio/sound.js). */
+  flightSound(sim) {
+    if (!this.sound.running) return;
+    const w = sim.world;
+    const cam = this.view.camera;
+    const fwd = new THREE.Vector3();
+    cam.getWorldDirection(fwd);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+    this.sound.update({
+      listener: { pos: [cam.position.x, cam.position.y, cam.position.z], forward: [fwd.x, fwd.y, fwd.z], up: [up.x, up.y, up.z] },
+      flying: true,
+      fireSources: sim.fireAudio?.sources,
+      fireVersion: sim.fireAudio?.version,
+      wind: { speed: sim.weather?.windSpeed ?? 0 },
+      rain: sim.weather?.rain ?? 0,
+      events: w.events,
+      helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
+      effort: 0,
+      heat: 0,
+      airFraction: 1,
+    });
+  }
+
   hurt(amount) {
     if (this.downed) return;
     this.health = Math.max(0, this.health - amount);
@@ -1253,6 +1291,15 @@ export class Walkthrough {
     if (this.flight) {
       this.flight.update(dt, locked ? this.keys : new Set());
       if (sim.ai) sim.ai.player = null;
+      if (this.flight instanceof HeliFlight) {
+        // at the controls of a helicopter you are in it: the rounds through your side of the
+        // cockpit (ai/helicopter.js hit → heliOccupantHit → host.playerHit) hit you now, not
+        // once you are out; down, you let go of the controls (walk/heliFlight.js pilotDown)
+        this.takeHits(w, true);
+        if (this.downed) this.flight.pilotDown();
+        // and you hear it (and the others): audio/heliSound.js
+        this.flightSound(sim);
+      }
       return;
     }
     // in a dragon's jaws: you look out past its teeth, and then it swallows
@@ -1690,14 +1737,7 @@ export class Walkthrough {
       }
     }
     // shots that hit you
-    for (const hit of w.playerHits.splice(0)) {
-      if (this.downed) continue;
-      // what hit you matters as much as where (sim/wounds.js WEAPONS)
-      const dmg = ({ head: 45, torso: 25, legs: 15 }[hit.zone] ?? 20) * (WEAPONS[hit.weapon ?? 'rifle']?.dmg ?? 1);
-      this.hurt(dmg);
-      if (hit.zone === 'head' && hit.weapon !== 'fist') this.damageMask(0.35, 0.5, 0.4);
-      this.say(hit.weapon === 'knife' ? `Stabbed – ${hit.zone}!` : hit.weapon === 'fist' ? (hit.down ? 'Thrown – you hit the ground' : `Struck – ${hit.zone}!`) : `You are hit – ${hit.zone}!`, 2);
-    }
+    this.takeHits(w);
     // and where your lamp's beam lands (a lit spot where it should be dark gives you away)
     if ((this.lampOn || this.flashLit) && !this.downed) {
       if (!sim.ai.lamp || w.time - sim.ai.lamp.time > 0.3) {
@@ -1816,6 +1856,8 @@ export class Walkthrough {
       enemies: w.enemies,
       dragons: w.dragons,
       phoenixes: w.phoenixes,
+      // the helicopters: rotor, tail rotor, turbine from each one's state (audio/heliSound.js)
+      helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });

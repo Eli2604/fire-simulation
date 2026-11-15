@@ -1747,6 +1747,11 @@ export function mountRig(root, opts = {}) {
     phoenixRig?.update(dt);
     heliRig?.update(dt);
     forceTick(frozen ? 0 : dt);
+    // the helicopter heard (Sound on): its rotor, tail rotor, turbine, hits and crash (audio/heliSound.js)
+    if (forceSound.running) {
+      forceSound.updateHelis(heliRig?.active && heliRig.stage.h ? [heliRig.stage.h] : []);
+      if (heliRig?.active) forceSound.heliEvents(heliRig.stage.world.events);
+    }
     vehicleRig.update(dt);
     controls.update();
     renderer.render(scene, camera);
