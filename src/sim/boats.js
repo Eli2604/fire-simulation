@@ -1,4 +1,4 @@
-import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bodyFromSpec, placeAt } from './buoyancy.js';
+import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bodyFromSpec, placeAt, surfaceOf } from './buoyancy.js';
 
 /**
  * Boats that move: a rowing boat (models/rowBoat.js) afloat (sim/buoyancy.js: heave, roll, pitch
@@ -18,6 +18,32 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
  *             each stroke (2 s: drive 42 %, recovery) pushes the boat with the blade's force
  *             (up to 160 N an oar, sin-shaped over the drive: its impulse ~ 85 N·s), at the
  *             rowlock, so pulling one oar harder (or backing the other) turns it; both: ~1.4 m/s.
+ *   motor     an outboard (models/rowBoat.js motor: 'outboard', motorPower kW) on the transom: its
+ *             speed n (rpm / max rpm) from the engine's torque (the throttle; idle ~950 rpm) against
+ *             the propeller's (∝ n², less as the boat's speed through the water approaches the
+ *             prop's pitch speed, J = v / (n·V_pitch)); thrust T = T₀·n²·(1 − J)·immersion (T₀ ~130 N
+ *             a kW: a 7.5 kW one pushes the boat at ~4 m/s), steered by turning it (the tiller). Out
+ *             of the water on a wave it races (no load: to the rev limiter) and ventilates; shallow it
+ *             cavitates (cav 0..1, less thrust); its powerhead under water (swamped, sunk) stalls it.
+ *             Started by pulling the cord (startMotor: ~1.2 s of cranking).
+ *   sail      a sailing dinghy (f.sail: models/rowBoat.js sailRigOf): the apparent wind (the true
+ *             wind less its velocity) on a una rig sheeted out to at most its sheet's angle, the boom to
+ *             the lee; lift ⊥ the flow by the angle of attack (~2π·α to a stall at ~17°, then down to a
+ *             flat plate's drag), drag along it, at the centre of effort; a centreboard's lift against
+ *             the leeway (C_L 5.5·β, stalling at 1.2) and its induced drag; a rudder that steers with way
+ *             on. Its side force × the height of the centre of effort heels it (sim/buoyancy.js stepBody
+ *             env.external) against its righting moment and the crew hiking out (~0.55 m over the side
+ *             each). So: no drive in the no-go zone (< ~49° off the wind), a beam reach fastest; the
+ *             boom swings across in a gybe. f.sailState: { boom, alpha, CL, fill, luff, lee, U, drive,
+ *             side, heel, hike }; f.row.sheet 0 (in) .. 1 (out), f.row.autoTrim (trimmed to the wind).
+ *   paddle    a canoe: the stern paddler's strokes (1.3 s), on the side that turns it, else
+ *             alternating; a bow paddler adds his on the other side.
+ *   kinds     f.kind: 'row' | 'motor' | 'sail' | 'canoe' (models/rowBoat.js BOAT_PRESETS); the drive
+ *             seat (seats[i].drive): the rower, the helmsman, the stern paddler.
+ *   sound     what happens to it that is heard (audio/boatSound.js): f.sfx, a short list of events
+ *             { kind: 'slap' (the bow meeting the water: v, the closing speed), 'catch' / 'release'
+ *             (an oar's blade in / out: k), 'hit' (a round), 'start', 'stall', t, n (a counter) };
+ *             the motor's state, the speed through the water, the line's tension, the water aboard.
  *   holes     a bullet through the planking (boatShot: the ray against the hull's own shape, in
  *             its pose) or a blast's fragments (boatBlast) make holes: below the waterline the
  *             water comes in through them by Torricelli (sim/buoyancy.js inflow), its weight
@@ -39,8 +65,14 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
  *                              (cos yaw, −sin yaw)), facing (the yaw that person faces: the
  *                              rower aft, the others forward) }
  *   rower(f)                   who is at the oars (null: nobody: it does not row)
+ *   (with a motor, the one in the rower's seat is its helmsman: pull is the throttle −1..1 (astern
+ *   .. full ahead), turn the tiller; rowToward and f.row.goal start it and motor there; if it will
+ *   not run (swamped, drowned) they row)
+ *   startMotor(f), stopMotor(f)  pull the cord / switch it off
  *   row(f, pull, turn)         the rower's orders for now on: pull −1..1 (back water .. pull),
  *                              turn −1..1 (to port .. to starboard: one oar pulls, the other backs)
+ *   sailToward(f, target)      a sailing dinghy's (rowToward hands it on): steer for it, or beat
+ *                              towards it close-hauled, tacking, the sheet trimmed
  *   rowToward(f, target, { radius = 2 })  orders for this step that row it to target ([x, z] or
  *                              [x, y, z]): it turns towards it, pulls, slows as it gets there
  *                              (casts off first) → { dist, arrived } or null (nobody to row)
@@ -65,6 +97,14 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
 
 export const OARS = { period: 2.0, drive: 0.42, force: 160, catch: 0.65, finish: -0.55, inboard: 0.78, outboard: 1.55 };
 export const PERSON_KG = 80;
+/** An outboard: speeds (rpm), cylinders, strokes, thrust per kW (N), the prop's pitch speed at full rpm (m/s). */
+export const MOTOR = { idleRpm: 950, maxRpm: 5500, limit: 1.08, idleThr: 0.07, thrustPerKw: 130, pitchSpeed: 8, crank: 1.2 };
+
+/** A motor's state from its spec ({ power (kW), cyl, strokes }). */
+export function makeMotor(spec = {}) {
+  const power = spec.power ?? 7.5;
+  return { kind: 'outboard', power, cyl: spec.cyl ?? (power > 15 ? 3 : 2), strokes: spec.strokes ?? 4, n: 0, rpm: 0, running: false, cranking: 0, throttle: 0, steer: 0, load: 0, cav: 0, imm: 1, thrust: 0, racing: false, stalled: false, why: '' };
+}
 const clamp = (v, a = -1, b = 1) => (v < a ? a : v > b ? b : v);
 
 /** Seats, oars, the mooring: what a float needs to be a boat (once, when it is first stepped). */
@@ -73,7 +113,13 @@ export function initBoat(f) {
   if (!f.seats) f.seats = [{ x: 0, y: b.hull.keel(0) + 0.3, z: 0, role: 'rower' }];
   f.seats = f.seats.map((s) => ({ who: null, ...s }));
   f.rowlocks ??= [-1, 1].map((sd) => [0.3, b.hull.sheer(0.3), sd * b.hull.half(0.3, b.hull.sheer(0.3) - 0.01)]);
-  f.row = { pull: 0, turn: 0, goal: null, oars: [-1, 1].map((side) => ({ side, phase: 0, dir: 0, k: 0, sweep: 0, dip: 0, out: false })) };
+  if (f.outboard && !f.motor) f.motor = makeMotor(f.outboard);
+  f.sfx = [];
+  f.sfxN = 0;
+  f.kind = f.boatKind ?? f.params?.kind ?? 'row';
+  f.sailState = f.sail ? { boom: 0, alpha: 0, CL: 0, fill: 0, luff: 1, U: 0, drive: 0, side: 0, heel: 0, hike: 0 } : null;
+  f.heelTorque = { tx: 0, tz: 0 };
+  f.row = { pull: 0, turn: 0, goal: null, sheet: 0.6, autoTrim: false, tack: 0, paddle: { phase: 0, side: 1, dir: 0, k: 0, sweep: 0, dip: 0 }, oars: [-1, 1].map((side) => ({ side, phase: 0, dir: 0, k: 0, sweep: 0, dip: 0, out: false })) };
   b.vx ??= 0;
   b.vz ??= 0;
   b.wy ??= 0;
@@ -105,7 +151,7 @@ export function launchBoat(f, { x = 0, z = 0, level = 0, yaw = 0, rho = RHO_SEA 
 /* ------------------------------------------------------------------ seats */
 
 export function rower(f) {
-  return f.seats?.find((s) => s.role === 'rower')?.who ?? null;
+  return f.seats?.find((s) => s.drive || s.role === 'rower')?.who ?? null;
 }
 
 export function boardSeat(f, who, k) {
@@ -170,10 +216,43 @@ export function makeFast(f, anchor, length) {
   return f.mooring;
 }
 
+export function startMotor(f) {
+  const M = f.motor;
+  if (!M || M.running || M.cranking > 0) return false;
+  M.cranking = MOTOR.crank;
+  sfx(f, 'start', 1);
+  return true;
+}
+
+export function stopMotor(f) {
+  const M = f.motor;
+  if (!M) return;
+  M.running = false;
+  M.cranking = 0;
+  M.why = 'off';
+}
+
+/** Something that happened to it, to be heard (audio/boatSound.js; see the top). */
+export function sfx(f, kind, v = 1, extra = null) {
+  const q = (f.sfx ??= []);
+  f.sfxN = (f.sfxN ?? 0) + 1;
+  q.push({ kind, v, t: f.body?.t ?? 0, n: f.sfxN, ...(extra ?? {}) });
+  if (q.length > 24) q.splice(0, q.length - 24);
+}
+
+/** Under power: the motor is running (or being started). */
+export function underPower(f) {
+  return !!f.motor && (f.motor.running || f.motor.cranking > 0);
+}
+
 export function rowToward(f, target, { radius = 2 } = {}) {
   if (!rower(f)) return null;
+  if (f.kind === 'sail') return sailToward(f, target, { radius: Math.max(radius, 3) });
   const b = f.body;
   if (f.mooring) castOff(f);
+  // a motor: start it (it will not start swamped, its powerhead under water)
+  if (f.motor && !underPower(f) && !b.swamped && !b.sunk && f.motor.why !== 'drowned') startMotor(f);
+  const motor = underPower(f);
   const tz = target.length === 2 ? target[1] : target[2];
   const dx = target[0] - b.X, dz = tz - b.Z;
   const dist = Math.hypot(dx, dz);
@@ -187,10 +266,152 @@ export function rowToward(f, target, { radius = 2 } = {}) {
   // (b.wy > 0: turning to port; damped so it does not swing past)
   const turn = clamp(1.6 * a + 1.2 * b.wy);
   const speed = b.vx * c - b.vz * s;
-  let pull = Math.abs(a) > 1.0 ? 0 : Math.cos(a) * Math.min(1, (dist - radius * 0.5) / 5);
-  if (dist < radius + 3 && speed > 0.25 + 0.3 * (dist - radius)) pull = -0.5; // (coming in too fast: back water)
+  let pull = Math.abs(a) > 1.0 ? 0 : Math.cos(a) * Math.min(1, (dist - radius * 0.5) / (motor ? 12 : 5));
+  if (motor && Math.abs(a) > 1.0) pull = 0.25; // (a motor boat turns under way: the prop's wash on it)
+  if (dist < radius + 3 && speed > 0.25 + 0.3 * (dist - radius)) pull = -0.5; // (coming in too fast: back water, astern)
+  if (motor && dist < radius + 12 && speed > 0.6 + 0.35 * (dist - radius)) pull = -0.6;
   row(f, pull, turn);
   return { dist, arrived: false };
+}
+
+const wrap = (a) => ((((a + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
+/** How close to the wind a sailing dinghy is sailed when it beats (rad off the true wind: ~49°). */
+export const CLOSE_HAULED = 0.85;
+
+/**
+ * A sailing dinghy's helmsman's orders for this step to get to target: steer for it, or, when it
+ * lies in the no-go zone (closer to the wind than CLOSE_HAULED), beat towards it close-hauled on
+ * one tack and then the other (he tacks when the target has fallen well over on the other side);
+ * the sheet trimmed to the apparent wind (autoTrim). Arriving, he lets the sheet fly.
+ */
+export function sailToward(f, target, { radius = 4 } = {}) {
+  if (!rower(f)) return null;
+  const b = f.body;
+  const R = f.row;
+  if (f.mooring) castOff(f);
+  const tz = target.length === 2 ? target[1] : target[2];
+  const dx = target[0] - b.X, dz = tz - b.Z;
+  const dist = Math.hypot(dx, dz);
+  R.autoTrim = true;
+  R.pull = 0;
+  if (dist < radius) {
+    R.turn = 0;
+    R.autoTrim = false;
+    R.sheet = 1;
+    return { dist, arrived: true };
+  }
+  const w = f.windNow ?? [0, 0];
+  const bt = Math.atan2(dz, dx);
+  let head = bt;
+  if (Math.hypot(w[0], w[1]) > 0.5) {
+    const from = Math.atan2(-w[1], -w[0]);
+    const d = wrap(bt - from);
+    if (Math.abs(d) < CLOSE_HAULED + 0.05) {
+      R.tack ||= Math.sign(d) || 1;
+      if (R.tack * d < -0.3) R.tack = -R.tack;
+      head = from + R.tack * CLOSE_HAULED;
+    } else R.tack = Math.sign(d);
+  }
+  // its heading as an angle in (x, z): −yaw; + turn: to starboard (the heading angle grows)
+  const e = wrap(head - -b.yaw);
+  R.turn = clamp(1.5 * e + 0.8 * b.wy);
+  // going astern (in irons, blown back): the rudder works the other way round
+  const ahead = b.vx * Math.cos(b.yaw) - b.vz * Math.sin(b.yaw);
+  if (ahead < -0.05) R.turn = -R.turn;
+  return { dist, arrived: false, tack: R.tack };
+}
+
+/** The canoe's paddle (the stern paddler's; strokes on the side that turns it, else alternating): its force (N, ahead). */
+function stepPaddle(P, dp, ds, h, able) {
+  const D = 0.5, period = 1.3;
+  if (P.phase === 0) {
+    if (!able || Math.max(Math.abs(dp), Math.abs(ds)) < 0.05) {
+      P.dir = 0;
+      P.dip = 0;
+      P.sweep *= Math.max(0, 1 - h * 3);
+      return 0;
+    }
+    P.side = Math.abs(Math.abs(dp) - Math.abs(ds)) > 0.3 ? (Math.abs(dp) > Math.abs(ds) ? -1 : 1) : -P.side;
+    const dem = P.side < 0 ? dp : ds;
+    P.dir = Math.sign(dem) || 1;
+    P.k = Math.min(1, Math.abs(dem));
+    P.ev = 'catch';
+  }
+  const ph = P.phase;
+  let F = 0;
+  if (ph < D) {
+    F = P.dir * P.k * 140 * Math.sin((Math.PI * ph) / D);
+    P.sweep = P.dir * (0.7 - (1.4 * ph) / D);
+    P.dip = Math.min(1, Math.sin((Math.PI * ph) / D) * 4);
+  } else {
+    P.sweep = P.dir * (-0.7 + (1.4 * (ph - D)) / (1 - D));
+    P.dip = 0;
+  }
+  P.phase += h / period;
+  if (ph < D && P.phase >= D) P.ev = 'release';
+  if (P.phase >= 1) P.phase = 0;
+  return F;
+}
+
+/**
+ * The sail's force for this instant (boat frame: x ahead, z to starboard) from the apparent wind
+ * (the true wind less the boat's own velocity): the sail sheeted out to at most its sheet's
+ * angle, the boom to the lee; lift ⊥ the flow (to the lee) and drag along it, by the angle of
+ * attack (lift ~2π·α to its stall at ~17°, then down to a flat plate's drag square to the wind);
+ * heeled, less of it to the wind. A boom swinging across with the wind from astern: a gybe.
+ */
+function sailForce(f, h, wind, ex, ez) {
+  const b = f.body, S = f.sailState, rig = f.sail, R = f.row;
+  const ax = wind[0] - b.vx, az = wind[1] - b.vz;
+  const U = Math.hypot(ax, az);
+  S.U = U;
+  if (U < 0.05) {
+    S.alpha = S.CL = S.fill = S.drive = S.side = 0;
+    S.luff = 1;
+    return null;
+  }
+  const ux = (ax * ex[0] + az * ex[1]) / U, uz = (ax * ez[0] + az * ez[1]) / U;
+  const phi = Math.atan2(uz, -ux); // (the flow's direction from dead aft: + to starboard)
+  S.phi = phi;
+  // (trimmed to the apparent wind; overpowered, heeled past ~17°, the sheet eased to spill wind)
+  if (R.autoTrim) R.sheet = clamp((Math.abs(phi) - 0.42) / 1.35 + clamp((Math.abs(b.roll) - 0.3) * 2.5, 0, 0.6), 0, 1);
+  const out = 0.1 + 1.35 * clamp(R.sheet, 0, 1);
+  const want = (Math.sign(phi) || 1) * Math.min(Math.abs(phi), out);
+  // (the wind from astern crossing over: the boom, well out, swings across: a gybe)
+  if (Math.sign(want) !== Math.sign(S.boom) && Math.abs(S.boom) > 0.6 && Math.abs(phi) > 1.6 && !S.swinging) {
+    S.swinging = true;
+    sfx(f, 'gybe', U);
+  }
+  if (Math.sign(want) === Math.sign(S.boom)) S.swinging = false;
+  S.boom += clamp(want - S.boom, -3 * h, 3 * h);
+  let alpha = Math.abs(wrap(phi - S.boom));
+  alpha = Math.min(alpha, Math.PI / 2);
+  const CL = alpha < 0.3 ? 4.67 * alpha : 1.4 * Math.cos(((alpha - 0.3) / (Math.PI / 2 - 0.3)) * (Math.PI / 2));
+  const CD = 0.06 + 1.2 * Math.sin(alpha) ** 2;
+  const q = 0.5 * RHO_AIR * U * U * rig.area * Math.cos(b.roll) ** 2;
+  // the lee side of the sail: its normal the flow passes through (n · u > 0); the lift that way
+  let nx = Math.sin(S.boom), nz = Math.cos(S.boom);
+  S.lee = 1;
+  if (nx * ux + nz * uz < 0) {
+    nx = -nx;
+    nz = -nz;
+    S.lee = -1;
+  }
+  let px = uz, pz = -ux;
+  if (px * nx + pz * nz < 0) {
+    px = -px;
+    pz = -pz;
+  }
+  const Fx = q * (CL * px + CD * ux), Fz = q * (CL * pz + CD * uz);
+  S.alpha = alpha;
+  S.CL = CL;
+  S.fill = clamp((CL + CD) / 1.3, 0, 1);
+  S.luff = alpha < 0.14 ? 1 - alpha / 0.14 : 0;
+  S.drive = Fx;
+  S.side = Fz;
+  // (at its centre of effort: a third of the way along the boom, swung out with it; the drive out
+  // over the side turns it less than the bare geometry says: the hull's own asymmetry heeled, ignored)
+  return { Fx, Fz, at: [rig.ceX - (rig.boom / 3) * (Math.cos(S.boom) - 1) * 0.5, rig.ceH, 0.3 * (rig.boom / 3) * Math.sin(S.boom)] };
 }
 
 /** An oar's force (N, along the boat: + ahead) this instant, its phase advanced by h. */
@@ -203,6 +424,7 @@ function stepOar(o, demand, h, able) {
       return 0;
     }
     o.dir = Math.sign(demand);
+    o.ev = 'catch';
   }
   // (how hard: what is asked now, in the stroke's own direction; the other way: feathered)
   o.k = able ? Math.max(0, demand * o.dir) : 0;
@@ -219,6 +441,7 @@ function stepOar(o, demand, h, able) {
     o.dip = 0;
   }
   o.phase += h / OARS.period;
+  if (ph < D && o.phase >= D) o.ev = 'release';
   if (o.phase >= 1) o.phase = 0;
   return F;
 }
@@ -234,7 +457,7 @@ function draftNow(b) {
 /** One step of a boat: afloat (Archimedes), then drift, mooring and oars. */
 export function stepBoat(f, dt, env = {}) {
   if (!f.row) initBoat(f);
-  stepBody(f.body, dt, env);
+  stepBody(f.body, dt, f.sail ? { ...env, external: f.heelTorque } : env);
   stepDrift(f, dt, env);
   return f;
 }
@@ -269,7 +492,22 @@ export function stepDrift(f, dt, env = {}) {
   const Alat = 0.9 * L * T;
   const yawDrag = 0.5 * b.rho * 1.0 * T * (L / 2) ** 4 / 2;
   const wa = b.windage?.area ?? L * 0.4;
-  const able = !!rower(f) && f.params?.oars !== false && !b.sunk && !b.swamped;
+  const M = f.motor;
+  const powered = underPower(f);
+  const crewed = !!rower(f) && !b.sunk && !b.swamped;
+  const able = crewed && (f.kind === 'row' || f.kind === 'motor') && f.params?.oars !== false && !powered;
+  const paddling = crewed && f.kind === 'canoe';
+  f.windNow = wind;
+  let heel = 0, heelN = 0;
+  if (M) {
+    // the helmsman's hand on the twist grip and the tiller (the throttle follows in ~0.5 s)
+    const helm = !!rower(f);
+    const want = helm && powered ? R.pull : 0;
+    M.throttle += clamp(want - M.throttle, -2 * dt, 2 * dt);
+    M.steer = helm ? R.turn : M.steer * 0.9;
+  }
+  const surf = surfaceOf({ ...env, t: env.t ?? b.t });
+  const hull = b.hull;
   const demand = [R.pull + R.turn, R.pull - R.turn]; // port, starboard
   const n = Math.max(1, Math.ceil(dt / 0.02));
   const h = dt / n;
@@ -314,7 +552,65 @@ export function stepDrift(f, dt, env = {}) {
         const k = 4000;
         const cdamp = 1.2 * Math.sqrt(k * mass);
         const F = Math.max(0, k * (d - m.length) - cdamp * (vpx * nx + vpz * nz));
+        m.tension = F;
         force(F * nx, F * nz, rx, rz);
+      } else m.tension = 0;
+    }
+    // the motor: its thrust at the prop, turned by the tiller
+    if (M) {
+      const T = stepMotor(f, h, us, surf);
+      if (T) {
+        const dl = 0.6 * M.steer; // (+: the bow to starboard: the thrust aimed to port at the stern)
+        const lx = Math.cos(dl), lz = -Math.sin(dl);
+        const p = toWorld(b, [hull.x0 - 0.25, hull.keel(hull.x0) - 0.15, 0]);
+        force(T * (lx * ex[0] + lz * ez[0]), T * (lx * ex[1] + lz * ez[1]), p[0] - b.X, p[2] - b.Z);
+      }
+    }
+    // the sail, the centreboard, the rudder
+    if (f.sail) {
+      const rig = f.sail;
+      const sf = sailForce(f, h, wind, ex, ez);
+      if (sf) {
+        const p = toWorld(b, sf.at);
+        force(sf.Fx * ex[0] + sf.Fz * ez[0], sf.Fx * ex[1] + sf.Fz * ez[1], p[0] - b.X, p[2] - b.Z);
+        // its heeling moment: the side force over the board's centre of lateral resistance
+        heel += sf.Fz * (rig.ceH + rig.board.depth / 2);
+      }
+      heelN++;
+      const U2 = us * us + uw * uw;
+      if (U2 > 1e-4) {
+        const beta = Math.atan2(uw, Math.abs(us));
+        const cl = clamp(5.5 * beta, -1.2, 1.2);
+        const qb = 0.5 * b.rho * rig.board.area * U2;
+        const bp = toWorld(b, [rig.board.x, 0, 0]);
+        const fl = -qb * cl, fd = -qb * ((cl * cl) / (Math.PI * 3)) * Math.sign(us);
+        force(fd * ex[0] + fl * ez[0], fd * ex[1] + fl * ez[1], bp[0] - b.X, bp[2] - b.Z);
+      }
+      if (crewed) {
+        const qr = 0.5 * b.rho * rig.rudder.area * us * Math.abs(us);
+        const fr = -qr * clamp(2 * R.turn, -1.1, 1.1);
+        const rp = toWorld(b, [hull.x0 - 0.1, 0, 0]);
+        force(fr * ez[0], fr * ez[1], rp[0] - b.X, rp[2] - b.Z);
+      }
+    }
+    // the paddle(s): the stern paddler's strokes, the bow paddler's on the other side
+    if (f.kind === 'canoe') {
+      const P = R.paddle;
+      const F = stepPaddle(P, R.pull + R.turn, R.pull - R.turn, h, paddling);
+      if (P.ev) {
+        sfx(f, P.ev, P.k || 0.5, { side: P.side });
+        P.ev = null;
+      }
+      if (F) {
+        const st = f.seats[0];
+        const half = hull.half(st.x, hull.sheer(st.x) - 0.05) + 0.15;
+        const p = toWorld(b, [st.x, 0, P.side * half]);
+        force(F * ex[0], F * ex[1], p[0] - b.X, p[2] - b.Z);
+        const bow = f.seats.find((s, i) => i > 0 && s.role === 'paddler' && s.who);
+        if (bow) {
+          const q = toWorld(b, [bow.x, 0, -P.side * (hull.half(bow.x, hull.sheer(bow.x) - 0.05) + 0.15)]);
+          force(F * ex[0], F * ex[1], q[0] - b.X, q[2] - b.Z);
+        }
       }
     }
     // the oars: each at its rowlock
@@ -322,6 +618,10 @@ export function stepDrift(f, dt, env = {}) {
       const o = R.oars[k];
       const F = stepOar(o, demand[k], h, able);
       o.out = able;
+      if (o.ev) {
+        sfx(f, o.ev, o.k || 0.5, { side: o.side });
+        o.ev = null;
+      }
       if (!F) continue;
       const rl = f.rowlocks[k];
       const p = toWorld(b, rl);
@@ -342,7 +642,100 @@ export function stepDrift(f, dt, env = {}) {
     b.yaw += b.wy * h;
   }
   b.pose = framePose(b);
+  if (f.sail) {
+    // the heeling moment against the crew hiking out (each ~0.55 m out over the windward side)
+    const S = f.sailState;
+    const Mh = heelN ? heel / heelN : 0;
+    const crew = f.seats.filter((s) => s.who).length;
+    const hikeMax = crew * PERSON_KG * G * 0.55;
+    const hike = Math.min(Math.abs(Mh) * 0.8, hikeMax);
+    const M = Mh - Math.sign(Mh) * hike;
+    S.hike = hikeMax ? hike / hikeMax : 0;
+    S.heel = M;
+    // (a moment about its long axis: a side force to starboard heels it to starboard)
+    f.heelTorque = { tx: M * Math.cos(b.yaw), tz: -M * Math.sin(b.yaw) };
+  }
+  listen(f, dt, surf, [cx, cz]);
   return f;
+}
+
+/**
+ * The motor for h s at the boat's speed through the water `us` (m/s, ahead): its speed from the
+ * engine's torque against the prop's, the prop's thrust (N, ahead) back. See the top.
+ */
+function stepMotor(f, h, us, surf) {
+  const M = f.motor;
+  const b = f.body;
+  const hull = b.hull;
+  // the prop (below the transom) and the powerhead (over it): in the water, out of it
+  const prop = toWorld(b, [hull.x0 - 0.25, hull.keel(hull.x0) - 0.15, 0]);
+  const head = toWorld(b, [hull.x0 - 0.2, hull.sheer(hull.x0) + 0.35, 0]);
+  const depth = surf(prop[0], prop[2]) - prop[1];
+  M.imm = clamp(depth / 0.12 + 0.3, 0, 1);
+  M.depth = depth;
+  const drowned = surf(head[0], head[2]) > head[1] || b.sunk;
+  if (drowned || (b.swamped && M.running)) {
+    if (M.running || M.cranking > 0) {
+      M.running = false;
+      M.cranking = 0;
+      M.stalled = true;
+      M.why = drowned ? 'drowned' : 'swamped';
+      sfx(f, 'stall', M.n);
+    }
+  }
+  if (M.cranking > 0) {
+    M.cranking -= h;
+    M.n = Math.max(M.n, 0.05 + 0.03 * Math.sin(M.cranking * 40));
+    if (M.cranking <= 0) {
+      M.cranking = 0;
+      M.running = !drowned && !b.swamped;
+      M.stalled = !M.running;
+      M.why = M.running ? '' : 'flooded';
+    }
+  }
+  const dir = Math.abs(M.throttle) > 0.05 ? Math.sign(M.throttle) : 0;
+  const n = M.n;
+  const thr = M.running ? Math.max(MOTOR.idleThr, Math.abs(M.throttle)) : 0;
+  // advance ratio: how much of the prop's pitch speed the boat already goes (in its direction)
+  const J = dir ? clamp((dir * us) / (Math.max(0.05, n) * MOTOR.pitchSpeed), -0.5, 1.2) : 0;
+  // shallow, or loaded hard at low speed: it cavitates / ventilates (loses grip on the water)
+  const cav = dir ? clamp((1 - M.imm) * 1.4 + Math.max(0, n - 0.75) * clamp(1 - (us * dir) / 2.5, 0, 1) * 0.9, 0, 1) : 0;
+  const grip = M.imm * (1 - 0.55 * cav);
+  const Qe = thr * (1.1 - 0.3 * n);
+  const Ql = (dir ? grip * n * n * (1 - 0.6 * clamp(J, 0, 1)) : 0.04 * n * n) + 0.03 * n;
+  M.n = clamp(n + (Qe - Ql) * 3 * h, 0, MOTOR.limit);
+  // (in gear and lugged down below ~400 rpm: it stalls)
+  if (M.running && dir && M.n < 0.07) {
+    M.running = false;
+    M.stalled = true;
+    M.why = 'lugged';
+    sfx(f, 'stall', M.n);
+  }
+  M.rpm = M.n * MOTOR.maxRpm;
+  M.cav = cav;
+  M.racing = M.running && dir !== 0 && M.imm < 0.5 && M.n > 0.95;
+  M.load = dir ? grip * (1 - clamp(J, 0, 1)) : 0;
+  M.thrust = dir ? dir * MOTOR.thrustPerKw * M.power * M.n * M.n * Math.max(0, 1 - J) * grip * (dir < 0 ? 0.6 : 1) : 0;
+  return M.thrust;
+}
+
+/** What the hull does that is heard: the bow meeting the water (a slap, v its closing speed), grounding. */
+function listen(f, dt, surf, cur) {
+  const b = f.body;
+  const hull = b.hull;
+  const x = hull.x1 - 0.35;
+  const bow = toWorld(b, [x, hull.keel(x) + 0.03, 0]);
+  const gap = bow[1] - surf(bow[0], bow[2]);
+  const A = (f.acoustic ??= { gap, slam: 0 });
+  const closing = dt > 0 ? (A.gap - gap) / dt : 0;
+  // (out of the water and back into it, coming down at more than a few dm/s)
+  if (A.gap > 0 && gap <= 0 && closing > 0.25) sfx(f, 'slap', closing);
+  A.slam = closing;
+  A.gap = gap;
+  const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
+  A.through = (b.vx - cur[0]) * c - (b.vz - cur[1]) * s; // (ahead, through the water)
+  A.side = (b.vx - cur[0]) * s + (b.vz - cur[1]) * c;
+  A.ground = b.aground ? Math.hypot(b.vx, b.vz) : 0;
 }
 
 /* ------------------------------------------------------------------ holes */
@@ -459,6 +852,7 @@ export function boatShot(sim, from, dir, tMax, weapon = 'rifle') {
   const k = mat === 'wood' || !mat ? 1 : 0.45;
   for (const c of best.crossings) holeBoat(best.boat, c.p, area * k);
   best.holes = best.crossings.length;
+  sfx(best.boat, 'hit', area * k * 1e4, { p: best.p.slice(), weapon });
   delete best.crossings;
   if (w.events) w.events.push({ type: 'boatHit', pos: best.p.slice(), time: w.time ?? 0, name: best.boat.label ?? 'a boat' });
   return best;

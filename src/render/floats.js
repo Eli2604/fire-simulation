@@ -58,6 +58,7 @@ export class FloatRenderer {
       m.group.position.set(pose.p[0], pose.p[1], pose.p[2]);
       m.group.rotation.set(pose.roll, pose.yaw, pose.pitch);
       m.setOars?.(f.row ?? null);
+      m.setRig?.(f, it.dt ?? 0); // (the sail, the outboard, the paddle: render/rowBoatMesh.js)
       this.placeLine(it);
     } else {
       const k = f.spec?.keelY ?? 0;
@@ -88,7 +89,10 @@ export class FloatRenderer {
   }
 
   update(dt) {
-    for (const it of this.items) if (!it.gone) this.place(it);
+    for (const it of this.items) {
+      it.dt = dt;
+      if (!it.gone) this.place(it);
+    }
     this.check -= dt;
     if (this.check > 0 || !this.world) return;
     this.check = 0.5;

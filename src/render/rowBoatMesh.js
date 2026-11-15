@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rowBoatHull } from '../sim/buoyancy.js';
-import { thwartsOf } from '../models/rowBoat.js';
+import { thwartsOf, sailRigOf } from '../models/rowBoat.js';
 
 /**
  * A rowing boat drawn (models/rowBoat.js; render/floats.js puts it in its pose on the water, the
@@ -152,6 +152,8 @@ export function buildRowBoatMesh(params = {}) {
       s.arm.rotation.x = s.sd * (o.dip > 0 ? 0.28 : -0.08) * (o.dip > 0 ? o.dip : 1);
     }
   };
+  // the kind's own: a sailing dinghy's rig, an outboard, a canoe's paddle (setRig moves them)
+  const rig = buildRig(p, hull, group, { wood, oarWood, iron, shadow, mid: th[0] ? [...th].sort((a, b) => a.x - b.x)[0] : null });
   const hullMats = [outside, inside, stripe];
   for (const m of [outside, inside, stripe, wood, oarWood]) m.userData.base = m.color.clone();
   return {
@@ -159,6 +161,8 @@ export function buildRowBoatMesh(params = {}) {
     hull,
     oars,
     setOars,
+    setRig: rig.set,
+    rig,
     hullMats,
     woodMats: [wood, oarWood],
     dims: [p.length, hull.D, p.beam],
@@ -169,4 +173,147 @@ export function buildRowBoatMesh(params = {}) {
         o.material.dispose?.();
       }),
   };
+}
+
+/**
+ * The kind's own parts and how they move (setRig(f, dt): f a boat of sim/boats.js, or null at rest):
+ *   sailing dinghy  the mast, the boom swinging on its gooseneck to the boom's angle (across in a
+ *                   gybe), the sail between them: cambered to leeward as it fills, flogging (a
+ *                   travelling ripple) as it luffs; the tiller over with the helm
+ *   outboard        clamped on the transom: turned with the tiller, tilted up when it is off, the
+ *                   prop spinning with the rpm, the powerhead shaking, a wash behind it with thrust
+ *   canoe           the stern paddler's paddle: swept fore and aft on its side, dipped for the drive
+ */
+function buildRig(p, hull, group, { wood, oarWood, iron, shadow, mid }) {
+  const out = { set: () => {} };
+  const kind = p.kind ?? 'row';
+  if (kind === 'sail') {
+    const r = sailRigOf(p, hull);
+    const alu = new THREE.MeshStandardMaterial({ color: 0xc8ccd0, roughness: 0.35, metalness: 0.7 });
+    const cloth = new THREE.MeshStandardMaterial({ color: 0xf4f1e8, roughness: 0.85, side: THREE.DoubleSide });
+    const top = r.boomY + r.mast;
+    const mast = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, top - hull.keel(r.mastX), 8), alu));
+    mast.position.set(r.mastX, (top + hull.keel(r.mastX)) / 2, 0);
+    group.add(mast);
+    const pivot = new THREE.Group();
+    pivot.position.set(r.mastX, r.boomY, 0);
+    group.add(pivot);
+    const boom = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, r.boom, 8).rotateZ(Math.PI / 2), alu));
+    boom.position.x = -r.boom / 2;
+    pivot.add(boom);
+    // the sail: rows from the foot to the head, points from the luff to the leech
+    const NR = 8, NC = 6;
+    const pos = new Float32Array((NR + 1) * (NC + 1) * 3);
+    const idx = [];
+    for (let i = 0; i < NR; i++)
+      for (let j = 0; j < NC; j++) {
+        const q = i * (NC + 1) + j;
+        idx.push(q, q + NC + 1, q + 1, q + 1, q + NC + 1, q + NC + 2);
+      }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    const sail = shadow(new THREE.Mesh(geo, cloth));
+    pivot.add(sail);
+    const tiller = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.03, 0.04), wood);
+    const tp = new THREE.Group();
+    tp.position.set(hull.x0, hull.sheer(hull.x0) + 0.05, 0);
+    tiller.position.x = 0.4;
+    tp.add(tiller);
+    group.add(tp);
+    let t = 0;
+    const shape = (fill, luff, lee, U) => {
+      for (let i = 0; i <= NR; i++) {
+        const h = i / NR;
+        const chord = r.boom * (1 - h);
+        for (let j = 0; j <= NC; j++) {
+          const s = j / NC;
+          const k = (i * (NC + 1) + j) * 3;
+          const camber = 0.09 * fill * chord * 4 * s * (1 - s) * lee;
+          const flog = luff * Math.min(1, U / 6) * 0.12 * chord * s * Math.sin(t * (6 + 3.5 * U) - s * 7 - h * 3);
+          pos[k] = -chord * s;
+          pos[k + 1] = r.mast * h;
+          pos[k + 2] = camber + flog;
+        }
+      }
+      geo.attributes.position.needsUpdate = true;
+      geo.computeVertexNormals();
+    };
+    shape(0, 0, 1, 0);
+    out.set = (f, dt = 0) => {
+      t += dt;
+      const S = f?.sailState;
+      if (!S) return;
+      pivot.rotation.y = S.boom;
+      shape(S.fill, S.luff, S.lee ?? 1, S.U);
+      tp.rotation.y = -0.5 * (f.row?.turn ?? 0);
+    };
+    out.sail = sail;
+    out.boom = pivot;
+    return out;
+  }
+  if (kind === 'motor' || p.motor === 'outboard') {
+    const body = new THREE.MeshStandardMaterial({ color: 0x1d1f22, roughness: 0.4, metalness: 0.3 });
+    const clamp = new THREE.Group(); // (the clamp on the transom: it tilts about it)
+    clamp.position.set(hull.x0 - 0.05, hull.sheer(hull.x0) - 0.02, 0);
+    group.add(clamp);
+    const turn = new THREE.Group();
+    clamp.add(turn);
+    const head = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.36, 0.26), body));
+    head.position.set(-0.12, 0.25, 0);
+    const len = hull.sheer(hull.x0) - hull.keel(hull.x0) + 0.2;
+    const shaft = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.08, len, 0.05), body));
+    shaft.position.set(-0.12, -len / 2 + 0.06, 0);
+    const prop = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.03, 4, 3), iron);
+    prop.rotation.y = Math.PI / 2;
+    prop.position.set(-0.2, -len + 0.08, 0);
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.03), body);
+    handle.position.set(0.22, 0.15, 0);
+    turn.add(head, shaft, prop, handle);
+    // the wash: churned water behind the prop
+    const foam = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.6).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xf2f6f8, transparent: true, opacity: 0, depthWrite: false }));
+    foam.position.set(hull.x0 - 0.8, -0.02, 0);
+    group.add(foam);
+    let t = 0;
+    out.set = (f, dt = 0) => {
+      t += dt;
+      const M = f?.motor;
+      if (!M) return;
+      const on = M.running || M.cranking > 0;
+      // tilted up when it is off, down when it runs
+      clamp.rotation.z += ((on ? 0 : -1.1) - clamp.rotation.z) * Math.min(1, dt * 3);
+      turn.rotation.y = 0.6 * M.steer;
+      prop.rotation.x += (M.rpm / 60) * 2 * Math.PI * dt * 0.05; // (slowed: a strobe of it)
+      head.position.y = 0.25 + (on ? 0.003 * Math.sin(t * M.rpm * 0.1) : 0);
+      const w = Math.min(1, Math.abs(M.thrust) / (130 * M.power));
+      foam.material.opacity = 0.6 * w * (M.imm ?? 1);
+      foam.scale.set(1 + 2 * w, 1, 1);
+      foam.position.x = hull.x0 - 0.5 - w;
+    };
+    out.motor = turn;
+    return out;
+  }
+  if (kind === 'canoe' && mid) {
+    const pv = new THREE.Group();
+    group.add(pv);
+    const shaft = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 1.3, 6), oarWood));
+    shaft.position.y = -0.35;
+    const blade = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.48, 0.012), oarWood));
+    blade.position.y = -1.05;
+    pv.add(shaft, blade);
+    const half = hull.half(mid.x, hull.sheer(mid.x) - 0.05);
+    pv.position.set(mid.x, mid.y + 0.5, 0);
+    pv.visible = false;
+    out.set = (f) => {
+      const P = f?.row?.paddle;
+      const on = !!P && (P.dir !== 0 || Math.abs(P.sweep) > 0.02) && !!f.seats?.[0]?.who;
+      pv.visible = on;
+      if (!on) return;
+      pv.position.z = P.side * (half * 0.6);
+      pv.rotation.set(-P.side * (0.35 + 0.25 * (1 - P.dip)), 0, P.sweep, 'XYZ');
+      pv.position.y = mid.y + 0.5 + 0.2 * (1 - P.dip);
+    };
+    out.paddle = pv;
+  }
+  return out;
 }

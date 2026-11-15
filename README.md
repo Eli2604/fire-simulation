@@ -1094,7 +1094,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed. Its boats at the pier are rowing boats (below) |
-| Rowing boat | length, beam, depth, hull of wood planks / aluminium / GRP, hull, inside and stripe colours, thwarts, oars, people aboard (80 kg each on the thwarts), load on the floorboards, buoyancy tanks, the water (auto: the sea, or fresh on a pond), the place it takes you to and where you step ashore coming back, moored (and its line's length; off: it drifts). Floats by Archimedes (`sim/buoyancy.js`): put its origin at the water's level; its hidden voxels burn as their material does, and are drawn afloat in their pose (`render/floats.js`) |
+| Rowing boat | length, beam, depth, hull of wood planks / aluminium / GRP, hull, inside and stripe colours, thwarts, oars, people aboard (80 kg each on the thwarts), load on the floorboards, buoyancy tanks, the water (auto: the sea, or fresh on a pond), the place it takes you to and where you step ashore coming back, moored (and its line's length; off: it drifts), its kind (rowing boat, outboard dinghy, sailing dinghy, canoe: also the models *Motor boat*, *Sailing dinghy*, *Canoe*), the transom's width, the motor and its power, the sail's area. Floats by Archimedes (`sim/buoyancy.js`): put its origin at the water's level; its hidden voxels burn as their material does, and are drawn afloat in their pose (`render/floats.js`) |
 | Water mill | house size, wall height, wheel radius, width, paddles and their depth, axle height, race wall, millstones grinding (a load) |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Terrain | width, depth, base ground thickness, base surface, grass moisture, tall grass, water / lava level and snow depth (for a base of those), border slope, ground under the surface (the rest hollow), seed, and its **areas** (see *Terrain* below) |
@@ -1527,6 +1527,34 @@ fragments hole it: below the waterline they let water in by Torricelli and it se
 and, with people aboard, sinks; above it they do nothing until it settles that deep. Once it
 has left its berth its voxels are taken out of the grid (they would stay behind): from then on
 it no longer burns.
+
+**Kinds of boat.** The same hull and physics, driven differently (`sim/boats.js`, the model's
+*kind*): the **outboard dinghy**'s motor spins up against its propeller's torque (rpm from the
+throttle, idle ~950 rpm; thrust 130 N a kW × n² × (1 − v / pitch speed) × immersion: ~4 m/s with
+7.5 kW), races to its limiter when the prop leaves the water on a wave, cavitates shallow, stalls
+when swamped (R pulls the cord; W/S throttle, A/D tiller). The **sailing dinghy**'s una rig
+(7 m²) is driven by the apparent wind (the true wind less its own velocity): the boom sheeted
+out to at most the sheet's angle, lift ⊥ the flow by the angle of attack (stall ~17°) and drag
+along it, a centreboard's lift against the leeway, a rudder that steers only with way on. So
+the points of sail emerge: nothing in the ~49° no-go zone, a beam reach fastest; it heels with
+the side force × the height of the sail's centre of effort against its buoyancy's righting
+moment and the crew hiking out; the boom slams across in a gybe (W/S sheet, Q trim, A/D tiller;
+the AI beats upwind, tacking). The **canoe** is paddled, a stroke on the side that turns it.
+Drawn: the sail cambered as it fills and flogging as it luffs, the boom swinging, the outboard
+turning with the tiller, tilted up when off, its wash; the paddle; the oars.
+
+**Boat sounds** (`audio/boatSound.js`, pure; `audio/boatVoices.js`, Web Audio): every boat heard
+from its physics, with distance and Doppler: the outboard's note at its firing frequency
+(rpm / 60 × cylinders / 2 for a four-stroke) and loudness from the power it gives, brighter
+under load and out of the water, its cavitation hiss, the cord and a stall's sputter; the hull's
+hiss with the speed through the water, the prop's wash, the bow slapping down on a wave (from
+the bow's closing speed on the surface), water sloshing aboard, grinding aground, the mooring
+line creaking under tension; each oar or paddle stroke's catch (the rowlock's knock, the plunge)
+and release (splash, creak, drips); the sail flogging when it luffs, rushing when it draws, the
+shrouds' Aeolian hum (0.2·U / d), the boom in a gybe; rounds through the hull.
+
+The squads (`ai/vehicles.js`) board these boats by their own seats (their weight aboard), and
+the man in the drive seat rows, motors or sails them where they go (`f.row.goal`).
 
 The **aircraft carrier** floats by the same law (`carrierBody`): a Nimitz hull, 317 m on the
 waterline and 40.8 m wide there, 100 000 t with its centre of mass 15 m over the keel, floats

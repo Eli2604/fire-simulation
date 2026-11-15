@@ -1,4 +1,4 @@
-import { boardSeat, leaveSeat, seatWorld, rower, row, castOff, makeFast, boatAt } from '../sim/boats.js';
+import { boardSeat, leaveSeat, seatWorld, rower, row, castOff, makeFast, boatAt, startMotor, stopMotor, underPower } from '../sim/boats.js';
 import { toWorld } from '../sim/buoyancy.js';
 import { MAT } from '../sim/materials.js';
 
@@ -9,9 +9,13 @@ import { MAT } from '../sim/materials.js';
  * The simulation keeps stepping the boat (sim/buoyancy.js stepFloats → sim/boats.js): this gives
  * the rower's orders (row), sits you on the thwart in its pose and shows how it is doing.
  *
- * Controls
- *   W / S        pull / back water (both oars)
- *   A / D        to port / to starboard: the other oar pulls, this one backs (with W: a wide turn)
+ * Controls (by the kind of boat: f.kind)
+ *   rowing boat, canoe   W / S pull / back water (paddle); A / D to port / to starboard (the other
+ *                oar pulls, this one backs; the paddle on the side that turns it)
+ *   motor boat   W / S open / close the throttle (through neutral to astern); A / D the tiller;
+ *                R pull the cord (or switch it off); dead (swamped, drowned): row it
+ *   sailing      W / S sheet in / ease out; A / D the tiller (it steers only with way on);
+ *                Q: the sheet trimmed for you
  *   mouse        look round (you face the bow: a sculler would look over his shoulder)
  *   C            cast off / make fast (to the shore or a pier within reach of the bow)
  *   E            step ashore (land within reach of its side); Shift+E: over the side, into the water
@@ -55,13 +59,39 @@ export class BoatRow {
     return { pull: k('KeyW') - k('KeyS'), turn: k('KeyD') - k('KeyA') };
   }
 
+  /** R: pull the cord, or switch the motor off. */
+  engine() {
+    const f = this.f;
+    if (!f.motor) return;
+    if (underPower(f)) {
+      stopMotor(f);
+      return this.walk.say('Motor off', 1.5);
+    }
+    if (f.body.swamped || f.motor.why === 'drowned') return this.walk.say('The motor is drowned: row', 2);
+    startMotor(f);
+  }
+
   update(dt, keys) {
     if (this.done) return;
     const f = this.f;
     this.fireRequested = this.flaresRequested = false;
     if (rower(f) === this.me) {
       const o = BoatRow.ordersFrom(keys);
-      row(f, o.pull, o.turn);
+      if (f.kind === 'sail') {
+        // the sheet in (W) and out (S), or trimmed for you (Q)
+        if (keys.has('KeyQ')) f.row.autoTrim = true;
+        if (o.pull) {
+          f.row.autoTrim = false;
+          f.row.sheet = Math.max(0, Math.min(1, f.row.sheet - o.pull * 0.5 * dt));
+        }
+        f.row.pull = 0;
+        f.row.turn = o.turn;
+      } else if (underPower(f)) {
+        // the twist grip: it stays where you leave it
+        this.lever = Math.max(-1, Math.min(1, (this.lever ?? 0) + o.pull * 0.7 * dt));
+        if (Math.abs(this.lever) < 0.04 && !o.pull) this.lever = 0;
+        row(f, this.lever, o.turn);
+      } else row(f, o.pull, o.turn);
     }
     if (f.body.sunk || f.body.swamped) {
       this.sunkT = (this.sunkT ?? 0) + dt;
@@ -86,9 +116,13 @@ export class BoatRow {
     const ahead = b.vx * c - b.vz * sn;
     const st = f.mooring ? (f.mooring.taut ? 'moored (line taut)' : 'moored') : 'adrift';
     const holes = f.shotHoles?.length ?? 0;
+    const M = f.motor, S = f.sailState;
+    const mine = rower(f) === this.me;
+    const what = M ? `motor ${underPower(f) ? `${Math.round(M.rpm)} rpm  throttle ${Math.round(M.throttle * 100)}%${M.cav > 0.3 ? '  CAVITATING' : ''}${M.racing ? '  RACING' : ''}` : M.why === 'drowned' || M.why === 'swamped' ? 'motor drowned' : 'motor off'}   ` : S ? `sail ${S.luff > 0.5 ? 'luffing' : S.fill > 0.4 ? 'drawing' : 'slack'}  sheet ${Math.round((1 - f.row.sheet) * 100)}%${f.row.autoTrim ? ' (trimmed)' : ''}  apparent wind ${S.U.toFixed(1)} m/s  heel ${Math.round((Math.abs(b.roll) * 180) / Math.PI)}°   ` : '';
+    const keys = !mine ? 'a passenger (someone else is at the ' + (M || S ? 'helm)' : f.kind === 'canoe' ? 'paddle)' : 'oars)') : S ? 'W/S sheet in / out  Q trim  A/D tiller' : M && underPower(f) ? 'W/S throttle  A/D tiller  R motor off' : M ? 'R start the motor  W/S row  A/D turn' : f.kind === 'canoe' ? 'W/S paddle  A/D turn' : 'W/S pull / back water   A/D port / starboard';
     this.hud.textContent =
-      `BOAT  ${ahead >= 0 ? 'ahead' : 'astern'} ${Math.abs(ahead).toFixed(1)} m/s   heading ${Math.round((((-b.yaw * 180) / Math.PI) % 360 + 360) % 360)}°   ${st}\n` +
-      (rower(f) === this.me ? 'W/S pull / back water   A/D port / starboard   C ' + (f.mooring ? 'cast off' : 'make fast') : 'a passenger (someone else has the oars)') +
+      `${(f.kind ?? 'row').toUpperCase()}  ${ahead >= 0 ? 'ahead' : 'astern'} ${Math.abs(ahead).toFixed(1)} m/s   heading ${Math.round((((-b.yaw * 180) / Math.PI) % 360 + 360) % 360)}°   ${st}\n${what}${what ? '\n' : ''}` +
+      (mine ? keys + '   C ' + (f.mooring ? 'cast off' : 'make fast') : keys) +
       '   E step ashore' +
       (b.water > 0.002 ? `\n⚠ WATER ABOARD ${(b.water * 1000).toFixed(0)} l${holes ? ` (${holes} holes)` : ''}  freeboard ${Math.max(0, b.freeboard ?? 0).toFixed(2)} m` : holes ? `\n${holes} holes in the hull, above the water` : '');
   }

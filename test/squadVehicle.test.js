@@ -190,3 +190,40 @@ test('backup by helicopter: the signaller calls them in, one by one into their s
   assert.ok(Bv.sq.threat && Bv.sq.supporting?.unit === 'Alpha', 'they go to work');
   assert.ok(log.some((l) => /Bravo radio: Bravo, on the ground, moving up to Alpha/.test(l)));
 });
+
+test('retreat into a real boat (world.floats, sim/boats.js): its own seats and their weight, the rower rows it away afloat', async () => {
+  const { placeRowBoat } = await import('../src/models/rowBoat.js');
+  const { launchBoat, stepBoat, rower } = await import('../src/sim/boats.js');
+  const world = { floats: [] };
+  // a rowing boat afloat 14 m behind them (the enemy 14 m in front), cast off, its bow away from the enemy
+  const f = launchBoat(placeRowBoat({ moored: false }, [0, 0, 0], 0.1).floats[0], { x: 0, z: 14, yaw: -Math.PI / 2 });
+  world.floats.push(f);
+  const { sq, ms, log } = team({ vehicles: [f], retreat: { order: true }, host: { din: () => 65, world } });
+  const V = vehicleOf(f);
+  assert.equal(V.kind, 'boat');
+  assert.equal(V.seats.filter((s) => s.drive).length, 1);
+  const M0 = f.body.M;
+  let maxAboard = 0, rowedT = 0, deepest = 0;
+  for (let t = 0; t < 300 && !(sq.strategy?.phase === 'done' && !sq.board); t += 0.05) {
+    sq.step(0.05);
+    // the world steps the boat: afloat, rowed by whoever is at its oars
+    stepBoat(f, 0.05, { level: 0, t });
+    const aboard = f.seats.filter((s) => s.who).length;
+    maxAboard = Math.max(maxAboard, aboard);
+    if (aboard === 4) deepest = Math.max(deepest, f.body.M - M0);
+    if (f.row.oars.some((o) => o.dir !== 0)) rowedT += 0.05;
+  }
+  const L = veh(sq);
+  assert.ok(sq.retreatLog.some((l) => /^retreat:vehicle:boat:/.test(l)), sq.retreatLog.join(' | '));
+  assert.ok(at(L, /^vehicle:depart:boat:(CMD|MG|R1|R2)$/) >= 0, L.join(' | '));
+  assert.equal(maxAboard, 4, 'all four in its seats');
+  assert.ok(Math.abs(deepest - 4 * 80) < 1e-6, `their weight aboard (${deepest} kg)`);
+  assert.ok(rowedT > 10, `rowed (${rowedT.toFixed(0)} s at the oars)`);
+  assert.ok(at(L, /^vehicle:arrive:boat/) >= 0, `got there: ${L.join(' | ')}`);
+  assert.ok(f.body.Z > 50, `rowed away from the threat (${f.body.X.toFixed(1)}, ${f.body.Z.toFixed(1)})`);
+  assert.ok(!f.body.sunk && f.body.water < 0.01, 'afloat and dry');
+  assert.equal(rower(f), null, 'out of it');
+  assert.equal(f.body.M, M0, 'and their weight with them');
+  for (const m of ms) assert.ok(!m.vehTask && !m.inVehicle && near(m.p, f.body.pose.p, 4), `${m.squad} out by the boat`);
+  assert.ok(log.some((l) => /clear of the contact by boat/.test(l)), log.join(' | '));
+});

@@ -29,11 +29,17 @@
  * the three.js way, as the boats (sim/buoyancy.js rot): x forward, rotated by yaw about y, so
  * forward is (cos yaw, -sin yaw) and the right side (sin yaw, cos yaw).
  *
+ * A boat afloat in the world (w.floats: sim/boats.js, any kind: rowing boat, motor boat, sailing
+ * dinghy, canoe) is its own: its seats (boardSeat / leaveSeat: their weight aboard), the man in
+ * its drive seat (the rower, the helmsman, the stern paddler) takes it there by f.row.goal (rowed,
+ * motored, sailed: tacking upwind), afloat by Archimedes as the world steps it (or the test).
+ *
  * A boat whose model brings its own seats API (seats [{ at, role|drive, shoot }], board(m, i),
  * leave(m), rowTo(p)) plugs straight in: those are used rather than the thwarts worked out here.
  */
 import { heliToWorld } from './helicopter.js';
-import { framePose } from '../sim/buoyancy.js';
+import { framePose, toWorld as hullToWorld } from '../sim/buoyancy.js';
+import { initBoat, boardSeat, leaveSeat, rower } from '../sim/boats.js';
 
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const ADAPTER = new WeakMap();
@@ -60,7 +66,7 @@ export function vehicleOf(x) {
   if (ADAPTER.has(x)) return ADAPTER.get(x);
   const kind = kindOfVehicle(x);
   if (!kind) return null;
-  const V = kind === 'helicopter' ? heliAdapter(x) : plainAdapter(x, kind);
+  const V = kind === 'helicopter' ? heliAdapter(x) : kind === 'boat' && x.spec?.hull && Array.isArray(x.seats) && typeof x.seats[0]?.x === 'number' ? floatAdapter(x) : plainAdapter(x, kind);
   ADAPTER.set(x, V);
   return V;
 }
@@ -152,6 +158,94 @@ function boatSeats(x) {
   seats.push({ role: 'floor', label: 'Stern sheets', at: [-0.4 * L, -0.15, 0], side: 0, drive: false, shoot: false });
   return seats;
 }
+/** The seats a man of the squad takes in a boat of sim/boats.js, as the adapter has them. */
+const FLOAT_LABEL = { rower: 'Rower', helm: 'Helm', paddler: 'Paddler', crew: 'Crew', floor: 'Stern sheets' };
+
+/** A boat of the world (sim/boats.js): its own seats, its own way of going (see the top). */
+function floatAdapter(x) {
+  const ready = () => {
+    if (x.body && !x.row) initBoat(x);
+    return !!x.body;
+  };
+  const drives = (s) => !!(s.drive || s.role === 'rower');
+  const seats = x.seats.map((s, i) => ({
+    i, role: s.role, label: s.role === 'passenger' ? `Thwart ${i} ${s.z < 0 ? 'port' : 'starboard'}` : FLOAT_LABEL[s.role] ?? `Seat ${i + 1}`,
+    at: [s.x, s.y, s.z], side: Math.sign(s.z), drive: drives(s),
+    // (an open boat: the passengers fire over the side; not whoever rows, steers, paddles or trims)
+    shoot: s.role === 'passenger', crewed: false,
+  }));
+  const plainYaw = () => x.body?.yaw ?? x.yaw ?? 0;
+  const V = {
+    isVehicleAdapter: true, kind: 'boat', ref: x, id: x.id ?? x.label ?? 'boat', seats, radius: 2.8, halfW: (x.params?.beam ?? 1.45) / 2,
+    speed: x.motor ? 4 : x.sail ? 2 : 1.4,
+    p: () => x.body?.pose?.p ?? x.at ?? [0, 0, 0],
+    yaw: plainYaw,
+    toWorld(l) {
+      if (x.body) return hullToWorld(x.body, l);
+      const p = V.p(), a = plainYaw(), c = Math.cos(a), s = Math.sin(a);
+      return [p[0] + l[0] * c + l[2] * s, p[1] + l[1], p[2] - l[0] * s + l[2] * c];
+    },
+    occupant: (i) => x.seats[i]?.who ?? null,
+    holds: (m) => x.seats.some((s) => s.who === m),
+    usable: () => !!x.body && !x.body.sunk && !x.body.swamped && !x.destroyed,
+    stationary: () => !x.row?.goal && Math.hypot(x.body?.vx ?? 0, x.body?.vz ?? 0) < 0.5,
+    driver: () => (x.row ? rower(x) : x.seats.find(drives)?.who ?? null),
+    needsDriver: () => true,
+    board(m, i) {
+      if (!ready()) return false;
+      const k = boardSeat(x, m, i);
+      if (k < 0) return false;
+      Object.assign(m, { aboard: V.id, seat: k, path: null, moving: false });
+      V.place();
+      return true;
+    },
+    leave(m) {
+      if (x.row) leaveSeat(x, m);
+      // out on the side of his seat (ashore, or into the water)
+      const s = seats[m.seat] ?? seats[0];
+      if (s) {
+        const q = V.toWorld([s.at[0], 0, (s.side || 1) * (V.halfW + 0.9)]);
+        m.p = [q[0], m.p[1], q[2]];
+      }
+      m.aboard = null;
+      m.seat = null;
+      m.frame = null;
+      m.squadInit = undefined;
+    },
+    go(to) {
+      V.dest = to.slice();
+      V.started = true;
+      if (ready()) x.row.goal = { p: [to[0], to[2]], radius: 3 };
+    },
+    // (the boat itself is stepped by the world: sim/buoyancy.js stepFloats; its helmsman takes it to f.row.goal)
+    step() {
+      if (!V.dest) return;
+      if (x.row && !x.row.goal) V.dest = null;
+      V.place();
+    },
+    moving: () => !!V.dest,
+    arrived: () => !!V.started && !V.dest,
+    place() {
+      if (!x.body) return;
+      const a = plainYaw();
+      x.seats.forEach((s, i) => {
+        const m = s.who;
+        if (!m || m.player) return;
+        const S = seats[i];
+        // (his feet on the floorboards under his seat; his front (sin yaw, cos yaw): the rower faces aft)
+        m.p = V.toWorld([s.x, Math.max(x.body.hull.keel(s.x) + 0.08, s.y - 0.42), s.z]);
+        m.yaw = S.shoot && S.side ? (S.side > 0 ? a : a + Math.PI) : s.role === 'rower' ? a - Math.PI / 2 : a + Math.PI / 2;
+        m.moving = false;
+        m.speed = 0;
+        if (!m.dead && !m.vehFiring) m.anim = m.down ? 'woundedDown' : S.shoot ? 'kneelAim' : 'deskSit';
+      });
+    },
+  };
+  V.free = () => freeSeats(V);
+  V.entry = (i) => entryOf(V, i);
+  return V;
+}
+
 /** A car's seats: the driver front left, a passenger beside him, two in the back. Closed: no one shoots. */
 function carSeats() {
   return [
