@@ -68,6 +68,9 @@ export class World {
     this.faceAir = new Int32Array(N); // air cell receiving this voxel's flames/fumes
     this.tint = new Uint8Array(N * 3); // per voxel base colour (paint, variation)
     this.owner = new Int16Array(N).fill(-1); // scene object index
+    // thin parts' real geometry for heat exchange (setThin): null until some voxel has it
+    this.thinArea = null; // Float32Array(3N): real face area over h², per x-, y-, z-face (1 = a full face)
+    this.thinContact = null; // Float32Array(N): contact conductance at its faces against other solids, W/m²K (0 = none)
 
     this.solids = new Int32Array(1024);
     this.solidCount = 0;
@@ -214,6 +217,7 @@ export class World {
    */
   setVoxel(i, id, o = {}) {
     const m = MATERIALS[id];
+    this.clearThin(i);
     this.mat[i] = id;
     this.temp[i] = o.temp ?? this.ambient;
     this.skin[i] = this.temp[i];
@@ -247,7 +251,36 @@ export class World {
     this.geomVersion++;
   }
 
+  /**
+   * A voxel of a thin part (a blade, a bar, sheet metal) given its real geometry for heat exchange:
+   * ax, ay, az the real area of its piece at each of its x-, y- and z-faces over the voxel face's
+   * h² (a 5 mm × 45 mm blade lying along x in a 4 cm voxel, its flat up: ax = 0.14, ay = 1.125,
+   * az = 0.125). Convection, radiation and contact conduction go over those areas
+   * (sim/simulation.js solidPassA). hc: the contact conductance (W/m²K) where it touches a solid
+   * that is not a thin part itself (hot steel on steel ~1–5 kW/m²K), in series with the voxels'
+   * conduction; 0: plain voxel-voxel conduction. Every other voxel stays at 1, 1, 1 / 0 (the
+   * arrays are made on first use, so a world without thin parts is exactly as before).
+   */
+  setThin(i, ax, ay, az, hc = 0) {
+    if (!this.thinArea) {
+      this.thinArea = new Float32Array(3 * this.N).fill(1);
+      this.thinContact = new Float32Array(this.N);
+    }
+    this.thinArea[3 * i] = ax;
+    this.thinArea[3 * i + 1] = ay;
+    this.thinArea[3 * i + 2] = az;
+    this.thinContact[i] = hc;
+  }
+
+  /** Voxel i back to a full cube for heat exchange (setThin undone). */
+  clearThin(i) {
+    if (!this.thinArea) return;
+    this.thinArea[3 * i] = this.thinArea[3 * i + 1] = this.thinArea[3 * i + 2] = 1;
+    this.thinContact[i] = 0;
+  }
+
   clearVoxel(i) {
+    this.clearThin(i);
     this.mat[i] = 0;
     this.flags[i] = 0;
     this.fuel[i] = 0;
@@ -267,6 +300,12 @@ export class World {
 
   /** Move a voxel's full state from i to empty cell j. */
   moveVoxel(i, j) {
+    if (this.thinArea) {
+      const TA = this.thinArea;
+      for (let a = 0; a < 3; a++) TA[3 * j + a] = TA[3 * i + a];
+      this.thinContact[j] = this.thinContact[i];
+      this.clearThin(i);
+    }
     this.mat[j] = this.mat[i];
     this.temp[j] = this.temp[i];
     this.skin[j] = this.skin[i];

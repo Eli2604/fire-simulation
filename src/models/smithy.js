@@ -136,7 +136,8 @@ export default {
       poses: {
         fire: pose(-0.38, 0.66, -0.9, [-1, 0, 0]), // in the groove, its point at the far end of the pot
         temper: pose(-0.38, 0.86, -0.9, [-1, 0, 0]), // over the fire, in the hot gas
-        anvil: pose(0.14, 0.74, 0.3, [-1, 0, 0]), // flat on the anvil's face
+        // flat on the anvil's face, its working length (the outer two thirds he works) over the face
+        anvil: pose(0.42, 0.74, 0.3, [-1, 0, 0]),
         water: pose(1.02, 0.3, -0.98, [-1, 0, 0]), // under the water of the slack tub
         grind: pose(1.2, 0.86, 1.0, [-1, 0, 0]), // on the wheel
         rack: pose(1.18, 0.6, 0.66, [0, 1, 0], [-1, 0, 0]), // upright at the end of the rack, point up, cooling

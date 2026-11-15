@@ -130,11 +130,16 @@ test('the sword is voxels: heated in the fire (point first), carried with its he
   const under = w.voxelAt(anvilTop[0], anvilTop[1] - w.h, anvilTop[2]);
   assert.equal(w.mat[under], MAT.steel, 'the anvil face under it');
   assert.ok([...b.body.cells].some((c) => c === under + w.nx || Math.abs(c - (under + w.nx)) < 30), 'it lies on the anvil');
-  const anvil0 = w.temp[under];
+  // the anvil's face under it (the cells under its voxels)
+  const face = [...b.body.cells].map((c) => c - w.nx).filter((c) => w.mat[c] === MAT.steel && !b.body.cells.has(c));
+  assert.ok(face.length >= 8, `its working length lies over the anvil's face: ${face.length} voxels`);
+  const faceT = () => face.reduce((s, c) => s + w.temp[c], 0) / face.length;
+  const anvil0 = faceT();
   const hot0 = b.T;
   const tip0 = b.tip;
+  b.hammering = true; // (no smith: the blows at his rhythm, the hammered spot pressed flat)
   run(sim, 10);
-  assert.ok(w.temp[under] > anvil0 + 3, `the anvil takes its heat by contact: ${anvil0.toFixed(0)} -> ${w.temp[under].toFixed(0)} °C`);
+  assert.ok(faceT() > anvil0 + 3, `the anvil takes its heat by contact: ${anvil0.toFixed(0)} -> ${faceT().toFixed(0)} °C`);
   assert.ok(b.T < hot0 - 50, `it cools on the anvil: ${hot0.toFixed(0)} -> ${b.T.toFixed(0)} °C`);
   assert.ok((tip0 - b.tip) / (tip0 - 20) > (hot0 - b.T) / (hot0 - 20), `the thin point cools first: ${tip0.toFixed(0)} -> ${b.tip.toFixed(0)} °C`);
 
@@ -170,15 +175,109 @@ test('the sword is voxels: heated in the fire (point first), carried with its he
   const d = describeSmithy(S);
   assert.ok(d.rows.some((r) => /point .* base/.test(r)));
   for (let a = 0; a < w.NA; a++) assert.ok(Number.isFinite(w.airT[a]) && Number.isFinite(w.steam[a]));
+  // the slack tub is tight: no puddles round it from its wetted staves (they once flooded the hearth)
+  const tr = S.trough;
+  let stray = 0;
+  for (let k = 0; k < w.solidCount; k++) {
+    const i = w.solids[k];
+    if (w.mat[i] !== MAT.water) continue;
+    const [x, , z] = w.coords(i);
+    const cx = (x + 0.5) * w.h, cz = (z + 0.5) * w.h;
+    if (cx < tr.min[0] - 0.05 || cx > tr.max[0] + 0.05 || cz < tr.min[2] - 0.05 || cz > tr.max[2] + 0.05) stray++;
+  }
+  assert.ok(stray <= 2, `water outside the tub: ${stray} voxels`);
 });
 
-/** The smith's cycle on its own: the blade's heat stood in for by a lumped model (no world). */
+// ---- thin parts' real geometry for heat exchange (World.setThin, sim/simulation.js solidPassA)
+
+/** The time (s) for the mean of T() to fall below each of marks. */
+function fallTimes(sim, T, marks, dt = DT, max = 200) {
+  const out = [];
+  let t = 0;
+  for (const m of marks) {
+    while (T() > m && t < max) {
+      sim.step(dt);
+      t += dt;
+    }
+    out.push(t);
+  }
+  return out;
+}
+
+test('thin parts: a 5 mm × 45 mm steel blade cools in air as a lumped estimate says (not as 4 cm cubes); the factor defaults to 1', () => {
+  // the lumped estimate: ρ c t / (2 h), h_conv+rad ≈ 100–150 W/m²K → 1050 → 760 °C in ~30–60 s
+  const bar = (thin) => {
+    const { sim, w } = shop({ coal: 0 });
+    const h = w.h;
+    assert.equal(w.thinArea, null, 'no thin part: no arrays, every voxel a full cube');
+    const cells = [];
+    for (let k = 0; k < 10; k++) {
+      const c = w.voxelAt(1.3 + k * h, 1.3, 1.6);
+      assert.equal(w.mat[c], 0);
+      w.setVoxel(c, MAT.steel, { temp: 1050, density: (0.045 * 0.005) / (h * h), anchored: true });
+      // along x, its flat facing z: its end 5 × 45 mm, its edges 5 mm × 4 cm, its flats 45 mm × 4 cm
+      if (thin) w.setThin(c, (0.045 * 0.005) / (h * h), 0.005 / h, 0.045 / h, 1000);
+      cells.push(c);
+    }
+    const [t760, t600] = fallTimes(sim, () => cells.reduce((s, c) => s + w.temp[c], 0) / cells.length, [760, 600]);
+    return { w, cells, t760, t600 };
+  };
+  const cube = bar(false);
+  const thin = bar(true);
+  assert.ok(thin.t760 >= 28 && thin.t760 <= 60, `the thin blade 1050 → 760 °C in ${thin.t760.toFixed(1)} s (as cubes ${cube.t760.toFixed(1)} s)`);
+  assert.ok(thin.t760 > cube.t760 * 1.4, 'its real surface: slower than 4 cm cubes of the same steel');
+  // the arrays: made on first use, the factor back to 1 when the voxel goes
+  const { w, cells } = thin;
+  assert.ok(w.thinArea && Math.abs(w.thinArea[3 * cells[0] + 2] - 0.045 / w.h) < 1e-6);
+  assert.equal(w.thinArea[3 * 0], 1, 'any other voxel: a full face');
+  assert.equal(w.thinContact[0], 0);
+  w.clearVoxel(cells[0]);
+  assert.deepEqual([...w.thinArea.subarray(3 * cells[0], 3 * cells[0] + 3)], [1, 1, 1]);
+  assert.equal(w.thinContact[cells[0]], 0);
+});
+
+test('thin parts: the sword cools in air in tens of seconds, somewhat faster on the anvil under the hammer; the quench is still fast and hardens it', () => {
+  const heat = (place, T0) => {
+    const { sim, w, S } = shop();
+    const b = (S.blade = newBlade(S, w.ambient));
+    b.place = place === 'water' ? 'tongs' : place;
+    sim.step(0.01);
+    for (let k = 0; k < b.body.n; k++) w.temp[b.body.at[k]] = w.skin[b.body.at[k]] = T0;
+    b.place = place;
+    b.hammering = place === 'anvil';
+    sim.step(0.01);
+    return { sim, w, S, b };
+  };
+  // (b.T: the mean over its working length, 3–5 mm thick)
+  const air = heat('tongs', 1000);
+  const [airT] = fallTimes(air.sim, () => air.b.T, [HEATS.working]);
+  const anvil = heat('anvil', 1000);
+  const [anvilT] = fallTimes(anvil.sim, () => anvil.b.T, [HEATS.working]);
+  assert.ok(airT >= 15 && airT <= 50, `in the air, forging heat → working heat in ${airT.toFixed(1)} s`);
+  assert.ok(anvilT >= 10 && anvilT < airT * 0.9 && anvilT > airT * 0.4, `on the anvil, hammered: ${anvilT.toFixed(1)} s (in the air ${airT.toFixed(1)} s)`);
+  // the blade's voxels carry their real geometry; the anvil's face is pressed under the hammer only
+  const { w, b } = anvil;
+  const hc = [...b.body.cells].map((c) => w.thinContact[c]);
+  assert.ok(hc.filter((x) => x >= 1000).length >= 1 && hc.filter((x) => x >= 1000).length <= 2, `one spot pressed: ${hc.join(', ')}`);
+  // the quench: from cherry red to under 200 °C in a few seconds, hardened
+  const q = heat('water', HEATS.hardening);
+  const [t200] = fallTimes(q.sim, () => q.b.Tpeak, [200], 0.05, 30);
+  assert.ok(t200 < 5, `quenched 830 → 200 °C (its hottest voxel) in ${t200.toFixed(1)} s`);
+  q.sim.step(0.5);
+  assert.ok(q.b.martensite > 0.6 && q.b.hardness > 50 && q.b.hardness < 67, `hardened: martensite ${(q.b.martensite * 100).toFixed(0)} %, ${q.b.hardness.toFixed(0)} HRC`);
+});
+
+/**
+ * The smith's cycle on its own: the blade's heat stood in for by a lumped model (no world), its
+ * time constants as the voxel blade has them (the thin parts' tests above: hammered on the anvil
+ * forging heat → working heat in ~12–15 s, back to forging heat in the fire in ~20–30 s).
+ */
 function standIn(S, dt) {
   const b = S.blade;
   if (!b) return;
   const to = (T, tau) => (b.T += (T - b.T) * Math.min(1, dt / tau));
   if (b.place === 'fire') to(1250, 40);
-  else if (b.place === 'anvil') to(20, 50);
+  else if (b.place === 'anvil') to(20, 45);
   else if (b.place === 'water') to(20, 2);
   else if (b.place === 'temper') to(450, 40);
   else to(20, 200);
@@ -197,6 +296,14 @@ test("the smith's cycle: heat, hammer, reheat, quench, temper, grind, rack; the 
     seen.add(S.smith.state);
   }
   assert.equal(S.made, 1, `a sword made (smith: ${S.smith.state})`);
+  // a realistic number of heats, each ~15–25 s and a few dozen blows on the anvil
+  const b = S.cooling[0];
+  const log = b.heatLog;
+  assert.ok(log.length >= 6 && log.length <= 12, `${log.length} heats to shape the sword`);
+  for (const h of log.slice(0, -1)) {
+    assert.ok(h.seconds >= 10 && h.seconds <= 40, `a heat: ${h.seconds.toFixed(1)} s on the anvil`);
+    assert.ok(h.blows >= 12 && h.blows <= 50, `a heat: ${h.blows} blows`);
+  }
   for (const st of ['pick', 'heat', 'hammer', 'quench', 'temper', 'grind', 'shelve']) assert.ok(seen.has(st), st);
   assert.equal(S.cooling.length, 1, 'it stands on the rack to cool');
   const blows = events.filter((e) => e.type === 'impact' && e.kind === 'hammer');

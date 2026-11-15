@@ -20,8 +20,14 @@
  * the point holds a tenth of what one at the base does): the voxel physics conducts heat along
  * it, heats it in the fire (radiation, the hot gas, contact with the glowing charcoal), cools it
  * in the room (radiation, convection) and on the anvil (contact conduction into the anvil's steel
- * voxels). The thin point heats first and cools first. The body goes where the smith's tongs
- * take it (fire, anvil, trough, grindstone, rack), restamped into the grid at the tongs' pose
+ * voxels). The thin point heats first and cools first. A voxel is 4 cm across but its piece of
+ * blade is 3–6 mm thick: so each voxel exchanges heat over its real faces (World.setThin, from
+ * swordVoxels' area: its flats width × length, its edges thickness × length), not the voxel's, and
+ * against the anvil across a contact conductance (CONTACT: the hammered spot pressed flat on the
+ * face, ~3 kW/m²K; the rest held a hair above it, radiation and air across the gap). So it cools
+ * from forging heat to working heat in ~20–30 s in the air and ~12–15 s hammered on the anvil, as a
+ * real blade of that thickness does (not in ~5 s as 4 cm cubes would). The body goes where the
+ * smith's tongs take it (fire, anvil, trough, grindstone, rack), restamped into the grid at the tongs' pose
  * with all its state: its heat goes with it. Its voxels are drawn as a thin blade (render/
  * smithy.js, F_HIDDEN), glowing by each voxel's temperature.
  *
@@ -81,12 +87,16 @@ export const HEATS = {
   burning: 1250, // °C: steel this hot starts to burn (sparkles, scale): he takes it out of the fire
 };
 
-/** What he makes (the sword is the one he forges here: its voxels; the others stock the shop). */
+/**
+ * What he makes (the sword is the one he forges here: its voxels; the others stock the shop).
+ * heats: how many heats a journeyman takes to shape it from its blank (drawing out the point, the
+ * bevels, the distal taper, straightening); a heat is ~12–15 s and ~15–18 blows on this thin blade.
+ */
 export const WEAPONS = [
-  { kind: 'sword', label: 'sword', heats: 3, temper: 290 },
-  { kind: 'axe', label: 'axe', heats: 3, temper: 250 },
-  { kind: 'spear', label: 'spear', heats: 2, temper: 270 },
-  { kind: 'dagger', label: 'dagger', heats: 2, temper: 240 },
+  { kind: 'sword', label: 'sword', heats: 8, temper: 290 },
+  { kind: 'axe', label: 'axe', heats: 6, temper: 250 },
+  { kind: 'spear', label: 'spear', heats: 5, temper: 270 },
+  { kind: 'dagger', label: 'dagger', heats: 4, temper: 240 },
 ];
 
 /**
@@ -100,21 +110,46 @@ export function swordVoxels(h) {
   const nTang = Math.max(2, Math.round(0.12 / h));
   const nBlade = Math.max(6, Math.round(0.72 / h));
   const wide = Math.max(1, Math.round((0.4 * nBlade)));
-  for (let k = 0; k < nTang; k++) out.push({ x: k * h, z: 0, part: 'tang', s: 0, width: Math.min(h, 0.025), thick: 0.006 });
+  for (let k = 0; k < nTang; k++) out.push({ x: k * h, z: 0, part: 'tang', s: 0, width: Math.min(h, 0.025), thick: 0.007 });
   for (let j = 0; j < nBlade; j++) {
     const s = (j + 0.5) / nBlade;
     const W = 0.055 - 0.043 * s ** 1.6; // m: 5.5 cm at the base to ~1.2 cm at the point
-    const t = 0.0062 - 0.0044 * s; // m: 6 mm at the base to ~2 mm at the point
+    // (as forged, before the grinding takes the bevels down: 6.5 mm at the base to 3 mm at the point)
+    const t = 0.0065 - 0.0035 * s;
     const nw = j < wide && W > h * 1.05 ? 2 : 1;
     for (let q = 0; q < nw; q++) out.push({ x: (nTang + j) * h, z: q * h, part: 'blade', s, width: W / nw, thick: t });
   }
-  for (const v of out) v.dens = Math.min(1, (v.width * v.thick) / (h * h));
+  for (const v of out) {
+    v.dens = Math.min(1, (v.width * v.thick) / (h * h));
+    // its real faces over the voxel's (World.setThin), in the body frame: its end (width ×
+    // thickness), its flats (width × length) and its edges (thickness × length)
+    v.area = [Math.min(1, (v.width * v.thick) / (h * h)), v.width / h, v.thick / h];
+  }
   return out;
 }
+
+/**
+ * The blade's heat exchange over its real geometry (World.setThin: convection, radiation and
+ * contact over its real faces, not the voxel's): the contact conductance of its faces against
+ * what it lies on (W/m²K). On the anvil only the section under the hammer is pressed flat on the
+ * face (hot steel with its scale on steel: ~1–5 kW/m²K); the rest of what lies over the face is
+ * held a hair off it by the smith's tongs (a gap of a mm or so: radiation and air across it).
+ */
+export const CONTACT = {
+  press: 3000, // W/m²K: pressed flat on the anvil's face under the hammer
+  gap: 120, // W/m²K: over the face, not pressed (εσ(T⁴−T_anvil⁴)/ΔT ≈ 100 at forging heat, + air across ~2 mm)
+  rest: 500, // W/m²K: lying loosely on anything else (the charcoal, the rack)
+  spot: 1, // voxels pressed at a time (the hammer's face covers ~4 cm of the blade)
+  blowsPerSpot: 3, // blows on a spot before he moves the blade along under the hammer
+};
 
 const WORK = 0.35; // the blade's working length: from this share of it to the point (in the fire's heart)
 const WALK = 1.0; // m/s
 const BLOW = 0.6; // s between hammer blows
+// a heat's work in blows at full forging heat (from forging heat down to working heat, ~12–15 s on
+// the thin blade, he strikes ~15–18 blows, the cooler the steel the less each moves it): with
+// WEAPONS[].heats heats at a journeyman's skill the blade is shaped
+const HEAT_BLOWS = 9.5;
 const STROKE = 1.1; // s a stroke of the bellows
 const SHOP_SLOTS = 14;
 
@@ -324,6 +359,7 @@ function placeBody(w, S, b, force = false) {
   const moved = b.poseAt !== b.place;
   if (!moved && !force && !needsRestamp(B, pose, w.h, 0.5)) return;
   if (!moved && !station && w.time - b.restampT < 0.25) return; // (in the tongs: a few times a second)
+  for (const c of B.cells) w.clearThin(c); // (its real geometry goes with it: bladeThin)
   const fromWater = b.poseAt === 'water';
   restamp(w, B, pose, {
     displace: (m) => m === MAT.water,
@@ -332,6 +368,65 @@ function placeBody(w, S, b, force = false) {
   if (fromWater) S.water.voxels = null; // (the water voxels are where they are now)
   b.poseAt = b.place;
   b.restampT = w.time;
+}
+
+/** The world axis (0 x, 1 y, 2 z) that body axis a lies along at rotation R. */
+function worldAxis(R, a) {
+  let best = 0;
+  for (let r = 1; r < 3; r++) if (Math.abs(R[3 * r + a]) > Math.abs(R[3 * best + a])) best = r;
+  return best;
+}
+
+/**
+ * The blade's voxels as the thin blade they are for heat exchange (World.setThin): each voxel's
+ * real faces at its pose, and its contact with what it lies on (CONTACT). On the anvil while he
+ * hammers, the section under the hammer is pressed flat on the face; he moves the blade along
+ * under the hammer every few blows (b.blows). → the world point of the hammered spot (or null).
+ */
+function bladeThin(w, S, b, hammering) {
+  const B = b.body;
+  if (!B) return null;
+  const R = B.pose.R;
+  const wa = [worldAxis(R, 0), worldAxis(R, 1), worldAxis(R, 2)];
+  const h = w.h;
+  // the voxels lying over the anvil's face (on a solid that is not the blade), base to point
+  let pressed = null;
+  let spotAt = null;
+  if (hammering) {
+    const on = [];
+    for (let k = 0; k < B.n; k++) {
+      const c = B.at[k];
+      if (c < 0 || w.mat[c] !== B.s.mat[k] || b.spec[k].part !== 'blade') continue;
+      const below = c - w.nx;
+      if (below >= 0 && w.mat[below] && !B.cells.has(below)) on.push(k);
+    }
+    if (on.length) {
+      // (the working length first: the part he heats and works)
+      const work = on.filter((k) => b.spec[k].s >= WORK);
+      const list = work.length ? work : on;
+      // he works along it and back: one spot per few blows
+      const n = Math.max(1, Math.ceil(list.length / CONTACT.spot));
+      const step = Math.floor((b.blows ?? 0) / CONTACT.blowsPerSpot) % (2 * n);
+      const at = step < n ? step : 2 * n - 1 - step;
+      pressed = new Set(list.slice(at * CONTACT.spot, at * CONTACT.spot + CONTACT.spot));
+      const k0 = list[at * CONTACT.spot];
+      const c = B.at[k0];
+      const [x, y, z] = w.coords(c);
+      spotAt = [(x + 0.5) * h, y * h, (z + 0.5) * h];
+    }
+  }
+  const f = [1, 1, 1];
+  for (let k = 0; k < B.n; k++) {
+    const c = B.at[k];
+    if (c < 0 || w.mat[c] !== B.s.mat[k]) continue;
+    const a = b.spec[k].area;
+    f[wa[0]] = a[0];
+    f[wa[1]] = a[1];
+    f[wa[2]] = a[2];
+    const hc = b.place !== 'anvil' ? CONTACT.rest : pressed?.has(k) ? CONTACT.press : CONTACT.gap;
+    w.setThin(c, f[0], f[1], f[2], hc);
+  }
+  return spotAt;
 }
 
 // ------------------------------------------------------------------ the forge in the air model
@@ -634,6 +729,21 @@ function bedRadiation(w, b, dt) {
   return P;
 }
 
+/**
+ * The slack tub is tight: what its water wets of its soaked staves stays in them. (sim/water.js
+ * wets every solid a water voxel touches, and what a voxel cannot soak up runs off into puddles
+ * on the floor: from a tub standing full for minutes that grew into a flood that reached the
+ * hearth and the fire pot. The run-off from the tub's columns is dropped.)
+ */
+function keepTubTight(w, S) {
+  if (!w.runoff) return;
+  const h = w.h;
+  const { min, max } = S.trough;
+  const x0 = Math.max(0, Math.floor(min[0] / h) - 2), x1 = Math.min(w.nx - 1, Math.floor(max[0] / h) + 2);
+  const z0 = Math.max(0, Math.floor(min[2] / h) - 2), z1 = Math.min(w.nz - 1, Math.floor(max[2] / h) + 2);
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) w.runoff[x + w.nx * z] = 0;
+}
+
 /** The trough's water mixing (natural convection; faster while the blade is worked in it). */
 function mixTrough(w, water, dt, tau) {
   if (water.length < 2) return 0;
@@ -870,6 +980,7 @@ export function stepSmith(S, dt, env) {
       if (sm.t > 0.8) {
         S.stoked = false;
         b.place = 'tongs';
+        b.heatFrom = b.T;
         if (b.stage === 'harden') go(S, 'trough', 'quench');
         else go(S, 'anvil', 'hammer');
       }
@@ -878,6 +989,11 @@ export function stepSmith(S, dt, env) {
     case 'hammer': {
       sm.pose = 'hammer';
       b.place = 'anvil';
+      if (b.heatAt == null) {
+        // (this heat on the anvil: its blows and how long it lasts)
+        b.heatAt = S.time;
+        b.heatBlows = 0;
+      }
       const prev = sm.phase;
       sm.phase += (dt * (S.pace ?? 1)) / BLOW;
       if (Math.floor(sm.phase) > Math.floor(prev)) {
@@ -891,17 +1007,22 @@ export function stepSmith(S, dt, env) {
           // a blow: the hotter the steel, the more it moves
           const soft = Math.min(1.25, Math.max(0.05, (b.T - 650) / (HEATS.forging - 650)));
           // (a skilled smith moves more steel a blow: models/smithy.js smithSkill, 0.5 a journeyman)
-          b.progress = Math.min(1, b.progress + (soft / (b.heats * 7)) * (0.5 + (S.skill ?? 0.5)));
+          b.progress = Math.min(1, b.progress + (soft / (b.heats * HEAT_BLOWS)) * (0.5 + (S.skill ?? 0.5)));
+          b.blows = (b.blows ?? 0) + 1;
+          b.heatBlows++;
+          const at = S.hammerAt ?? top;
           const speed = 7;
-          ev('impact', { kind: 'hammer', bare: false, pos: top.slice(), materials: ['steel', 'steel'], temps: [env.Ta, b.T], bladeT: b.T, blade: { length: 0.84, thickness: 0.005, width: 0.045 }, mass: 1.4, speed, energy: 0.5 * 1.4 * speed * speed, radius: 0.015, size: 0.44, sizeA: 0.1, name: 'anvil', quiet: true });
+          ev('impact', { kind: 'hammer', bare: false, pos: at.slice(), materials: ['steel', 'steel'], temps: [env.Ta, b.T], bladeT: b.T, blade: { length: 0.84, thickness: 0.005, width: 0.045 }, mass: 1.4, speed, energy: 0.5 * 1.4 * speed * speed, radius: 0.015, size: 0.44, sizeA: 0.1, name: 'anvil', quiet: true });
           // scale flying off the hot steel: sparks (more, the hotter it is)
           if (b.T > 700) S.sparks += 1;
-          ev('anvilBlow', { pos: top.slice(), T: b.T, quiet: true });
+          ev('anvilBlow', { pos: at.slice(), T: b.T, quiet: true });
         }
       }
       if (b.progress >= 1 || b.T < HEATS.working) {
         if (b.progress >= 1) b.stage = 'harden';
         b.heat++;
+        (b.heatLog ??= []).push({ blows: b.heatBlows, seconds: S.time - b.heatAt, from: b.heatFrom ?? b.T, to: b.T });
+        b.heatAt = null;
         b.place = 'tongs';
         go(S, 'forge', 'load');
       }
@@ -1016,12 +1137,19 @@ export function stepSmithies(sim, dt) {
     // the next is put up goes to the display as it is
     const b = S.blade;
     finishCooling(w, S, b?.place === 'rack' && S.cooling.length > 0);
+    for (const c of S.cooling) bladeThin(w, S, c, false);
     // the blade: made, moved with the tongs, quenched, its steel's structure
     if (b && !b.body) makeBlade(w, S, b);
     const water = troughWater(w, S);
+    keepTubTight(w, S);
     let q = { J: 0, kg: 0 };
     if (b?.body) {
       placeBody(w, S, b);
+      // its real geometry for heat exchange; on the anvil the hammered spot pressed flat
+      // (with no smith: b.hammering, the blows at his rhythm)
+      const hammering = b.place === 'anvil' && (S.smith ? S.smith.state === 'hammer' : !!b.hammering);
+      if (hammering && !S.smith) b.blows = (b.blows ?? 0) + (dt * 0.75) / BLOW;
+      S.hammerAt = bladeThin(w, S, b, hammering);
       if (b.place === 'water') q = quench(w, S, b, dt);
       b.fromBed = b.place === 'fire' ? bedRadiation(w, b, dt) : 0;
       metallurgy(w, S, b);

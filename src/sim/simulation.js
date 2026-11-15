@@ -672,6 +672,9 @@ export class Simulation {
     const windBoost = Math.sqrt(Math.hypot(D.windX, D.windZ));
     let radDemand = 0;
     let radEmit = 0;
+    // thin parts' real geometry (World.setThin): their faces' real areas, their contact conductance
+    const TA = w.thinArea;
+    const TC = w.thinContact;
 
     const { gsum, dEs, gext, skin, flameT } = w;
     for (let k = 0; k < n; k++) {
@@ -712,7 +715,9 @@ export class Simulation {
       let dEx = 0; // surface energy change
       let gx = 0; // surface conductances
       let ex = 0;
+      let exA = 0; // exposed area over h² (ex, but for a thin part its real faces)
       let fa = -1;
+      const hci = TC === null ? 0 : TC[i];
 
       for (let d = 0; d < 6; d++) {
         // faces: +x, -x, +z, -z, -y, +y (+y last so flames prefer leaving upwards)
@@ -738,7 +743,20 @@ export class Simulation {
             // conduction, each pair handled once (from the positive direction)
             if (d === 0 || d === 2 || d === 5) {
               const kj = (flags[j] & F_LIQUID ? K[mj] * LIQUID_MIXING : K[mj]) * dens[j];
-              const G = ((2 * ki * kj) / (ki + kj)) * h;
+              let G = ((2 * ki * kj) / (ki + kj)) * h;
+              if (TC !== null) {
+                // a thin part against another solid (World.setThin): its contact conductance over
+                // its real face, in series with the other voxel's half cell (through its own
+                // thickness a thin part is near enough isothermal: not its diluted k·dens)
+                const hcj = TC[j];
+                if (hci > 0 !== hcj > 0) {
+                  const ax = d === 0 ? 0 : d === 2 ? 2 : 1;
+                  const ai = TA[3 * i + ax], aj = TA[3 * j + ax];
+                  const Gc = (hci > 0 ? hci : hcj) * A * (ai < aj ? ai : aj);
+                  const Gh = 2 * (hci > 0 ? kj : ki) * h;
+                  G = (Gc * Gh) / (Gc + Gh);
+                }
+              }
               const q = G * (temp[j] - Ti) * dt;
               dEi += q;
               dE[j] -= q;
@@ -752,7 +770,8 @@ export class Simulation {
         // convection with the gas in front of the face (flame contact included)
         const sp = Math.abs(vx[a]) + Math.abs(vy[a]) + Math.abs(vz[a]);
         const fl = flame[a];
-        const g = (6 + 3.5 * Math.sqrt(sp) + windBoost + 100 * fl) * A * sfi;
+        const af = TA === null ? 1 : TA[3 * i + (d < 2 ? 0 : d < 4 ? 2 : 1)];
+        const g = (6 + 3.5 * Math.sqrt(sp) + windBoost + 100 * fl) * A * sfi * af;
         const Ta = airT[a];
         dEx += g * (Ta - Ts) * dt;
         gx += g;
@@ -770,6 +789,7 @@ export class Simulation {
           }
         }
         ex++;
+        exA += af;
         if (fa < 0 || d === 5) fa = a;
       }
       if (fa < 0) fa = own;
@@ -781,7 +801,7 @@ export class Simulation {
         // Same effective area for both, so nothing gets hotter than its source.
         const eps = EPS[m];
         const Tk = Ts + 273.15;
-        const area = A * ex * (sfi < 3 ? sfi : 3);
+        const area = A * exA * (sfi < 3 ? sfi : 3);
         const Tk3 = Tk * Tk * Tk;
         const P = eps * SIGMA * (Tk3 * Tk - TambK4) * area;
         dEx -= P * dt;
