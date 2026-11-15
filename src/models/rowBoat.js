@@ -154,6 +154,9 @@ function rowBoatBuild(p, { h }) {
       portals.push({ p: [0, p.arriveY, side * (half + 0.1)], r: 0.7, to: p.goesTo, label: p.label, arrive: { p: [p.arriveX, p.arriveY, p.arriveZ], yaw: ((p.arriveYaw ?? 0) * Math.PI) / 180 } });
     }
     for (const q of prims) q.float = 0; // (its voxels: sim/buoyancy.js, render/floats.js)
+    // held up by the water, not by what is under it: the structure pass (simulation.js checkSupport)
+    // would drop a hull afloat clear of the bottom as loose debris in the first step
+    for (const q of prims) q.anchored = true;
     return {
       prims,
       floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, params: { length: p.length, beam: p.beam, depth: p.depth, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load } }],

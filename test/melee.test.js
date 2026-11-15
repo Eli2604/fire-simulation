@@ -125,10 +125,13 @@ test('the rig: every hand-to-hand clip, labelled; an unarmed figure fights from 
   assert.equal(g.current.getClip().name, 'guard');
 });
 
+/** A small seeded random source (mulberry32). */
+const seeded = (a) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
 test('the squad AI: an unarmed man closes in and fights hand-to-hand; his blows land', () => {
   const H = { p: [0, 0, 5], yaw: Math.PI, health: 100, dead: false };
   const members = [{ p: [0, 0, 10], yaw: Math.PI, squad: 'R1', unit: 'Alpha', skill: 'regular', health: 100, loadout: 'unarmed' }];
-  const s = new SquadAI({ unit: 'Alpha', members: () => members, solid: () => false, floor: () => 0, bounds: [-30, -30, 30, 30], hostiles: () => [H], lineOfSight: () => true, visibility: () => 60 });
+  const s = new SquadAI({ unit: 'Alpha', members: () => members, solid: () => false, floor: () => 0, bounds: [-30, -30, 30, 30], hostiles: () => [H], lineOfSight: () => true, visibility: () => 60, rand: seeded(7) }); // (seeded: Math.random once gave a run of front kicks only)
   const m = members[0];
   const seen = new Set();
   for (let k = 0; k < 400 && H.health > 40; k++) {

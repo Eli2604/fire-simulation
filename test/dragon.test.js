@@ -180,7 +180,8 @@ test('on the island it walks its round: the hilltop, up the church walls and ove
   sc.startZone = 'island';
   sc.noFire = true;
   // (without the volcano: it would erupt as the dragon passes, and set the island's grass alight)
-  sc.zones.island.objects = sc.zones.island.objects.filter((o) => o.type !== 'enemy' && o.type !== 'volcano');
+  // (and without the young koi dragon: its own route flies it to a duel with this one half a minute in)
+  sc.zones.island.objects = sc.zones.island.objects.filter((o) => o.type !== 'enemy' && o.type !== 'volcano' && !(o.type === 'dragon' && o.params?.colours === 'koi'));
   const sim = createSimulation(sc);
   const w = sim.world;
   const d = w.dragons[0];
