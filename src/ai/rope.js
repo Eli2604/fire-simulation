@@ -23,6 +23,8 @@
  *    whole depth split into equal bounds so the last one lands him); on the ground he stands up
  *    and unclips (rappelEnd), and the rifle comes back round off his back. Hit (a wound): the
  *    brake hand lets go and he slides down the rope out of control (most of g), landing hard.
+ *    A team going over together (ai/ropeTeam.js: a rope with quick) does the assault rappel:
+ *    RAPPEL_QUICK, a short sit-back and long fast bounds (the rappelQuick clip).
  *  - Fast rope (from a helicopter, a high point): he steps out and grips the rope with both
  *    hands and his feet (the rope clamped between his boots), slides down braking with them
  *    (towards FAST.vmax, less with a heavy load; braking harder near the ground to land at
@@ -50,7 +52,9 @@
  *                             crawling, both arms hit, already on one)
  *   stepRopes(sim, dt)        everyone on a rope (the simulation's step, after the squads)
  *   rappelFrom(sim, m, dir)   at a drop too deep to jump (ahead of m along dir): rig a rope at
- *                             the edge (or use one already there) and start down it
+ *                             the edge (or use one already there) and start down it (the
+ *                             player; a squad goes through ai/ropeTeam.js lowerRope: it needs
+ *                             a man who carries a rope)
  *   ropeEnds(rope)            [top, bottom] as it hangs now (render/ropes.js draws it so)
  *   ropePoint(rope, s)        the point s m down it from the top
  *   nearRope(sim, p, r)       a rope whose top (or, for a cable, whose high end) is within reach
@@ -61,6 +65,19 @@ import { HANDLING, handKind } from './weapons.js';
 const G = 9.81;
 /** Rappelling (the clips' geometry: operator/rig.js RAPPEL; wall: the root's distance out from the wall face, top: how far below the roof the root starts). */
 export const RAPPEL = { wall: 0.56, top: 1.0, edgeIn: 0.29, hook: 0.8, over: 1.8, bound: 1.8, hop: 1.7, off: 1.4, minDepth: 2.2, maxDepth: 45, slip: 0.55 };
+/**
+ * The quick (assault) rappel of a team going over an edge together (ai/ropeTeam.js; a rope with
+ * `quick`, or a man with m.ropeQuick): a short sit-back over the edge, then long fast bounds (the
+ * brake hand nearly open in each swing out): about 2.8 m/s down instead of 1.
+ */
+export const RAPPEL_QUICK = { hook: 0.45, over: 1.0, bound: 1.15, hop: 3.2 };
+const QUICK = { ...RAPPEL, ...RAPPEL_QUICK };
+/**
+ * Lowering a rope (ai/ropeTeam.js; the rig's anchorRope and throwRope clips): kneeling at the edge
+ * tying it off round an anchor (anchor s), then up and the coil thrown out over the edge (throw s;
+ * it leaves his hands `release` s into the throw).
+ */
+export const ROPE_T = { anchor: 2.2, throw: 1.3, release: 0.75 };
 /** Fast-roping: target slide speed, landing speed, braking (m/s²), spacing on one rope, hands above the feet, the rope in front of the chest. */
 export const FAST = { vmax: 4.5, land: 1.6, brake: 6.5, spacing: 3.2, grip: 1.54, front: 0.22, s0: 0.6, mount: 0.7, settle: 0.45, clear: 3.0, run: 2.6 };
 /** Zipline: hands above the feet, pulley friction, drag (1/m), the glove's limit, braking at the end, the gap ahead, hand over hand. */
@@ -194,6 +211,8 @@ export function startRope(sim, m, rope) {
     t0: w.time ?? 0,
     // the weapon slung for the way down: where it goes (ai/weapons.js HANDLING slot)
     slung: HANDLING[wk]?.slot ?? 'slung across the back',
+    // a team's assault rappel: quicker over the edge, longer bounds (RAPPEL_QUICK)
+    quick: rope.kind === 'rappel' && !!(rope.quick || m.ropeQuick),
   };
   m.trav = null;
   m.moving = true;
@@ -281,6 +300,7 @@ export function stepRopes(sim, dt) {
 /* ---------- rappel ---------- */
 function stepRappel(sim, m, R, dt) {
   const r = R.rope, n = (R.n ??= outward(sim, r));
+  const Q = R.quick ? QUICK : RAPPEL; // (the assault rappel: quicker over the edge, longer bounds)
   const E = r.top;
   const yaw = Math.atan2(-n[0], -n[1]); // facing the wall
   const rx = E[0] + n[0] * RAPPEL.wall, rz = E[2] + n[1] * RAPPEL.wall; // the root on the rope
@@ -289,13 +309,13 @@ function stepRappel(sim, m, R, dt) {
   if (R.phase === 'hook') {
     // to the edge, clipping in, turning his back to the drop
     const S = [E[0] - n[0] * RAPPEL.edgeIn, E[1], E[2] - n[1] * RAPPEL.edgeIn];
-    const u = sm(R.t / RAPPEL.hook);
+    const u = sm(R.t / Q.hook);
     m.p = lerp3(R.from, S, u);
     let dy = yaw - R.yaw0;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     m.yaw = R.yaw0 + dy * u;
     anim(sim, m, 'idle');
-    if (R.t >= RAPPEL.hook) (R.phase = 'over'), (R.t = 0);
+    if (R.t >= Q.hook) (R.phase = 'over'), (R.t = 0);
     return;
   }
   m.yaw = yaw;
@@ -305,26 +325,26 @@ function stepRappel(sim, m, R, dt) {
     m.p = [rx, y0, rz];
     R.s = RAPPEL.top;
     anim(sim, m, 'rappelStart');
-    if (R.t >= RAPPEL.over) {
+    if (R.t >= Q.over) {
       R.phase = 'down';
       R.t = 0;
       R.ground ??= groundBelow(sim, rx, y0, rz, r.bottom[1]);
       const D = Math.max(0, y0 - R.ground);
-      R.bounds = Math.max(1, Math.ceil(D / (RAPPEL.hop * loadK(m))));
+      R.bounds = Math.max(1, Math.ceil(D / (Q.hop * loadK(m))));
       R.hop = D / R.bounds;
     }
     return;
   }
   if (R.phase === 'down') {
     // bound after bound: the drop happens in the swing out (as the clip has it: u 0.22 .. 0.84)
-    const b = Math.floor(R.t / RAPPEL.bound), u = R.t / RAPPEL.bound - b;
+    const b = Math.floor(R.t / Q.bound), u = R.t / Q.bound - b;
     const k = b >= R.bounds ? R.bounds : b + sm((u - 0.22) / 0.62);
     const y = y0 - R.hop * k;
     m.speed = Math.abs(y - m.p[1]) / Math.max(dt, 1e-3);
     R.v = m.speed;
     m.p = [rx, y, rz];
     R.s = E[1] - y;
-    anim(sim, m, 'rappel');
+    anim(sim, m, R.quick ? 'rappelQuick' : 'rappel');
     if (b >= R.bounds) (R.phase = 'off'), (R.t = 0);
     return;
   }

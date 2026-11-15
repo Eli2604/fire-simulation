@@ -48,7 +48,7 @@ import { allows as handlingAllows } from '../ai/weapons.js';
 import { MELEE, REACT } from '../ai/melee.js';
 import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
 import { TORCH_T } from '../ai/flashlight.js';
-import { FAST, ZIP } from '../ai/rope.js';
+import { FAST, ZIP, RAPPEL_QUICK, ROPE_T } from '../ai/rope.js';
 import { RT_T } from '../ai/retreat.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
@@ -407,6 +407,12 @@ function crouchLegs(p) {
   p.footR = [-0.8, 0, 0]; p.footL = [-0.8, 0, 0]; p.spine = [0.25, 0, 0]; p.head = [-0.22, 0, 0];
   return p;
 }
+/** On one knee (the right knee down, the left foot planted ahead): the overwatch at a rope's foot, the men waiting at the top (ai/ropeTeam.js). */
+function kneelLegs(p) {
+  p.hipsPos = [0, -0.45, 0]; p.thighR = [0.05, 0, -0.05]; p.shinR = [1.5, 0, 0]; p.footR = [-0.1, 0, 0];
+  p.thighL = [-1.45, 0, 0.08]; p.shinL = [1.45, 0, 0]; p.footL = [0, 0, 0]; p.spine = [0.1, 0, 0]; p.head = [-0.08, 0, 0];
+  return p;
+}
 function prone(p) {
   p.hips = [1.45, 0, 0]; p.hipsPos = [0, -0.82, 0]; p.spine = [-0.05, 0, 0]; p.neck = [-0.3, 0, 0]; p.head = [-1.05, 0, 0];
   p.thighR = [-0.05, 0, -0.25]; p.thighL = [-0.05, 0, 0.25]; p.shinR = [0.1, 0, 0]; p.shinL = [0.1, 0, 0]; p.footR = [0.5, 0, 0]; p.footL = [0.5, 0, 0];
@@ -620,6 +626,8 @@ const RETREAT_CLIPS = {
   }],
 };
 /** The retreat's clips that place the weapons themselves (slung) or hold none. */
+/** The rope drill's clips that place the weapons themselves (slung on the back): ai/ropeTeam.js. */
+export const ROPE_DRILL = { rappelQuick: 1, anchorRope: 1, throwRope: 1 };
 export const RETREAT = { fireCarry: 1, carried: 1, liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
 const RETREAT_ONCE = { signalFallBack: 1, liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
 const RETREAT_LABELS = { signalFallBack: 'Sig: fall back (rally, to the rear)', aimWalkBack: 'Aim-walk backwards', fireCarry: "Fireman's carry (carrier + casualty)", carried: 'Carried (casualty)', liftCasualty: 'Lift casualty (into the carry)', lifted: 'Lifted (casualty)', putDownCasualty: 'Put casualty down', setDown: 'Set down (casualty)', setTripwire: 'Set a tripwire (kneel, fix, string)' };
@@ -644,6 +652,14 @@ export function shootClips(R = recoilSpec('rifle'), control = 1) {
     crouchShoot: [dur, (t) => {
       const p = crouchLegs(pose0());
       p.spine[0] = 0.12; p.head[0] = -0.1; aimUpper(p, 1);
+      const { kick: r, climb } = recoilAt(R, t, control);
+      p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb;
+      return pump(p, t);
+    }],
+    // on one knee (the overwatch at a rope's foot: ai/ropeTeam.js), the knee taking the kick
+    kneelShoot: [dur, (t) => {
+      const p = kneelLegs(pose0());
+      aimUpper(p, 1);
       const { kick: r, climb } = recoilAt(R, t, control);
       p.recoil = r; p.climb = climb; p.chest[0] -= 0.03 * r + 0.3 * climb;
       return pump(p, t);
@@ -829,6 +845,56 @@ function stabPose(t) {
 // the flash-bang, underarm: the right hand to the belt, up to the chest (the pin), swing back low, bowl it
 const FLASH_K = [[0, [-0.2, 1.02, 0.14]], [0.25, [-0.13, 0.97, 0.13]], [0.45, [-0.08, 1.28, 0.28]], [0.8, [-0.26, 0.86, -0.2]], [1.0, [-0.14, 0.98, 0.42]], [1.15, [-0.08, 1.2, 0.55]], [1.6, [-0.2, 1.05, 0.15]]]
   .map(([k, v]) => [k / 1.6, v]);
+/*
+ * The rope drill (ai/ropeTeam.js; ai/rope.js ROPE_T): lowering a rope.
+ * anchorRope: down on one knee at the edge, the weapon slung, the coil off his shoulder, the rope
+ * passed round the anchor low ahead (a parapet, a post, the edge), knotted (the fingers working)
+ * and pulled tight. throwRope: up at the edge, the coil in both hands at the chest, swung back low
+ * and thrown out and over the edge with both arms (it leaves the hands at ROPE_T.release).
+ */
+const ANCHOR_HANDS = [
+  // t, right hand, left hand (figure space)
+  [0, [-0.25, 0.97, 0.07], [0.25, 0.97, 0.07]],
+  [0.35, [-0.15, 1.35, -0.05], [0.18, 1.4, 0]],
+  [0.8, [-0.22, 0.35, 0.55], [0.22, 0.35, 0.55]],
+  [1.3, [-0.05, 0.3, 0.6], [0.08, 0.32, 0.58]],
+  [1.7, [-0.04, 0.32, 0.58], [0.06, 0.3, 0.6]],
+  [2.0, [-0.1, 0.45, 0.4], [0.15, 0.6, 0.3]],
+  [ROPE_T.anchor, [-0.15, 0.8, 0.3], [0.15, 0.85, 0.3]],
+];
+function anchorPose(t) {
+  const p = droneKneel(pose0(), sm01(t / 0.45));
+  handsFree(p);
+  p.sling2 = 1;
+  const K = (j) => ANCHOR_HANDS.map((k) => [k[0], k[j]]);
+  p.rTW = pathK(K(1), t); p.lTW = pathK(K(2), t);
+  const work = env(t, 1.2, 1.3, 1.7, 1.8);
+  p.rTW[0] += 0.015 * work * sin(t * 20); p.lTW[2] += 0.012 * work * sin(t * 17);
+  p.rW = p.lW = 1;
+  p.spine = [0.2 + 0.35 * env(t, 0.5, 0.8, 1.8, 2.1), 0, 0]; p.head = [0.25, 0, 0];
+  p.rPole = [-1, -0.6, -0.4]; p.lPole = [1, -0.6, -0.4];
+  return p;
+}
+const THROW_HANDS = [
+  [0, [-0.15, 1.1, 0.3], [0.15, 1.1, 0.3]],
+  [0.35, [-0.12, 0.7, 0.05], [0.12, 0.7, 0.05]],
+  [ROPE_T.release, [-0.12, 1.35, 0.7], [0.12, 1.35, 0.7]],
+  [1.0, [-0.18, 1.1, 0.5], [0.18, 1.1, 0.5]],
+  [ROPE_T.throw, [-0.25, 0.97, 0.07], [0.25, 0.97, 0.07]],
+];
+function throwRopePose(t) {
+  const p = handsFree(stance(pose0()));
+  p.sling2 = 1;
+  const K = (j) => THROW_HANDS.map((k) => [k[0], k[j]]);
+  p.rTW = pathK(K(1), t); p.lTW = pathK(K(2), t);
+  p.rW = p.lW = 1;
+  const back = env(t, 0.1, 0.35, 0.4, 0.6), thr = env(t, 0.45, ROPE_T.release, 0.85, 1.2);
+  p.hipsPos = [0, -0.02 - 0.12 * back - 0.05 * thr, 0];
+  p.thighR[0] -= 0.3 * back; p.thighL[0] -= 0.3 * back; p.shinR[0] += 0.5 * back + 0.1 * thr; p.shinL[0] += 0.5 * back + 0.1 * thr;
+  p.spine = [0.45 * back + 0.25 * thr, 0, 0]; p.head = [0.2 + 0.2 * thr, 0, 0];
+  p.rPole = [-1, -0.5, -0.3]; p.lPole = [1, -0.5, -0.3];
+  return p;
+}
 /** On the rope: leaning back from the wall, feet flat on it; u: one bound (knees in, push off, swing out and back, land). */
 function rappelPose(p, u) {
   const crouch = env(u, 0, 0.15, 0.2, 0.32), out = sin(Math.PI * sm01((u - 0.22) / 0.62)), land = env(u, 0.78, 0.86, 0.88, 1);
@@ -1441,7 +1507,7 @@ const MELEE_LABELS = {
   clinch_d: 'Clinch (held)', hipThrow_d: 'Hip throw (thrown)', shoulderThrow_d: 'Shoulder throw (thrown)', footSweep_d: 'Foot sweep (swept)',
 };
 /** Unarmed (weapon 'fists'): what each clip becomes (the rest: the empty-handed versions). */
-const FIST_AS = { aim: 'guard', shoot: 'guard', crouchAim: 'guard', crouchShoot: 'guard', knifeReady: 'guard', stab: 'jab', flame: 'guard', reload: 'guard', idle: 'guard', proneShoot: 'proneAim' };
+const FIST_AS = { aim: 'guard', shoot: 'guard', crouchAim: 'guard', crouchShoot: 'guard', kneelAim: 'guard', kneelShoot: 'guard', knifeReady: 'guard', stab: 'jab', flame: 'guard', reload: 'guard', idle: 'guard', proneShoot: 'proneAim' };
 
 /* ---------- gear: where each weapon is carried, dropping it, the pack off, picking things up ---------- */
 /**
@@ -1892,6 +1958,16 @@ const CLIPS = {
     return p;
   }],
   rappel: [1.8, (t, u) => rappelPose(pose0(), u)],
+  // the team's assault rappel (ai/rope.js RAPPEL_QUICK): the same bound, quicker
+  rappelQuick: [RAPPEL_QUICK.bound, (t, u) => rappelPose(pose0(), u)],
+  // the rope drill (ai/ropeTeam.js): a rope tied off and thrown down; on one knee, weapon up, scanning his sector
+  anchorRope: [ROPE_T.anchor, (t) => anchorPose(t)],
+  throwRope: [ROPE_T.throw, (t) => throwRopePose(t)],
+  kneelAim: [2.6, (t, u) => {
+    const p = kneelLegs(pose0()), f = TAU * u;
+    aimUpper(p, 1); p.spine[1] += 0.06 * sin(f); p.chest[1] += 0.05 * sin(f); p.wOff = [0.003 * sin(f), 0.003 * sin(2 * f), 0];
+    return p;
+  }],
   rappelStart: [1.8, (t) => keyed(RAPPEL_START, t)],
   rappelEnd: [1.4, (t) => keyed(RAPPEL_END, t)],
   // ropes and cables (ai/rope.js): fast-roping, the zipline (on the pulley, hand over hand), falling off one
@@ -1916,14 +1992,14 @@ const CLIPS = {
 };
 
 export const ONCE = { deployDrone: 1, drawSecondary: 1, radio: 1, hit: 1, die: 1, reload: 1, jump: 1, signalMove: 1, signalHalt: 1, signalDown: 1, throwGrenade: 1, pickup: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE, dropWeapon: 1, pickupOne: 1, dropPack: 1, ...PEEK, ...TORCH_CLIPS };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, stab: 1, throwFlash: 1, rappelStart: 1, rappelEnd: 1, anchorRope: 1, throwRope: 1, ...PARKOUR, ...ROLL, ...MELEE_ONCE, dropWeapon: 1, pickupOne: 1, dropPack: 1, ...PEEK, ...TORCH_CLIPS };
 /** Ground speed each moving clip is made for (m/s). */
 export const MOVING = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35, swim: 0.6, stairsUp: 0.9, stairsDown: 1.0, slide: 2.6 };
-export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk: 1, flame: 1, peekWall: 1, leanLeft: 1, leanRight: 1, sliceLeft: 1, sliceRight: 1 };
+export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, kneelAim: 1, kneelShoot: 1, aimWalk: 1, flame: 1, peekWall: 1, leanLeft: 1, leanRight: 1, sliceLeft: 1, sliceRight: 1 };
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stairs up', stairsDown: 'Stairs down', slide: 'Slide (hill)', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
-  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', fastRope: 'Fast rope', zipline: 'Zipline', zipHand: 'Cable: hand over hand', ropeFall: 'Fall off the rope', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
+  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', fastRope: 'Fast rope', rappelQuick: 'Rappel (assault, quick)', anchorRope: 'Anchor a rope (kneel, tie off)', throwRope: 'Throw a rope down', kneelAim: 'Kneel aim (one knee)', kneelShoot: 'Kneel fire', zipline: 'Zipline', zipHand: 'Cable: hand over hand', ropeFall: 'Fall off the rope', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
   woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS, ...PEEK_TORCH_LABELS };
 export { PARKOUR, ROLL };
@@ -1933,16 +2009,16 @@ Object.assign(MOVING, { aimWalkBack: 1.0, fireCarry: 0.85 });
 Object.assign(AIMING, { aimWalkBack: 1 });
 Object.assign(LABELS, RETREAT_LABELS);
 /** Without a rifle: what each clip becomes. */
-const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
+const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', kneelShoot: 'kneelAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
 const NO_UNARMED = { ...MELEE_CLIP, dropWeapon: 1, pickupOne: 1, dropPack: 1, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1 };
-Object.assign(NO_UNARMED, RETREAT);
+Object.assign(NO_UNARMED, RETREAT, ROPE_DRILL);
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
-const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
+const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', kneelAim: 'crouch', kneelShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
 const PRONE = { crawl: 1, proneAim: 1, proneShoot: 1, peekOver: 1, peekOverAim: 1 };
 /** A flame trooper cannot shoot or reload; he fires the flame gun standing only. */
-const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle' };
+const TORCH_AS = { shoot: 'flame', crouchShoot: 'crouchAim', kneelShoot: 'kneelAim', proneShoot: 'proneAim', reload: 'idle' };
 
 /** The unarmed version of a clip: hands that were on the rifle are free (hanging, swinging, guard). */
 function unarm(name, base) {
@@ -1960,7 +2036,7 @@ function unarm(name, base) {
       pr = [-1, -0.2, -1]; pl = [1, -0.2, -1];
     } else if (name === 'crouch') {
       R = [-0.17, 1.0, 0.3]; L = [0.17, 1.0, 0.3];
-    } else if (name === 'aim' || name === 'crouchAim' || name === 'shoot' || name === 'crouchShoot') {
+    } else if (name === 'aim' || name === 'crouchAim' || name === 'shoot' || name === 'crouchShoot' || name === 'kneelAim' || name === 'kneelShoot') {
       R = [-0.13, 1.28, 0.27]; L = [0.13, 1.3, 0.3];
       pr = [-1, -1, 0]; pl = [1, -1, 0];
     } else if (PRONE[name]) {
@@ -1972,7 +2048,7 @@ function unarm(name, base) {
     if (p.rG > 0.5) p.rPole = pr;
     if (p.lG > 0.5) p.lPole = pl;
     p.rG = 0; p.lG = 0; p.rH = 0; p.lH = 0; p.lMag = 0;
-    if (name === 'aim' || name === 'shoot' || name === 'crouchAim' || name === 'crouchShoot') {
+    if (name === 'aim' || name === 'shoot' || name === 'crouchAim' || name === 'crouchShoot' || name === 'kneelAim' || name === 'kneelShoot') {
       // no rifle to aim: turn back to face forward
       p.spine[1] = 0; p.chest[1] = 0; p.neck[1] = 0; p.head[1] = 0;
     }
@@ -2135,7 +2211,7 @@ function pistolReload(t) {
 const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
 const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1, die: 1 };
-Object.assign(NO_STYLE, RETREAT);
+Object.assign(NO_STYLE, RETREAT, ROPE_DRILL);
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
@@ -2165,7 +2241,7 @@ function weaponShootClips(R, control, kind) {
   const S = WEAPON_STYLE[kind];
   return Object.fromEntries(Object.keys(C).map((n) => [n, makeClip(n, C[n][0], S ? styled(S, n, C[n][1]) : C[n][1])]));
 }
-const SHOOT = { shoot: 1, crouchShoot: 1, proneShoot: 1 };
+const SHOOT = { shoot: 1, crouchShoot: 1, kneelShoot: 1, proneShoot: 1 };
 /** The pose of clip name at t (s) held as weapon kind, unbaked (to check: solve() it). */
 export function weaponPose(kind, name, t = 0) {
   const S = WEAPON_STYLE[kind];
@@ -2826,7 +2902,7 @@ const ROPE_L = V3(P.rw(P.fgp.c)).sub(REST.handL); // the left palm (where it hol
 const ROPE_H = V3([0, 0.92, 0.17]).sub(REST.hips); // the belay device on the harness
 // aiming at a point on the ground (where the target stands): at his chest, from the shooter's eyes
 const AIM_H = 1.2;
-const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0 };
+const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0, kneelAim: 1.0, kneelShoot: 1.0 };
 /**
  * An operator: build it from loaded assets, add .group to the scene, and each frame call
  * update(dt). play(name) cross-fades to a clip; setAim(point) twists the upper body towards a
@@ -3728,7 +3804,7 @@ export class OperatorFigure {
     // muzzle flash: told (flashUntil) or from the firing clips
     const a = this.current;
     const hasRifle = this.armed && (this.weapon === 'secondary' || (this.weapon === 'primary' && !this.parts.rifle.userData.pivot));
-    const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'proneShoot') && a;
+    const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'kneelShoot' || this.shown === 'proneShoot') && a;
     const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
     this.flash.position.copy(rl2w(pk === 'carbine' ? 0.82 : WEAPON_STYLE[pk]?.muzzle ?? 1.03, pk === 'pistol' ? 0.012 : 0.045, 0));
     if (this.primaryKind === 'shotgun') this.updatePump();

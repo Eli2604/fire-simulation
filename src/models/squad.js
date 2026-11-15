@@ -40,10 +40,15 @@ export default {
     rallyZ: { value: 0, min: -60, max: 60, step: 0.5, label: 'Rally point offset Z (m)' },
     casualties: { value: 'auto', options: ['auto', 'carry', 'leave'], label: "A man down in a retreat (auto: by experience, the enemy's distance, his wounds, the men left; carry: fireman's carry; leave: he stays and covers them)" },
     tripwire: { value: true, label: 'The last man back through a door strings a tripwire with a charge across it' },
+    // ropes (ai/ropeTeam.js): coils carried, one a man (rifleman one, rifleman two, the commander, the gunner, the drone operator)
+    ropes: { value: 2, min: 0, max: 5, step: 1, label: 'Rope coils carried (one a man: the riflemen first); a man with one can lower a rope down a drop too deep to jump' },
+    teamRope: { value: true, label: 'Team rope-down: on a roof or a cliff with the objective below, the leader can take them all down together (ropes side by side, a flashbang first)' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
     if (p.droneOperator) roles.push(['UAV', 0, 3.2]);
+    // who carries a rope coil: the riflemen first, then the commander, the gunner, the drone operator
+    const ROPE_ORDER = ['R1', 'R2', 'CMD', 'MG', 'UAV'];
     return {
       prims: [],
       enemies: roles.map(([squad, x, z]) => ({
@@ -58,6 +63,8 @@ export default {
         fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
         sightRange: p.sightRange !== 400 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false,
         forceScale: p.force ?? 1,
+        ropes: ROPE_ORDER.indexOf(squad) < (p.ropes ?? 2) ? 1 : 0,
+        teamRope: p.teamRope !== false ? undefined : false,
         retreat: {
           order: p.strategy === 'retreat',
           auto: p.strategy !== 'no retreat',

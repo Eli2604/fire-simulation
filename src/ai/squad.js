@@ -76,6 +76,9 @@
  *                      running from fire (optional; ai/enemies.js)
  *   hostiles(), lineOfSight(a, b), visibility(), dark(), noises()  what they can sense
  *   path3d(a, b)       a way between levels (by the stairs), [points], last = b (optional)
+ *   rappel(m, dir)     at a drop too deep to jump: down a rope (ai/ropeTeam.js lowerRope: true,
+ *                      or 'cannot' with no rope in the team); ropeSim, autoRig, teamRope: the rope
+ *                      drill's (ai/ropeTeam.js: overwatch on a descent, the team rope-down) (optional)
  *   lookouts()         raised places with a view (a deck, a roof): [[x, y, z], ...] (optional).
  *                      Before contact one rifleman climbs to the best of them and watches from
  *                      there; on contact the gunner takes one that sees the threat as his
@@ -97,6 +100,7 @@ import { friendliesOf, sideOf } from './retreatRadio.js';
 import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
+import { stepRopeTeam } from './ropeTeam.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
@@ -111,6 +115,10 @@ export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.s
 export class SquadAI {
   constructor(host) {
     this.host = host;
+    // a man the rope drill has (ai/ropeTeam.js: covering a descent, waiting his turn at the top,
+    // lowering a rope) is not this AI's to move either
+    const own = host.ownMove;
+    host.ownMove = (m) => !!m.ropeTask || !!own?.call(host, m);
     this.threat = host.threat ? host.threat.slice() : null;
     this.on = true;
     this.phase = 'bound';
@@ -870,7 +878,9 @@ export class SquadAI {
     // a drop too deep for anyone to jump (a roof's edge, a wall): down a rope rigged there (ai/rope.js, the host's)
     if (geo.type === 'down' && !moveFor(geo, FIT, mode) && this.host.rappel) {
       if (geo.face > 0.45) return { near: geo.face - 0.35 };
-      if (this.host.rappel(m, dir, geo)) return 'go';
+      const r = this.host.rappel(m, dir, geo);
+      if (r === 'cannot') return 'cannot'; // (no rope in the team: not this way)
+      if (r) return 'go';
     }
     const kind = moveFor(geo, ability(m), mode);
     if (!kind) return moveFor(geo, FIT, mode) ? 'cannot' : null;
@@ -1383,6 +1393,8 @@ export class SquadAI {
     stepTraps(this);
     // no threat yet: listen, look, send men to investigate; hold where they are
     if (this.on) this.senses(dt);
+    // the rope drill (ai/ropeTeam.js): overwatch on a descent, ropes lowered, the team rope-down
+    stepRopeTeam(this, dt);
     stepGroups(this, dt);
     stepClearing(this);
     if (this.breach && !this.breach.g?.route) breachStep(this, this.breach.g, dt);
@@ -1420,7 +1432,7 @@ export class SquadAI {
     }
     const al = ms.filter((m) => !m.dead);
     for (const m of ms) {
-      m.aimAt = this.threat;
+      m.aimAt = m.ropeTask?.aim ?? this.threat;
       if (m.dead) {
         if (m.trav) {
           m.trav = null;

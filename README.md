@@ -1763,8 +1763,9 @@ on ropes (the simulation's step, after the squads).
   rope run in each swing out (`rappel`, at most 1.7 m a bound, the depth split into equal bounds:
   about 1 m/s, never over 3), stands up on the ground and unclips (`rappelEnd`), and the rifle
   comes back round off his back. A squad man whose way leads over a drop too deep to jump (a roof
-  edge) rigs his own rope there and rappels (`host.rappel` → `rappelFrom`; the rope stays for the
-  next man); so does the player with **Space** at such an edge.
+  edge) goes down a rope there, or one lowered by a man who carries one (the rope drill below;
+  the rope stays for the next man); the player with **Space** at such an edge rigs his own
+  (`rappelFrom`).
 - **Fast rope** (a helicopter's, or model `rope`'s gantry): he swings onto the rope, both hands on
   it and the rope clamped between his boots (`fastRope`), slides down braking with hands and feet
   (towards 4.5 m/s, slower with a heavy load, braking to land at 1.6 m/s), lands in a crouch and
@@ -1786,6 +1787,41 @@ on ropes (the simulation's step, after the squads).
 - **Player**: Space at the top of a rope (a fast rope, a rappel anchor, a zipline's high end
   overhead) or at a drop too deep to jump: down it as the soldiers go (a stand-in rider in
   `world.ropeRiders`); hit on the rope, you fall.
+
+#### The rope drill: overwatch on a descent, ropes as gear, the team rope-down
+
+`ai/ropeTeam.js` (pure logic, stepped by each squad AI after its senses) is what the rest of a fire
+team does round the man on the rope. A man it has (`m.ropeTask`: `watch`, `wait`, `rig`, `stack`,
+`hold`) is not the squad AI's to move (`host.ownMove`); the squad gets him back when the drill ends.
+- **Overwatch** (any descent: a helicopter's fast ropes, a gantry, a rappel off a roof): the first
+  man down goes ~4.5 m off the rope's foot (5 m under a helicopter), drops to one knee facing out
+  (`kneelAim`: his sector away from the rope), weapon up, scanning; a hostile the team has
+  identified (`ai/perception.js` through the squad's senses) in his line of sight he fires on in
+  bursts (`kneelShoot`), covering the man on the rope. Each man down after him joins and the
+  sectors are split again (off a wall: an arc of ±72° away from it; in the open: the full circle);
+  the men waiting their turn at the top kneel back from the edge, one behind the other, facing out
+  over the drop and covering the ground below, and go as soon as the rope takes them (a
+  helicopter's troops by its doors crouch in them, covering, as before). All down: the perimeter holds 2 s, then each man
+  is on his way again.
+- **Rope as gear**: a man carries rope coils (`m.ropes`; the squad model's **Rope coils carried**,
+  one a man, the riflemen first; default 2). At a drop too deep to jump (`host.rappel` →
+  `lowerRope`) he uses a rope already there (queueing for it), or with a coil kneels at the edge and
+  ties it off round something solid (a parapet, a post; else round the edge itself: `anchorRope`),
+  stands and throws it down (`throwRope`; "Rope!"), and goes down it; without one he calls the
+  nearest man who has one ("rope up here") and waits while he lowers it. Nobody in the team has a
+  rope: not that way (`'cannot'`: the squad drops it and looks for another). `host.autoRig`: men
+  with no coils listed rig as many as they need (the old behaviour).
+- **Team rope-down**: up on a roof or a cliff with the objective (their goal, the threat, what they
+  investigate) more than 2.2 m below and an edge towards it within 22 m, with two or more ropes in
+  the team, the leader takes them down together (the squad model's **Team rope-down**). He signals
+  it ("rope up, on my mark": a hand signal, and on the radio unless they keep radio silence); each
+  man with a rope goes to his own spot along the edge, 1.7 m apart, anchors and drops his rope and
+  kneels there ready (a man without one waits behind the nearest rope). Set, one throws a flashbang
+  down onto the landing area (the room-breach flashbang: whoever is below with it in view is
+  blinded and deafened for a few seconds); on the bang ("Go, go, go!") they all go over at once, a
+  quick assault rappel (`rappelQuick`: a short sit-back, 3.2 m bounds, ~2.8 m/s), land, take
+  kneeling cover round the foot of the ropes, and the squad carries on from down there (the grid
+  rebuilt on the new level; they do not rope down from that level again).
 
 ### The retreat: peeling back, the wounded, a wire on the door
 

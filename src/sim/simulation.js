@@ -15,7 +15,8 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
-import { stepRopes, rappelFrom } from '../ai/rope.js';
+import { stepRopes } from '../ai/rope.js';
+import { lowerRope } from '../ai/ropeTeam.js';
 import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
 import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
@@ -1604,8 +1605,11 @@ export class Simulation {
       // guards: the guard AI moves them on their patrol and when they run from fire (ai/enemies.js)
       // (and a man on a rope or a cable: ai/rope.js moves him until he is off it)
       ownMove: (m) => !!m.guardCtl || !!m.rope,
-      // at a drop too deep to jump: a rope rigged at the edge and down it (ai/rope.js)
-      rappel: (m, dir) => rappelFrom(this, m, dir),
+      // at a drop too deep to jump: a rope there, or one lowered by a man who carries one (m.ropes:
+      // the squad model's coils), and down it (ai/ropeTeam.js, ai/rope.js); nobody has one: not that way
+      rappel: (m, dir) => lowerRope(ai, m, dir),
+      // the world the rope drill works on (ai/ropeTeam.js: overwatch on a descent, the team rope-down)
+      ropeSim: this,
       // what threatens a man (a grenade by him, a rocket, rounds cracking past, a dragon): he rolls out of it (ai/evade.js)
       dangers: (m) => dangers(w, m),
       // you: seen through doorways, not through walls or thick smoke
