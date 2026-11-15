@@ -288,6 +288,8 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const ph of built.phoenixes ?? []) world.phoenixes.push({ ...ph, owner: ownerIndex, p: toWorld(...ph.p), yaw: (ph.yaw ?? 0) + rot, exit: toWorld(...ph.exit), flight: ph.flight.map((q) => toWorld(...q)) });
   for (const pt of built.portals ?? []) world.portals.push({ ...pt, p: toWorld(...pt.p), arrive: pt.arrive ? { p: toWorld(...pt.arrive.p), yaw: (pt.arrive.yaw ?? 0) + rot } : undefined });
   for (const lp of built.lookouts ?? []) world.lookouts.push(toWorld(...lp));
+  // gates that are run (sim/gates.js: a barrier a driver radios to have raised): their points in the world
+  for (const g of built.gates ?? []) (world.gates ??= []).push({ ...g, p: toWorld(...g.p), pivot: toWorld(...g.pivot), tip: toWorld(...g.tip), control: g.control && toWorld(...g.control), booth: g.booth && toWorld(...g.booth), dir: dirToWorld(g.dir), owner: ownerIndex });
   // ropes and cables (models/rope.js; ai/rope.js): their ends in the world, a rappel rope's way out from the wall turned with the object
   (built.ropes ?? []).forEach((r, k) => {
     const out = r.out && dirToWorld([r.out[0], 0, r.out[1]]);

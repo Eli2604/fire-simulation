@@ -31,8 +31,9 @@ import { hqCorridorPlace } from './models/militaryBase.js';
  */
 
 const H = 0.5; // m voxels (the island's 0.4 for a bigger place: about as many cells)
-// (the island grown for the base: a wider pad in the west, the ridge and the landing moved east)
-export const CAMP_ISLAND_TERRAIN = { ...defaultParams('campIsland'), width: 124, depth: 92, padEast: 0.1, ridgeX: 0.26, landingX: 0.66 };
+// (the island grown for the base: a wider pad in the west, the ridge and the landing moved east;
+// the pad reaching ~8 m east of the gate: an apron outside it where a car can turn along the wall)
+export const CAMP_ISLAND_TERRAIN = { ...defaultParams('campIsland'), width: 124, depth: 92, padEast: 0.2, ridgeX: 0.26, landingX: 0.66 };
 const T = CAMP_ISLAND_TERRAIN;
 /** Where the island's centre is in the zone, and the zone in the world. */
 export const CAMP_ISLAND_CENTRE = [64, 48];
@@ -126,7 +127,8 @@ export function campIslandZone() {
       // the perimeter, the gate in its east wall (the booth north of the road), two sentries at it
       ...PERIMETER.map(wallRun),
       onPad('guardPost', { roadWidth: 6, side: '-z' }, GATE_AT),
-      { type: 'campPatrol', params: { count: 2, radius: 3, corners: 4, unit: 'Lima' }, x: GATE_AT[0] - 5.5, z: GATE_AT[1], y: ON_PAD },
+      // (their round beside the road, by the booth, not in it: the cars would stop for them)
+      { type: 'campPatrol', params: { count: 2, radius: 1.8, corners: 4, unit: 'Lima' }, x: GATE_AT[0] - 6.5, z: GATE_AT[1] - 5.4, y: ON_PAD },
       // the roads: the main road from the gate to the camp's gate, a path to the HQ's door, one to
       // the helipad, the vehicle park's hardstanding
       roadAt(-8, 0, 28, 6),

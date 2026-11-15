@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { carNear, boardCar, leaveCar, driverOf } from '../sim/cars.js';
 import { pedals, startEngine, stopEngine, carToWorld } from '../sim/carPhysics.js';
+import { gateNear, gatePassable, requestGate, callsignOf } from '../sim/gates.js';
 
 /**
  * Driving a car yourself (one of the world's cars: sim/cars.js; the dynamics: sim/carPhysics.js).
@@ -14,6 +15,10 @@ import { pedals, startEngine, stopEngine, carToWorld } from '../sim/carPhysics.j
  *   A / D        steer left / right (the wheel comes back when you let go)
  *   Space        the handbrake (the rear wheels lock: it slides)
  *   H            the horn;   R  the engine off / on (it cranks: a burnt engine or an empty tank won't start)
+ *   G            at a closed gate (sim/gates.js: the military base's barrier): radio the base to
+ *                raise it (the horn at it does too); the base answers (the radio, its words on
+ *                the screen), a sentry raises it, it comes down behind you. A car not theirs (or
+ *                them fighting you there): refused, and the sentries come for you
  *   mouse        look round it (the camera comes back behind it)
  *   E            get out (once it is slow); you are put down by the driver's door
  * You hear it (and every other car) from its engine, tyres and wind: audio/carSound.js. Rounds
@@ -32,6 +37,7 @@ export class CarDrive {
     this.steer = 0;
     this.look = [0, 0];
     this.camPos = null;
+    this.seenEvents = sim.world.events?.length ?? 0;
     if (this.seat < 0) return;
     c.player = true;
     c.drive = null;
@@ -86,7 +92,14 @@ export class CarDrive {
     // (the wheel turns as fast as hands turn it, and comes back by itself)
     this.steer += clamp(o.steer - this.steer, -dt * 3, dt * 3);
     c.input = { ...pedals(c, o.ahead, o.back), steer: this.steer, handbrake: o.handbrake };
+    // the horn at a closed gate: as good as a call (G)
+    if (o.horn && !this.hornWas) {
+      const g = gateNear(this.sim.world, [c.x, c.y, c.z], 18);
+      if (g && !gatePassable(g)) this.radioGate();
+    }
+    this.hornWas = o.horn;
     c.horn = o.horn;
+    this.radioLines();
     this.fireRequested = this.flaresRequested = false;
     this.lookT = (this.lookT ?? 0) + dt;
     if (this.lookT > 1.5) {
@@ -132,12 +145,42 @@ export class CarDrive {
     this.hud.textContent =
       `${c.label.toUpperCase()}  ${String(kmh).padStart(3)} km/h   ${gear.padEnd(3)}  ${String(Math.round(c.rpm)).padStart(4)} rpm ${bar}   fuel ${c.fuel.toFixed(1)} l\n` +
       `W/S on / brake (S at rest: reverse)  A/D steer  Space handbrake  H horn  R engine  E get out` +
+      (this.gateHint() ? `
+${this.gateHint()}` : '') +
       (warn.length ? `\n${warn.join('   ')}` : '');
+  }
+
+  /** G: radio the base to raise the gate you are at (sim/gates.js requestGate). */
+  radioGate() {
+    const w = this.sim.world, c = this.c;
+    const g = gateNear(w, [c.x, c.y, c.z], 30);
+    if (!g) return this.walk.say('No gate near enough to call', 2);
+    if (g.state === 'broken') return this.walk.say(`${g.name}: smashed – drive on through`, 2);
+    if (gatePassable(g)) return this.walk.say(`${g.name}: open – drive on through`, 2);
+    this.gateReq = requestGate(w, g, { car: c, player: true, callsign: callsignOf(c) });
+  }
+
+  /** What the gates say on the radio (sim/gates.js), on the screen as you hear it. */
+  radioLines() {
+    const ev = this.sim.world.events ?? [];
+    for (; this.seenEvents < ev.length; this.seenEvents++) {
+      const e = ev[this.seenEvents];
+      if (e.type === 'radio' && e.gate && Math.hypot(e.pos[0] - this.c.x, e.pos[2] - this.c.z) < 80) this.walk.say(`📻 ${e.name}`, 4);
+    }
   }
 
   /** X: no ejection seat. */
   eject() {
     this.walk.say('E to get out', 2);
+  }
+
+  /** The gate you are at, in a word (the instruments' line). */
+  gateHint() {
+    const c = this.c;
+    const g = gateNear(this.sim.world, [c.x, c.y, c.z], 30);
+    if (!g) return '';
+    if (g.state === 'closed') return this.gateReq && !this.gateReq.done && this.gateReq.answer !== 'denied' ? `${g.name}: waiting for ${g.callsign}` : `${g.name} closed: G (or the horn) to radio ${g.callsign}`;
+    return `${g.name}: ${g.state}`;
   }
 
   /** E: out by the driver's door (or the other, if that side is blocked), once it is slow. */

@@ -287,11 +287,13 @@ function carAdapter(c) {
       m.frame = null;
       m.squadInit = undefined;
     },
-    go(to) {
+    // (o: { callsign (the squad's, on the radio at a gate), urgent (a retreat under fire: a gate
+    // refused is rammed), log }: ai/carDriver.js)
+    go(to, o = {}) {
       V.dest = to.slice();
       V.started = true;
       startEngine(c);
-      driveTo(c, to, { speed: V.speed, radius: 4 });
+      driveTo(c, to, { speed: V.speed, radius: 4, callsign: o.callsign, urgent: o.urgent, log: o.log });
     },
     // (the car itself is stepped by the world: sim/cars.js; its driver takes it to c.drive.target)
     step() {
