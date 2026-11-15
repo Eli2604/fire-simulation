@@ -556,6 +556,7 @@ function buildWeatherFolder() {
   fP.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
   // lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
   fP.add({ bolt: () => import('./sim/lightning.js').then(({ strike }) => strike(sim)) }, 'bolt').name('Lightning strike now');
+  fP.add({ rain: () => setWeather({ ambient: 10, rain: 15, humidity: 0.9, windSpeed: 1, fog: 0, sunshine: 0.2 }) }, 'rain').name('Rain (10 °C, steady: soaks what is outside, steam off hot surfaces)');
   fP.add({ calm: () => setWeather({ windSpeed: 1.5, rain: 0, humidity: 0.5, fog: 0 }) }, 'calm').name('Calm');
   fP.add({ snowfall: () => setWeather({ ambient: -4, rain: 4, windSpeed: 5, humidity: 0.92, fog: 0.12, sunshine: 0.2, snowSpeed: 30 }) }, 'snowfall').name('Snowfall (−4 °C, snowing: it builds up 30× faster)');
   fP.add({ dew: () => setWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0, sunshine: 0.3 }) }, 'dew').name('Misty morning (dew point: dew, or frost below 0 °C)');

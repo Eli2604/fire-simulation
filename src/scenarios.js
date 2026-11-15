@@ -43,6 +43,10 @@ export const SCENARIO_ALIASES = {
   campIsland: { scenario: 'carrier', zone: 'camp' },
   carHouse: { scenario: 'carrier', zone: 'carHouse' },
   neighbourhood: { scenario: 'carrier', zone: 'dryGarden' },
+  // (a house fire in the rain: the lake house in steady rain, light a fire in it; the car fire's
+  // fuel tank: the street's car with a steel tank and a blocked vent, both its parameters)
+  rainyHouse: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_RAIN' },
+  tankRupture: { scenario: 'carrier', zone: 'carHouse' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -145,7 +149,9 @@ function catacombObjects(exitTo = '') {
 export const LAKESIDE_AUTUMN = { ambient: 19, humidity: 0.45, windSpeed: 2.5, windDir: 20, rain: 0, fog: 0, sunshine: 0.8, season: 'autumn', snowCover: 0, iceCover: 0 };
 export const LAKESIDE_WINTER = { ambient: -4, humidity: 0.85, windSpeed: 1.5, windDir: 60, rain: 0.5, fog: 0.05, sunshine: 0.35, season: 'winter', snowCover: 0.12, iceCover: 0.1 };
 /** Named weathers an old scenario key can start a place in. */
-export const WEATHERS = { LAKESIDE_AUTUMN, LAKESIDE_WINTER };
+/** Steady rain at the lake house (the old House fire in the rain): Weather › Presets › Rain. */
+export const LAKESIDE_RAIN = { ...LAKESIDE_AUTUMN, ambient: 10, humidity: 0.9, windSpeed: 1, rain: 15, fog: 0, sunshine: 0.2 };
+export const WEATHERS = { LAKESIDE_AUTUMN, LAKESIDE_WINTER, LAKESIDE_RAIN };
 function lakesideObjects({ boatTo = '', boatLabel = 'Boat', ferryTo = '', ferryLabel = 'Boat' } = {}) {
   return [
     { type: 'island', params: { width: 20, depth: 17, seaLevel: 1.0, hill: 1.2, plateau: 0.9, plateauEast: 0.7, canal: false, pond: true, pondX: 0.05, pondZ: -0.3, pondRadius: 4.2, pondRadiusZ: 2.4, pondDepth: 0.8, pierLength: 4, catacombs: '', hut: false, boatTo, boatLabel, ferryTo, ferryLabel, seed: 21 }, x: 11, z: 9.5 },
@@ -266,19 +272,6 @@ export const SCENARIOS = {
       { type: 'gasCylinder', params: { reliefValve: 'working' }, x: 3.4, z: 4.6 },
       { type: 'gasCylinder', params: { reliefValve: 'blocked', color: '#3b6fb0' }, x: 4.6, z: 3.5 },
       { type: 'fence', params: { length: 6 }, x: 4, z: 7.2 },
-    ],
-  },
-  tankRupture: {
-    name: 'Car fire: what the fuel tank does',
-    description: 'A car with a steel fuel tank and a blocked vent burns from the interior. The thin tank wall heats up far faster than the petrol, so it softens and splits before much pressure can build: the fuel pours out into a pool fire. Real car tanks almost never explode; for a real explosion see the gas cylinders.',
-    world: { size: [12, 7, 10], h: 0.12 },
-    weather: w({ windSpeed: 1 }),
-    timeScale: 10,
-    view: { camera: [2, 5, 11] },
-    objects: [
-      { type: 'car', params: { bodyColor: '#d9d9d9', tankMaterial: 'steel', tankVent: 'blocked', fuelLiters: 50, igniteAt: 'interior' }, x: 6, z: 5, ignite: true },
-      { type: 'fence', params: { length: 8 }, x: 6, z: 8.5 },
-      { type: 'tree', params: { height: 4.5, crownRadius: 1.4 }, x: 10, z: 2.5 },
     ],
   },
   hallway: {
@@ -572,19 +565,6 @@ export const SCENARIOS = {
     name: 'Soldier rig test (animations, hit areas, gear)',
     description: 'The sculpted operator on its own page: every animation, the hit areas, the detachable gear, and the squad AI on a range you edit.',
     page: 'rig.html',
-  },
-  rainyHouse: {
-    name: 'House fire in the rain',
-    description: 'A furnished house fire in steady rain. Rain cannot reach the fire inside, which still breaks through the roof, but the soaked grass and the tree do not catch, and rain on hot surfaces makes steam.',
-    world: { size: [14, 8, 12], h: 0.15 },
-    weather: w({ rain: 15, humidity: 0.9, windSpeed: 1, ambient: 10 }),
-    timeScale: 10,
-    view: { camera: [-2, 8, 14] },
-    objects: [
-      { type: 'grass', params: { width: 13, depth: 11, height: 0.15, density: 0.7, moisture: 0.6 }, x: 7, z: 6 },
-      { type: 'house', params: { width: 7, depth: 5, roofMaterial: 'wood shingles', doorOpen: true }, x: 7, z: 6, ignite: true },
-      { type: 'tree', params: { height: 5, crownRadius: 1.6 }, x: 12, z: 2.5 },
-    ],
   },
 };
 

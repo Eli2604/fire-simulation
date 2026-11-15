@@ -5,6 +5,20 @@ import { F_HIDDEN } from '../src/sim/world.js';
 import { createSimulation, spawnFloor } from '../src/sim/createSimulation.js';
 import { SCENARIOS, cloneScene } from '../src/scenarios.js';
 import { explode, burstPipeAt } from '../src/sim/explosions.js';
+import { defaultWeather } from '../src/sim/weather.js';
+
+// a small furnished house in steady rain (the old House fire in the rain scene: now the lake house in Weather › Presets › Rain)
+const RAINY_HOUSE = {
+  name: 'House fire in the rain',
+  world: { size: [14, 8, 12], h: 0.15 },
+  weather: { ...defaultWeather(), rain: 15, humidity: 0.9, windSpeed: 1, ambient: 10 },
+  timeScale: 10,
+  objects: [
+    { type: 'grass', params: { width: 13, depth: 11, height: 0.15, density: 0.7, moisture: 0.6 }, x: 7, z: 6 },
+    { type: 'house', params: { width: 7, depth: 5, roofMaterial: 'wood shingles', doorOpen: true }, x: 7, z: 6, ignite: true },
+    { type: 'tree', params: { height: 5, crownRadius: 1.6 }, x: 12, z: 2.5 },
+  ],
+};
 
 const run = (sim, t) => {
   const end = sim.world.time + t;
@@ -105,11 +119,11 @@ test('catacombs: the guards walk their rounds through the passages, opening (and
 });
 
 test('walk-in start: the scene shows it as a marker, and a start you choose replaces it', () => {
-  const sim = createSimulation(cloneScene(SCENARIOS.rainyHouse));
+  const sim = createSimulation(cloneScene(RAINY_HOUSE));
   const mk = sim.markers.find((m) => m.kind === 'walk');
   assert.ok(mk, 'a walk-in marker');
   assert.ok(Math.abs(mk.p[0] - sim.spawn.p[0]) < 1e-9);
-  const scene = cloneScene(SCENARIOS.rainyHouse);
+  const scene = cloneScene(RAINY_HOUSE);
   scene.walkStart = { p: [2, 0.2, 3], yaw: 1 };
   const s2 = createSimulation(scene);
   assert.deepEqual(s2.spawn, scene.walkStart);
@@ -117,7 +131,7 @@ test('walk-in start: the scene shows it as a marker, and a start you choose repl
 });
 
 test('rain stays outside a house, and so does the wind', () => {
-  const scene = cloneScene(SCENARIOS.rainyHouse);
+  const scene = cloneScene(RAINY_HOUSE);
   scene.noFire = true;
   const sim = createSimulation(scene);
   const w = sim.world;
