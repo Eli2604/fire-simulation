@@ -38,10 +38,13 @@
  *    orders him to scout: he flies the drone on an expanding square round the area (m.droneGoal,
  *    two rings of eight points), reporting each sector clear. If the threat moves or a man goes
  *    down, the commander calls the drone back over the threat.
- *  - Senses: they see hostiles (host.hostiles) within what the visibility allows and in line of
- *    sight (host.lineOfSight); a sighting is the threat, marked on the hostile, and followed as
- *    he moves. Noises (host.noises: { p, loud m, time }) within earshot make the commander send
- *    two men to investigate (or investigate(p) on order); losing sight of the enemy for long,
+ *  - Senses: they see hostiles (host.hostiles: you, or the soldiers of another side: ai/sides.js)
+ *    within what the visibility allows and in line of sight (host.lineOfSight); the nearest one
+ *    made out is the threat, marked on the hostile, and followed as he moves; each man fires at
+ *    the nearest he sees. What they have seen they remember a while (sq.known: knownHostiles,
+ *    with what the friendly teams near them see): the leader weighs all of it (ai/strategy.js).
+ *    Noises (host.noises: { p, loud m, time }) within earshot make the commander send two men to
+ *    investigate (or investigate(p) on order); losing sight of the enemy for long,
  *    they investigate the last known position.
  *  - The commander's calls: radio silence for a while (calls wait; hand signals instead) when
  *    they move unseen; thermal goggles on when the visibility is poor (fog, smoke, dark,
@@ -109,6 +112,8 @@ const PLAIN_UP = 0.6, PLAIN_DOWN = 0.8;
 const FIT = ability({});
 const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, signalFallBack: 2.0, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+/** s: a hostile seen is remembered this long (counted by the leader: knownHostiles); m: a friendly team this near shares what it sees. */
+export const KNOWN_T = 30, SHARE_R = 60;
 const NAME = { UAV: 'the drone operator', CMD: 'the commander', MG: 'the gunner', R1: 'rifleman one', R2: 'rifleman two' };
 export const teamOf = (m) => (m.squad === 'UAV' ? 'U' : m.squad === 'CMD' || m.squad === 'R1' ? 'A' : 'B');
 
@@ -1223,6 +1228,24 @@ export class SquadAI {
       m.aimAt = p;
     });
   }
+  /**
+   * Every hostile the team knows of: those its men see or saw in the last KNOWN_T s (alive), and
+   * those the friendly teams within SHARE_R m of it see now (what the leader weighs: ai/strategy.js
+   * assess, ai/retreatRadio.js retreatCase). Each once.
+   */
+  knownHostiles() {
+    const out = new Set((this.seen ?? []).filter((h) => !h.dead));
+    for (const h of this.known?.keys() ?? []) if (!h.dead) out.add(h);
+    const al = this.members().filter((m) => !m.dead);
+    if (al.length) {
+      const c = centroid(al);
+      for (const f of friendliesOf(this)) {
+        const fm = f.members().filter((m) => !m.dead);
+        if (fm.length && dist2(centroid(fm), c) < SHARE_R) for (const h of f.seen ?? []) if (!h.dead) out.add(h);
+      }
+    }
+    return [...out];
+  }
   /** Sightings, noises, losing contact; the commander's calls on gear, silence and backup. */
   senses(dt) {
     const H = this.host;
@@ -1237,7 +1260,9 @@ export class SquadAI {
     for (const m of al) if (m.peek) peeking(m, now);
     let seen = null, nSeen = 0;
     this.seen = [];
-    for (const h of H.hostiles?.() ?? []) {
+    const c0 = centroid(al);
+    const hostiles = H.hostiles?.() ?? [];
+    for (const h of hostiles) {
       if (h.dead) continue;
       let spot = null;
       for (const m of al) {
@@ -1256,8 +1281,17 @@ export class SquadAI {
       nSeen++;
       this.seen.push(h);
       h.marked = true;
-      if (!seen || dist2(spot.p, h.p) < dist2(spot.p, seen.p)) seen = h;
+      // (the threat: the nearest of them to the team)
+      if (!seen || dist2(c0, h.p) < dist2(c0, seen.p)) seen = h;
     }
+    // what they have seen, remembered a while (the dead and the long unseen forgotten; one the
+    // host no longer hands in, remembered where one is seen now, taken for him: a host may hand the same man in anew)
+    this.known ??= new Map();
+    for (const h of this.seen) {
+      for (const [k, K] of this.known) if (k !== h && !hostiles.includes(k) && dist2(K.p, h.p) < 1.5) this.known.delete(k);
+      this.known.set(h, { t: now, p: h.p.slice() });
+    }
+    for (const [h, K] of this.known) if (h.dead || now - K.t > KNOWN_T) this.known.delete(h);
     if (seen) {
       this.lastSeen = this.time;
       if (this.inv) this.endInvestigation(false);

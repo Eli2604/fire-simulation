@@ -563,6 +563,23 @@ export const SCENARIOS = {
       { type: 'squad', params: { unit: 'Bravo', threatX: 12, threatZ: -21, flameTrooper: true }, x: 6, z: 29 },
     ],
   },
+  squadClash: {
+    name: 'Squad against squad: two blue teams meet a red one',
+    description: "Teams of two sides on a long desert range (the squad's Side param: blue fight on your side, red against you and the blue teams). Two blue fire teams, Alpha and Bravo, come down from the north; a red team, Charlie, comes up from the south. They make each other out across the range (sight, the dark, smoke and walls as ever: ai/perception.js), each team going for the nearest enemy it has seen, each man firing at the nearest he sees, with bounding overwatch between the brick walls and crates. Nobody fires at his own side, and the blue teams never at you. The red team is outnumbered two to one: its leader counts every enemy his men have seen (and the blue leaders count the teams beside them as their strength), seeing two to one he breaks contact at once, and once rounds crack past his men (pinned down) or he loses men, he calls the retreat: the word passed round, man by man back to the rally point under covering fire (ai/retreat.js). Walk in (you are blue) and help, or change a team's side in the editor.",
+    world: { size: [40, 5, 80], h: 0.2, ground: 'quarrySand' },
+    weather: w({ ambient: 27, humidity: 0.25, windSpeed: 1.5 }),
+    timeScale: 1,
+    view: { camera: [42, 30, 40] },
+    objects: [
+      ...[['wall', 12, 56, 0], ['wall', 28, 56, 0], ['crate', 20, 52, 0], ['wall', 8, 46, 90], ['wall', 32, 46, 90], ['wall', 20, 42, 0], ['crate', 15, 38, 0], ['crate', 25, 38, 0],
+        ['wall', 12, 28, 0], ['wall', 28, 28, 0], ['crate', 20, 24, 0], ['wall', 20, 18, 0]].map(([type, x, z, rotation]) => ({ type, params: {}, x, z, rotation })),
+      // blue: yours, from the north (each first towards the middle of the range: in a fight, the nearest enemy)
+      { type: 'squad', params: { unit: 'Alpha', side: 'blue', threatX: 6, threatZ: -40 }, x: 13, z: 72 },
+      { type: 'squad', params: { unit: 'Bravo', side: 'blue', threatX: -6, threatZ: -40 }, x: 27, z: 72 },
+      // red: from the south, one team against two (veterans)
+      { type: 'squad', params: { unit: 'Charlie', side: 'red', skill: 'veteran', threatX: 0, threatZ: 40 }, x: 20, z: 6 },
+    ],
+  },
   droneCamp: {
     name: 'Military camp: drone operations desk',
     description: 'A camp with a swarm of drones flown by the group logic of the drones repo (vendor/drones); a drone operator walks to his desk with a monitor per drone and a tactical map; jammers cut the link to the camp or GNSS.',

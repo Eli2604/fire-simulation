@@ -4,8 +4,10 @@
  *
  *  - 'blue'  you (the walk-through's player), a helicopter you fly or a friendly one (models/
  *            helicopter.js side: 'friendly'), and its crew.
- *  - 'red'   the simulation's soldiers (w.enemies) unless they say otherwise (e.side), and the
- *            helicopters that bring them.
+ *  - 'red'   the simulation's soldiers (w.enemies) unless they say otherwise (e.side: the squad
+ *            model's side param), and the helicopters that bring them.
+ *  - 'blue' teams (squad side 'blue') fight on your side: against the red teams, never at you;
+ *    'green' is a third side, against both. Teams of different sides fight each other.
  *  - 'beast' a dragon: everybody's enemy.
  *  - 'target' the rig stage's targets: shot at by anyone.
  * Two things are hostile when their sides differ (nobody is hostile to 'neutral').
