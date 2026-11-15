@@ -1,4 +1,4 @@
-import { ONCE, MOVING, RELOAD_TIME, PARKOUR, ROLL, PEEK } from './rig.js';
+import { ONCE, MOVING, RELOAD_TIME, PARKOUR, ROLL, PEEK, RETREAT } from './rig.js';
 import { recoilOf, skillOf } from '../ai/soldier.js';
 
 /**
@@ -36,6 +36,15 @@ export function driveFromAI(f, d, st) {
     if (cur !== want) f.switchWeapon(FIG_WEAPON[want]);
     st.animT = d.animT; // (that was the switch's animation)
   }
+  // his weapon slung on its carry slot to free both hands (ai/retreat.js: carrying a man, setting a
+  // wire): put away when he slings it, drawn again when he is done, at the AI's pace
+  if (!!d.slung !== !!st.slung) {
+    st.slung = !!d.slung;
+    const n = st.slung ? 'holsterRifle' : 'drawRifle';
+    const dur = f.A?.clips?.[n]?.duration;
+    f.play(n, { restart: true, fade: 0.15, speed: dur && d.animDur && d.anim === n ? dur / d.animDur : 1 });
+    st.animT = d.animT;
+  }
   if (ONCE[f.shown] && f.current?.isRunning() && !(ONCE[d.anim] && d.animT !== st.animT)) {
     // let a draw, a throw, a reload or a radio call finish
   } else {
@@ -51,6 +60,12 @@ export function driveFromAI(f, d, st) {
       else if (PARKOUR[name] || ROLL[name] || name === 'pickup' || name === 'pickupOne') f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
       // a peek (ai/peek.js): its clip stretched to how long he shows himself (shorter for the experienced)
       else if (PEEK[name]) f.play(name, { restart: true, fade: 0.12, speed: d.animDur ? f.A.clips[name].duration / d.animDur : 1 });
+      // the pack off (ai/retreat.js, before a carry): the figure's staged pack drop, the pack left on the ground
+      else if (name === 'dropPack' && f.dropPack?.()) {
+        // (dropPack plays the clip)
+      }
+      // the retreat's one-shots (the lift, the put-down, the wire) at the AI's pace (an old hand is quicker)
+      else if (RETREAT[name]) f.play(name, { restart: true, fade: 0.15, speed: d.animDur && f.A?.clips?.[name] ? f.A.clips[name].duration / d.animDur : 1 });
       else f.play(name, { restart: true, fade: 0.15 });
     } else if (!ONCE[name]) f.play(name);
     if (MOVING[f.state] && !ONCE[f.shown]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, (d.speed ?? 1) / MOVING[f.state])) : 0.001);

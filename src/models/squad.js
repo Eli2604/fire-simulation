@@ -34,6 +34,12 @@ export default {
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
     force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
+    // the retreat (ai/retreat.js): ordered from the start, or left to the leader (men down, pinned down)
+    strategy: { value: 'auto', options: ['auto', 'retreat', 'no retreat'], label: 'Strategy on contact (auto: the leader decides, retreating when pinned down or with men down; retreat: ordered back at once)' },
+    rallyX: { value: 0, min: -60, max: 60, step: 0.5, label: "Rally point offset X (m; 0, 0: where they started if that is behind them, else back out of the enemy's sight)" },
+    rallyZ: { value: 0, min: -60, max: 60, step: 0.5, label: 'Rally point offset Z (m)' },
+    casualties: { value: 'auto', options: ['auto', 'carry', 'leave'], label: "A man down in a retreat (auto: by experience, the enemy's distance, his wounds, the men left; carry: fireman's carry; leave: he stays and covers them)" },
+    tripwire: { value: true, label: 'The last man back through a door strings a tripwire with a charge across it' },
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
@@ -52,6 +58,13 @@ export default {
         fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined,
         sightRange: p.sightRange !== 400 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false,
         forceScale: p.force ?? 1,
+        retreat: {
+          order: p.strategy === 'retreat',
+          auto: p.strategy !== 'no retreat',
+          rally: p.rallyX || p.rallyZ ? [p.rallyX, p.level, p.rallyZ] : null,
+          casualties: p.casualties ?? 'auto',
+          tripwire: p.tripwire !== false,
+        },
       })),
     };
   },

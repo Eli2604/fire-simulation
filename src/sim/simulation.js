@@ -26,7 +26,7 @@ import { stepSnow, initSnow } from './snow.js';
 import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
 import { stepPower } from './power.js';
-import { impact, bodyLanding } from './impact.js';
+import { impact, bodyLanding, shockwave } from './impact.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 import { farRadiation } from './farRadiation.js';
@@ -1625,6 +1625,17 @@ export class Simulation {
         if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle, weapon });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
+      // a wire at a door (ai/retreat.js): drawn while it is there (render/markers.js w.traps); its
+      // charge set off: the blast (sim/explosions.js: debris, fire, the men near it hurt), the
+      // shockwave through the floor (sim/impact.js: people near staggered, knocked down), fragments into you
+      trap: (t) => (w.traps ??= []).push(t),
+      explode: (p, E, o = {}) => {
+        explode(this, p, E, { name: o.name ?? 'charge' });
+        shockwave(this, w, p, E, 4.5);
+        const P = pl();
+        const d = P ? Math.hypot(P.p[0] - p[0], P.p[1] - p[1], P.p[2] - p[2]) : Infinity;
+        if (d < 6) for (let i = 0; i < (d < 2 ? 3 : d < 4 ? 2 : 1); i++) w.playerHits.push({ zone: i ? 'torso' : 'legs', time: w.time, from: p.slice(), weapon: 'fragment' });
+      },
       // landing from a drop, a vault, a roll: the force and its sound (sim/impact.js)
       landing: (e, o) => bodyLanding(this, e, o),
       // a blow, a throw (rig/objects.js ACT_IMPACTS; sim/impact.js): impact(sim, { ... })
