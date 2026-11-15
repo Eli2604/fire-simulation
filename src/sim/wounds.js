@@ -2,6 +2,7 @@ import { MATERIALS } from './materials.js';
 import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
 import { boatShot } from './boats.js';
+import { cellsShot } from './batteries.js';
 import { sideOf, hostile, PLAYER_SIDE } from '../ai/sides.js';
 
 /**
@@ -251,7 +252,9 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   }
   if (wall) {
     bulletHole(sim, wall);
-    return { wall };
+    // through a car's thin skin into its battery pack (sim/batteries.js: the cells it holes short and go into runaway)
+    const cells = cellsShot(sim, wall.p, d);
+    return cells ? { wall, cells } : { wall };
   }
   return null;
 }

@@ -827,7 +827,7 @@ export class View {
     this.volcanoes.update(this.time);
     this.waterworks.update(dt, this.world.time ?? this.time);
     this.floats.update(dt, this.camera);
-    this.cars.update(dt);
+    this.cars.update(dt, this.camera);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);

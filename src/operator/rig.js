@@ -50,6 +50,7 @@ import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
 import { TORCH_T } from '../ai/flashlight.js';
 import { FAST, ZIP, RAPPEL_QUICK, ROPE_T } from '../ai/rope.js';
 import { RT_T } from '../ai/retreat.js';
+import { WHEEL_PHASE_RANGE } from '../sim/carPhysics.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -535,6 +536,60 @@ export function boatClipPose(name, u, t = 0) {
   }
   return p;
 }
+
+/* ---------- in a car (sim/cars.js placeAboard) ---------- */
+/**
+ * The steering wheel in the driver's figure space (+z ahead of him, +x his left, his feet at 0):
+ * its centre, the rim's radius, the column's tilt (rad: its rim leans away from him at the top).
+ * render/cars.js draws it at the same place in the car (its seat + this).
+ */
+export const CAR_WHEEL = { c: [0, 0.8, 0.4], r: 0.185, tilt: 0.44 };
+/** The hands hold on round the rim this far (rad) from 9 and 3; turned further, they go hand over hand (they stay, the wheel turns on under them). */
+export const WHEEL_HOLD = 1.75;
+/** A point on the steering wheel's rim (figure space) at phi (rad from 12 o'clock, + towards his left). */
+export function wheelRim(phi, out = [0, 0, 0]) {
+  const { c, r, tilt } = CAR_WHEEL;
+  const a = sin(phi) * r, b = cos(phi) * r;
+  out[0] = c[0] + a;
+  out[1] = c[1] + b * cos(tilt);
+  out[2] = c[2] + b * sin(tilt);
+  return out;
+}
+/** His hands on the wheel turned theta (rad, + left: anticlockwise as he sees it): { l, r, theta (where they hold) }. */
+export function wheelHands(theta) {
+  const th = Math.max(-WHEEL_HOLD, Math.min(WHEEL_HOLD, theta));
+  return { l: wheelRim(Math.PI / 2 + th), r: wheelRim(-Math.PI / 2 + th), theta: th };
+}
+/** Seated in a car seat: the hips low, the legs out to the pedals. */
+function carSeatLegs(p) {
+  p.hipsPos = [0, -0.52, -0.06];
+  p.thighR = [-1.32, 0, -0.1]; p.thighL = [-1.32, 0, 0.1];
+  p.shinR = [1.05, 0, 0]; p.shinL = [1.05, 0, 0];
+  p.footR = [0.3, 0, 0]; p.footL = [0.3, 0, 0];
+  return p;
+}
+/**
+ * A car clip's pose at u (0..1: OperatorFigure.setPhase).
+ *   carDrive   u the steering wheel's angle (sim/carPhysics.js wheelPhase: 0.5 straight ahead,
+ *              ± WHEEL_PHASE_RANGE rad at the ends): both hands on the rim where it has turned
+ *              (wheelHands), the head into the turn; the weapon slung
+ *   carSit     a passenger: hands on his thighs, looking about (its clock)
+ */
+export function carClipPose(name, u) {
+  const p = carSeatLegs(pose0());
+  if (name === 'carDrive') {
+    const th = (u - 0.5) * 2 * WHEEL_PHASE_RANGE;
+    const { l, r } = wheelHands(th);
+    const look = Math.max(-1, Math.min(1, th / 4));
+    p.spine = [-0.06, 0.05 * look, 0]; p.chest = [0.04, 0, 0]; p.head = [-0.02, 0.35 * look, 0];
+    return freeHands(p, l, r, [1, -0.7, -0.2], [-1, -0.7, -0.2]);
+  }
+  const f = TAU * u;
+  p.spine = [-0.04, 0, 0]; p.head = [-0.04 + 0.04 * sin(2 * f), 0.45 * sin(f) + 0.1 * sin(3 * f), 0];
+  return freeHands(p, [0.15, 0.5, 0.3], [-0.15, 0.5, 0.3]);
+}
+/** The car clips (they hold no weapon: slung). */
+export const CAR_WORK = { carDrive: 1, carSit: 1 };
 /**
  * The firing clips for a weapon's recoil R (ai/recoil.js recoilSpec: its kick, its muzzle rise,
  * its recovery, the fire mode's rounds) and the shooter's control (1 a regular; less, a better
@@ -1969,6 +2024,9 @@ const CLIPS = {
   boatSit: [6.0, (t, u) => boatClipPose('boatSit', u)],
   sitAim: [2.6, (t, u) => boatClipPose('sitAim', u)],
   sitShoot: [1.2, (t, u) => boatClipPose('sitShoot', u, t)],
+  // in a car (carClipPose): at the wheel, its phase the steering wheel's angle; a passenger
+  carDrive: [2.0, (t, u) => carClipPose('carDrive', u)],
+  carSit: [6.0, (t, u) => carClipPose('carSit', u)],
   // flying the drone on a search: bigger stick inputs, the head turning with it
   droneScout: [4.0, (t, u) => {
     const p = droneKneel(pose0(), 1);
@@ -2330,6 +2388,9 @@ Object.assign(NO_STYLE, RETREAT, ROPE_DRILL);
 // in a boat (boatClipPose): at work the weapon is slung, as at a desk; seated, up with it, as kneeling
 Object.assign(NO_UNARMED, BOAT_WORK);
 Object.assign(NO_STYLE, BOAT_WORK);
+Object.assign(NO_UNARMED, CAR_WORK);
+Object.assign(NO_STYLE, CAR_WORK);
+Object.assign(LABELS, { carDrive: 'Driving (car)', carSit: 'Passenger (car)' });
 Object.assign(AIMING, { sitAim: 1, sitShoot: 1 });
 Object.assign(LABELS, { boatRow: 'Rowing (boat)', boatPaddle: 'Paddling (canoe)', boatHelm: 'At the helm (boat)', boatHike: 'Hiking out (dinghy)', boatSit: 'Sitting (boat)', sitAim: 'Seated aim', sitShoot: 'Seated fire' });
 const STYLE_CACHE = new Map();

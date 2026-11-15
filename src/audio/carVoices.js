@@ -9,6 +9,9 @@
  *   tyres:  their roll (band-passed noise at the speed's pitch), the squeal (a sine with a little
  *           wobble, and a narrow band of noise), the scrub off the road
  *   wind:   low-passed noise rising with the speed;  brakes: a thin squeal;  horn: two tones
+ *   motor:  an EV's / a hybrid's: its whine (a triangle at its 6th electrical order, a sine at the
+ *           electrical frequency under it), the inverter's switching tone (a thin sine), the
+ *           pedestrian warning (AVAS: two soft tones through a low-pass) below 30 km/h
  *   to you: a panner for the direction (its level set here), the air's low-pass, the distance's
  *           gain; every frequency times the Doppler factor, the noises' playback rate too.
  * One-shots (c.sfx: shifts, the key, stalls, crashes, a man struck, a landing) through the
@@ -140,7 +143,26 @@ export class CarVoices {
     V.hornA.connect(V.hornLp);
     V.hornB.connect(V.hornLp);
     V.hornLp.connect(V.hornG).connect(V.mix);
-    V.oscs = [V.fire, V.crank, V.starter, V.squeal, V.wob, V.brake, V.hornA, V.hornB];
+    // an electric drive
+    V.whine = osc('triangle', 400);
+    V.whineE = osc('sine', 70);
+    V.whineG = gain(0);
+    V.whineEG = gain(0);
+    V.whine.connect(V.whineG).connect(V.mix);
+    V.whineE.connect(V.whineEG).connect(V.mix);
+    V.inv = osc('sine', 2500);
+    V.invG = gain(0);
+    V.inv.connect(V.invG).connect(V.mix);
+    V.avasA = osc('triangle', 360);
+    V.avasB = osc('triangle', 540);
+    V.avasLp = ctx.createBiquadFilter();
+    V.avasLp.type = 'lowpass';
+    V.avasLp.frequency.value = 1600;
+    V.avasG = gain(0);
+    V.avasA.connect(V.avasLp);
+    V.avasB.connect(V.avasLp);
+    V.avasLp.connect(V.avasG).connect(V.mix);
+    V.oscs = [V.fire, V.crank, V.starter, V.squeal, V.wob, V.brake, V.hornA, V.hornB, V.whine, V.whineE, V.inv, V.avasA, V.avasB];
     V.noises = [V.intake, V.rattle, V.roll, V.squealN, V.scrub, V.wind];
     return V;
   }
@@ -204,6 +226,18 @@ export class CarVoices {
     at(V.hornA.frequency, P.hornHz[0], 0.02);
     at(V.hornB.frequency, P.hornHz[1], 0.02);
     at(V.hornG.gain, P.horn * 0.12, 0.02);
+    const Mo = P.motor;
+    if (Mo) {
+      at(V.whine.frequency, Math.max(20, Math.min(12000, Mo.whineHz)), 0.03);
+      at(V.whineE.frequency, Math.max(20, Mo.elecHz), 0.03);
+      at(V.whineG.gain, Mo.whine * 0.12, 0.06);
+      at(V.whineEG.gain, Mo.whine * 0.05, 0.06);
+      at(V.inv.frequency, Mo.inverterHz, 0.1);
+      at(V.invG.gain, Mo.inverter * 0.05, 0.08);
+      at(V.avasA.frequency, Mo.avasHz[0], 0.08);
+      at(V.avasB.frequency, Mo.avasHz[1], 0.08);
+      at(V.avasG.gain, Mo.avas * 0.25, 0.15);
+    }
     for (const n of V.noises) at(n.src.playbackRate, P.doppler, 0.1);
   }
 

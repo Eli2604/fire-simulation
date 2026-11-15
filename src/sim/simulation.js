@@ -3,6 +3,7 @@ import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR, 
 import { deriveWeather } from './weather.js';
 import { skyState } from './sky.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
+import { stepBatteries } from './batteries.js';
 import { stepStirrers } from './stirrers.js';
 import { stepRivers } from './river.js';
 import { stepProjectiles, stepGasPipes, explode } from './explosions.js';
@@ -204,6 +205,7 @@ export class Simulation {
     stepPower(this, dt, D); // wind turbines, solar parks and the camps they power (sim/power.js)
     stepLightning(this, dt);
     stepVessels(this, dt);
+    stepBatteries(this, dt); // lithium-ion packs: thermal runaway, cell to cell, venting (sim/batteries.js)
     updateActivity(this, D); // which parts are doing anything at all (the rest sleeps)
     this.solidPassA(dt, D);
     this.fireAudio?.step(w, dt); // (only while something listens: sim/fireAudio.js)
@@ -911,7 +913,8 @@ export class Simulation {
       // --- water arriving (rain, extinguisher): boils off a hot surface (cooling,
       // steam); whatever does not boil soaks in / wets the surface
       let ws = wetSkin[i];
-      const water = waterIn[i];
+      // (a sealed battery pack: little of it reaches the cells: sim/batteries.js)
+      const water = waterIn[i] * (M.waterReach ?? 1);
       if (water > 0) {
         let rest = water;
         if (Ts > 100) {
@@ -1761,6 +1764,12 @@ export class Simulation {
     let count = 0;
     this.forSphere(p, radius, (i) => {
       const M = MATERIALS[w.mat[i]];
+      // a battery's cells (asked for by name): a fault in them, an internal short: thermal runaway (sim/batteries.js)
+      if (M.runaway && materials?.includes(w.mat[i])) {
+        w.crack[i] = Math.max(w.crack[i], 0.6);
+        count++;
+        return;
+      }
       if (!M.combustible) return;
       if (materials && !materials.includes(w.mat[i])) return;
       // (a spark, an ember: it catches only on fuel dry enough to burn)
@@ -1794,7 +1803,7 @@ export class Simulation {
     for (const i of cells) {
       const M = MATERIALS[w.mat[i]];
       const dry = M.density * w.dens[i] * V;
-      let water = perVoxel;
+      let water = perVoxel * (M.waterReach ?? 1);
       const C = dry * M.specificHeat;
       if (w.temp[i] > 100) {
         const need = ((w.temp[i] - 100) * C) / (CW * 85 + LV);
