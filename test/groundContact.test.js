@@ -17,8 +17,8 @@ function ground(material, { moist, size = [60, 4, 10], weather = {} } = {}) {
   return { sim, w };
 }
 /** A car on it at (x, z) heading +x, you at the wheel, the engine running. */
-function carOn(sim, x = 5, z = 5) {
-  const c = newCar({}, { x, y: 0.2, z });
+function carOn(sim, x = 5, z = 5, params = {}) {
+  const c = newCar(params, { x, y: 0.2, z });
   c.player = true;
   startEngine(c);
   const ctx = { world: sim.world, sim };
@@ -91,7 +91,9 @@ test('a car on mud: the wheels spin (patinate), it slows, throws mud; on dry soi
 
 test('ruts: the wheels leave them in mud, deeper with each pass; the car sits in them; nothing beside the track', () => {
   const { sim, w } = ground('mud', { moist: 0.4 });
-  const { c, ctx } = carOn(sim);
+  // (four-wheel drive: each wheel has its own grip (sim/carPhysics.js), and a rear-driven car's
+  // wheels spinning in the slurry of their own ruts get it only so far on the third pass)
+  const { c, ctx } = carOn(sim, 5, 5, { drivetrain: 'awd' });
   const track = (k) => c.spec.track / 2 * k;
   const at = (x) => rutAt(w, x, 5 + track(1));
   const depths = [];

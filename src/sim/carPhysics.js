@@ -167,6 +167,7 @@ export function carSpec(params = {}) {
     maxSteer: heavy ? 0.5 : 0.56,
     steerRate: 2.2, // rad/s at the wheels
     steerRatio: heavy ? 18 : 15, // the steering wheel's turn per the road wheels'
+    esp: params.esp !== false, // stability and traction control
     maxStep: 0.45, // m a wheel climbs (a kerb)
     tank: tankLiters(params),
     soc0: battery ? clamp(params.charge ?? (hybrid ? 0.55 : 0.8), 0, 1) : 0,
@@ -333,7 +334,8 @@ export function setMode(c, m) {
 function autoShift(c, thr) {
   const S = c.spec, E = S.engine;
   if (c.mode !== 'D' || c.shiftT > 0 || c.gear < 1 || c.t - (c.shiftAt ?? -9) < 1) return;
-  // the driven wheels spinning (mud, sand, snow, ice): their revs are not the car's speed: it holds its gear
+  // the driven wheels spinning (mud, sand, snow, ice): their revs are not the car's speed: it holds its
+  // gear (as an automatic's traction logic does)
   const spinning = Math.abs(c.omega * S.wheelR - c.u) > Math.max(1.5, 0.25 * Math.abs(c.u));
   const wheelRpm = Math.abs(c.omega) * RPM;
   const rpmIn = (g) => wheelRpm * ratioOf(S, g);
@@ -405,8 +407,24 @@ export function subStep(c, dt, env) {
   if (c.shiftT > 0) c.shiftT -= dt;
   if (!S.single) autoShift(c, clamp(inp.throttle ?? 0, 0, 1));
   let thr = c.running ? clamp(inp.throttle ?? 0, 0, 1) : 0;
+  const pedal = thr;
   const brake = clamp(inp.brake ?? 0, 0, 1);
   c.brakeOn = brake;
+  // stability and traction control (params.esp: on unless false): the drive's torque cut back when
+  // the driven wheels spin far faster than the car goes (they may spin a few m/s: mud, snow), or
+  // when it yaws more than its front wheels steer it (the tail stepping out)
+  if (S.esp && thr > 0) {
+    const uA = Math.abs(c.u);
+    const spinV = Math.abs(c.omega * S.wheelR - c.u);
+    let cut = clamp((spinV - (1.2 + 0.15 * uA + 3.8 * clamp(1 - uA, 0, 1))) / 1.5, 0, 1);
+    if (uA > 1) {
+      const rRef = (c.u * Math.tan(c.steer)) / (S.a + S.b);
+      const over = Math.abs(c.wz) - Math.abs(rRef) * 1.1 - 0.08;
+      cut = Math.max(cut, clamp(over / 0.15, 0, 1));
+    }
+    c.esp = (c.esp ?? 0) + (cut - (c.esp ?? 0)) * Math.min(1, dt * 20);
+    thr *= 1 - c.esp;
+  } else c.esp = 0;
   if (!S.single) {
     // the idle governor; the rev limiter
     if (c.running) {
@@ -509,8 +527,9 @@ export function subStep(c, dt, env) {
   // (combined slip: a spinning or a locked wheel has little cornering force left: power oversteer
   // through the rear, a front pushing wide with the power through it, a locked front that will not steer)
   c.alphaR = Math.atan2(vrLat, Math.max(Math.abs(rLong), UMIN));
-  let FxF = tF.C * c.slipF;
-  FyF /= 1 + Math.abs(c.slipF);
+  // (a sliding tyre's longitudinal pull, as the circle sees it: past its peak it grows with the slip to ~1.6× its grip)
+  const slideX = (C, k, lim) => clamp(C * k, -lim * (1 + 0.6 * Math.min(1, Math.abs(k))), lim * (1 + 0.6 * Math.min(1, Math.abs(k))));
+  let FxF = slideX(tF.C, c.slipF, tF.lim);
   {
     const t = Math.hypot(FxF, FyF), lim = tF.lim;
     if (t > lim && t > 0) {
@@ -518,8 +537,8 @@ export function subStep(c, dt, env) {
       FyF *= lim / t;
     }
   }
-  let FxR = tR.C * c.slipR;
-  let FyR = (-S.cAlphaR * FzR * c.alphaR) / (1 + Math.abs(c.slipR));
+  let FxR = slideX(tR.C, c.slipR, tR.lim);
+  let FyR = -S.cAlphaR * FzR * c.alphaR;
   {
     const t = Math.hypot(FxR, FyR), lim = tR.lim;
     if (t > lim && t > 0) {
@@ -578,7 +597,8 @@ export function subStep(c, dt, env) {
   const kappa = Math.max(Math.abs(c.slipR), lockF ? 0 : Math.abs(c.slipF));
   c.skid = clamp(Math.max(0, kappa - 0.12) * 3 + (lockF ? 0.8 : 0) + (hand && Math.abs(u) > 1 ? 0.6 : 0) + Math.max(0, latSlide) * 5, 0, 1.5) * (air ? 0 : 1) * clamp(Math.hypot(u, v) / 3 + kappa * 0.3, 0, 1);
   springs(c, dt);
-  c.thr = thr;
+  c.thr = pedal; // (the driver's foot; what the engine got: c.thrOut)
+  c.thrOut = thr;
   if (cl) {
     const P = c.running ? Math.max(0, cl.Te) * (c.rpm / RPM) : 0;
     c.power = P;
