@@ -5,8 +5,17 @@ import { toggleDoor } from './doors.js';
 import { initVacuum } from './vacuum.js';
 import { DetailPatches } from './patches.js';
 import { initSnow } from './snow.js';
+import { enableRigidBodies } from '../physics/simPhysics.js';
 
 const IGNITION_SECONDS = 40;
+
+/**
+ * Defaults for every simulation built here. rigidBodies: detached voxel chunks, knocked loose
+ * things and fragments as rigid bodies (physics/simPhysics.js); off unless the app (main.js) or
+ * the scene (scene.rigidBodies: true or its options) turns it on, so headless runs and the tests
+ * keep the voxel-by-voxel collapse they were written for.
+ */
+export const SIM_OPTIONS = { rigidBodies: false };
 
 /**
  * Build world + simulation from a scene description and start its fires.
@@ -55,6 +64,8 @@ export function createSimulation(scene, prebuilt = null) {
   for (const ht of world.heaters) {
     if (ht.start !== undefined) sim.markers.push({ p: ht.pos, label: `${ht.label ?? 'source'} (after ${ht.start} s)`, kind: 'pending', heater: ht });
   }
+  const rigid = scene.rigidBodies ?? SIM_OPTIONS.rigidBodies;
+  if (rigid) enableRigidBodies(sim, typeof rigid === 'object' ? rigid : {});
   return sim;
 }
 

@@ -205,6 +205,7 @@ export function explode(sim, center, E, opts = {}) {
   sim.phoenixAI?.blast(center, blastR);
   sim.heliAI?.blast(center, blastR);
   if (w.floats?.length) boatBlast(sim, center, blastR * 1.5); // (fragments hole the boats: sim/boats.js)
+  sim.rigid?.explosion(center, E, blastR * 1.5); // rigid bodies (physics/simPhysics.js): debris chunks, loose things, ragdolls
 }
 
 /** Distance from p to the segment a–b. */

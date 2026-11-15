@@ -232,6 +232,7 @@ export class Simulation {
     const w = this.world;
     this.structure(dt);
     stepDebris(this, dt);
+    this.rigid?.step(dt); // rigid bodies: debris chunks, knocked loose things, fragments (physics/simPhysics.js)
     stepStirrers(this, dt); // whirlpools and wind hoses: what floats and what is light goes with them
     if (w.rivers?.length || w.mills?.length) stepRivers(this, dt); // rivers, the waterfall, water mills (sim/river.js)
     stepProjectiles(this, dt);
@@ -1407,11 +1408,21 @@ export class Simulation {
     // Pieces that broke loose fall under gravity as real fragments (with speed, so
     // their impact counts); a very large collapse still slides down cell by cell.
     {
-      const loose = [];
+      let loose = [];
       for (let k = 0; k < n; k++) {
         const i = solids[k];
         const f = flags[i];
         if (f & F_FALLING && !(f & F_LIQUID) && !MATERIALS[mat[i]].granular) loose.push(i);
+      }
+      // with rigid bodies (physics/simPhysics.js) the pieces fall as bodies: tumbling, landing whole
+      if (this.rigid && loose.length) {
+        const before = loose.length;
+        loose = this.rigid.capture(loose);
+        if (loose.length !== before) {
+          w.rebuildLists();
+          solids = w.solids;
+          n = w.solidCount;
+        }
       }
       if (loose.length && loose.length <= 2500) {
         for (const i of loose) {

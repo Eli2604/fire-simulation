@@ -206,6 +206,11 @@ function knockBack(w, e, r, time) {
 /** A loose object (w.loose: a drum, a crate) sent flying (ai/dragonAir.js stepThrown lands it). */
 function launchLoose(w, o, v, time) {
   if (o.held || len(v) < 0.5) return;
+  // with rigid bodies (physics/simPhysics.js) it tumbles and lands as one
+  if (w.rigid && !(o.flying && !o.rigid)) {
+    w.rigid.knockLoose(o, v);
+    return;
+  }
   if (o.flying) {
     for (let c = 0; c < 3; c++) o.v[c] += v[c];
     return;
