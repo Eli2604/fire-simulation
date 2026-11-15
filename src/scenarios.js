@@ -38,6 +38,7 @@ export const SCENARIO_ALIASES = {
   laundry: { scenario: 'carrier', zone: 'garden' },
   winterTea: { scenario: 'carrier', zone: 'lake', weather: 'LAKESIDE_WINTER' },
   grassFire: { scenario: 'carrier', zone: 'meadow' },
+  threeTrees: { scenario: 'carrier', zone: 'trees' },
   catacombs: { scenario: 'carrier', zone: 'catacombs' },
   campIsland: { scenario: 'carrier', zone: 'camp' },
   carHouse: { scenario: 'carrier', zone: 'carHouse' },
@@ -236,21 +237,6 @@ export const SCENARIOS = {
       { type: 'metalBar', params: { material: 'copper', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.55 },
     ],
   },
-  threeTrees: {
-    name: 'Oak, willow and pine in a grass fire',
-    description: "A grass fire runs under an oak, a weeping willow and a pine. The pine's dead lower branches and resinous needles carry the fire into a crown fire; the willow's charred branches snap and drop burning; the oak's heavy limbs mostly burn where they are.",
-    world: { size: [22, 11, 12], h: 0.2 },
-    weather: w({ windSpeed: 3, windDir: 0, humidity: 0.25, ambient: 30 }),
-    timeScale: 4,
-    view: { camera: [-6, 8, 18] },
-    objects: [
-      { type: 'grass', params: { width: 21.5, depth: 11.5, height: 0.4, density: 0.85, moisture: 0.06 }, x: 11, z: 6 },
-      { type: 'grass', params: { width: 1.5, depth: 1.5, height: 0.05, density: 1, moisture: 0.06 }, x: 1.2, z: 6, ignite: true },
-      { type: 'tree', params: { species: 'oak', height: 8, crownRadius: 3 }, x: 8, z: 6 },
-      { type: 'tree', params: { species: 'willow', height: 7, crownRadius: 2.6, seed: 2 }, x: 13.5, z: 6 },
-      { type: 'tree', params: { species: 'pine', height: 9, crownRadius: 2.2, seed: 3 }, x: 18.5, z: 6 },
-    ],
-  },
   foggyForest: {
     name: 'Forest fire in fog',
     description: 'A small conifer stand burning in fog: the temperature inversion caps the plume so smoke spreads sideways, and steam lingers.',
@@ -317,7 +303,7 @@ export const SCENARIOS = {
   },
   carrier: {
     name: 'Carrier, island, catacombs and a spaceship',
-    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time). Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
+    description: 'The flight deck of a carrier at sea with a jet fighter: walk up to it and press E to fly it (W/S throttle, mouse to pitch and roll, A/D rudder, Space or click for rockets, E to climb out once stopped on deck). The hatch next to the island (E) leads below deck: corridors, mess, berthing, a store room and a server room behind a locked glass door, where a rack catches fire after 25 s. A ladder at its forward end leads down to the lower decks below the waterline: after 30 s a fuel line bursts against the hull there, the vapour explodes and tears the plating open, and the sea pours in, filling the lower deck from the bottom up (close the watertight doors; under water you breathe from your mask) while the ship settles and lists. Its inert-gas system floods the room when the ceiling gets hot, but only works if the door is shut. Not far off lies an island with hills, a canal and a pond, a gothic church being built on a plateau (its tower and south arm still in scaffolding, the sun falling through the stained glass), a campfire and a house, and at the shore the stairs down into the catacombs; take the boat from the stern, or fly there. A dragon lives on the island: it rests on the hillside, crawls up the hill, climbs over the church roof and sniffs at the catacomb stairs, then flies back. It hunts what it sees, guards and you: it breathes fire and devours its prey. Fire does not hurt it; arrows and rockets do. Rockets hit whatever they reach and the jet can be damaged by blasts, flames and scrapes; X ejects. Hold B to boost: climb out of the atmosphere and dock (slowly) at the spaceship in orbit, 2.4 km up. Its hull holds the air: breach it with a grenade or a rocket, or open the outer airlock door, and the ship decompresses. From the islet a boat goes on to the lake house on a small island, on a mild early-autumn afternoon of its own: tea on a veranda by its lake (a cold snap freezes the lake over: Weather › Presets › Cold snap); on the shore beside it its garden, where the wash on the line catches from a spark of the barbecue half a minute in and burns away (15× time), and a meadow of dry grass lit on its upwind edge, the wind driving the fire towards trees and a fence (3× time), and east of it a grass fire running under an oak, a weeping willow and a pine (4× time): the pine goes up in a crown fire, the willow drops burning branches, the limbs of the oak burn where they are. Along the street beyond them a car parked by a wooden house catches fire in its engine bay: as the whole car burns, its heat cracks the windows of the house, the curtains behind them catch, and the fascia, the gutter and the shingles go up (10× time); and in the garden on a dry day next door a fire starts on the sofa of a brick house with a car in the drive, trees, a dried-out conifer hedge, a woodpile and a fence (10× time). Zoomed out, every place shows as a labelled box (Edit world too): click one to go there. Only the place you are in is simulated; the others are built the first time you get there and frozen while you are away.',
     weather: w({ ambient: 16, humidity: 0.7, windSpeed: 8 }),
     timeScale: 1,
     startZone: 'deck',
@@ -456,6 +442,30 @@ export const SCENARIOS = {
       // dry day where the fire starts on the sofa of a brick house (the old Garden on a dry day,
       // ?scenario=neighbourhood). Each keeps its own weather and time scale.
       ...streetPlaces(),
+      // east of the meadow, a field of dry grass under an oak, a weeping willow and a pine (the
+      // old Oak, willow and pine in a grass fire: its field, its trees, its weather, its 4x time).
+      // The grass is lit on its upwind (west) edge; the wind drives the fire under the trees. Each
+      // tree is an object of its kind (models/treeObjects.js) and burns as its kind does: the
+      // pine's dead lower branches and resinous needles take the fire up into its crown, the
+      // willow's charred branches snap and drop burning, the oak's heavy limbs burn where they are
+      trees: {
+        name: 'Oak, willow and pine in a grass fire',
+        label: 'Oak, willow & pine: grass fire',
+        group: 'lake',
+        origin: [283, 2.85, 171.5], // (east of the meadow, its ground level with the meadow's)
+        world: { size: [22, 11, 12], h: 0.2 },
+        view: { camera: [-6, 8, 18], around: { y: -0.05, color: '#2c5d78' } },
+        proxy: { sea: 0, color: '#a99a52', height: 0.6, fill: 1, cell: 0.2 },
+        timeScale: 4,
+        weather: { ...LAKESIDE_AUTUMN, ambient: 30, humidity: 0.25, windSpeed: 3, windDir: 0, sunshine: 1 },
+        objects: [
+          { type: 'grass', params: { width: 21.5, depth: 11.5, height: 0.4, density: 0.85, moisture: 0.06 }, x: 11, z: 6 },
+          { type: 'grass', params: { width: 1.5, depth: 1.5, height: 0.05, density: 1, moisture: 0.06 }, x: 1.2, z: 6, ignite: true },
+          { type: 'oakTree', params: { height: 8, crownRadius: 3, seed: 1 }, x: 8, z: 6 },
+          { type: 'willowTree', params: { height: 7, crownRadius: 2.6, seed: 2 }, x: 13.5, z: 6 },
+          { type: 'pineTree', params: { height: 9, crownRadius: 2.2, seed: 3 }, x: 18.5, z: 6 },
+        ],
+      },
       island: {
         name: 'Island',
         origin: [105, 0, -30],
