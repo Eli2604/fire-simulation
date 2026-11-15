@@ -1583,9 +1583,30 @@ oar: ~1.4 m/s. AI soldiers take seats with `boardSeat` / `leaveSeat`, and the on
 thwart rows it with `row` or `rowToward` (or `f.row.goal`); see the top of `sim/boats.js`.
 A rifle round through its planking (the ray against the hull's shape in its pose) or a blast's
 fragments hole it: below the waterline they let water in by Torricelli and it settles, swamps
-and, with people aboard, sinks; above it they do nothing until it settles that deep. Once it
-has left its berth its voxels are taken out of the grid (they would stay behind): from then on
-it no longer burns.
+and, with people aboard, sinks; above it they do nothing until it settles that deep.
+
+**Its voxels go with it** (`sim/movingBody.js`, a generic moving voxel body; `stampFloat` in
+`sim/buoyancy.js`). The hull, thwarts, floorboards and oars are kept in the boat's own frame
+with their material state (temperature, fuel, char, moisture, burning, colour) and stamped into
+the grid at its pose whenever it has moved half a voxel (at most ten times a second): the state
+is read back from the grid, the old cells emptied, the voxels placed again (a voxel with no
+room, rotated onto a neighbour, is held off the grid until the next pose). So a boat set alight
+at its berth and rowed away keeps burning where it is, one adrift catches from a fire where it
+drifts, and it burns down to its waterline (what is under the water is kept wet through); its
+burnt planking lets the water in and leaves less shell to float on. A pond's water is pushed out
+of its hull and closes in where it was. Limitations: the hot gas and flames over it stay where
+they were as it moves (the fire makes new ones where it is); each restamp makes the world
+rebuild its list of solids.
+
+**The people aboard** (`sim/boatCrew.js`, drawn by `render/boatCrew.js` and, for the squads'
+men, `render/enemies.js`) sit in their seats (their feet on the floorboards, tilted with the
+boat) and do their seat's work, in step with the boat: the rower pulls (`boatRow`, its phase the
+oars' stroke: catch, drive, recovery), paddlers paddle on their sides, the helmsman's hand
+follows the tiller or the outboard's handle, a sailing crew hike out over the windward side (and
+their weight really goes out: `hikeCrew` moves their loads, so the centre of mass, and that is
+what rights it), passengers sit, aim and fire over the side. The model's *people aboard* are
+drawn as boatmen; you are drawn whenever the camera is not at your eyes (V in the boat: from
+outside).
 
 **Kinds of boat.** The same hull and physics, driven differently (`sim/boats.js`, the model's
 *kind*): the **outboard dinghy**'s motor spins up against its propeller's torque (rpm from the

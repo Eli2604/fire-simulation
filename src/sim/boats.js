@@ -35,7 +35,9 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
  *             env.external) against its righting moment and the crew hiking out (~0.55 m over the side
  *             each). So: no drive in the no-go zone (< ~49° off the wind), a beam reach fastest; the
  *             boom swings across in a gybe. f.sailState: { boom, alpha, CL, fill, luff, lee, U, drive,
- *             side, heel, hike }; f.row.sheet 0 (in) .. 1 (out), f.row.autoTrim (trimmed to the wind).
+ *             side, heel, hike, hikeSide }; f.row.sheet 0 (in) .. 1 (out), f.row.autoTrim (trimmed to
+ *             the wind). The crew hiking out (hikeCrew) move their weight: the loads go out over the
+ *             windward side, the centre of mass with them, and that is what rights it.
  *   paddle    a canoe: the stern paddler's strokes (1.3 s), on the side that turns it, else
  *             alternating; a bow paddler adds his on the other side.
  *   kinds     f.kind: 'row' | 'motor' | 'sail' | 'canoe' (models/rowBoat.js BOAT_PRESETS); the drive
@@ -90,9 +92,10 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
  *
  * The simulation (sim/buoyancy.js stepFloats) steps every boat of the world this way, with the
  * current where it is, keeps it off the shore, finds the water's level and the bottom under it as
- * it moves, and once it has left its berth takes its voxels out of the grid (they would stay
- * behind where it was built: from then on its damage is the holes shot in it, see limitations in
- * walk/boatRow.js).
+ * it moves, and takes its voxels with it (sim/movingBody.js: their heat, fire and char too; a boat
+ * set alight burns wherever it goes, down to its waterline, and its burnt planking lets the water
+ * in). The people aboard are seated and posed by sim/boatCrew.js (drawn: render/boatCrew.js,
+ * render/enemies.js); a sailing crew's weight goes out over the side as they hike (hikeCrew).
  */
 
 export const OARS = { period: 2.0, drive: 0.42, force: 160, catch: 0.65, finish: -0.55, inboard: 0.78, outboard: 1.55 };
@@ -643,20 +646,64 @@ export function stepDrift(f, dt, env = {}) {
   }
   b.pose = framePose(b);
   if (f.sail) {
-    // the heeling moment against the crew hiking out (each ~0.55 m out over the windward side)
+    // the heeling moment, against the crew hiking out over the windward side (hikeCrew: their
+    // weight moves out, the centre of mass with it: the righting moment grows)
     const S = f.sailState;
     const Mh = heelN ? heel / heelN : 0;
-    const crew = f.seats.filter((s) => s.who).length;
-    const hikeMax = crew * PERSON_KG * G * 0.55;
-    const hike = Math.min(Math.abs(Mh) * 0.8, hikeMax);
-    const M = Mh - Math.sign(Mh) * hike;
-    S.hike = hikeMax ? hike / hikeMax : 0;
-    S.heel = M;
+    hikeCrew(f, Mh, dt);
+    S.heel = Mh;
     // (a moment about its long axis: a side force to starboard heels it to starboard)
-    f.heelTorque = { tx: M * Math.cos(b.yaw), tz: -M * Math.sin(b.yaw) };
+    f.heelTorque = { tx: Mh * Math.cos(b.yaw), tz: -Mh * Math.sin(b.yaw) };
   }
   listen(f, dt, surf, [cx, cz]);
   return f;
+}
+
+/** How far out over the side a sailing crew gets their weight hiking (m, from where they sit), the helmsman less. */
+export const HIKE = { reach: 0.55, helm: 0.3, rate: 1.2 };
+
+/**
+ * A sailing dinghy's people hike out against the heeling moment Mh (N·m; > 0 heels it to
+ * starboard): their loads (and the boatmen's) go out over the windward side, as far as it takes to
+ * hold ~80 % of it (at most HIKE.reach each, the helmsman HIKE.helm), at a man's pace; the boat's
+ * centre of mass goes with them (updateMass), so it is their weight that rights it. The one on
+ * the floor (a man down) stays where he is. f.sailState.hike 0..1 how far out, hikeSide ±1 (+z).
+ */
+export function hikeCrew(f, Mh, dt) {
+  const b = f.body, S = f.sailState;
+  // (its own: the spec's loads are shared with the float's spec)
+  if (!b.ownLoads) {
+    b.loads = b.loads.map((L) => ({ ...L }));
+    b.ownLoads = true;
+  }
+  const out = [];
+  let max = 0;
+  for (const L of b.loads) {
+    if (L.label !== 'person') continue;
+    const k = L.who ? f.seats.findIndex((s) => s.who === L.who) : -1;
+    const role = k >= 0 ? f.seats[k].role : L.p[1] < 0.32 ? 'floor' : 'crew';
+    if (role === 'floor' || L.who?.down || L.who?.dead) continue;
+    L.base ??= L.p.slice();
+    const reach = role === 'helm' ? HIKE.helm : HIKE.reach;
+    out.push([L, reach]);
+    max += L.m * G * reach;
+  }
+  const want = max ? Math.min(1, (Math.abs(Mh) * 0.8) / max) : 0;
+  if (Math.abs(Mh) > 30) S.hikeSide = Mh > 0 ? -1 : 1;
+  S.hikeSide ??= 1;
+  // (across the boat, they come in first: a tack, a gybe)
+  const k0 = S.hike ?? 0;
+  S.hike = k0 + clamp(want - k0, -HIKE.rate * dt, HIKE.rate * dt);
+  let moved = false;
+  for (const [L, reach] of out) {
+    const z = L.base[2] + S.hikeSide * S.hike * reach;
+    const zz = clamp(z, L.p[2] - HIKE.rate * dt * 1.5, L.p[2] + HIKE.rate * dt * 1.5);
+    if (Math.abs(zz - L.p[2]) > 0.004) {
+      L.p = [L.p[0], L.p[1], zz];
+      moved = true;
+    }
+  }
+  if (moved) updateMass(b);
 }
 
 /**

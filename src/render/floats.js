@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { F_HIDDEN } from '../sim/world.js';
 import { buildRowBoatMesh } from './rowBoatMesh.js';
 import { toWorld } from '../sim/buoyancy.js';
+import { bodyStats, clearFlag } from '../sim/movingBody.js';
+import { BoatCrewRenderer } from './boatCrew.js';
 
 const LINE_N = 12;
 
@@ -13,11 +15,13 @@ const LINE_N = 12;
  * of its planking has gone (burnt, blown away), what is left of it shows as voxels.
  */
 export class FloatRenderer {
-  constructor(parent) {
+  constructor(parent, opts = {}) {
     this.group = new THREE.Group();
     parent.add(this.group);
     this.items = [];
     this.check = 0;
+    // the people aboard (render/boatCrew.js): you seen from outside, the boatmen; the squad's men are render/enemies.js's
+    this.crew = new BoatCrewRenderer(this.group, { assets: opts.assets ?? null });
   }
 
   setWorld(world) {
@@ -38,6 +42,7 @@ export class FloatRenderer {
   }
 
   clear() {
+    this.crew?.clear();
     for (const it of this.items) {
       this.group.remove(it.m.group);
       if (it.line) {
@@ -88,36 +93,31 @@ export class FloatRenderer {
     line.visible = true;
   }
 
-  update(dt) {
+  update(dt, camera = null) {
     for (const it of this.items) {
       it.dt = dt;
       if (!it.gone) this.place(it);
     }
+    this.crew.update(this.world, this.items.filter((it) => !it.gone && !it.f.body?.sunk).map((it) => it.f), dt, camera);
     this.check -= dt;
     if (this.check > 0 || !this.world) return;
     this.check = 0.5;
     const w = this.world;
     for (const it of this.items) {
       const f = it.f;
-      // (gone, or off its berth: its voxels out of the grid, sim/buoyancy.js moveBoat)
-      if (it.gone || f.detached || !f.voxels?.length) continue;
-      let left = 0;
-      let ch = 0;
-      for (const i of f.voxels)
-        if (w.mat[i]) {
-          left++;
-          ch += w.char[i];
-        }
-      // gone (burnt, shattered): what is left of it shows as voxels
-      if (left < f.voxels.length * 0.35) {
+      // (its voxels go with it, wherever it is: sim/movingBody.js, f.mb; its planking tagged 1)
+      if (it.gone || !f.mb) continue;
+      const st = bodyStats(w, f.mb, 1);
+      // gone (burnt, shattered): what is left of it shows as voxels (and they go on moving with it)
+      if (st.n && st.left < st.n * 0.35) {
         it.gone = true;
         it.m.group.visible = false;
-        for (const i of f.own ?? f.voxels) if (w.mat[i]) w.flags[i] &= ~F_HIDDEN;
-        w.geomVersion++;
+        this.crew?.drop(f);
+        clearFlag(w, f.mb, F_HIDDEN);
         continue;
       }
       // charring: the paint and the wood blacken as its voxels char
-      const c = left ? ch / left : 0;
+      const c = st.char;
       if (Math.abs(c - it.char) > 0.03) {
         it.char = c;
         for (const mt of [...it.m.hullMats, ...it.m.woodMats]) mt.color.copy(mt.userData.base).multiplyScalar(1 - 0.85 * c);

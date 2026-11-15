@@ -1,5 +1,5 @@
 import { boardSeat, leaveSeat, seatWorld, rower, row, castOff, makeFast, boatAt, startMotor, stopMotor, underPower } from '../sim/boats.js';
-import { toWorld } from '../sim/buoyancy.js';
+import { toWorld, floatOwns } from '../sim/buoyancy.js';
 import { MAT } from '../sim/materials.js';
 
 /**
@@ -19,10 +19,13 @@ import { MAT } from '../sim/materials.js';
  *   mouse        look round (you face the bow: a sculler would look over his shoulder)
  *   C            cast off / make fast (to the shore or a pier within reach of the bow)
  *   E            step ashore (land within reach of its side); Shift+E: over the side, into the water
+ *   V            your eyes / from outside, over the boat (you, in your seat at the oars, the tiller, the
+ *                paddle: render/boatCrew.js draws you whenever the camera is not at your eyes)
  *
- * Limitations: it is the boat's own mesh that you sit in (no voxels move with it); once it has
- * left its berth its voxels are taken out of the grid, so it no longer burns (fire has nothing to
- * burn) and only shots and blasts hole it; water in a pond's voxels shows inside its hull.
+ * Its voxels go with it (sim/movingBody.js, sim/buoyancy.js stampFloat): set alight it burns
+ * wherever you take it, and down to its waterline; the pond's water is pushed out of its hull.
+ * Limitations: it is the boat's own mesh that you see (its voxels are hidden until most of its
+ * planking has burnt away); the hot gas over a fire in it stays where it was as you row away.
  */
 export class BoatRow {
   constructor(walk, sim, f) {
@@ -100,7 +103,13 @@ export class BoatRow {
     this.draw();
   }
 
-  /** You on the thwart, in its pose; the instruments. */
+  /** V: from your eyes, or from outside over the boat (you drawn in your seat: render/boatCrew.js). */
+  toggleView() {
+    this.outside = !this.outside;
+    this.walk.say(this.outside ? 'View from outside (V: your eyes)' : 'Your eyes (V: from outside)', 1.5);
+  }
+
+  /** You on the thwart, in its pose (or the boat from outside); the instruments. */
   draw() {
     const f = this.f;
     const b = f.body;
@@ -108,9 +117,18 @@ export class BoatRow {
     const up = b.pose.R;
     const eye = 0.78;
     const cam = this.view.camera;
-    cam.position.set(s.p[0] + up[1] * eye, s.p[1] + up[4] * eye, s.p[2] + up[7] * eye);
-    cam.up.set(0, 1, 0);
-    cam.rotation.set(this.look[1], b.yaw - Math.PI / 2 + this.look[0], -b.roll * 0.5, 'YXZ');
+    if (this.outside) {
+      // behind and over it, looking at it (the mouse swings the camera round it)
+      const a = b.yaw + Math.PI + this.look[0], d = 3.2 + b.hull.L, hgt = 1.6 + 0.4 * b.hull.L * (0.6 - this.look[1]);
+      const c = toWorld(b, [0, b.hull.D * 0.5, 0]);
+      cam.position.set(c[0] + Math.cos(a) * d, c[1] + hgt, c[2] - Math.sin(a) * d);
+      cam.up.set(0, 1, 0);
+      cam.lookAt(c[0], c[1], c[2]);
+    } else {
+      cam.position.set(s.p[0] + up[1] * eye, s.p[1] + up[4] * eye, s.p[2] + up[7] * eye);
+      cam.up.set(0, 1, 0);
+      cam.rotation.set(this.look[1], b.yaw - Math.PI / 2 + this.look[0], -b.roll * 0.5, 'YXZ');
+    }
     cam.updateMatrixWorld();
     const c = Math.cos(b.yaw), sn = Math.sin(b.yaw);
     const ahead = b.vx * c - b.vz * sn;
@@ -123,7 +141,7 @@ export class BoatRow {
     this.hud.textContent =
       `${(f.kind ?? 'row').toUpperCase()}  ${ahead >= 0 ? 'ahead' : 'astern'} ${Math.abs(ahead).toFixed(1)} m/s   heading ${Math.round((((-b.yaw * 180) / Math.PI) % 360 + 360) % 360)}°   ${st}\n${what}${what ? '\n' : ''}` +
       (mine ? keys + '   C ' + (f.mooring ? 'cast off' : 'make fast') : keys) +
-      '   E step ashore' +
+      '   E step ashore   V view' +
       (b.water > 0.002 ? `\n⚠ WATER ABOARD ${(b.water * 1000).toFixed(0)} l${holes ? ` (${holes} holes)` : ''}  freeboard ${Math.max(0, b.freeboard ?? 0).toFixed(2)} m` : holes ? `\n${holes} holes in the hull, above the water` : '');
   }
 
@@ -155,7 +173,7 @@ export class BoatRow {
           if (i < 0) break;
           const m = w.mat[i];
           if (!m) continue;
-          if (m !== MAT.water && (this.f.detached || !this.f.own?.includes(i)) && d < bd) {
+          if (m !== MAT.water && !floatOwns(this.f, i) && d < bd) {
             bd = d;
             best = [x, Math.floor(y / w.h) * w.h + w.h, z];
           }

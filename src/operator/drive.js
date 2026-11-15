@@ -70,6 +70,12 @@ export function driveFromAI(f, d, st) {
     } else if (!ONCE[name]) f.play(name);
     if (MOVING[f.state] && !ONCE[f.shown]) f.setSpeed(d.moving ? Math.max(0.5, Math.min(1.8, (d.speed ?? 1) / MOVING[f.state])) : 0.001);
   }
+  // in a boat (sim/boatCrew.js placeCrew): the clip held at the boat's phase (the stroke, the tiller, the hike)
+  if (f.setPhase && (d.animPhase != null || st.phased)) {
+    const on = d.animPhase != null && f.shown === d.anim;
+    f.setPhase(on ? d.animPhase : null);
+    st.phased = on;
+  }
   f.setAim(d.aimAt);
   // his light (ai/flashlight.js): the hand torch in the left hand (drawn, put away), on or off
   if (f.setTorch) {

@@ -22,7 +22,7 @@ import { FlareFx } from '../render/flares.js';
 import { VEHICLE_ZONES, VEHICLE_WEAPONS, vehicleZones, rayZone, hitPart, integrity } from '../models/vehicleZones.js';
 import { buildCarMesh, buildJet, buildBoatMesh, Sea, disposeTree } from './vehicleMeshes.js';
 import { buildRowBoatMesh } from '../render/rowBoatMesh.js';
-import { ROW_BOAT_PARAMS, rowBoatSpec, rowBoatDraft, thwartsOf } from '../models/rowBoat.js';
+import { ROW_BOAT_PARAMS, rowBoatSpec, rowBoatDraft, thwartsOf, ROWLOCK_X } from '../models/rowBoat.js';
 import { bodyFromSpec, placeAt, stepBody, framePose } from '../sim/buoyancy.js';
 
 const NAMES = { car: 'Car', jet: 'Jet', boat: 'Boat', jetFlight: 'Jet flight', pilot: 'Pilot', rowBoat: 'Row boat' };
@@ -1245,7 +1245,7 @@ function rowBoatStage(params) {
   group.add(m.group);
   const th = thwartsOf(p, m.hull);
   const mid = th.length ? th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a)) : { x: 0 };
-  const lx = mid.x + 0.32;
+  const lx = mid.x + ROWLOCK_X;
   return {
     group,
     oars: m.oars,

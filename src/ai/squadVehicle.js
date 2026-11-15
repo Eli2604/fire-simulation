@@ -455,7 +455,7 @@ function coverFromInside(sq, B, dt) {
     m.vfT = m.vburst > 0 ? 0.15 : 0.9 + srand(sq) * 0.8;
     const at = seen.length ? seen.reduce((a, h) => (d2(h.p, m.p) < d2(a.p, m.p) ? h : a)).p : T;
     spend(m);
-    m.anim = 'kneelShoot';
+    m.anim = V.kind === 'boat' ? 'sitShoot' : 'kneelShoot'; // (an open boat: over the side from his thwart)
     sq.host.fire?.(m, aimPoint(m, at, () => srand(sq)), weaponKind(m));
     B.shots = (B.shots ?? 0) + 1;
   }
