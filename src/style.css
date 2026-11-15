@@ -778,8 +778,8 @@ body[data-mode='edit'] #toolhint {
   left: 50%;
   bottom: 12px;
   transform: translateX(-50%);
-  width: min(700px, calc(100vw - 16px));
-  max-height: 46vh;
+  width: min(980px, calc(100vw - 16px));
+  max-height: 52vh;
   overflow-y: auto;
   background: rgba(18, 18, 22, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -825,7 +825,7 @@ body[data-mode='edit'] #toolhint {
 }
 #moviePanel .shot {
   display: grid;
-  grid-template-columns: 22px minmax(70px, 1.4fr) 1fr 1fr 1fr 1fr auto;
+  grid-template-columns: 28px minmax(70px, 1.4fr) 1fr 1fr 1fr 1fr 1fr 1fr auto;
   gap: 4px;
   align-items: center;
   margin: 2px 0;
@@ -860,6 +860,187 @@ body[data-mode='edit'] #toolhint {
 }
 #moviePanel .actions .rec {
   color: #ff6b6b;
+}
+/* the movie's timeline (editor/cinemaPanel.js, cinema/timeline.js) */
+#moviePanel h3 select {
+  max-width: 180px;
+  margin-left: 6px;
+}
+#moviePanel h3 button {
+  padding: 1px 6px;
+}
+#moviePanel button.on {
+  background: rgba(255, 154, 74, 0.25);
+  border-color: var(--accent);
+}
+#moviePanel .toolbar,
+#moviePanel .phrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0;
+}
+#moviePanel .toolbar .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  flex: 1;
+}
+#moviePanel .chip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(127, 208, 255, 0.18);
+  border: 1px solid rgba(127, 208, 255, 0.5);
+  cursor: grab;
+  user-select: none;
+}
+#moviePanel .toolbar input[type='range'] {
+  width: 90px;
+  vertical-align: middle;
+}
+#moviePanel .phrow input[type='number'] {
+  width: 60px;
+}
+#moviePanel .tl {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+#moviePanel .tl .inner {
+  position: relative;
+  min-width: 100%;
+}
+#moviePanel .tl .ruler {
+  position: relative;
+  height: 30px;
+  cursor: col-resize;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+#moviePanel .tl .tick {
+  position: absolute;
+  top: 0;
+  height: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 10px;
+  color: var(--muted);
+  padding-left: 2px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+#moviePanel .tl .tick.major {
+  height: 14px;
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+#moviePanel .tl .tick.sim {
+  top: 16px;
+  height: 14px;
+  border-left-color: rgba(125, 255, 154, 0.5);
+  color: rgba(125, 255, 154, 0.8);
+  line-height: 14px;
+}
+#moviePanel .tl .lane {
+  position: relative;
+  height: 40px;
+}
+#moviePanel .tl .clip {
+  position: absolute;
+  top: 5px;
+  height: 30px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: rgba(127, 208, 255, 0.28);
+  border: 1px solid rgba(127, 208, 255, 0.7);
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+}
+#moviePanel .tl .clip.on {
+  background: rgba(255, 154, 74, 0.35);
+  border-color: var(--accent);
+}
+#moviePanel .tl .clip.missing {
+  background: rgba(255, 107, 107, 0.25);
+  border-color: rgba(255, 107, 107, 0.7);
+}
+#moviePanel .tl .clip .name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  padding: 0 2px;
+}
+#moviePanel .tl .clip .tr {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  font-size: 11px;
+}
+#moviePanel .tl .clip .tw {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 209, 102, 0.8);
+  pointer-events: none;
+}
+#moviePanel .tl .clip .h {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0.12);
+  z-index: 1;
+}
+#moviePanel .tl .clip .h.l {
+  left: 0;
+}
+#moviePanel .tl .clip .h.r {
+  right: 0;
+}
+#moviePanel .tl .playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid #ff6b6b;
+  pointer-events: none;
+}
+#moviePanel .shot.on .n {
+  border-color: var(--accent);
+}
+#props .cinemaAim .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#props .cinemaAim .row select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+#props .cinemaAim .add button.on {
+  background: rgba(255, 209, 102, 0.25);
+  border-color: rgba(255, 209, 102, 0.8);
+}
+#props .cinemaAim .muted {
+  margin: 4px 0 2px;
+  font-size: 11px;
 }
 /* a movie playing: only the picture */
 body.cinema > *:not(#view):not(#cineBar) {
