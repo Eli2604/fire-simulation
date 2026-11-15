@@ -2416,6 +2416,11 @@ function assemble(R) {
   A.mic = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([[0.128, -0.005, 0.03], [0.11, -0.035, 0.08], [0.07, -0.055, 0.108], [0.042, -0.058, 0.113]].map(V3)), 16, 0.0035, 6);
   A.foam = new THREE.SphereGeometry(0.013, 12, 8);
   A.antenna = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([[-0.1, 1.46, -0.26], [-0.115, 1.7, -0.255], [-0.14, 1.95, -0.24], [-0.16, 2.05, -0.235]].map((a) => V3(a).sub(REST.chest))), 16, 0.0045, 6);
+  // a rope coil strapped on the back of the pack (ai/ropeTeam.js: a man who carries one, m.ropes),
+  // in chest-bone space: a few loose wraps, flat against the pack, and the strap over them
+  A.coil = [0, 1, 2].map((i) => new THREE.TorusGeometry(0.135 + i * 0.012, 0.016, 6, 22).rotateZ(i * 0.5).translate(0.02 + i * 0.008, 1.2 - i * 0.01, -0.39 - i * 0.022).translate(-REST.chest.x, -REST.chest.y, -REST.chest.z));
+  A.coilMat = new THREE.MeshStandardMaterial({ color: '#4d5236', roughness: 0.95 });
+  A.coilStrap = new THREE.BoxGeometry(0.045, 0.34, 0.012).translate(0.02, 1.2, -0.445).translate(-REST.chest.x, -REST.chest.y, -REST.chest.z);
   // the helmet's shock cords, on the shell, in head-bone space
   const HF = SC.HF, C = V3(HF.C), F = P.H;
   const hp = (d, off) => {
@@ -3933,9 +3938,10 @@ export class OperatorFigure {
       s.material.opacity = 1 - a / 0.55;
     }
   }
-  /** Gear the squad wears: thermal monocular down, weapon light on. */
-  setGear({ thermal = false, light = false } = {}) {
+  /** Gear the squad wears: thermal monocular down, weapon light on, a rope coil on the pack (rope: undefined leaves it as it is). */
+  setGear({ thermal = false, light = false, rope } = {}) {
     this.thermal.visible = thermal;
+    if (rope !== undefined) this.setCoil(rope);
     if (light === this.lightOn) return;
     this.lightOn = light;
     // (the light itself: render/flashlights.js lights the nearest few from lightSource(); each
@@ -3950,6 +3956,23 @@ export class OperatorFigure {
     }
     if (this.lampGlow) this.lampGlow.visible = this.lampBeam.visible = light;
     if (this.lampGlow) this.lampGlow.position.copy(rl2w(this.lampX(), 0.045, 0.052));
+  }
+  /** The rope coil strapped on the back of his pack (made the first time he carries one; gone once he has lowered it). */
+  setCoil(on) {
+    if (!on && !this.coil) return;
+    if (!this.coil) {
+      const g = (this.coil = new THREE.Group());
+      g.name = 'ropeCoil';
+      for (const geo of this.A.coil) {
+        const m = new THREE.Mesh(geo, this.A.coilMat);
+        m.castShadow = true;
+        g.add(m);
+      }
+      g.add(new THREE.Mesh(this.A.coilStrap, this.A.black));
+      // (on the pack: it goes where the pack goes, dropped with it)
+      this.parts.pack.add(g);
+    }
+    this.coil.visible = !!on;
   }
   /** Where the weapon light sits along the weapon in his hands (rifle-local x). */
   lampX() {

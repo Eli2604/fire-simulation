@@ -5,6 +5,7 @@ import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 import { driveFromAI } from '../operator/drive.js';
 import { ropeEnds } from '../ai/rope.js';
+import { carriesCoil } from '../ai/ropeTeam.js';
 import { PACE } from '../ai/patrol.js';
 import { lod, updateEvery } from './lod.js';
 import { FlashlightPool } from './flashlights.js';
@@ -572,8 +573,9 @@ export class EnemyRenderer {
       f.setSpeed(moving ? Math.max(0.5, Math.min(1.8, (sq ? e.speed : f.speed) / MOVING[f.state])) : 0.001);
     }
     if (!sq) f.setAim(null);
-    // the weapon light (ai/flashlight.js: e.lightSrc 'weapon'); the hand torch is the figure's left hand (drive.js)
-    f.setGear({ thermal: !!e.thermal, light: e.lightSrc !== undefined ? !!e.lightOn && e.lightSrc === 'weapon' : !!e.light });
+    // the weapon light (ai/flashlight.js: e.lightSrc 'weapon'); the hand torch is the figure's left hand (drive.js);
+    // a rope coil on the pack while he carries one (ai/ropeTeam.js m.ropes: gone once lowered, in his hands as he throws it)
+    f.setGear({ thermal: !!e.thermal, light: e.lightSrc !== undefined ? !!e.lightOn && e.lightSrc === 'weapon' : !!e.light, rope: carriesCoil(e) });
     if (e.aimAt) f.droneTarget = new THREE.Vector3(e.aimAt[0], e.aimAt[1], e.aimAt[2]);
     f.droneGoal = e.droneGoal ? new THREE.Vector3(e.droneGoal[0], e.droneGoal[1], e.droneGoal[2]) : null;
     // the level of detail: the animation less often further off (the time it skipped made up)
