@@ -34,7 +34,7 @@ export const SNOW = {
 };
 
 // (the ground and trees have no eaves: a step in a hillside, a branch, is not a roof's edge)
-const NO_EAVE = new Set(['soil', 'grass', 'basalt', 'hillRock', 'bedrock', 'pine', 'oak', 'willow', 'bark', 'twigs', 'leaves', 'needles']);
+const NO_EAVE = new Set(['soil', 'grass', 'basalt', 'hillRock', 'bedrock', 'mud', 'tephra', 'beachSand', 'quarrySand', 'pine', 'oak', 'willow', 'bark', 'twigs', 'leaves', 'needles']);
 const NO_SNOW_ON = new Set(['leaves', 'needles', 'twigs', 'water', 'gasoline']);
 
 export class SnowField {
@@ -433,6 +433,22 @@ function heaterFlux(S, w) {
 export function initSnow(world, depth = 0) {
   if (world.dark || world.vacuum || world.indoor) return null;
   world.snow = new SnowField(world, depth);
+  // snow a terrain's areas lay down (models/terrain.js: a snowfield, per voxel column, m), on
+  // top of what the weather has lying: a few days old, settled a little
+  const add = world.snowDepth0;
+  if (add) {
+    const S = world.snow;
+    for (let z = 0; z < S.sz; z++)
+      for (let x = 0; x < S.sx; x++) {
+        const j = x + S.sx * z;
+        const d = add[Math.floor(x / S.k) + world.nx * Math.floor(z / S.k)];
+        if (d > 0 && S.cover[j] > 0) {
+          S.depth[j] += d * S.cover[j];
+          S.rho[j] = 250;
+        }
+      }
+    S.version++;
+  }
   return world.snow;
 }
 

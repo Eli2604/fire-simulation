@@ -24,7 +24,7 @@ export function createSimulation(scene, prebuilt = null) {
   const { world, ignitions, spawn } = prebuilt ?? buildScene({ ...scene, weather });
   world.dark = !!scene.view?.dark; // underground: a light where there should be none is noticed
   world.indoor = !!(scene.indoor ?? zone?.indoor) || exposure !== 'outdoor'; // no sky over it: no snow
-  if (weather.snowCover > 0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors)
+  if (weather.snowCover > 0 || world.snowDepth0) initSnow(world, weather.snowCover); // snow lying when it starts (outdoors; a terrain's snowfields too)
   const sim = new Simulation(world, weather);
   // where the firefighter walk-through starts: chosen by the user, the scene's own, or the edge
   sim.spawn = scene.walkStart ?? spawn ?? defaultSpawn(world);

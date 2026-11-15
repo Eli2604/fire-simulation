@@ -35,6 +35,20 @@ at the top switches between:
   it there. Del removes, Ctrl+D duplicates, Ctrl+Z / Ctrl+Y undo and redo. With nothing selected
   the right shows the world: name, size, voxel size, ground, weather, the fire at start. Every
   change rebuilds the scene (the voxels are made from the description).
+  **Terrain** (*+ Add › Nature › Terrain*): the ground of the world shaped by areas (see
+  *Terrain* below). It is laid over the whole world, first in the scene, and what stood on the
+  world's ground now sits on it (y *auto*). Selected, its properties list its **areas** in their
+  stack order (later ones lie over earlier ones): click one to edit it (the gizmo jumps to it),
+  ↑ / ↓ move it in the stack, ⧉ duplicates, ✕ deletes; *+ Hill*, *+ Pit / lake*, *+ Plateau*,
+  *+ Patch* (a surface only) and *+ Polygon* add one where the view looks. In the view every
+  area's outline is drawn over the ground (the picked one orange); a click on the terrain picks
+  the topmost area there. With an area picked, the gizmo's arrows move it over the terrain (the
+  up arrow raises or lowers its height), the green ring (T) turns it; Del deletes the area, Ctrl+D
+  duplicates it, Esc lets go of it (the terrain stays selected; Esc again: nothing). Its fields:
+  name, on / off, shape (rectangle, ellipse, polygon: its corners as `x z; x z; …` metres in its
+  own frame), where, size, turn, height (+ raises, − digs), raise / dig or level (flatten at the
+  height), edge slope width and profile (smooth, linear, dome; 0: a cliff), roughness, surface,
+  and per surface its grass moisture and tall grass, its water / lava level, its snow depth.
 - **🦴 Rig** (R from a selected character or vehicle): a stage of its own (`rig/stage.js`) with an
   **Object** drop-down: the *soldier* (every clip, loadouts, weapons, gear, hit zones), a *squad*
   (the fire team of `models/squad.js` in formation, playing clips together; pick a member, add a
@@ -998,6 +1012,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed |
 | Water mill | house size, wall height, wheel radius, width, paddles and their depth, axle height, race wall, millstones grinding (a load) |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
+| Terrain | width, depth, base ground thickness, base surface, grass moisture, tall grass, water / lava level and snow depth (for a base of those), border slope, ground under the surface (the rest hollow), seed, and its **areas** (see *Terrain* below) |
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
 | Helicopter | mission (insert / land / overwatch / hover), soldiers in the back, door guns, start in the air or on the ground, where it comes from, altitude, cruise speed, fast-rope hover height, rope length, orbit radius, call sign, paint. Flies there with its crew (`ai/helicopter.js`) |
@@ -1017,6 +1032,50 @@ Each shape has a material, optional fill probability (foliage, grass), moisture,
 and an **effective density**. The density lets a 15 cm voxel stand for a 1.5 mm car
 panel, a 6 mm glass pane or a 24 mm roof tile with the right mass, heat capacity and
 fuel, so results do not depend on the voxel size.
+
+### Terrain
+
+`terrain` (`models/terrain.js`, edited with `editor/terrainPanel.js`) is the ground of a place:
+a bed of ground `base` metres thick over the world's ground layer, of one surface, and on it a
+list of **areas** in `params.areas`, saved with the scene like any parameter:
+
+```jsonc
+{ "type": "terrain", "x": 15, "z": 15, "params": { "width": 30, "depth": 30, "base": 1, "surface": "grass",
+  "areas": [
+    { "name": "Hill", "shape": "ellipse", "x": -6, "z": -5, "width": 12, "depth": 9, "rotation": 0,
+      "height": 3, "mode": "add", "slope": 4.5, "profile": "smooth", "noise": 0.3, "surface": "grass" },
+    { "name": "Pond", "shape": "ellipse", "x": 6, "z": 5, "width": 7.5, "depth": 5.5,
+      "height": -1.2, "slope": 2, "surface": "water", "level": -0.2 },
+    { "name": "Lava field", "shape": "polygon", "x": 0, "z": 8, "points": [[-3, -2], [3, -2], [0, 3]],
+      "height": -0.6, "slope": 0.5, "surface": "lava", "level": -0.2 }
+  ] } }
+```
+
+- **Footprint**: `rectangle` (width × depth), `ellipse` (across x and z), `polygon` (`points`,
+  [x, z] in metres in the area's frame); `x`, `z` in the terrain's frame (from its centre),
+  `rotation` in degrees.
+- **Height**: `height` metres; `mode` `add` raises a hill or a plateau (+) or digs a pit or a lake
+  bed (−) on the ground as the areas before left it, `level` flattens the ground at `height` above
+  the base (a terrace, a pad). The flanks lie inside the footprint: `slope` metres wide (0: a
+  cliff), `profile` smooth, linear or dome; `noise` metres of roughness. A pit goes down to the
+  world's ground layer at most.
+- **Surface**: `grass` (a turf of grass on soil; `moisture` dry < 0.15 kg/kg, green > 0.6; `tall`
+  metres of tall grass over it: real grass fuel, a fire runs over it, and its blades are drawn),
+  `soil`, `mud`, `sand`, `gravel`, `rock`, `volcanic` (basalt), `ash` (volcanic ash and cinders on
+  basalt), `snow` (`snow` metres of the snow field, `sim/snow.js`, on frozen soil: it lies,
+  settles, is trodden and melts like snow that fell), `water` (a mud bed filled with water to
+  `level` metres above the base: a lake, a pond), `lava` (a basalt bed filled to its level with
+  molten basalt at 1180 °C: it glows, flows, sets what it touches alight and crusts over as it
+  cools), or `keep` (only the height changes).
+- **Stacking**: areas apply in their order; heights add up (or level what is there), the last
+  surface covering a spot wins. `enabled: false` leaves one out.
+
+It is a height field voxelised as columns (the voxelizer's `columns` shape): under the hills only
+a shell of ground (`shell` metres; the rest hollow, as the island's), down at least to the
+lowest neighbour's top so no gap shows at a step. Objects on it stand on its surface with y
+*auto*. Burning at start lights its grass nearest its centre. Two ground materials came with it:
+**mud** (wet soil: heavy, ~2.2 kJ/(kg·K), it holds water) and **tephra** (volcanic ash and
+cinders: porous basalt, ~1.1 t/m³, insulating, it melts as basalt does).
 
 ### Objects of objects
 
@@ -1411,7 +1470,7 @@ src/render/     three.js rendering: voxels or smooth surfaces, flames/sparks, pa
 src/ai/         enemies: senses, path finding around fire, luring with fire
 src/walk/       first-person walk-through (firefighter), flying the jet
 src/audio/      procedural sound, synthesised from physics (physics.js: modes, flows, propagation)
-src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library
+src/editor/     the editor: Play / Edit world / Rig, outliner, gizmo, palette, scene library, terrain areas
 src/rig/        the character stage (stage.js: soldiers and the dragon; the editor's Rig mode)
 src/camp/       the drone operations camp stage (stage.js; opened from the editor)
 src/main.js     app, controls panel, HUD, tools, zones

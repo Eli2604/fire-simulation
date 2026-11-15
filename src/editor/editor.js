@@ -31,6 +31,7 @@ import { skyFolder } from '../skyGui.js';
 import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } from '../models/composite.js';
+import { TerrainEditing } from './terrainPanel.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -44,7 +45,7 @@ export const GROUPS = [
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
   ['Vehicles', ['car', 'helicopter']],
   ['Furniture & props', ['couch', 'livingRoom', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp']],
-  ['Nature', ['tree', 'grass', 'hedge', 'volcano']],
+  ['Nature', ['tree', 'grass', 'hedge', 'volcano', 'terrain']],
   // every kind of tree as an object of its own (models/treeObjects.js: oak, willow, pine, birch, ...)
   ['Trees', Object.keys(TREE_OBJECTS)],
   ['Water & air', ['waterVortex', 'windHose', 'windJet', 'mill']],
@@ -154,6 +155,8 @@ export class Editor {
     this.box = new THREE.Box3Helper(new THREE.Box3(), 0xffb347);
     this.box.visible = false;
     v.root.add(this.box);
+    // a terrain's areas: their outlines, the gizmo on the picked one, their panel (editor/terrainPanel.js)
+    this.terrain = new TerrainEditing(this);
     // picking in the view (a click without a drag, so orbiting still works)
     const cv = v.renderer.domElement;
     cv.addEventListener('pointerdown', (e) => {
@@ -210,6 +213,7 @@ export class Editor {
     this.palette.hidden = true;
     this.gizmo.enabled = editing && this.sel >= 0;
     this.gizmoHelper.visible = this.gizmo.enabled;
+    this.terrain.group.visible = editing;
     this.box.visible = editing && this.sel >= 0;
     C.playGui.domElement.style.display = m === 'play' ? '' : 'none';
     if (editing) {
@@ -521,6 +525,7 @@ export class Editor {
     const fp = gui.addFolder('Parameters');
     ob.params ??= {};
     for (const [key, spec] of Object.entries(M?.params ?? {})) {
+      if (spec.list) continue; // (a list: a panel of its own, below)
       ob.params[key] ??= spec.value;
       let c;
       if (spec.options) c = fp.add(ob.params, key, spec.options);
@@ -530,6 +535,7 @@ export class Editor {
       else c = fp.add(ob.params, key, spec.min, spec.max, spec.step);
       c.name(spec.label ?? key).onFinishChange(change);
     }
+    if (ob.type === 'terrain') this.terrain.folder(gui, ob, change);
     if (RIG_TYPES[ob.type] && rigTargetFor(ob)) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
   }
 
@@ -650,6 +656,13 @@ export class Editor {
       // a place (a room of its own) is made by its model; an object of objects comes with what
       // is in it (the carrier: its jets, its below deck), its places named apart from the others
       if (M.create) o = M.create(o);
+      // ground (a terrain) covers the world it is put in
+      if (M.ground && !this.placeInside) {
+        const [sx, , sz] = C.scene.world.size;
+        Object.assign(o, { x: sx / 2, z: sz / 2 });
+        delete o.y;
+        Object.assign(o.params, { width: sx, depth: sz });
+      }
       if (M.children) o.children = M.children(o.params);
       uniquifyPlaces(o, placeKeys(C.scene));
       this.snapshot();
@@ -662,6 +675,11 @@ export class Editor {
         if (l.tiltX) o.tiltX = l.tiltX;
         if (l.tiltZ) o.tiltZ = l.tiltZ;
         (into.node.children ??= []).push(o);
+      } else if (M.ground) {
+        // ground (a terrain): first, so what is built after it stands on it; what stood on the
+        // world's ground now sits on the terrain (y 'auto')
+        for (const q of C.scene.objects) if (!isPlace(q) && q.y === undefined) q.y = 'auto';
+        C.scene.objects.unshift(o);
       } else C.scene.objects.push(o);
       this.selectNode(o);
       this.rebuild();
@@ -682,16 +700,20 @@ export class Editor {
         if (d < best) (best = d), (k = i);
       });
     }
+    // (on a terrain: the topmost of its areas there is picked)
+    if (entries[k]?.node.type === 'terrain') this.terrain.pickAt(k, hit.point);
     this.select(entries[k] ? k : -1, true);
   }
 
   select(i, fromUser = false) {
+    this.terrain.selectObject(i, this.sel);
     this.sel = i;
     const on = this.mode === 'edit' && i >= 0;
     this.gizmo.enabled = on;
     this.gizmoHelper.visible = on;
     this.box.visible = on;
     if (on) this.placeGizmo();
+    else this.terrain.drawOutlines();
     if (fromUser || this.mode === 'edit') this.refresh();
   }
 
@@ -699,6 +721,8 @@ export class Editor {
   placeGizmo() {
     const C = this.ctx, e = this.cur(), o = e?.node;
     if (!o) return;
+    // (a terrain's picked area: the gizmo on it)
+    if (this.terrain.placeGizmo()) return;
     const w = C.sim.world;
     // (where it is in the world: a child's record there, from its parent's)
     const rec = w.objectTree?.[this.sel]?.rec ?? o;
@@ -738,6 +762,7 @@ export class Editor {
   applyGizmo() {
     const C = this.ctx, e = this.cur(), o = e?.node;
     if (!o) return;
+    if (this.terrain.applyGizmo(this.pivotPose(), this.dragStart)) return void (this.dragStart = null);
     const w = C.sim.world;
     const rec = w.objectTree?.[this.sel]?.rec ?? o;
     let fields = poseToRecord(rec, this.pivotPose(), { start: this.dragStart, size: C.scene.world.size, h: w.h });
@@ -904,6 +929,7 @@ export class Editor {
       if (e.code === 'KeyR' && this.mode === 'edit') return this.setMode('rig', this.rigTarget());
     }
     if (this.mode !== 'edit') return;
+    if (this.terrain.key(e)) return; // (Esc, Del, Ctrl+D on a terrain's picked area)
     if (e.code === 'Escape') {
       if (this.placing) {
         this.placing = null;

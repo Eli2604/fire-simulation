@@ -3,7 +3,7 @@ import { F_ANCHOR, F_FALLING } from './world.js';
 import { launchVoxel } from './vessels.js';
 
 // (the ground itself does not give: a foot comes down on it, it does not stamp a hole in the island)
-const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock', 'bedrock', 'basalt']);
+const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock', 'bedrock', 'basalt', 'mud', 'tephra']);
 
 /**
  * A great weight coming down on what is built (a dragon stamping on a roof, slamming into a

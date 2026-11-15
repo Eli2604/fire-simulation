@@ -632,3 +632,74 @@ body[data-mode='edit'] #toolhint {
   inset: 0;
   z-index: auto;
 }
+/* a terrain's areas in its properties (editor/terrainPanel.js): the stack, buttons to add one */
+#props .terrainAreas {
+  padding: 4px 6px 6px;
+  font-size: 12px;
+}
+#props .terrainAreas .row {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+}
+#props .terrainAreas .row button {
+  width: auto;
+  height: auto;
+  flex: none;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  font: inherit;
+}
+#props .terrainAreas .row button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+#props .terrainAreas .row .name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#props .terrainAreas .row.on {
+  background: rgba(255, 154, 74, 0.25);
+  border-radius: 4px;
+}
+#props .terrainAreas .row.off .name {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+#props .terrainAreas .n,
+#props .terrainAreas .x,
+#props .terrainAreas .muted {
+  color: var(--muted);
+}
+#props .terrainAreas .tag {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+#props .terrainAreas .add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+#props .terrainAreas .add button {
+  flex: 1 0 auto;
+  width: auto;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  padding: 3px 6px;
+  cursor: pointer;
+  font: inherit;
+}
