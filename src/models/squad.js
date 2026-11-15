@@ -6,6 +6,9 @@
  * With a patrol drawn for them (in the editor's view, ai/patrol.js: a path, an area) they patrol
  * that instead, in file, as guards of their own team, until contact (then the squad AI as ever,
  * on the leash); the threat offset is then not used.
+ * Side (ai/sides.js): red teams fight you and the blue ones; blue teams are yours and fight the
+ * red ones (and green, a third side, fights both). The threat offset is only where they go first:
+ * in a fight they go for the nearest hostile they have made out (ai/squad.js senses).
  */
 import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
 /** A member's primary from the Riflemen option (undefined: a rifle; the gunner keeps his MG). */
@@ -19,7 +22,9 @@ export default {
   params: {
     threatX: { value: 0, min: -60, max: 60, step: 0.5, label: 'Threat offset X (m)' },
     threatZ: { value: -20, min: -60, max: 60, step: 0.5, label: 'Threat offset Z (m)' },
-    unit: { value: 'Alpha', options: ['Alpha', 'Bravo', 'Charlie'], label: 'Team call sign' },
+    unit: { value: 'Alpha', options: ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'], label: 'Team call sign (each team its own: two teams with one call sign are one team)' },
+    // whose side they are on (ai/sides.js): blue fight with you, red against you; teams of other sides fight each other
+    side: { value: 'red', options: ['red', 'blue', 'green'], label: 'Side (red: the enemy, they fight you and blue teams; blue: on your side, they fight red teams; green: a third side, against both)' },
     flameTrooper: { value: false, label: 'Rifleman two carries a flame gun' },
     // the riflemen's primary (ai/weapons.js: each its grips, carry, aim, and what it allows: no roll with the flame gun...)
     riflemen: { value: 'rifle', options: ['rifle', 'shotgun', 'pistol', 'mixed', 'unarmed'], label: 'Riflemen carry (mixed: rifleman one a shotgun, the commander a pistol; unarmed: hand-to-hand)' },
@@ -61,6 +66,7 @@ export default {
         p: [x, p.level, z],
         squad,
         unit: p.unit,
+        side: p.side ?? 'red',
         loadout: p.flameTrooper && squad === 'R2' ? 'torch' : loadoutOf(p.riflemen, squad),
         threat: area ? undefined : [p.threatX, p.level, p.threatZ],
         ...(area ? { area, routeStart: -1, guard: true } : {}),

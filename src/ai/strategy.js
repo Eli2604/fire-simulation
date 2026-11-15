@@ -2,8 +2,10 @@
  * The squad leader's fighting strategy on contact (on top of ai/squad.js, which moves, covers and
  * fires). Pure logic, no three.js.
  *
- *  - assess(sq): what the leader weighs: the enemies seen (how many, where), his own strength (men
- *    standing, the wounded, the ammunition left), the fire coming in, and the ground: for each flank
+ *  - assess(sq): what the leader weighs: the enemies he knows of (how many: every hostile his men
+ *    see or saw lately and the near friendly teams see, ai/squad.js knownHostiles; where), his own
+ *    strength (men standing, the wounded, the ammunition left) and the friendly teams' with him
+ *    (a.friends: their men standing, near and in the same fight), the fire coming in, and the ground: for each flank
  *    of the threat a covered route there (ai/squad.js route with the parkour links, steering clear of
  *    the cells the enemy sees: exposedTo) and how much of it the enemy can see.
  *  - choose(a): one of
@@ -28,6 +30,7 @@
  */
 import { badlyHit, roundsLeft, ARMS } from './soldier.js';
 import { retreatWanted, startRetreat, stepRetreat } from './retreat.js';
+import { friendliesOf } from './retreatRadio.js';
 
 export const STRATEGIES = {
   suppressFlank: 'Suppress and flank',
@@ -100,19 +103,35 @@ export function flankPoint(sq, T, from, side, off = 8) {
   return k >= 0 ? sq.cellPos(k) : p;
 }
 
+/** The men standing in the friendly teams near (FRIENDS_R m) and in the fight (a threat of their own). */
+const FRIENDS_R = 40;
+function friendsWith(sq, al) {
+  if (!al.length) return 0;
+  const c = cen(al);
+  let n = 0;
+  for (const f of friendliesOf(sq)) {
+    if (!f.threat) continue;
+    const fm = f.members().filter((m) => !m.dead && m.squad !== 'UAV');
+    if (fm.length && d2(cen(fm), c) < FRIENDS_R) n += fm.filter((m) => !badlyHit(m) && !m.crawling && !m.down).length;
+  }
+  return n;
+}
+
 /** What the leader weighs (see the top). */
 export function assess(sq) {
   const T = sq.threat;
   const al = sq.members().filter((m) => !m.dead && m.squad !== 'UAV');
   const fit = al.filter((m) => !badlyHit(m) && !m.crawling && !m.down);
-  const enemies = Math.max(sq.seen?.length ?? 0, T ? 1 : 0);
+  // (every hostile they know of: seen now, seen lately, seen by the friendly teams near them)
+  const known = sq.knownHostiles?.() ?? sq.seen ?? [];
+  const enemies = Math.max(known.length, sq.seen?.length ?? 0, T ? 1 : 0);
   const full = al.reduce((a, m) => a + ARMS[m.primary ?? 'rifle'].size * (ARMS[m.primary ?? 'rifle'].mags + 1), 0) || 1;
   const ammo = al.reduce((a, m) => a + roundsLeft(m), 0) / full;
   const now = sq.host.now?.() ?? sq.time;
   const hits = al.filter((m) => m.lastHitT != null && now - m.lastHitT < 6).length;
   const down = sq.members().filter((m) => m.dead || m.down || badlyHit(m)).length;
   // (fixed: they have it in sight and are engaging it; a reported point no one sees is not to be flanked)
-  const a = { T, men: al.length, fit: fit.length, enemies, ammo, hits, down, fixed: (sq.seen?.length ?? 0) > 0, flanks: {} };
+  const a = { T, men: al.length, fit: fit.length, enemies, friends: friendsWith(sq, al), ammo, hits, down, fixed: (sq.seen?.length ?? 0) > 0, flanks: {} };
   if (!T || !al.length || !sq.route) return a;
   const c = cen(al);
   const A = al.filter((m) => team(m) === 'A' && !badlyHit(m));
@@ -131,10 +150,11 @@ export function assess(sq) {
 export function choose(sq, a, not = null) {
   const can = (k) => k !== not;
   // ordered back, or too hurt to hold (ai/retreat.js)
-  const r = can('retreat') ? retreatWanted(sq, a) : null;
+  // (the friendly teams fighting beside them count for their strength: two teams against one, it is not the two that fall back)
+  const r = can('retreat') ? retreatWanted(sq, a.friends ? { ...a, fit: a.fit + a.friends } : a) : null;
   if (r) return { kind: 'retreat', why: r.why };
   // (a man on his own fights where he is: a team down to one man standing breaks contact)
-  const outmatched = a.enemies >= 2 * Math.max(1, a.fit) || (a.fit <= 1 && a.men > 1) || a.ammo < 0.15;
+  const outmatched = a.enemies >= 2 * Math.max(1, a.fit + (a.friends ?? 0)) || (a.fit <= 1 && a.men > 1) || a.ammo < 0.15;
   if (outmatched && can('withdraw')) return { kind: 'withdraw', why: a.ammo < 0.15 ? 'low on ammunition' : 'outnumbered' };
   if ((a.fit < 3 || a.down >= 2) && a.enemies >= a.fit - 1 && can('defend')) return { kind: 'defend', why: 'men down' };
   const good = a.fixed === false ? [] : [1, -1].filter((s) => a.flanks[s]?.ok && a.flanks[s].expo < 0.4);
@@ -246,8 +266,10 @@ export function stepStrategy(sq, dt) {
   // (one man on his own: no teams to give parts to, he fights where he is)
   if (al.length < 2) return false;
   // (far off, or moving up in formation: not yet engaged; a team sent round a flank by the lead
-  // squad follows that order instead: ai/squad.js command, sq.goal)
-  if (!sq.strategy && (sq.phase === 'formation' || d2(cen(al), T) > 32)) return false;
+  // squad follows that order instead: ai/squad.js command, sq.goal) — unless they already know they
+  // are outnumbered two to one (the friendly teams with them counted): the leader weighs it now
+  const outnumbered = () => (sq.knownHostiles?.().length ?? 0) >= 2 * Math.max(1, al.length + friendsWith(sq, al));
+  if (!sq.strategy && (sq.phase === 'formation' || d2(cen(al), T) > 32) && !outnumbered()) return false;
   sq.stratT = (sq.stratT ?? 0) - dt;
   const S = sq.strategy;
   if (!S) {

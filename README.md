@@ -1654,6 +1654,21 @@ down; the first team leads and sends the others to a flank, tells them to hold o
 and calls a pursuit when the threat moves away. Scenario **Squad on a range**; the tool *Squad:
 set the threat* moves the threat.
 
+**Sides**: each team has a *Side* param (`ai/sides.js`): *red* (the default) fight you and the blue
+teams, *blue* are on your side and fight the red ones (never you: their rounds pass you by, and on a
+drawn patrol their guards do not take you for an enemy), *green* is a third side against both.
+Teams of different sides fight each other: each sees the other's men as it sees you
+(`ai/perception.js`: distance, light, smoke, walls, a moment to notice), the nearest one made out is
+its threat and each man fires at the nearest he sees; rounds of another side crack past them
+(`m.shotAt`: pinned down), knives and fists land on them too. The leader counts **every hostile he
+knows of**: the ones his men see, saw in the last 30 s (`sq.known`, `knownHostiles()`) or that a
+friendly team within 60 m sees; and the men standing in the friendly teams fighting beside him (within
+40 m) count for his strength, so it is the team that is outnumbered that falls back
+(`ai/strategy.js assess`: `a.enemies`, `a.friends`); a team that knows it is outnumbered two to one
+weighs it at once, even far off (it breaks contact; pinned down or losing men, it retreats). Each team needs a call sign of its own (two
+teams with one call sign are one team). Scenario **Squad against squad**: two blue teams meet a red
+one on a long range; outnumbered, the red team retreats.
+
 The range has a **lookout**: model `deck` (`models/deck.js`), a concrete deck 3 m up on pillars
 (width, depth and height are parameters), a straight staircase up one side (a step per voxel
 layer, so the 3D paths of `ai/enemies.js` and the walk-through climb it) and glass rails round it,

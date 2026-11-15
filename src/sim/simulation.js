@@ -22,7 +22,8 @@ import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
 import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
 import { HeliAI } from '../ai/helicopter.js';
-import { sideOf, squadHostiles } from '../ai/sides.js';
+import { sideOf, squadHostiles, hostile, PLAYER_SIDE } from '../ai/sides.js';
+import { applyMelee } from '../ai/melee.js';
 import { shoot } from './wounds.js';
 import { stepVacuum } from './vacuum.js';
 import { stepBreach } from './breach.js';
@@ -1586,7 +1587,10 @@ export class Simulation {
       return ref;
     };
     const pl = () => (this.ai.player && !this.ai.player.dead ? this.ai.player : null);
-    const side = sideOf(squad[0]); // (ai/sides.js: 'red' unless they came in a friendly helicopter)
+    // (ai/sides.js: the squad model's side param, 'red' unless they say otherwise or came in a friendly helicopter)
+    const side = sideOf(squad[0]);
+    // a soldier of another side (the squads fight each other: blue with you, red against you)
+    const foe = (h) => h && h !== pl() && w.enemies.includes(h) && hostile(side, sideOf(h));
     const ai = new SquadAI({
       members: () => w.enemies,
       solid: (x, y, z) => this.ai.solidAt(x, y, z),
@@ -1616,9 +1620,11 @@ export class Simulation {
       ropeSim: this,
       // what threatens a man (a grenade by him, a rocket, rounds cracking past, a dragon): he rolls out of it (ai/evade.js)
       dangers: (m) => dangers(w, m),
-      // you: seen through doorways, not through walls or thick smoke (and the soldiers and
-      // helicopters of the other side, if there are any: ai/sides.js; a red team's only you, else)
+      // you (to a team not on your side): seen through doorways, not through walls or thick smoke;
+      // and the soldiers (other teams) and helicopters of every other side (ai/sides.js)
       hostiles: () => squadHostiles(w, side, pl()),
+      // their side (ai/retreatRadio.js: who hears their calls, whose orders they take)
+      side,
       lineOfSight: (a, b) => this.ai.sees([a[0], a[1] + 1.6, a[2]], [b[0], b[1] + 1.5, b[2]]),
       // from an eye to a point (ai/perception.js: crouched, standing, peeking over a wall or round a corner)
       sightLine: (eye, at) => this.ai.sightLine(eye, at),
@@ -1633,7 +1639,7 @@ export class Simulation {
       fire: (e, target, weapon = 'rifle') => {
         const muzzle = [e.p[0] + Math.sin(e.yaw) * 0.6, e.p[1] + 1.1, e.p[2] + Math.cos(e.yaw) * 0.6];
         e.flashUntil = w.time + 0.06;
-        const hit = shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !!o.squad && sideOf(o) === side, player: side === 'blue' ? null : pl(), weapon });
+        const hit = shoot(this, muzzle, [target[0] - muzzle[0], target[1] - muzzle[1], target[2] - muzzle[2]], { shooter: e, ignore: (o) => !hostile(side, sideOf(o)), player: hostile(side, PLAYER_SIDE) ? pl() : null, weapon });
         if (hit?.player) w.playerHits.push({ zone: hit.zone, time: w.time, from: muzzle, weapon });
       },
       grenade: (e, from, vel) => this.throwGrenade(from, vel, 8e5, 2.5),
@@ -1654,12 +1660,22 @@ export class Simulation {
       impact: (o) => impact(this, o),
       flashbang: (e, from, vel) => w.projectiles.push({ type: 'flash', p: from.slice(), v: vel.slice(), fuse: 1.5, by: e.unit, resting: false }),
       // the knife: into you (the torso, or the neck over the collar of your gear)
+      // (or into a soldier of another side)
       stab: (e, h) => {
         if (h === pl()) w.playerHits.push({ zone: Math.random() < 0.3 ? 'head' : 'torso', time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'knife' });
+        else if (foe(h)) {
+          h.lastHitT = w.time;
+          this.ai.damage(h, 45);
+        }
       },
       // hand-to-hand (ai/melee.js): a punch, a kick or a throw into you
       melee: (e, h, res) => {
         if (h === pl()) w.playerHits.push({ zone: res.zone === 'legs' ? 'legs' : res.zone, time: w.time, from: [e.p[0], e.p[1] + 1.3, e.p[2]], weapon: 'fist', melee: res.kind, down: res.down });
+        else if (foe(h) && res.hit) {
+          // a soldier of another side: the damage through the guard AI (his death), the daze and the fall
+          if (res.dmg) this.ai.damage(h, res.dmg);
+          applyMelee(h, { ...res, dmg: 0 }, w.time, e);
+        }
       },
       shout: (e, text) => w.events.push({ type: 'shout', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text }),
       now: () => w.time,

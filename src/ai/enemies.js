@@ -5,6 +5,7 @@ import { hitZone, wound, shoot } from '../sim/wounds.js';
 import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 import { impact, groundMaterial, bodyLanding } from '../sim/impact.js';
 import { nextLeg, areaGoal, holdAt, paceOf, leashHolds, insideZone } from './patrol.js';
+import { sideOf, hostile, PLAYER_SIDE } from './sides.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -273,7 +274,8 @@ export class EnemyAI {
         continue;
       }
       // --- senses
-      const seesPlayer = pl && this.spots(e, pl, dt);
+      // (you are not an enemy to a guard on your side: a blue team on its patrol, ai/sides.js)
+      const seesPlayer = pl && hostile(sideOf(e), PLAYER_SIDE) && this.spots(e, pl, dt);
       if (seesPlayer) {
         e.lastSeen = pl.p.slice();
         if (!e.alerted) {

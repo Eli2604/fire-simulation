@@ -2,6 +2,7 @@ import { MATERIALS } from './materials.js';
 import { emitSound, LOUDNESS } from '../ai/perception.js';
 import { F_FALLING } from './world.js';
 import { boatShot } from './boats.js';
+import { sideOf, hostile, PLAYER_SIDE } from '../ai/sides.js';
 
 /**
  * Wounds, blood and bullets.
@@ -219,13 +220,15 @@ export function shoot(sim, from, dir, { shooter = null, player = null, range = 8
   if (bo) best = { boat: bo.boat, zone: 'hull', p: bo.p, holes: bo.holes };
   // the report (ai/perception.js): a rifle's crack carries kilometres (who hears it goes to look only nearer)
   emitSound(w, { pos: from, loudness_dB: LOUDNESS[weapon] ?? LOUDNESS.rifle, kind: shooter ? 'enemy' : 'gunshot', source: shooter ?? player ?? null });
-  // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at (ai/evade.js)
-  // (your rounds: they are all on the other side)
-  if (!shooter) {
+  // the ones it cracks past (within ~1.5 m of the round's way, not hit): they know they are shot at
+  // (ai/evade.js; ai/retreatRadio.js: pinned down) — the shooter's enemies (ai/sides.js: yours,
+  // or a soldier's: the teams fight each other), not his own side
+  const by = shooter ? sideOf(shooter) : PLAYER_SIDE;
+  {
     const end = best ? best.p : wall ? wall.p : [from[0] + d[0] * range, from[1] + d[1] * range, from[2] + d[2] * range];
     const L = Math.hypot(end[0] - from[0], end[1] - from[1], end[2] - from[2]);
     for (const e of w.enemies) {
-      if (e.dead || e === best?.enemy) continue;
+      if (e.dead || e === best?.enemy || e === shooter || !hostile(by, sideOf(e))) continue;
       const r = [e.p[0] - from[0], e.p[1] + 1.1 - from[1], e.p[2] - from[2]];
       const t = Math.max(0, Math.min(L, r[0] * d[0] + r[1] * d[1] + r[2] * d[2]));
       if (Math.hypot(r[0] - d[0] * t, r[1] - d[1] * t, r[2] - d[2] * t) < 1.5) e.shotAt = { time: w.time, from: from.slice(), dir: d.slice() };
