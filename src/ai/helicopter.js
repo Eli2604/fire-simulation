@@ -19,10 +19,26 @@
  *    or two man the door guns (a pintle machine gun in each door: `doorGuns`), the rest are troops
  *    on the benches. They are the simulation's own soldiers (w.enemies: the squad AI's men, drawn by
  *    render/enemies.js), held in their seats (`guardCtl`: neither the guard nor the squad AI moves
- *    them; `aboard`: the helicopter's id). With a door open the gunner fires at what he sees on his
- *    side, and the troop nearest each door fires his own weapon out of it (sim/wounds.js shoot:
- *    the same rounds, tracers and reports). A trooper on a cable is the rope module's (below);
- *    down, he is his squad's again (ai/squad.js).
+ *    them; `aboard`: the helicopter's id). Each man is posed in the helicopter's frame (e.frame: its
+ *    axes; e.seatYaw: his heading in it; e.eye: his eye in the world), so he tilts with its pitch
+ *    and roll, and what he sees and shoots from is where his eye and his gun really are.
+ *  - Who they shoot at (stepSenses, pickTarget): the crew watch out of the doors (the men in the
+ *    back) and through the glass (the pilots) and identify what they see as the soldiers do
+ *    (ai/perception.js perceive: distance, the light, smoke, a moment to notice, sooner where they
+ *    are being shot from or where a friendly squad reported its threat); what one man identifies
+ *    the whole crew knows (`known`, as a squad shares its sightings). The contacts are the host's
+ *    (contacts(): you, the soldiers, the dragons, the other helicopters), each on a side
+ *    (ai/sides.js): only a hostile one that has been identified and is in sight out of his door
+ *    is fired at, the most dangerous first (shooting at them, near, exposed: threatScore); a
+ *    friendly in the line of fire holds it. With a door open the gunner fires the door gun and
+ *    the troop nearest the door his own weapon out of it (sim/wounds.js shoot: real rounds that
+ *    wound a soldier, strike a dragon, hit another helicopter's parts). A trooper on a cable is
+ *    the rope module's (below); down, he is his squad's again (ai/squad.js).
+ *  - You can fly it (board / unboard; `controls`: collective, cyclic pitch and roll, pedals; mode
+ *    'player': stepPlayer). The same hit parts and failures apply: a tail rotor shot away spins
+ *    you round the mast (the pedals do nothing; less collective, less torque), a dead engine
+ *    autorotates (the collective only spends the rotor's spin: a flare), no rotor drops you. The
+ *    crew in the back still fight from the doors, and fast-rope down on your order (playerRopes).
  *  - Hit parts: models/vehicleZones.js VEHICLE_ZONES.helicopter (the rig's table, editable there).
  *    A bullet (sim/wounds.js shoot), an arrow or rocket (sim.hitEnemy) or a blast (explode) at a
  *    part damages it (hitPart): the cockpit hits a pilot, the cabin the men in the back, the fuel
@@ -37,6 +53,9 @@
  *      'engine'  autorotation: the descent keeps the rotor turning, it glides down at ~9 m/s with
  *                some forward speed and flares just above the ground: a hard landing.
  *      'pilot'   both pilots down: nobody flies it, it drifts and rolls and goes in.
+ *    The tail boom shot through breaks off at its root: the boom, the fin and the tail rotor fall
+ *    away as one piece (a debris entry 'tailBoom' with its own attitude, tumbling down and lying
+ *    where it lands), and without its weight aft the nose drops.
  *    A burning fuel tank: the pilot puts it down at once; in the air too long, it blows up (then
  *    'main'). Every touchdown and crash goes through sim/impact.js (force, shockwave, sound); a
  *    crash hurts the crew by how hard it was, the fuel can catch (sim.ignite and a torch: the fire
@@ -58,14 +77,17 @@
  *   heliHitZone(h, p)                // the part at world point p: { k, zone, local } or null
  *   heliRayHit(h, from, dir, max)    // the part a ray meets first: { k, zone, t, p } or null
  *   heliSeats(n, doorGuns)           // the seats: pilot, co-pilot, door gunners, troops
+ *   h.board(); h.controls = { collective, pitch, roll, pedal };  h.unboard();   // you fly it
+ *   h.playerRopes()                  // (flown by you) cables out at the hover, the troops down; again: cut
  *   new HeliAI(sim)                  // the simulation's helicopters (w.helis): steps, bullets, blasts
  */
 import { VEHICLE_ZONES, VEHICLE_WEAPONS, vehicleZones, rayZone, hitPart, integrity } from '../models/vehicleZones.js';
 import { impact, groundMaterial } from '../sim/impact.js';
 import { shoot, wound } from '../sim/wounds.js';
 import { explode } from '../sim/explosions.js';
-import { emitSound } from './perception.js';
+import { emitSound, perceive, senses } from './perception.js';
 import { startRope } from './rope.js';
+import { sideOf, hostile } from './sides.js';
 
 const G = 9.81;
 /** The helicopter's numbers (a UH-60-sized machine). */
@@ -109,6 +131,15 @@ export const HELI = {
   gunBurst: 12,
   rifleRate: 3,
   rifleBurst: 3,
+  senseEvery: 0.2, // s between the crew's looks round (ai/perception.js perceive, the time between made up)
+  forgetAfter: 20, // s unseen: an identified contact is no longer known
+  // flown by you (stepPlayer)
+  collective: 0.4, // of g more (or less) lift at the collective's ends (0: holds its height, level or tilted)
+  thrustMax: 1.5, // of g at full power
+  tiltMax: 0.42, // rad the cyclic tilts the disc (nose down / up, banked)
+  dragH: 0.0011, // quadratic drag across (s²/m²: ~63 m/s at full forward cyclic)
+  dragV: 0.5, // per s: the disc's damping of a climb or a sink
+  pedalRate: 0.95, // rad/s at full pedal
 };
 
 /** Where the men are, in the helicopter's frame (front +x, right +z, skids at y = 0). face: yaw offset (0 forward, +π/2 left, -π/2 right). */
@@ -128,6 +159,9 @@ export const DOOR = {
   anchor: (s) => [0.6, 2.3, s * 1.32],
   opening: [-0.1, 1.85],
 };
+/** Where the tail boom breaks off (its root, behind the cabin), in the helicopter's frame; how far aft its far end (the fin) reaches. */
+export const BOOM_ROOT = [-3.0, 2.05, 0];
+export const BOOM_LENGTH = 6.6;
 
 /**
  * The seats for `n` men in the back (0..8): pilot, co-pilot, then a door gunner per gun side
@@ -253,8 +287,13 @@ let NEXT = 0;
  *   ground(x, z) → y             what is under it (default 0)
  *   world                        { time, events, noises, enemies, ropes } (the rope list, the crew)
  *   sim                          the Simulation (sim/impact.js, wounds, fire), if there is one
- *   targets() → [[x,y,z], ...]   what the guns are after
+ *   contacts() → [{ key, ref, kind, side, p, at, speed?, size?, exposure? }]
+ *                                what there is to see (you, soldiers, dragons, helicopters, targets):
+ *                                key a stable identity (the object itself), at the point to aim at
+ *   targets() → [[x,y,z], ...]   (older hosts) points to fire at: contacts on the 'target' side
  *   sees(a, b) → bool            a line of sight (default: yes)
+ *   reports() → [[x,y,z], ...]   where friendly squads have their threat (they look there first)
+ *   playerHit(zone, weapon, p)   (flown by you) a round through the cockpit into you
  *   fire(e, from, dir, weapon)   one round (default: sim/wounds.js shoot on host.sim)
  *   hurt(e, amount), wound(e, zone, weapon, p, dir), ignite(p, r), torch(p, W, s, r), explode(p, E)
  *   radio(h, text)
@@ -264,7 +303,14 @@ export class Helicopter {
     this.host = host;
     this.id = o.id ?? `heli${++NEXT}`;
     this.call = o.callsign ?? 'Hawk';
+    this.color = o.color; // (its paint: render/helis.js)
     this.rand = rng(o.seed ?? 7);
+    // whose it is (ai/sides.js): 'red' brings the simulation's soldiers, 'blue' (friendly) is yours
+    this.side = o.side === 'friendly' ? 'blue' : o.side === 'enemy' ? 'red' : o.side ?? 'red';
+    this.player = false; // you have the controls (board)
+    this.controls = null;
+    this.known = new Map(); // what the crew have identified: key → { c (the contact), firstT, seenT, by }
+    this.attacks = []; // rounds at it or past its men: { from, who, t }
     this.mission = o.mission ?? 'insert';
     this.cruise = o.cruise ?? HELI.cruise;
     this.altitude = o.altitude ?? 40;
@@ -362,30 +408,50 @@ export class Helicopter {
       skill: seat.role === 'pilot' ? 'veteran' : 'regular', armour: true, helmet: true,
       guardCtl: true, // neither the guard AI nor the squad AI moves him while he is aboard (ai/squad.js ownMove)
       heliCrew: this.id, aboard: this.id, seat: i, role: seat.role, anim: seat.anim, name: `${this.call} ${seat.label.toLowerCase()}`,
+      side: this.side,
     };
   }
   aboard() {
     return this.crew.filter((e) => e.aboard === this.id);
   }
+  /** The men at the controls (not a pilot you relieved: he sits in the back while you fly). */
   pilots() {
-    return this.crew.filter((e) => (e.role === 'pilot' || e.role === 'copilot') && e.aboard === this.id && !e.dead);
+    return this.crew.filter((e) => (e.role === 'pilot' || e.role === 'copilot') && e.aboard === this.id && !e.dead && !e.relieved);
   }
-  /** Each man aboard in his place (the gunner at his gun, the door shooter in the door), facing his way. */
+  /** Where a man aboard is in the helicopter's frame: his seat, the door, or (a relieved pilot) the back of the cabin. */
+  placeOf(e) {
+    const s = this.seats[e.seat];
+    if (e.relieved) return { at: [-1.35, F, 0], face: 0, anim: 'deskSit' };
+    return { at: e.atDoor ? DOOR.shooter(s.side) : s.at, face: s.face, anim: s.anim };
+  }
+  /**
+   * Each man aboard in his place (the gunner at his gun, the door shooter in the door), facing his
+   * way, all in the helicopter's frame: his feet, his eye (e.eye) and his heading (e.seatYaw, in
+   * its frame; e.frame its axes for render/enemies.js) tilt and turn with it.
+   */
   placeCrew() {
     const A = this.axes;
     const w = this.world;
     for (const e of this.crew) {
       if (e.aboard !== this.id) continue;
       const s = this.seats[e.seat];
-      const at = e.atDoor ? DOOR.shooter(s.side) : s.at;
-      e.p = heliToWorld(this, at, A);
+      const pl = this.placeOf(e);
+      e.p = heliToWorld(this, pl.at, A);
       e.home = e.p.slice();
-      e.yaw = e.aiming && !e.dead && e.aimYawWorld != null ? e.aimYawWorld : this.yaw + s.face;
+      // his heading in the helicopter's frame (0 forward, +π/2 left): his seat's, or onto what he aims at
+      const aim = e.aiming && !e.dead && e.aimLocal ? e.aimLocal : null;
+      e.seatYaw = aim ? Math.atan2(-aim[2], aim[0]) : pl.face;
+      e.yaw = e.aiming && !e.dead && e.aimYawWorld != null ? e.aimYawWorld : this.yaw + e.seatYaw;
+      e.frame = { f: A.f, u: A.u, r: A.r };
       e.moving = false;
       if (e.dead) e.anim = 'die';
+      else if (e.relieved) e.anim = pl.anim;
       else if (s.role === 'gunner') e.anim = (this.guns[sideName(s.side)].flash ?? -1) > this.time - 0.15 ? 'shoot' : 'aim';
       else if (e.atDoor) e.anim = (e.flashUntil ?? -1) > (w.time ?? 0) - 0.3 ? 'crouchShoot' : 'crouchAim';
-      else e.anim = s.anim;
+      else e.anim = pl.anim;
+      // his eye: seated, standing at the gun, crouched in the door (ai/perception.js EYE), up the helicopter's own axis
+      const eyeH = e.dead ? 0.4 : e.anim === 'aim' || e.anim === 'shoot' ? 1.55 : e.anim === 'deskSit' ? 1.05 : 1.0;
+      e.eye = heliToWorld(this, [pl.at[0], pl.at[1] + eyeH, pl.at[2]], A);
     }
   }
 
@@ -406,6 +472,11 @@ export class Helicopter {
       if (r.value > 0.25 || big) this.glass = true;
       // the man on the side it came in on (the pilot sits right)
       const l = heliToLocal(this, q);
+      // flown by you: you are in the right seat
+      if (this.player && l[2] >= 0) {
+        if (big || this.rand() < 0.6) this.host.playerHit?.(big ? 'torso' : this.rand() < 0.3 ? 'head' : 'torso', weapon, q);
+        return r;
+      }
       const ps = this.pilots();
       const who = ps.find((e) => (e.role === 'pilot') === l[2] >= 0) ?? ps[0];
       if (who && (big || this.rand() < 0.6)) this.hurtMan(who, big ? 'torso' : this.rand() < 0.3 ? 'head' : 'torso', weapon, q, dir, big ? 120 : 0);
@@ -424,8 +495,9 @@ export class Helicopter {
     } else if (k === 'tailRotor' || k === 'tailBoom') {
       if (r.destroyed) {
         this.gone.add('tailRotor');
+        // the boom shot through: it breaks off with the fin and the tail rotor (one piece falling)
         if (k === 'tailBoom') this.gone.add('tailBoom');
-        this.shed('tailRotor');
+        this.shed(k === 'tailBoom' ? 'tailBoom' : 'tailRotor');
         this.fail('tail', k === 'tailBoom' ? 'the tail boom is shot through' : 'the tail rotor is gone');
       }
     } else if (k === 'rotor' || k === 'mast') {
@@ -462,6 +534,15 @@ export class Helicopter {
   fail(kind, why = '') {
     const RANK = { main: 4, tail: 3, engine: 2, pilot: 1 };
     if (this.crashed || (this.failure && RANK[this.failure] >= RANK[kind])) return;
+    // flown by you: you are the pilot (no 'pilot' failure); a tail or an engine gone, you fly on
+    // with it (stepPlayer: the spin, the autorotation); no rotor, nothing to fly with
+    if (this.player && kind !== 'main') {
+      if (kind === 'pilot') return;
+      this.failure = kind;
+      this.failT = 0;
+      this.event('heliFailure', { failure: kind, why });
+      return;
+    }
     if (this.landed && kind !== 'main') {
       // on the ground: it stays there (the rotor runs down)
       this.failure = kind;
@@ -482,7 +563,8 @@ export class Helicopter {
     this.fire = 1;
     this.burnT = 0;
     this.event('heliFire');
-    if (!this.failure && !this.landed && !this.crashed) {
+    // (flown by you: putting it down is yours to do, before the tank goes: HELI.burn)
+    if (!this.failure && !this.landed && !this.crashed && !this.player) {
       this.mode = 'emergency';
       this.t = 0;
       if (this.pilots().length) this.radio('fire, fire, putting her down');
@@ -501,6 +583,13 @@ export class Helicopter {
         const c = this.toWorld([0, 3.6, 0]);
         this.debris.push({ kind: 'blade', p: [c[0] + out[0] * 3, c[1], c[2] + out[2] * 3], v: [this.v[0] + out[0] * tip * 0.3 + out[2] * tip * 0.2, this.v[1] + 4 + this.rand() * 6, this.v[2] + out[2] * tip * 0.3 - out[0] * tip * 0.2], a: a, spin: 8 + this.rand() * 8, rest: false, t: 0 });
       }
+    } else if (what === 'tailBoom') {
+      // the boom breaks at its root (BOOM_ROOT): the piece keeps the helicopter's frame there (its
+      // own yaw, pitch, roll: render/heliMesh.js buildTailMesh draws it aft of that point) and its
+      // motion, and tumbles: the heavy far end (the fin, the tail rotor's gearbox) drops first
+      const c = this.toWorld(BOOM_ROOT);
+      const tip = [this.v[0] - A.f[0] * 2 + A.r[0] * this.yawRate * 3, this.v[1] + 1, this.v[2] - A.f[2] * 2 + A.r[2] * this.yawRate * 3];
+      this.debris.push({ kind: 'tailBoom', p: c, v: tip, yaw: this.yaw, pitch: this.pitch, roll: this.roll, w: [this.yawRate * 0.6 + (this.rand() - 0.5) * 0.8, 0.9 + this.rand() * 0.8, (this.rand() - 0.5) * 1.6], tailAngle: this.tailAngle, a: 0, spin: 0, rest: false, t: 0 });
     } else {
       const c = this.toWorld([-9.3, 3, 0.35]);
       this.debris.push({ kind: 'tailRotor', p: c, v: [this.v[0] + A.r[0] * 6, this.v[1] + 3, this.v[2] + A.r[2] * 6], a: 0, spin: 20, rest: false, t: 0 });
@@ -515,7 +604,7 @@ export class Helicopter {
     this.t += dt;
     this.stepFire(dt);
     if (!this.crashed) {
-      if (!this.failure && this.pilots().length === 0 && !this.landed) this.fail('pilot', 'both pilots are down');
+      if (!this.failure && !this.player && this.pilots().length === 0 && !this.landed) this.fail('pilot', 'both pilots are down');
       if (this.failure && this.mode === 'falling') this.stepFailure(dt);
       else this.stepMission(dt);
       this.stepGround(dt);
@@ -524,6 +613,7 @@ export class Helicopter {
     this.stepDoors(dt);
     this.stepCables(dt);
     this.placeCrew();
+    this.stepSenses(dt);
     this.stepGuns(dt);
     this.stepDebris(dt);
     this.stepDeployed();
@@ -577,6 +667,8 @@ export class Helicopter {
     const shut = () => (this.doorsWant = { L: 0, R: 0 });
     const open = (both = true) => (this.doorsWant = both ? { L: 1, R: 1 } : { L: sides.includes(-1) ? 1 : 0, R: sides.includes(1) ? 1 : 0 });
     switch (this.mode) {
+      case 'player':
+        return this.stepPlayer(dt);
       case 'parked':
       case 'shutdown':
         this.omegaWant = 0;
@@ -670,6 +762,165 @@ export class Helicopter {
     this.roll += ((this.skidsBent ? 0.08 : 0) - this.roll) * Math.min(1, dt * 3);
   }
 
+  /* ---------------- flown by you ---------------- */
+  /**
+   * You take the controls (walk/heliFlight.js: E at the cockpit door, landed). It is yours now
+   * (side 'blue'): men of another side aboard get out and fight (their squads have them); a
+   * friendly pilot hands over and sits in the back; the rest of a friendly crew stay at the guns
+   * and on the benches. The engines run up if they were still (HELI.spinUp before it lifts).
+   */
+  board() {
+    if (this.crashed) return false;
+    this.player = true;
+    this.side = 'blue';
+    for (const e of this.aboard()) {
+      if (e.dead) continue;
+      if (hostile(sideOf(e), this.side)) this.dismount(e);
+      else if (e.role === 'pilot') e.relieved = true;
+    }
+    this.controls = { collective: 0, pitch: 0, roll: 0, pedal: 0 };
+    this.ropeOrder = false;
+    this.omegaWant = 1;
+    this.setMode('player');
+    this.event('heliBoard');
+    return true;
+  }
+  /**
+   * You let go of the controls: on the ground (climbing out) it shuts down; in the air (the
+   * walk-through closed) its own pilot, if it has one, takes it and holds a hover where it is.
+   */
+  unboard() {
+    if (!this.player) return;
+    this.player = false;
+    this.controls = null;
+    this.ropeOrder = false;
+    for (const e of this.crew) e.relieved = false;
+    this.event('heliUnboard');
+    if (this.crashed || this.mode === 'falling') return;
+    if (this.landed) {
+      this.omegaWant = 0;
+      this.setMode('shutdown');
+    } else {
+      const gy = this.ground(this.p[0], this.p[2]);
+      this.lz = [this.p[0], gy, this.p[2]];
+      this.mission = 'hover';
+      this.hoverAlt = clamp(this.p[1] - gy, 4, this.ropeLength - 1);
+      this.setMode('hover');
+      // (a tail or an engine already gone: the pilot's way down)
+      if (this.failure) {
+        this.mode = 'falling';
+        this.t = 0;
+      }
+    }
+  }
+  /**
+   * G (flown by you): at a steady hover low enough for the cables, the troops fast-rope down
+   * (stepFastRope: the doors open, cables out, one man after another on each, cut when all are
+   * down); again while the cables are out: cut them now. A word on why not, else null.
+   */
+  playerRopes() {
+    if (!this.player) return 'not flying';
+    if (this.ropes.some((r) => r.attached)) {
+      if (this.crew.some((e) => e.rope && !e.dead && this.ropes.includes(e.rope.rope))) return 'men on the ropes';
+      this.cutRopes();
+      this.ropeOrder = false;
+      this.ropesCut = true;
+      return null;
+    }
+    const troops = this.aboard().filter((e) => this.seats[e.seat].role === 'troop' && !e.dead);
+    if (!troops.length) return 'no troops aboard';
+    if (this.landed) return 'on the ground';
+    const alt = this.p[1] - this.ground(this.p[0], this.p[2]);
+    if (alt > this.ropeLength - 1) return `too high for the ${this.ropeLength} m ropes`;
+    if (Math.hypot(this.v[0], this.v[2]) > 2.5) return 'too fast: hover';
+    this.ropeOrder = true;
+    this.ropesCut = false;
+    this.downT = 0;
+    this.ropeT = {};
+    this.radio('ropes, ropes, ropes');
+    return null;
+  }
+  /**
+   * Your flying (mode 'player'): controls { collective -1..1 (0 holds the height), pitch -1..1
+   * (+: the cyclic forward, nose down), roll -1..1 (+: right), pedal -1..1 (+: the nose left) }.
+   * The cyclic tilts the disc (a stability system levels it when let go); the lift is along the
+   * disc's axis, so a tilt accelerates you that way; at speed a bank turns you (and the fin keeps
+   * the nose into the wind). What is shot away still counts: no tail rotor, no pedals and the
+   * torque spins you (more collective, faster); no engine, the collective can only spend the
+   * rotor's spin (autorotation, then a flare); a hurt engine, less power.
+   */
+  stepPlayer(dt) {
+    const c = this.controls ?? { collective: 0, pitch: 0, roll: 0, pedal: 0 };
+    const col = clamp(c.collective ?? 0, -1, 1);
+    const engineOut = this.failure === 'engine';
+    const tailOut = this.failure === 'tail';
+    // the doors: open for the ropes, or for the men in the back to fight from at a fighting speed
+    const sides = this.seats.filter((s) => (s.role === 'troop' || s.role === 'gunner') && this.aboard().some((e) => !e.dead && this.seats[e.seat] === s)).map((s) => s.side);
+    const sp = Math.hypot(this.v[0], this.v[2]);
+    if (this.ropeOrder) this.doorsWant = { L: 1, R: 1 };
+    else if (!this.landed && sp < 30 && sides.length) this.doorsWant = { L: sides.includes(-1) ? 1 : 0, R: sides.includes(1) ? 1 : 0 };
+    else this.doorsWant = { L: 0, R: 0 };
+    this.omegaWant = 1;
+    const P = engineOut ? 0 : this.omega < 0.9 ? 0 : 1 - 0.5 * (this.dmg.engine ?? 0);
+    if (this.landed) {
+      // on the skids: the rotor up to speed and the collective raised, it lifts
+      this.hold(dt);
+      if (col > 0.15 && P > 0 && !tailOut) {
+        this.landed = false;
+        this.v[1] = 0.6;
+        this.p[1] += 0.02;
+      }
+      return;
+    }
+    // the attitude: where the cyclic holds the disc (nose down to go forward)
+    const T = HELI.tiltMax;
+    const wob = this.dmg.tailRotor > 0.4 ? 0.04 * Math.sin(this.time * 2.3) * this.dmg.tailRotor : 0;
+    const pitchT = -clamp(c.pitch ?? 0, -1, 1) * T;
+    const rollT = clamp(c.roll ?? 0, -1, 1) * T * 1.2 + wob + (this.vibration > 0.5 ? 0.02 * Math.sin(this.time * 31) * this.vibration : 0);
+    this.pitch += (pitchT - this.pitch) * Math.min(1, dt * 2.5);
+    this.roll += (rollT - this.roll) * Math.min(1, dt * 2.5);
+    // the heading: the pedals; at speed the bank turns it (a coordinated turn) and the fin weathervanes
+    if (tailOut) {
+      // the main rotor's torque, unopposed: the more collective, the faster it spins (nose right)
+      const torque = HELI.tailSpin * (0.55 + 0.45 * (col + 1) / 2) * (engineOut ? 0.3 : 1);
+      this.yawRate = Math.max(-HELI.tailSpinMax * (0.6 + 0.4 * (col + 1) / 2), this.yawRate - torque * dt);
+    } else {
+      const turn = sp > 8 ? (G * Math.tan(this.roll)) / sp * Math.min(1, (sp - 8) / 10) : 0;
+      const want = clamp(c.pedal ?? 0, -1, 1) * HELI.pedalRate - turn * 0.9;
+      this.yawRate += (want - this.yawRate) * Math.min(1, dt * 3);
+    }
+    this.yaw = wrap(this.yaw + this.yawRate * dt);
+    // the lift along the disc's axis: enough to hold the height at the collective's middle
+    // (whatever the tilt), more or less towards its ends, no more than the power gives
+    const A = this.axes;
+    let lift;
+    if (engineOut) {
+      // autorotation: the air up through the disc gives ~0.78 g (a steady sink near HELI.autoSink);
+      // the collective pulled spends the rotor's spin for more, once (the flare)
+      this.rotorStore = this.rotorStore ?? 1;
+      const pull = Math.max(0, col) * Math.min(1, this.rotorStore * 3);
+      this.rotorStore = Math.max(0, this.rotorStore - pull * dt * 0.45);
+      lift = G * (0.78 + 0.6 * pull);
+    } else {
+      const want = (G * (1 + HELI.collective * col)) / Math.max(0.6, A.u[1]);
+      lift = Math.min(want, G * HELI.thrustMax * P);
+    }
+    if (tailOut) lift *= 0.92; // (fighting the spin)
+    if (this.blades === 0 || this.omega < 0.3) lift = 0;
+    const vh = sp;
+    const a = [
+      A.u[0] * lift - HELI.dragH * vh * this.v[0] - 0.04 * this.v[0],
+      // (the collective let go to its middle: the height hold takes out what climb or sink is left)
+      A.u[1] * lift - G - (HELI.dragV + (engineOut ? 0 : 1.2 * (1 - Math.abs(col)))) * this.v[1],
+      A.u[2] * lift - HELI.dragH * vh * this.v[2] - 0.04 * this.v[2],
+    ];
+    for (let i = 0; i < 3; i++) {
+      this.v[i] += a[i] * dt;
+      this.p[i] += this.v[i] * dt;
+    }
+    if (this.ropeOrder) this.stepFastRope(dt);
+  }
+
   /**
    * The pilot flies: g { to?: [x,_,z] (a point), orbit?: { c, R }, speed (m/s), y (the height he
    * wants), sink? (m/s, the most down), plan?: slowing to stop at `to` (the approach) }. The
@@ -751,7 +1002,8 @@ export class Helicopter {
       const lift = (throttleOff ? 0.7 : HELI.tailLift) * G;
       a = [-0.15 * v[0], -G + lift - 0.45 * v[1], -0.15 * v[2]];
       this.yaw = wrap(this.yaw + this.yawRate * dt);
-      this.pitch += (0.06 * Math.sin(this.time * 2.1) - this.pitch) * Math.min(1, dt * 2);
+      // (the boom gone: its weight aft gone with it, the nose drops)
+      this.pitch += ((this.gone.has('tailBoom') ? -0.22 : 0) + 0.06 * Math.sin(this.time * 2.1) - this.pitch) * Math.min(1, dt * 2);
       this.roll += (0.12 * Math.sin(this.time * 3.3) + 0.04 * this.yawRate - this.roll) * Math.min(1, dt * 2);
     } else if (this.failure === 'engine') {
       // autorotation: the air coming up through the disc keeps it turning; down at ~9 m/s,
@@ -802,6 +1054,7 @@ export class Helicopter {
     this.v = [0, 0, 0];
     this.yawRate = 0;
     this.event('heliTouchdown', { speed: vy });
+    if (this.player) return; // (yours: it sits there, rotor turning, until you lift or climb out)
     this.setMode(this.mission === 'land' && this.aboard().some((e) => this.seats[e.seat].role === 'troop') ? 'landed' : 'shutdown');
   }
 
@@ -957,6 +1210,11 @@ export class Helicopter {
         this.cutRopes();
         this.ropesCut = true;
         this.radio('troops away, cutting ropes');
+        // (flown by you: that was your order done; where to now is yours too)
+        if (this.player) {
+          this.ropeOrder = false;
+          return;
+        }
         this.next = this.exit;
         this.setMode('depart');
       }
@@ -969,6 +1227,7 @@ export class Helicopter {
     e.p = this.toWorld(DOOR.shooter(this.seats[e.seat].side));
     if (!startRope(this.host.sim ?? { world: this.world }, e, rope)) return false;
     e.aboard = null;
+    e.frame = null; // (upright on the cable again)
     e.heliDeploy = true;
     this.event('heliRope', { who: e.name });
     return true;
@@ -980,6 +1239,8 @@ export class Helicopter {
     const q = this.toWorld([s.at[0] - (this.seats.indexOf(s) % 3) * 0.6, 0, side * (2.4 + this.rand() * 1.5)]);
     e.aboard = null;
     e.atDoor = false;
+    e.frame = null;
+    e.relieved = false;
     e.p = [q[0], this.ground(q[0], q[2]), q[2]];
     e.home = e.p.slice();
     e.yaw = this.yaw + (side < 0 ? Math.PI / 2 : -Math.PI / 2);
@@ -1000,24 +1261,152 @@ export class Helicopter {
   }
 
   /* ---------------- the guns: the door gunners, and the troops by the doors ---------------- */
-  /** What a man at `from` on side s can see out of his door within range: the nearest such target, or null. */
-  pickTarget(from, s, range) {
-    const ts = this.host.targets?.() ?? [];
+  /**
+   * What there is to see round it: the host's contacts (contacts(): you, the soldiers, dragons,
+   * helicopters), or an older host's targets() as contacts on the 'target' side. Not itself, nor
+   * its own men aboard.
+   */
+  contacts() {
+    if (this.host.contacts) return this.host.contacts().filter((c) => c.ref !== this && !(c.ref?.aboard === this.id));
+    return (this.host.targets?.() ?? []).map((T, i) => ({ key: `target${i}`, ref: T, kind: 'target', side: 'target', p: T, at: T, size: 1 }));
+  }
+  /** Rounds at it (sim/wounds.js shoot through HeliAI.shot), or cracking past its men: who fired and from where. */
+  underFire(from, who = null) {
+    const now = this.world.time ?? this.time;
+    this.attacks.push({ from: from.slice(), who, t: now });
+    if (this.attacks.length > 12) this.attacks.shift();
+  }
+  /** Is contact c shooting at it (a round from within 3 m of it, or by it, in the last 10 s)? */
+  attacking(c) {
+    const now = this.world.time ?? this.time;
+    return this.attacks.some((a) => now - a.t < 10 && ((a.who && a.who === c.ref) || len(sub(a.from, c.at ?? c.p)) < 3));
+  }
+  /**
+   * Can a man on `side` (-1 left door, +1 right, 0 the cockpit) look along the local direction l
+   * (a unit vector in the helicopter's frame)? Out of his door (open; or the door's window, a
+   * shorter look), or forward and down through the pilots' glass; not through the fuselage.
+   */
+  viewOut(side, l) {
+    if (!side) return l[0] > -0.15 && l[1] < 0.55 ? 1 : 0;
+    if (l[2] * side < 0.3 || l[1] > 0.5 || l[0] > 0.85 || l[0] < -0.75) return 0;
+    return this.doorOpen(side) ? 1 : 0.4;
+  }
+  /**
+   * The crew look round (every HELI.senseEvery s): each live man aboard, from his eye, at each
+   * hostile contact he can see out of his door or the glass (ai/perception.js perceive: his
+   * senses, its distance, the light, smoke, the moment it takes, sooner where rounds came from or
+   * where a friendly squad reported its threat). What one identifies the crew knows (`known`);
+   * what nobody has seen for HELI.forgetAfter s is forgotten. Rounds cracking past the men aboard
+   * count as being shot at from there.
+   */
+  stepSenses(dt) {
+    this.senseT = (this.senseT ?? 0) + dt;
+    if (this.senseT < HELI.senseEvery || this.crashed) return;
+    const sdt = this.senseT;
+    this.senseT = 0;
+    const w = this.world;
+    const now = w.time ?? this.time;
+    const men = this.aboard().filter((e) => !e.dead);
+    for (const e of men)
+      if (e.shotAt && e.shotAt.time > (e.shotSeen ?? -Infinity) && now - e.shotAt.time < 1) {
+        e.shotSeen = e.shotAt.time;
+        this.underFire(e.shotAt.from, null);
+      }
+    const cs = this.contacts();
+    this.contactsNow = cs;
     const A = this.axes;
-    let best = null, bd = Infinity;
-    for (const T of ts) {
+    const expects = [...this.attacks.filter((a) => now - a.t < 10).map((a) => a.from), ...(this.host.reports?.(this.side) ?? [])];
+    for (const c of cs) {
+      if (!hostile(this.side, c.side)) continue;
+      const at = c.at ?? c.p;
+      const expect = expects.find((q) => len(sub(q, at)) < 6) ?? null;
+      for (const e of men) {
+        const s = this.seats[e.seat];
+        const eye = e.eye ?? e.p;
+        const d = sub(at, eye);
+        const L = len(d) || 1;
+        const side = s.role === 'pilot' || s.role === 'copilot' ? (e.relieved ? null : 0) : s.side;
+        if (side == null) continue;
+        const view = this.viewOut(side, heliToLocal(this, d.map((x) => x / L), true, A));
+        if (!view) continue;
+        const prof = senses(e, 'soldier');
+        const r = perceive(e, { ...c, key: c.key ?? c.ref, head: at }, sdt, {
+          now, eye, at, prof, range: prof.sightRange * view, expect,
+          los: this.host.sees ? (a, b) => this.host.sees(a, b) : null, world: this.host.sim?.world ?? null,
+        });
+        if (!r.seen) continue;
+        const k = c.key ?? c.ref;
+        const kn = this.known.get(k);
+        if (!kn) {
+          this.known.set(k, { c, firstT: now, seenT: now, by: e });
+          this.event('heliContact', { what: c.kind, by: e.name, at: at.slice() });
+        } else {
+          kn.c = c;
+          kn.seenT = now;
+        }
+        break; // (one man has it: the crew know)
+      }
+    }
+    for (const [k, kn] of this.known) {
+      const dead = kn.c.ref?.dead || (kn.c.ref?.health != null && kn.c.ref.health <= 0) || kn.c.ref?.crashed;
+      if (dead || now - kn.seenT > HELI.forgetAfter || !cs.some((c) => (c.key ?? c.ref) === k)) this.known.delete(k);
+    }
+  }
+  /** Has the crew identified this contact (or its object)? */
+  knows(ref) {
+    for (const [k, kn] of this.known) if (k === ref || kn.c.ref === ref) return true;
+    return false;
+  }
+  /**
+   * How dangerous an identified contact is to them (the higher, the sooner fired at): one shooting
+   * at them most, then a dragon or a helicopter over a man; nearer and more exposed (standing, not
+   * crouched or prone) more; the one already on the gun a little more (no flicking between two).
+   */
+  threatScore(c, d, current = false) {
+    const W = { dragon: 2.5, heli: 2, player: 1.2, soldier: 1, target: 1 };
+    const exp = c.exposure ?? 1;
+    return (W[c.kind] ?? 1) * (this.attacking(c) ? 4 : 1) * (0.4 + 0.6 * exp) * (current ? 1.3 : 1) / (1 + d / 60);
+  }
+  /**
+   * What a man at `from` on side s fires at: of what the crew have identified, a hostile he can
+   * see out of his door within range, in his line of sight and with no friendly in the line of
+   * fire, the most dangerous (threatScore). The contact, or null.
+   */
+  pickTarget(from, s, range, current = null) {
+    const A = this.axes;
+    const cs = this.contactsNow ?? this.contacts();
+    let best = null, bs = 0;
+    for (const kn of this.known.values()) {
+      const c = cs.find((x) => (x.key ?? x.ref) === (kn.c.key ?? kn.c.ref)) ?? kn.c;
+      if (!hostile(this.side, c.side)) continue;
+      const T = c.at ?? c.p;
       const d = sub(T, from);
       const L = len(d);
       if (L > range || L < 2) continue;
-      const l = heliToLocal(this, d.map((x) => x / L), true, A);
-      if (l[2] * s < 0.3 || l[1] > 0.5 || l[0] > 0.85 || l[0] < -0.75) continue; // out of his door, not through the fuselage
+      if (this.viewOut(s, heliToLocal(this, d.map((x) => x / L), true, A)) < 1) continue; // out of his (open) door, not through the fuselage
       if (this.host.sees && !this.host.sees(from, T)) continue;
-      if (L < bd) {
-        bd = L;
-        best = T;
+      if (this.friendlyInLine(from, T, cs)) continue;
+      const sc = this.threatScore(c, L, current && (current.key ?? current.ref) === (c.key ?? c.ref));
+      if (sc > bs) {
+        bs = sc;
+        best = c;
       }
     }
     return best;
+  }
+  /** A friendly (or a man of no side) within 1.5 m of the line from `from` to T, short of it: hold fire. */
+  friendlyInLine(from, T, cs) {
+    const d = sub(T, from);
+    const L = len(d) || 1;
+    const u = d.map((x) => x / L);
+    for (const c of cs) {
+      if (hostile(this.side, c.side)) continue;
+      const q = sub(c.at ?? c.p, from);
+      const t = dot(q, u);
+      if (t < 1 || t > L - 0.5) continue;
+      if (len(sub(q, u.map((x) => x * t))) < 1.5) return true;
+    }
+    return false;
   }
   stepGuns(dt) {
     if (this.crashed) return;
@@ -1042,18 +1431,23 @@ export class Helicopter {
       } else if (!open) continue;
       const gunner = s.role === 'gunner';
       const from = gunner ? heliToWorld(this, DOOR.gun(side), A) : heliToWorld(this, [DOOR.shooter(side)[0], F + 1.1, side * 1.05], A);
-      const T = this.pickTarget(from, side, gunner ? HELI.gunRange : HELI.gunRange * 0.6);
       const G2 = gunner ? this.guns[sideName(side)] : (e.gun ??= { cd: 0, burst: 0, flash: -1 });
+      const C = this.pickTarget(from, side, gunner ? HELI.gunRange : HELI.gunRange * 0.6, G2.target);
+      G2.target = C;
       G2.cd -= dt;
-      if (!T) {
+      if (!C) {
         G2.burst = 0;
         e.aiming = false;
+        e.target = null;
         continue;
       }
+      const T = C.at ?? C.p;
       e.aiming = true;
+      e.target = C.ref;
       const d = norm(sub(T, from));
       // the gun (and the man behind it) turned onto it
       const l = heliToLocal(this, d, true, A);
+      e.aimLocal = l; // his heading in the helicopter's frame (placeCrew)
       e.aimYawWorld = Math.atan2(d[0], d[2]); // he turns to it (placeCrew)
       if (gunner) G2.dir = l; // the gun's barrel, in the helicopter's frame (render/heliMesh.js)
       if (G2.cd > 0) continue;
@@ -1075,7 +1469,7 @@ export class Helicopter {
       e.flashUntil = (w.time ?? this.time) + 0.06;
       this.shots++;
       const hit = this.host.fire ? this.host.fire(e, from, dir, weapon) : null;
-      (this.lastShots ??= []).push({ from, dir, weapon, who: e.role, hit: hit ?? null });
+      (this.lastShots ??= []).push({ from, dir, weapon, who: e.role, at: C.ref, kind: C.kind, hit: hit ?? null });
       if (this.lastShots.length > 20) this.lastShots.shift();
     }
   }
@@ -1084,6 +1478,10 @@ export class Helicopter {
   stepDebris(dt) {
     for (const b of this.debris) {
       if (b.rest) continue;
+      if (b.kind === 'tailBoom') {
+        this.stepBoom(b, dt);
+        continue;
+      }
       b.t += dt;
       b.v[1] -= G * dt;
       for (let i = 0; i < 3; i++) b.p[i] += b.v[i] * dt;
@@ -1099,6 +1497,47 @@ export class Helicopter {
         b.v = [0, 0, 0];
       }
     }
+  }
+
+  /**
+   * The tail boom broken off: a piece in its own frame (yaw, pitch, roll; its root at b.p, the fin
+   * BOOM_LENGTH m aft along its -x), falling with the air's drag and tumbling (b.w: yaw, pitch and
+   * roll rates); its tail rotor runs down. When either end reaches the ground it comes down there:
+   * the impact (sim/impact.js), whoever is under it hurt, and it lies flat where it fell.
+   */
+  stepBoom(b, dt) {
+    b.t += dt;
+    const s = len(b.v);
+    b.v[1] -= G * dt;
+    for (let i = 0; i < 3; i++) {
+      b.v[i] -= HELI.dragK * 2 * s * b.v[i] * dt;
+      b.p[i] += b.v[i] * dt;
+    }
+    b.yaw = wrap(b.yaw + b.w[0] * dt);
+    b.pitch += b.w[1] * dt;
+    b.roll += b.w[2] * dt;
+    b.tailAngle = (b.tailAngle ?? 0) + Math.max(0, 1 - b.t / 4) * HELI.tailRev * 2 * Math.PI * dt;
+    const A = heliAxes(b.yaw, b.pitch, b.roll);
+    const end = [0, 1, 2].map((i) => b.p[i] - A.f[i] * BOOM_LENGTH + A.u[i] * 0.9);
+    const gy0 = this.ground(b.p[0], b.p[2]), gy1 = this.ground(end[0], end[2]);
+    if (b.p[1] > gy0 + 0.3 && end[1] > gy1 + 0.3) return;
+    b.rest = true;
+    const vs = len(b.v);
+    impact(this.host.sim ?? this.world, { pos: (b.p[1] - gy0 < end[1] - gy1 ? b.p : end).slice(), normal: [0, 1, 0], mass: 180, velocity: b.v.slice(), materials: ['aluminium', groundMaterial(this.host.sim?.world ?? this.world, b.p)], radius: 0.3, size: 6, kind: 'crash', name: 'the tail boom', effects: { damage: false, crush: false } });
+    // whoever it comes down on (anywhere along it)
+    for (const e of this.world.enemies ?? []) {
+      if (e.dead || e.aboard != null || vs < 5) continue;
+      const q = sub(e.p, b.p), ax = [-A.f[0], 0, -A.f[2]];
+      const al = Math.hypot(ax[0], ax[2]) || 1;
+      const t = clamp((q[0] * ax[0] + q[2] * ax[2]) / al, 0, BOOM_LENGTH * al);
+      if (Math.hypot(q[0] - (ax[0] / al) * t, q[2] - (ax[2] / al) * t) < 1.3) this.hurt(e, 110);
+    }
+    // it lies on the ground, flat, on its side or upright as it fell
+    b.pitch = 0;
+    b.roll = Math.abs(wrap(b.roll)) > 0.8 ? Math.sign(wrap(b.roll)) * Math.PI / 2 : 0;
+    b.p[1] = (gy0 + gy1) / 2 + 0.3; // (the boom's axis: its radius over the ground)
+    b.v = [0, 0, 0];
+    b.w = [0, 0, 0];
   }
 
   /** How whole it is (0..1: models/vehicleZones.js integrity), and a few words on its state. */
@@ -1140,18 +1579,22 @@ export class HeliAI {
       world: w,
       ground: (x, z) => groundY(w, x, z),
       addCrew: (e) => w.enemies.push(e),
-      // you (the walk-through's player), if you are about
-      targets: () => {
-        const pl = sim.ai?.player;
-        return pl && !pl.dead && pl.p ? [[pl.p[0], pl.p[1] + 1.2, pl.p[2]]] : [];
-      },
+      // what there is to see (each on its side: ai/sides.js): you on foot, the soldiers (not the men
+      // aboard a helicopter: the helicopter is the contact), the dragons, the helicopters
+      contacts: () => worldContacts(sim),
       sees: (a, b) => (sim.ai?.sightLine ? sim.ai.sightLine(a, b) : true),
+      // where the fire teams of its side have their threat (ai/squad.js: radioed, they look there)
+      reports: (side) => (sim.squads ?? []).filter((sq) => sq.threat && w.enemies.some((m) => m.squad && !m.dead && m.aboard == null && (m.unit ?? 'Alpha') === sq.unit && sideOf(m) === side)).map((sq) => sq.threat),
+      // real rounds (sim/wounds.js shoot): a soldier wounded, a dragon struck, another helicopter's
+      // part, you; not through the men aboard a helicopter (its cabin zone takes those)
       fire: (e, from, dir, weapon) => {
         const pl = sim.ai?.player && !sim.ai.player.dead ? sim.ai.player : null;
         const hit = shoot(sim, from, dir, { shooter: e, player: pl, range: HELI.gunRange + 20, weapon, ignore: (o) => o.aboard != null || o.heliCrew === e.heliCrew });
         if (hit?.player) w.playerHits?.push({ zone: hit.zone, time: w.time, from, weapon });
         return hit;
       },
+      // flown by you: a round through your side of the cockpit
+      playerHit: (zone, weapon, p) => w.playerHits?.push({ zone, time: w.time, from: p, weapon: weapon === 'bullet' ? 'rifle' : weapon }),
       hurt: (e, amount) => sim.ai?.damage(e, amount),
       wound: (e, zone, kind, p, dir) => wound(sim, e, zone, kind, p, dir),
       ignite: (p, r) => sim.ignite?.(p, r),
@@ -1198,6 +1641,7 @@ export class HeliAI {
     }
     if (!best) return null;
     const amount = VEHICLE_WEAPONS.bullet * (weapon === 'mg' ? 1.25 : weapon === 'pistol' || weapon === 'carbine' ? 0.7 : 1);
+    best.heli.underFire(from, shooter); // (its crew know where that came from: ai/helicopter.js stepSenses)
     best.heli.hit(best.k, amount, best.p, dir, weapon);
     return { heli: best.heli, k: best.k, zone: best.zone, p: best.p, s: best.t };
   }
@@ -1214,6 +1658,41 @@ export class HeliAI {
       h.hit(Z.k, VEHICLE_WEAPONS.rocket * clamp(1 - Math.max(0, d) / (R * 2), 0, 1) * (Z.k === 'rotor' ? 0.6 : 1), center, null, 'rocket');
     }
   }
+}
+
+/**
+ * What there is for a helicopter's crew to see in a simulation (host.contacts): each a contact
+ * { key (its identity: the object), ref (the object), kind, side (ai/sides.js), p, at (where to
+ * aim: a man's chest, the dragon's, a helicopter's cabin), speed, size, exposure (a man crouched
+ * or lying shows less of himself) }. You on foot (sim.ai.player: flying, your helicopter is the
+ * contact), the soldiers not aboard a helicopter, the live dragons, the helicopters not wrecked.
+ */
+export function worldContacts(sim) {
+  const w = sim.world;
+  const out = [];
+  const pl = sim.ai?.player;
+  if (pl && !pl.dead && pl.p) {
+    const low = pl.crouch ? 0.5 : 1.2;
+    out.push({ key: 'player', ref: pl, kind: 'player', side: 'blue', p: pl.p, at: [pl.p[0], pl.p[1] + low, pl.p[2]], speed: pl.moving ? 1.5 : 0, exposure: pl.crouch ? 0.45 : 1, lightOn: pl.lightOn, beam: pl.beam });
+  }
+  for (const e of w.enemies ?? []) {
+    if (e.dead || e.aboard != null || e.devoured || e.held || !e.p) continue;
+    const a = e.anim ?? '';
+    const prone = e.crawling || /prone|crawl|wounded|peekOver/.test(a);
+    const low = !prone && /crouch|peekWall|kneel/i.test(a);
+    const h = prone ? 0.3 : low ? 0.85 : 1.25;
+    out.push({ key: e, ref: e, kind: 'soldier', side: sideOf(e), p: e.p, at: [e.p[0], e.p[1] + h, e.p[2]], speed: e.moving ? e.speed ?? 1.3 : 0, exposure: prone ? 0.4 : low ? 0.7 : 1, lightOn: e.lightOn, beam: e.beam });
+  }
+  for (const d of w.dragons ?? []) {
+    if (!(d.health > 0) || !d.chest) continue;
+    out.push({ key: d, ref: d, kind: 'dragon', side: d.side ?? 'beast', p: d.chest, at: d.chest.slice(), speed: d.speed ?? 0, size: 4 * (d.k ?? 1) });
+  }
+  for (const s of w.helis ?? []) {
+    const h = s.ai;
+    if (!h || h.crashed) continue;
+    out.push({ key: h, ref: h, kind: 'heli', side: h.side, p: h.p, at: h.toWorld([0, 1.4, 0]), speed: len(h.v), size: 5 });
+  }
+  return out;
 }
 
 /** What is under (x, z) in a voxel world: the top of its column (or the sea, or 0 off the world). */

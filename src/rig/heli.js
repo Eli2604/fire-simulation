@@ -168,7 +168,14 @@ export class HeliRig {
     }
     pos.needsUpdate = true;
     this.tracerGeo.setDrawRange(0, n * 2);
-    for (const m of this.targetMeshes) m.visible = ['doorGun', 'troopsFire', 'hover', 'approach'].includes(this.stage.act);
+    // the targets: lit up when a round hits, lying on the ground once down (rig/heliStage.js TARGET_HP)
+    this.targetMeshes.forEach((m, i) => {
+      m.visible = ['doorGun', 'troopsFire', 'hover', 'approach'].includes(this.stage.act);
+      const down = this.stage.targetHp[i] <= 0;
+      m.rotation.z += ((down ? Math.PI / 2 : 0) - m.rotation.z) * Math.min(1, dt * 6);
+      m.position.y = 0.9 - (0.9 - 0.35) * (m.rotation.z / (Math.PI / 2));
+      m.material.color.set(w.time - this.stage.targetHitT[i] < 0.08 ? 0xffe0a0 : down ? 0x5a2a24 : 0xc84a3a);
+    });
     this.poseZones(dt);
     this.status();
   }
