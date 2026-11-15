@@ -27,6 +27,8 @@ export const GUNS = {
   pistol: { label: '9 mm pistol', bullet: 0.008, v: 360, charge: 0.0004, mass: 0.9, rpm: 0, modes: ['single'], mode: 'single', hands: true },
   // a pump-action 12 gauge: 32 g of buckshot (the 'bullet'), one round a pull, then the pump
   // worked back and forward (pump, s) before the next
+  // a 7.62 mm marksman rifle: single aimed rounds, a heavier kick than the 5.56
+  marksman: { label: '7.62 mm marksman rifle', bullet: 0.0095, v: 820, charge: 0.0029, mass: 4.9, rpm: 0, modes: ['single'], mode: 'single' },
   shotgun: { label: '12 gauge pump shotgun', bullet: 0.032, v: 400, charge: 0.0025, mass: 3.6, rpm: 0, modes: ['single'], mode: 'single', pump: 0.45 },
 };
 export const FIRE_MODES = { single: 'Single', burst: 'Burst (3)', auto: 'Auto' };

@@ -82,6 +82,15 @@
  *   rappel(m, dir)     at a drop too deep to jump: down a rope (ai/ropeTeam.js lowerRope: true,
  *                      or 'cannot' with no rope in the team); ropeSim, autoRig, teamRope: the rope
  *                      drill's (ai/ropeTeam.js: overwatch on a descent, the team rope-down) (optional)
+ *   water(x, z, y)     the water standing over the ground at y there: { depth, surface } or null
+ *                      (optional): they wade the shallows, swim the deep (ai/swim.js; a heavy load
+ *                      makes them struggle, ditch gear or drown) and route round deep water unless
+ *                      it saves a long way (only the light swim a stretch)
+ *   surface(p, m)      the ground's material under a man ('concrete', 'grass'...: his footsteps) (optional)
+ *   sound(n)           a sound in the world (ai/perception.js emitSound: { pos, loudness_dB, kind,
+ *                      source }): their footsteps and gear rattle each stride (optional)
+ *   log(m, text)       a note of what happened (gear ditched in the water, a man drowned) (optional)
+ *   drown(m, hp)       a drowning man's damage (optional; else his health here)
  *   lookouts()         raised places with a view (a deck, a roof): [[x, y, z], ...] (optional).
  *                      Before contact one rifleman climbs to the best of them and watches from
  *                      there; on contact the gunner takes one that sees the threat as his
@@ -101,18 +110,20 @@ import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
 import { stepTraps } from './retreat.js';
 import { friendliesOf, sideOf } from './retreatRadio.js';
-import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
+import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM, stepNoise } from './perception.js';
+import { stepSwim, wadeK, waterCost, WADE, SWIM_DEPTH, FLOAT_Y, WATER_ANIMS, DRAIN_T } from './swim.js';
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
 import { stepRopeTeam } from './ropeTeam.js';
 import { stepVehicles, mountForBackup } from './squadVehicle.js';
+import { sideOf as manSide } from './sides.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
 // a plain step between grid cells: up a stair, down a steep slope; more is a parkour move
 const PLAIN_UP = 0.6, PLAIN_DOWN = 0.8;
 const FIT = ability({});
-const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, signalFallBack: 2.0, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary };
+const ONCE_T = { deployDrone: 7.0, signalMove: 1.6, signalHalt: 1.6, signalDown: 1.6, signalFallBack: 2.0, throwGrenade: 1.6, throwFlash: TIMES.flash, pickup: 1.3, radio: 2.4, reload: TIMES.reload, stab: TIMES.stab, drawKnife: TIMES.toKnife, drawRifle: TIMES.toRifle, sheathKnife: TIMES.toRifle, drawSecondary: TIMES.toSecondary, drawPistol: TIMES.toPistol };
 const BEARING = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
 /** s: a hostile seen is remembered this long (counted by the leader: knownHostiles); m: a friendly team this near shares what it sees. */
 export const KNOWN_T = 30, SHARE_R = 60;
@@ -372,6 +383,9 @@ export class SquadAI {
     this.z0 = z0;
     const raw = new Uint8Array(nx * nz);
     this.fy = new Float32Array(nx * nz);
+    // the water over each cell (host.water: ai/swim.js), and the height a swimmer is at there
+    const wd = (this.wdepth = this.host.water ? new Float32Array(nx * nz) : null);
+    this.wy = wd ? new Float32Array(nx * nz) : null;
     for (let j = 0; j < nz; j++)
       for (let i = 0; i < nx; i++) {
         const x = x0 + (i + 0.5) * cs, z = z0 + (j + 0.5) * cs;
@@ -382,6 +396,11 @@ export class SquadAI {
           continue;
         }
         this.fy[k] = y;
+        if (wd) {
+          const W = this.host.water(x, z, y);
+          wd[k] = W?.depth ?? 0;
+          this.wy[k] = wd[k] > SWIM_DEPTH ? (W.surface ?? y + wd[k]) - FLOAT_Y : y;
+        }
         outer: for (const [ox, oz] of [[0, 0], [0.13, 0], [-0.13, 0], [0, 0.13], [0, -0.13]])
           for (const hy of [0.5, 1.0, 1.45])
             if (this.host.solid(x + ox, y + hy, z + oz)) {
@@ -614,6 +633,10 @@ export class SquadAI {
     const { nx, nz } = this;
     const s = this.nearestFree(p0[0], p0[2], p0[1]), g = this.nearestFree(p1[0], p1[2], p1[1]);
     const ab = ability(m), links = useLinks ? this.links : null, via = new Map();
+    // water (ai/swim.js): wading costs a little, swimming a lot (the worse he swims, the more):
+    // round it on dry ground unless that is a long way; a swimmer is at the surface, not the bottom
+    const wd = this.wdepth, swimCls = m?.swim ?? 'swims';
+    const hy = (k) => (wd && wd[k] > SWIM_DEPTH ? this.wy[k] : this.fy[k]);
     if (s < 0 || g < 0) return [p1.slice()];
     const G = new Float32Array(nx * nz).fill(1e9), from = new Int32Array(nx * nz).fill(-1), closed = new Uint8Array(nx * nz);
     const gi = g % nx, gj = (g / nx) | 0;
@@ -666,10 +689,11 @@ export class SquadAI {
           if (!this.walk[kk] || closed[kk]) continue;
           if (di && dj && (!this.walk[j * nx + a] || !this.walk[b * nx + i])) continue;
           // a plain step: no more than a stair up (a steep slope down); higher needs a move
-          const dh = this.fy[kk] - this.fy[k];
-          if (dh > PLAIN_UP || dh < -PLAIN_DOWN) continue;
+          const dh = hy(kk) - hy(k);
+          // (into water any way down; out of it up a bank no more than a step over the surface)
+          if (dh > PLAIN_UP + (wd && wd[k] > SWIM_DEPTH ? 0.3 : 0) || (dh < -PLAIN_DOWN && !(wd && wd[kk] > WADE))) continue;
           // (opts.avoid: an enemy at that point; the cells it sees cost more: a covered way)
-          const c = G[k] + (di && dj ? 1.414 : 1) * this.cost[kk] + (avoid && exposedTo(this, avoid, this.cellPos(kk)) ? 4 : 0);
+          const c = G[k] + (di && dj ? 1.414 : 1) * (this.cost[kk] + (wd ? waterCost(wd[kk], swimCls) : 0)) + (avoid && exposedTo(this, avoid, this.cellPos(kk)) ? 4 : 0);
           if (c < G[kk]) {
             G[kk] = c;
             from[kk] = k;
@@ -704,7 +728,8 @@ export class SquadAI {
     let pd = null, lastFixed = false;
     for (let i = 0; i < cells.length; i++) {
       const p = this.cellPos(cells[i]);
-      const fixed = via.has(cells[i]) || (i + 1 < cells.length && via.has(cells[i + 1]));
+      // (by the water's edge every cell is kept: a straight line between far points would cut across it)
+      const fixed = via.has(cells[i]) || (i + 1 < cells.length && via.has(cells[i + 1])) || (wd && [cells[i] - 1, cells[i] + 1, cells[i] - nx, cells[i] + nx].some((q) => (wd[q] ?? 0) > WADE) !== (wd[cells[i]] > WADE));
       if (via.has(cells[i])) p.move = via.get(cells[i]).kind0;
       if (i > 0 && i < cells.length - 1 && !fixed) {
         const n = this.cellPos(cells[i + 1]);
@@ -729,6 +754,11 @@ export class SquadAI {
   /* ---------- per member ---------- */
   setAnim(m, a, dur) {
     if (m.trav && a !== m.trav.kind) return; // over a wall, up a ledge: that first
+    // in deep water: swimming, treading water, struggling, drowning (ai/swim.js), nothing else
+    if (m.swimming && !WATER_ANIMS[a]) {
+      a = m.swimAnim ?? 'treadWater';
+      dur = undefined;
+    }
     if (m.anim === a && !dur) return;
     m.anim = a;
     m.animT = this.time;
@@ -765,6 +795,72 @@ export class SquadAI {
     m.moveMode = mode;
     m.then = then;
     m.arrived = false;
+  }
+  /** The water standing over the ground at (x, z) (host.water): { depth, surface, floor }, or null. */
+  waterAt(x, z, m) {
+    if (!this.host.water) return null;
+    const fy = this.host.floor(x, z, m) ?? m?.p[1] ?? 0;
+    const W = this.host.water(x, z, fy);
+    return W && W.depth > 0 ? { depth: W.depth, surface: W.surface ?? fy + W.depth, floor: fy } : null;
+  }
+  /**
+   * A man in the water, each step (ai/swim.js): swimming, treading water, struggling under his
+   * load, ditching gear to stay up (logged), going under, drowning; his feet at the height the
+   * water holds him, the clip for it; out again, his weapon cleared of water before it fires.
+   */
+  inWater(m, dt) {
+    kit(m);
+    const W = this.waterAt(m.p[0], m.p[2], m);
+    const was = m.swimming;
+    const r = stepSwim(m, dt, W ?? { depth: 0 }, {
+      now: this.time,
+      moving: !!m.path && !this.busy(m),
+      name: (q) => this.name(q),
+      log: (q, text) => {
+        (this.swimLog ??= []).push({ t: this.time, who: this.name(q), unit: this.unit, text });
+        this.host.log?.(q, text);
+        if (!q.dead) this.host.shout?.(q, q.drowned ? text : `Ditching my ${q.ditched?.[q.ditched.length - 1] ?? 'kit'}!`);
+      },
+      drown: this.host.drown ? (q, hp) => this.host.drown(q, hp) : null,
+    });
+    if (r) {
+      if (!m.trav) m.p[1] = r.y;
+      m.swimSpeed = r.speed;
+      m.swimAnim = r.anim;
+      m.trav = null;
+      m.reloadUntil = 0;
+      if (m.anim !== r.anim && !(m.moving && r.anim === 'treadWater')) this.setAnim(m, r.anim);
+    } else {
+      m.swimSpeed = null;
+      // (out: his feet on the ground again, not where the water held him)
+      if (was && !m.trav) m.p[1] = W?.floor ?? this.host.floor(m.p[0], m.p[2], m) ?? m.p[1];
+      // out of the water: the water out of his weapon first (a quick function check), then it fires
+      if (was && m.weaponWet && !m.dead && m.weapon !== 'knife' && m.weapon !== 'fists' && m.weapon !== 'torch' && !m.switching) {
+        m.switching = { to: m.weapon, from: m.weapon, until: this.time + DRAIN_T };
+        m.anim = null;
+        this.setAnim(m, 'reload', DRAIN_T);
+      }
+    }
+  }
+  /**
+   * His footsteps and his gear's rattle (ai/perception.js stepNoise): a sound in the world each
+   * stride (host.sound), as loud as his pace, the ground (host.surface; splashing when wading),
+   * what he carries (ai/loadout.js mobility noiseDb) and his care (stealthy: before contact, not
+   * running) make it; m.lastStep for the audio (audio/sound.js: his footfall, his kit).
+   */
+  footfall(m, sp, mode, dt) {
+    if (m.swimming || !(sp > 0.05)) return;
+    m.stride = (m.stride ?? 0) + sp * dt;
+    const len = mode === 'crawl' ? 0.5 : sp > 2.2 ? 1.2 : 0.75;
+    if (m.stride < len) return;
+    m.stride = 0;
+    const surface = m.wading ? 'water' : this.host.surface?.(m.p, m) ?? 'soil';
+    const stealth = m.stealth ?? (this.stealthy() && mode !== 'run');
+    // (the pace is his gait's: a run is a run however slow his load makes it)
+    const pace = mode === 'crawl' ? 'crawl' : mode === 'run' ? (sp > 4.2 ? 'sprint' : 'run') : stealth ? 'sneak' : 'walk';
+    const n = stepNoise({ pace, surface, gearDb: m.mob?.noiseDb ?? 0, stealth });
+    m.lastStep = { t: this.time, dB: n.dB, step: n.step, rattle: n.rattle, pace: n.pace, surface };
+    this.host.sound?.({ pos: m.p.slice(), loudness_dB: n.dB, kind: 'footstep', source: m });
   }
   move(m, dt) {
     m.moving = false;
@@ -819,6 +915,9 @@ export class SquadAI {
     let sp = SPEED[mode] * (m.speedFactor ?? 1) * gaitK(m, mode) * Math.max(0, Math.cos(dy)) ** 2;
     // (and what he carries: ai/loadout.js, × a rifleman's pace; spent from running, slower still)
     if (m.paceK) sp *= mode === 'run' ? m.paceK.run * (m.tired ?? 1) : m.paceK.walk;
+    // in the water (ai/swim.js): wading slows him; deep, he swims at what his load lets him
+    if (m.swimming) return this.swimMove(m, dt, dx, dz, dy);
+    if (m.wading) sp *= wadeK(this.waterAt(m.p[0], m.p[2], m)?.depth ?? 0);
     // a wall, a ledge or a drop ahead: over it, up it, down it (or, if he cannot, stop); only in
     // action (a threat, something to look into): on a routine move they walk round, as on patrol
     const alert = this.alert();
@@ -856,8 +955,10 @@ export class SquadAI {
     }
     const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
     const fy = this.host.floor(nx, nz, m);
+    // into deep water ahead: he wades in (no jump: it is water, not a drop)
+    const into = this.host.water && fy != null && m.p[1] - fy > DROP_MIN ? this.waterAt(nx, nz, m) : null;
     // off an edge he did not line up for (turning at it): jump down properly, or not at all
-    if (fy != null && m.p[1] - fy > DROP_MIN && mode !== 'crawl' && this.host.solid) {
+    if (!(into?.depth > WADE) && fy != null && m.p[1] - fy > DROP_MIN && mode !== 'crawl' && this.host.solid) {
       const dir = [Math.sin(m.yaw), Math.cos(m.yaw)];
       const geo = probe((x, y, z) => this.host.solid(x, y, z), m.p, dir, { range: sp * dt + 0.3 });
       if (!alert) return; // (on a routine move: no jumping down, he keeps to the plain way)
@@ -867,10 +968,28 @@ export class SquadAI {
     }
     // (on a routine move nothing higher than a stair is stepped onto: that would be a climb)
     if (!alert && fy != null && fy - m.p[1] > PLAIN_UP) return;
-    m.p = [nx, fy ?? m.p[1], nz];
+    m.p = [nx, into?.depth > WADE ? Math.max(fy, into.surface - FLOAT_Y) : fy ?? m.p[1], nz];
     m.moving = sp > 0.05;
     m.speed = sp;
     this.setAnim(m, anim);
+    this.footfall(m, sp, mode, dt);
+  }
+  /** Swimming along his path (ai/swim.js: m.swimSpeed), out onto the bank where it is low enough to climb out. */
+  swimMove(m, dt, dx, dz, dy) {
+    const sp = (m.swimSpeed ?? 0.3) * Math.max(0, Math.cos(dy)) ** 2;
+    const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
+    const W = this.waterAt(nx, nz, m);
+    if (W && W.depth > SWIM_DEPTH) m.p = [nx, m.p[1], nz];
+    else {
+      // the bank: out where it is no more than a step over the water (else he stays in, treading water)
+      const fy = this.host.floor(nx, nz, { ...m, p: [nx, (W?.surface ?? m.p[1] + FLOAT_Y) - 0.6, nz] });
+      const surf = this.waterAt(m.p[0], m.p[2], m)?.surface ?? m.p[1] + FLOAT_Y;
+      if (fy == null || fy - surf > PLAIN_UP + 0.3) return;
+      m.p = [nx, Math.max(fy, m.p[1]), nz];
+    }
+    m.moving = sp > 0.02;
+    m.speed = sp;
+    this.setAnim(m, m.swimAnim === 'treadWater' ? 'swim' : m.swimAnim ?? 'swim');
   }
   /**
    * What is ahead as he goes (along his heading, towards a target dist m off): 'go' (a move has
@@ -1331,6 +1450,8 @@ export class SquadAI {
       if (n.time <= this.heardT) continue;
       this.heardT = Math.max(this.heardT, n.time);
       if (n.squad === this.unit || (n.source && n.source.unit === this.unit)) continue;
+      // (the footsteps of men on their own side: nothing to look into; the other side's give them away)
+      if (n.kind === 'footstep' && n.source && typeof n.source === 'object' && manSide(n.source) === manSide(al[0])) continue;
       // heard (ai/perception.js): as far as it carries to the commander's ears, less through walls;
       // where it came from only roughly; too far off to go and look: they note it and stay
       const c = centroid(al);
@@ -1454,6 +1575,8 @@ export class SquadAI {
     // where they started (a rally point to fall back on, ai/retreat.js); their wires at the doors
     this.home ??= centroid(ms);
     stepTraps(this);
+    // in the water (ai/swim.js): wading, swimming, treading water, ditching gear, drowning
+    if (this.host.water) for (const m of ms) if (!m.dead && !this.host.ownMove?.(m)) this.inWater(m, dt);
     // no threat yet: listen, look, send men to investigate; hold where they are
     if (this.on) this.senses(dt);
     // the rope drill (ai/ropeTeam.js): overwatch on a descent, ropes lowered, the team rope-down

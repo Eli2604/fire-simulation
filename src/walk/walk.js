@@ -23,7 +23,8 @@ import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
 import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
 import { peekOptions } from '../ai/peek.js';
 import { lightSource, TORCH_T } from '../ai/flashlight.js';
-import { emitSound, footstepDb, BEAM } from '../ai/perception.js';
+import { emitSound, stepNoise, BEAM } from '../ai/perception.js';
+import { playerGear, swimAbility, ditchGear } from '../ai/swim.js';
 import { useSmithy } from '../sim/smithy.js';
 
 const EYE_STAND = 1.65;
@@ -174,6 +175,7 @@ export class Walkthrough {
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
+      if (e.code === 'KeyK' && !e.repeat && this.swimming) this.ditch(); // in deep water: ditch the heaviest of your kit
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
       if (e.code === 'KeyN') this.toggleFlashlight();
@@ -1233,6 +1235,27 @@ export class Walkthrough {
     return true;
   }
 
+  /**
+   * Your gear (ai/loadout.js, ai/swim.js): the scene's loadout for you (this.kit), else the
+   * firefighter's own (playerGear: the rifle and its magazines, helmet, radio, grenades; the
+   * breathing set about neutral in the water). What it weighs decides how you swim, as for the
+   * soldiers: light you swim; heavy you struggle (your wind goes fast, then you go under); too
+   * heavy you sink. K in deep water ditches the heaviest of it.
+   */
+  gear() {
+    if (!this.gearState || this.gearState.src !== (this.kit ?? null)) this.gearState = Object.assign(playerGear(this.kit), { src: this.kit ?? null });
+    return this.gearState;
+  }
+  /** Ditch the heaviest of your kit (in deep water, to stay up). */
+  ditch() {
+    const g = this.gear();
+    const what = ditchGear(g);
+    if (!what) return this.say('Nothing more to ditch', 2);
+    if (g.kit.primary === 'none' && this.tool === 'rifle') this.tool = 'hose';
+    const S = swimAbility(g.loadKg, g.fitness);
+    this.say(`You ditch your ${what} (${g.loadKg.toFixed(1)} kg left: ${S.cls === 'swims' ? 'you can swim' : S.cls === 'struggles' ? 'still a struggle' : 'still too heavy'})`, 3);
+  }
+
   isWater(x, y, z) {
     const w = this.hooks.getSim().world;
     const i = w.voxelAt(x, y, z);
@@ -1426,7 +1449,9 @@ export class Walkthrough {
     const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     // wading: water round the legs holds you back; deeper, you swim (slowly, in full gear)
     const wet = this.water?.depth ?? 0;
-    const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 : Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
+    // (swimming: your pace from your load, as the soldiers': ai/swim.js; struggling, a crawl)
+    const swimK = this.swimAb ? (this.swimAb.cls === 'swims' ? Math.min(1.25, Math.max(0.5, this.swimAb.speed / 0.6)) : this.swimAb.cls === 'struggles' ? 0.45 : 0.15) : 1;
+    const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 * swimK : Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
     // deep snow holds you back too (fresh powder more than a trodden trail: sim/snow.js)
     const sn = this.hooks.getSim()?.world.snow;
     let trudge = 1;
@@ -1592,7 +1617,15 @@ export class Walkthrough {
     // gear is about neutral: you drift slowly up when you stop swimming.
     if (this.swimming) {
       if (this.crawl) this.crawl = false;
-      let vy = 0.25; // drifting up
+      // what you carry (ai/swim.js, the soldiers' rule): light you float up; heavy you keep up only
+      // while your wind lasts; too heavy you go down (K: ditch the heaviest of your kit)
+      const G = this.gear(), S = (this.swimAb = swimAbility(G.loadKg, G.fitness));
+      this.swimWind = Math.max(0, (this.swimWind ?? 1) - S.drain * (moving ? 1 : 0.6) * dt);
+      let vy = S.cls === 'swims' ? 0.25 : S.cls === 'struggles' && this.swimWind > 0 ? 0.04 : -0.35; // drifting up (or down)
+      if (S.cls !== 'swims' && !this.heavySaid) {
+        this.say(S.cls === 'sinks' ? `Your kit (${G.loadKg.toFixed(0)} kg) drags you under – K to ditch it, piece by piece` : `Heavy in the water (${G.loadKg.toFixed(0)} kg): your wind will not last – K to ditch kit`, 4);
+        this.heavySaid = true;
+      }
       if (locked && (this.keys.has('KeyC') || this.keys.has('ControlLeft') || this.keys.has('ControlRight'))) vy -= 1.1;
       if (locked && this.keys.has('Space')) vy += 1.2;
       if (this.dive > 0.2 && fz !== 0) vy += Math.sin(this.pitch) * speed * fz * 1.6;
@@ -1602,7 +1635,11 @@ export class Walkthrough {
         this.say('Diving – Space to come up, C / Ctrl to go deeper, W to swim where you look', 4);
         this.diveSaid = true;
       }
-    } else this.dive = 0;
+    } else {
+      this.dive = 0;
+      this.heavySaid = false;
+      this.swimWind = Math.min(1, (this.swimWind ?? 1) + dt / 30);
+    }
     const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12) - this.dive) : floor;
     if (!this.trav && !this.ropeRider) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
@@ -1625,11 +1662,15 @@ export class Walkthrough {
     this.stride += Math.hypot(this.pos.x - (this.lastStep?.[0] ?? this.pos.x), this.pos.z - (this.lastStep?.[1] ?? this.pos.z));
     const stepV = this.stride / Math.max(1e-3, w.time - (this.strideT ?? w.time - 1));
     this.lastStep = [this.pos.x, this.pos.z];
-    if (this.stride > (this.crawl ? 0.5 : 0.75) && !this.swimming) {
+    if (this.stride > (this.crawl ? 0.5 : stepV > 2.2 ? 1.2 : 0.75) && !this.swimming) {
+      // (the same rule as the soldiers': ai/perception.js stepNoise: your pace, the ground, your kit's rattle)
       const under = w.voxelAt(this.pos.x, this.pos.y - w.h * 0.5, this.pos.z);
-      const surf = under >= 0 && w.mat[under] ? MATERIALS[w.mat[under]].name : 'soil';
-      const dB = footstepDb(this.crawl ? 0.35 : Math.min(4, stepV), surf);
-      if (dB > 0) emitSound(w, { pos: [this.pos.x, this.pos.y, this.pos.z], loudness_dB: dB, kind: 'footstep', source: 'player' });
+      const surf = (this.water?.depth ?? 0) > 0.3 ? 'water' : under >= 0 && w.mat[under] ? MATERIALS[w.mat[under]].name : 'soil';
+      const N = stepNoise({ speed: this.crawl ? 0.35 : Math.min(5, stepV), crawl: this.crawl, surface: surf, gearDb: this.gear().mob.noiseDb, stealth: !this.crawl && stepV < 0.9 });
+      if (N.dB > 0) {
+        emitSound(w, { pos: [this.pos.x, this.pos.y, this.pos.z], loudness_dB: N.dB, kind: 'footstep', source: 'player' });
+        this.sound.footstep?.(null, { surface: surf, pace: N.pace, step: N.step, rattle: N.rattle, own: true });
+      }
       this.stride = 0;
       this.strideT = w.time;
     }

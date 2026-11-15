@@ -35,7 +35,7 @@ import { stepIce, initIce } from './ice.js';
 import { stepCups } from './tea.js';
 import { stepSmithies } from './smithy.js';
 import { stepPower } from './power.js';
-import { impact, bodyLanding, shockwave } from './impact.js';
+import { impact, bodyLanding, shockwave, groundMaterial } from './impact.js';
 import { stepLightning } from './lightning.js';
 import { stepAir, blurRadiation, radiationGain, FLAME_TEMP } from './air.js';
 import { farRadiation } from './farRadiation.js';
@@ -1722,6 +1722,16 @@ export class Simulation {
       indoors: (p) => {
         for (let y = p[1] + 2.2; y < p[1] + 8; y += w.h) if (this.ai.solidAt(p[0], y, p[2])) return true;
         return false;
+      },
+      // the water (ai/swim.js): they wade the shallows, swim the deep, ditch gear or drown under a load
+      water: (x, z, y) => this.ai.waterAt(x, z, y),
+      drown: (e, hp) => this.ai.damage(e, hp),
+      log: (e, text) => w.events.push({ type: 'log', pos: [e.p[0], e.p[1] + 1.6, e.p[2]], time: w.time, name: text }),
+      // their footsteps and gear rattle (ai/perception.js stepNoise): heard by the other side, on the ground under them
+      sound: (n) => emitSound(w, n),
+      surface: (p) => {
+        const sn = w.snow, j = sn ? sn.cell(p[0], p[2]) : -1;
+        return j >= 0 && sn.depth[j] > 0.05 ? 'snow' : groundMaterial(w, p);
       },
       // the flame gun: burning fuel along a 2-7 m stream; it lights what it reaches
       flame: (e, target) => {

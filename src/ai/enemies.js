@@ -58,6 +58,31 @@ export class EnemyAI {
     return true;
   }
 
+  /**
+   * The water standing over the ground at height y at (x, z): { depth, surface } (a lake's, a
+   * river's, a flooded room's voxels; the open sea round an island or a ship), or null. Ice that
+   * bears them is ground, not water (ai/squad.js wades and swims by it: ai/swim.js).
+   */
+  waterAt(x, z, y) {
+    const w = this.world, h = w.h;
+    const wet = (yy) => {
+      const i = w.voxelAt(x, yy, z);
+      return i >= 0 && w.mat[i] !== 0 && MATERIALS[w.mat[i]].fluidity >= 0.95 && !(w.ice && w.ice.bearsAt(w, i, 250));
+    };
+    let yy = y + h * 0.5;
+    while (yy < w.size[1] && wet(yy)) yy += h;
+    let surface = Math.floor((yy - h * 0.5) / h) * h;
+    // the open sea (not voxels): its still level, outside the hull
+    const s = w.sea;
+    if (s && !w.vacuum && y < s.level) {
+      const [x0, z0, x1, z1] = s.box ?? [0, 0, 0, 0];
+      const i = w.voxelAt(x, y + h * 0.5, z);
+      if (!(x > x0 && x < x1 && z > z0 && z < z1) && !(i >= 0 && w.mat[i] !== 0)) surface = Math.max(surface, s.level);
+    }
+    const depth = surface - y;
+    return depth > 0.02 ? { depth, surface } : null;
+  }
+
   floorAt(x, z, from) {
     const h = this.world.h;
     for (let y = from; y > from - 3; y -= h * 0.5) if (this.solidAt(x, y - h * 0.25, z)) return Math.floor((y - h * 0.25) / h) * h + h;
@@ -307,6 +332,8 @@ export class EnemyAI {
       for (const n of e.guard ? [] : noises) { // a guard team hears as a squad (ai/squad.js)
         // heard (ai/perception.js): through walls less; where it was only roughly; far off, not worth a look
         if (['lure', 'retreat', 'flee'].includes(e.state) || n.kind === 'enemy' || n.kind === 'dragon' || n.source === e) continue;
+        // (the footsteps of his own side's men: nothing to look into)
+        if (n.kind === 'footstep' && n.source && typeof n.source === 'object' && !hostile(sideOf(e), sideOf(n.source))) continue;
         const prof = senses(e, 'guard');
         const heard = hears(e, n, { at: [e.p[0], e.p[1] + 1.6, e.p[2]], prof, solid: (x, y, z) => this.solidAt(x, y, z) });
         if (heard && heard.d <= prof.investigate) {

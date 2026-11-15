@@ -35,6 +35,11 @@
  *    after every round; the pistol cupped), carry, aim (the pistol square to the target at arm's
  *    length, the flame gun from the hip), reloads; a set of clips baked for each (weaponClips) and
  *    swapped in as the weapon in his hands changes. allows(act): what that weapon lets him do.
+ *    The carbine (short barrel, collapsible stock) and the marksman rifle (long barrel, scope,
+ *    bipod) have meshes of their own, each with the points its hands go to (gunPoints). A pistol as
+ *    the sidearm (setSidearm) sits in a holster on the right thigh: drawPistol takes it out into a
+ *    two-handed grip (the long gun slung first), and it is aimed, fired and reloaded as a pistol.
+ *  - In the water (ai/swim.js): swim, treadWater, swimStruggle (a heavy load), drown.
  *  - Hit zones: cylinders on the bones (head, torso, pelvis, arms, legs) with a damage
  *    multiplier each, for picking; they can be shown.
  */
@@ -2288,6 +2293,11 @@ export const WEAPON_STYLE = {
   mg: {
     lGo: [-0.07, 0.075, 0.012], carry: { wOff: [0.03, -0.1, 0.04], wRot: [0.1, 0, 0.04] }, lean: 0.1, wide: 0.07, muzzle: 1.1,
   },
+  // the marksman rifle: the left hand further out under the long handguard, carried a little lower
+  // (the weight out front), leaning into it a touch
+  marksman: {
+    lGo: [0.04, 0.02, 0], carry: { wOff: [0, -0.02, 0], wRot: [0.08, 0, 0] }, lean: 0.03, muzzle: 1.25,
+  },
   pistol: {
     lGo: [-0.255, -0.05, -0.012],
     carry: { wOff: [0.1, 0.08, 0.03], wRot: [0.4, -0.9, 0] },
@@ -2386,6 +2396,67 @@ const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RE
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
 const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1, die: 1 };
 Object.assign(NO_STYLE, RETREAT, ROPE_DRILL);
+/**
+ * The pistol as a sidearm (a holster on the right thigh, ai/loadout.js sidearm 'pistol'): drawn
+ * (the right hand down to the holster, the pistol up out of it and pushed out, the left hand
+ * meeting it in a two-handed grip) and put back, held the pistol's way throughout. The long gun
+ * is slung on the back first (holsterRifle) and taken again after (drawRifle): switchWeapon.
+ */
+export const PISTOL_DRAW_T = 0.9;
+function pistolDraw(u) {
+  return styled(WEAPON_STYLE.pistol, 'drawPistol', (t) => hipHolster('pistol', 1 - t))(u, u);
+}
+/**
+ * In the water (ai/swim.js): treading water (upright, head out, the hands sculling, the legs
+ * cycling), struggling (a heavy load dragging him: arms beating the surface, the head thrown back)
+ * and drowning (gone under: limp, arms drifting up, sinking). The weapon slung on the back.
+ */
+function waterPose(p) {
+  p.sling = 1; p.lG = 0; p.rG = 0; p.lH = 0; p.rH = 0;
+  p.lPole = [1, -0.3, -0.5]; p.rPole = [-1, -0.3, -0.5];
+  return p;
+}
+const WATER_CLIPS = {
+  treadWater: [2.0, (t, u) => {
+    const p = waterPose(pose0()), f = TAU * u;
+    p.hipsPos = [0, 0.02 * sin(2 * f), 0]; p.spine = [0.12, 0, 0]; p.head = [-0.15, 0, 0];
+    // the hands sculling just under the surface (figure ~1.25 m: the chest), in and out
+    p.lT = [0.32 + 0.12 * sin(f), 1.22, 0.2 + 0.06 * cos(f)]; p.rT = [-0.32 - 0.12 * sin(f), 1.22, 0.2 + 0.06 * cos(f)];
+    // an eggbeater kick: the knees up, the shins turning
+    p.thighR = [-0.6 + 0.2 * sin(f), 0, -0.25]; p.thighL = [-0.6 - 0.2 * sin(f), 0, 0.25];
+    p.shinR = [1.0 + 0.4 * sin(f + 1), 0, 0]; p.shinL = [1.0 - 0.4 * sin(f + 1), 0, 0];
+    p.footR = [0.4, 0, 0]; p.footL = [0.4, 0, 0];
+    return p;
+  }],
+  swimStruggle: [1.1, (t, u) => {
+    const p = waterPose(pose0()), f = TAU * u;
+    p.hipsPos = [0, -0.06 + 0.06 * sin(2 * f), 0]; p.spine = [0.25, 0, 0]; p.neck = [-0.35, 0, 0]; p.head = [-0.45 + 0.1 * sin(2 * f), 0.15 * sin(f), 0];
+    // the arms beating down on the water, out of step
+    p.lT = [0.4, 1.35 + 0.28 * mx0(sin(f)), 0.25 + 0.1 * cos(f)]; p.rT = [-0.4, 1.35 + 0.28 * mx0(sin(f + 2.2)), 0.25 + 0.1 * cos(f + 2.2)];
+    p.thighR = [-0.4 + 0.45 * sin(2 * f), 0, -0.1]; p.thighL = [-0.4 - 0.45 * sin(2 * f), 0, 0.1];
+    p.shinR = [0.7 + 0.5 * sin(2 * f + 1), 0, 0]; p.shinL = [0.7 - 0.5 * sin(2 * f + 1), 0, 0];
+    return p;
+  }],
+  drown: [3.0, (t, u) => {
+    const p = waterPose(pose0()), f = TAU * u;
+    const g = sm01(t / 1.5);
+    p.hipsPos = [0, -0.05 * g, 0]; p.spine = [-0.2 * g, 0, 0.05 * sin(f)]; p.neck = [-0.3 * g, 0, 0]; p.head = [-0.5 * g, 0.1 * sin(f), 0];
+    p.lT = lerpA([0.4, 1.4, 0.25], [0.35, 1.85, 0.05], g); p.rT = lerpA([-0.4, 1.4, 0.25], [-0.32, 1.8, 0.0], g);
+    p.thighR = [-0.35 * g, 0, -0.08]; p.thighL = [-0.25 * g, 0, 0.08]; p.shinR = [0.6 * g, 0, 0]; p.shinL = [0.5 * g, 0, 0]; p.footR = [0.5 * g, 0, 0]; p.footL = [0.5 * g, 0, 0];
+    return p;
+  }],
+};
+Object.assign(CLIPS, WATER_CLIPS, {
+  drawPistol: [PISTOL_DRAW_T, (t) => pistolDraw(t / PISTOL_DRAW_T)],
+  holsterPistol: [PUT_T, (t) => pistolDraw(1 - t / PUT_T)],
+});
+export const WATER = { swim: 1, treadWater: 1, swimStruggle: 1, drown: 1 };
+Object.assign(ONCE, { drawPistol: 1, holsterPistol: 1 });
+Object.assign(MOVING, { swimStruggle: 0.25 });
+Object.assign(LABELS, { drawPistol: 'Draw pistol (holster)', holsterPistol: 'Holster pistol', treadWater: 'Tread water', swimStruggle: 'Struggling (heavy, in water)', drown: 'Drowning' });
+Object.assign(NO_UNARMED, WATER, { drawPistol: 1, holsterPistol: 1 });
+Object.assign(NO_STYLE, WATER, { drawPistol: 1, holsterPistol: 1 });
+SWITCH_TIME.pistol = PUT_T + PISTOL_DRAW_T;
 // in a boat (boatClipPose): at work the weapon is slung, as at a desk; seated, up with it, as kneeling
 Object.assign(NO_UNARMED, BOAT_WORK);
 Object.assign(NO_STYLE, BOAT_WORK);
@@ -2913,8 +2984,64 @@ function gunKit() {
   box(mg, 0.12, 0.1, 0.07, 0.42, -0.1, 0, olive, 0.045);
   box(mg, 0.3, 0.01, 0.01, 0.88, 0.02, 0, steel, 0.018);
   box(mg, 0.3, 0.01, 0.01, 0.88, 0.02, 0, steel, -0.018);
-  return { guns: { shotgun, pistol, mg }, pumpAxis: rl2w(1, 0, 0) };
+  // the carbine (5.56 mm, short): a collapsible stock on its buffer tube (pushed in), the receiver,
+  // a short handguard with a vertical grip where the rifle's foregrip is, a short barrel and its
+  // flash hider; the rifle's magazine (the mag bone's, for the reload) in its well
+  const carbine = new THREE.Group();
+  carbine.name = 'carbine';
+  tube(carbine, 0.014, -0.05, 0.2, 0.005, 0, poly); // the buffer tube
+  box(carbine, 0.13, 0.05, 0.042, -0.02, -0.002, 0.04, poly); // the stock, collapsed onto it
+  box(carbine, 0.028, 0.115, 0.046, -0.085, -0.02, 0.04, poly); // its butt plate
+  box(carbine, 0.3, 0.068, 0.046, 0.35, 0.016, 0, steel); // the receiver
+  box(carbine, 0.035, 0.11, 0.035, 0.28, -0.075, -0.35, poly); // the pistol grip
+  box(carbine, 0.075, 0.035, 0.04, 0.44, -0.035, 0, steel); // the magazine well
+  tube(carbine, 0.024, 0.5, 0.7, 0.018, 0, poly, 10); // the handguard (short)
+  box(carbine, 0.03, 0.085, 0.03, 0.56, -0.046, 0, poly); // the vertical grip (the left hand)
+  tube(carbine, 0.009, 0.7, 0.81, 0.02, 0, steel); // the barrel (short)
+  tube(carbine, 0.013, 0.79, 0.84, 0.02, 0, steel); // the flash hider
+  box(carbine, 0.012, 0.035, 0.01, 0.68, 0.055, 0, steel); // the front sight post
+  box(carbine, 0.06, 0.035, 0.03, 0.33, 0.066, 0, poly); // the red dot
+  // the marksman rifle (7.62 mm): a fixed stock with a cheek riser, a long free-floated handguard
+  // and barrel with a muzzle brake, a scope on its rings, a bipod folded under the handguard
+  const marksman = new THREE.Group();
+  marksman.name = 'marksman';
+  box(marksman, 0.28, 0.06, 0.045, 0.0, -0.005, 0.06, poly); // the stock
+  box(marksman, 0.17, 0.025, 0.04, 0.03, 0.04, 0, poly); // the cheek riser
+  box(marksman, 0.03, 0.13, 0.05, -0.14, -0.025, 0.06, poly); // the butt plate
+  box(marksman, 0.34, 0.075, 0.05, 0.36, 0.016, 0, steel); // the receiver
+  box(marksman, 0.035, 0.11, 0.035, 0.28, -0.075, -0.35, poly); // the pistol grip
+  box(marksman, 0.08, 0.035, 0.042, 0.45, -0.038, 0, steel); // the magazine well
+  tube(marksman, 0.027, 0.52, 0.86, 0.02, 0, poly, 10); // the handguard (long; the left hand under it)
+  tube(marksman, 0.011, 0.86, 1.2, 0.02, 0, steel); // the barrel (long)
+  box(marksman, 0.07, 0.032, 0.032, 1.215, 0.02, 0, steel); // the muzzle brake
+  tube(marksman, 0.019, 0.25, 0.48, 0.1, 0, steel); // the scope's tube
+  tube(marksman, 0.027, 0.46, 0.55, 0.1, 0, steel); // its objective bell
+  tube(marksman, 0.023, 0.2, 0.26, 0.1, 0, steel); // its eyepiece
+  box(marksman, 0.022, 0.04, 0.03, 0.3, 0.064, 0, steel); // the rings
+  box(marksman, 0.022, 0.04, 0.03, 0.44, 0.064, 0, steel);
+  box(marksman, 0.03, 0.025, 0.05, 0.84, -0.012, 0, steel); // the bipod's hinge
+  box(marksman, 0.25, 0.012, 0.012, 0.97, -0.025, 0, steel, 0.018); // its legs, folded forward
+  box(marksman, 0.25, 0.012, 0.012, 0.97, -0.025, 0, steel, -0.018);
+  for (const [k, g] of Object.entries({ shotgun, pistol, carbine, marksman })) g.userData.points = gunPoints(k);
+  return { guns: { shotgun, pistol, mg, carbine, marksman }, pumpAxis: rl2w(1, 0, 0) };
 }
+/**
+ * Where the hands go on each weapon (rifle-local: x along the barrel, y up, from the weapon bone):
+ * grip (the right hand on the pistol grip), fore (the left hand: the rifle's foregrip, the
+ * carbine's vertical grip, under the marksman rifle's long handguard, the shotgun's pump, the top of
+ * the MG's handguard, the pistol cupped under the right hand) and the muzzle: the rifle's grips
+ * moved by the weapon's style (WEAPON_STYLE lGo / rGo), so the clips put the hands there.
+ */
+export function gunPoints(kind) {
+  const S = WEAPON_STYLE[kind] ?? {};
+  const l = S.lGo ?? [0, 0, 0], r = S.rGo ?? [0, 0, 0];
+  return {
+    grip: P.pg.c.map((v, i) => v + r[i]),
+    fore: P.fgp.c.map((v, i) => v + l[i]),
+    muzzle: kind === 'carbine' ? CARBINE_MUZZLE : S.muzzle ?? 1.03,
+  };
+}
+const CARBINE_MUZZLE = 0.84;
 /** The knife with its sheath and the flash-bang, the other primaries (shotgun, pistol, the MG's extras), and where they sit (plain three.js: tests use it headless). */
 export function weaponKit() {
   return Object.assign(knifeKit(), flashKit(), gunKit());
@@ -3069,9 +3196,22 @@ export class PhysicsWorld {
 
 /* ================= one animated soldier ================= */
 // the primaries: the rifle's mesh as it is ('rifle'), with extras over it ('mg'), or hidden under one of their own
-const PRIMARY_MESH = { rifle: 'rifle', mg: 'extra', shotgun: 'own', pistol: 'own' };
+// (ownMag: a mesh of its own with the rifle's magazine kept in its well, for the reloads: the
+// carbine, the marksman rifle)
+const PRIMARY_MESH = { rifle: 'rifle', mg: 'extra', shotgun: 'own', pistol: 'own', carbine: 'ownMag', marksman: 'ownMag' };
 // each handling kind's gun (ai/recoil.js GUNS) for its firing clips when no recoil was set
-const GUN_OF = { shotgun: 'shotgun', pistol: 'pistol', mg: 'mg' };
+const GUN_OF = { shotgun: 'shotgun', pistol: 'pistol', mg: 'mg', marksman: 'marksman' };
+// the sidearm pistol in its holster (hips-bone space): where hipHolster leaves the weapon bone
+let HOLSTERED = null;
+function holstered() {
+  if (HOLSTERED) return HOLSTERED;
+  const o = solve(hipHolster('pistol', 1));
+  const c = (pos, q) => new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1));
+  const M = c(REST.spine.clone().sub(REST.hips), o.spine).multiply(c(REST.chest.clone().sub(REST.spine), o.chest)).multiply(c(o.weaponPos, o.weapon));
+  const p = new THREE.Vector3(), q = new THREE.Quaternion();
+  M.decompose(p, q, new THREE.Vector3());
+  return (HOLSTERED = { p, q });
+}
 const HIDDEN = new THREE.MeshBasicMaterial({ visible: false });
 const _pm = new THREE.Matrix4(), _pv = new THREE.Vector3();
 // the pump at rest (rifle-local x of the palm on it) and the palm's place across the barrel
@@ -3245,7 +3385,9 @@ export class OperatorFigure {
     flashHand.visible = false;
     bones.handR.add(flashHand);
     this.parts = { person, rifle, mag, helmet, pack, secondary: sec, knife, carrier };
-    this.restParent = { rifle: bones.weapon, mag: bones.mag, helmet: bones.head, pack: bones.chest, secondary: bones.chest, knife: bones.thighR };
+    this.restParent = { rifle: bones.weapon, mag: bones.mag, helmet: bones.head, pack: bones.chest, secondary: bones.chest, knife: bones.thighR, sidePistol: bones.hips };
+    // the sidearm: the carbine across the back (as always), or a pistol in its holster (setSidearm)
+    this.sidearm = 'carbine';
     this.holdKnife(false);
     // the rope, while he rappels: anchor - guide hand - harness - brake hand - the tail
     const ropeM = new THREE.MeshStandardMaterial({ color: '#2f3527', roughness: 0.9 });
@@ -3380,9 +3522,15 @@ export class OperatorFigure {
         this.play('droneControl', { fade: 0.2 });
         return;
       }
-      if (was === 'drawSecondary') {
+      if (was === 'drawSecondary' || was === 'drawPistol') {
         this.drawing = false;
         this.armed = true;
+      }
+      // the sidearm pistol back in its holster: empty-handed, the long gun where the next draw takes it
+      if (was === 'holsterPistol') {
+        this.stowHip(this.parts.sidePistol);
+        this.unstowRifle();
+        this.weapon = 'none';
       }
       // a weapon put away: empty-handed (the rifle on his back, the pistol in its holster, the
       // flame gun's wand on its clip) until he draws another
@@ -3514,7 +3662,39 @@ export class OperatorFigure {
   }
   /** Has he a carbine on his back to draw? */
   get hasSecondary() {
+    if (this.sidearm === 'pistol') return this.parts.sidePistol?.parent === this.bones.hips && !this.parts.sidePistol.userData.pivot;
+    if (this.sidearm === 'none') return false;
     return this.parts.secondary.parent === this.bones.chest && !this.parts.secondary.userData.pivot;
+  }
+  /**
+   * His sidearm (ai/loadout.js kit.sidearm): 'carbine' (the compact carbine across his back, as
+   * always), 'pistol' (a pistol in a holster on the right thigh: drawn with drawPistol, held and
+   * fired as a pistol, its own reload) or 'none'. The 'secondary' of switchWeapon and the AI.
+   */
+  setSidearm(kind = 'carbine') {
+    if (kind === this.sidearm) return this;
+    const P = this.parts, W = this.bones.weapon;
+    // (not while one is in his hands)
+    if (this.weapon === 'secondary' && (P.secondary.parent === W || P.sidePistol?.parent === W)) return this;
+    this.sidearm = kind;
+    P.secondary.visible = kind === 'carbine' && this.loadout !== 'unarmed';
+    if (kind === 'pistol' && !P.sidePistol) {
+      const g = new THREE.Group();
+      g.name = 'sidePistol';
+      const src = this.A.guns?.pistol;
+      if (src) g.add(src.clone());
+      P.sidePistol = g;
+    }
+    if (P.sidePistol && !P.sidePistol.userData.pivot) {
+      if (kind === 'pistol' && P.sidePistol.parent !== this.bones.hips) {
+        const H = holstered();
+        this.bones.hips.add(P.sidePistol);
+        P.sidePistol.position.copy(H.p);
+        P.sidePistol.quaternion.copy(H.q);
+      }
+      P.sidePistol.visible = kind === 'pistol';
+    }
+    return this;
   }
   /** Reach back and draw the carbine (when the rifle is gone). */
   drawSecondary() {
@@ -3530,16 +3710,19 @@ export class OperatorFigure {
    */
   switchWeapon(to) {
     const want = to === 'rifle' || to === 'primary' ? 'primary' : to;
-    const draw = { primary: 'drawRifle', secondary: 'drawSecondary', knife: 'drawKnife', fists: 'fistsUp' }[want];
+    const pistol = this.sidearm === 'pistol';
+    const draw = { primary: 'drawRifle', secondary: pistol ? 'drawPistol' : 'drawSecondary', knife: 'drawKnife', fists: 'fistsUp' }[want];
     const P = this.parts, W = this.bones.weapon;
     // (a flame trooper's primary is the flame gun: its wand onto the clip at his side and back)
     const torch = this.loadout === 'torch';
     const have = torch && want === 'primary' ? 'torch' : want;
     if (!draw || this.shown === 'die' || have === this.weapon) return 0;
     if (this.loadout === 'unarmed' && want !== 'fists') return 0;
-    if (want !== 'fists' && P[have === 'primary' ? 'rifle' : have]?.userData.pivot) return 0;
+    if (want === 'secondary' && this.sidearm === 'none') return 0;
+    if (want !== 'fists' && P[have === 'primary' ? 'rifle' : have === 'secondary' && pistol ? 'sidePistol' : have]?.userData.pivot) return 0;
     if (torch && have === 'torch' && P.torch.parent !== W && P.torch.parent !== this.bones.hips) return 0; // (it went with the tanks)
     const put = this.weapon === 'knife' ? 'sheathKnife'
+      : this.weapon === 'secondary' && P.sidePistol?.parent === W ? 'holsterPistol'
       : this.weapon === 'secondary' && P.secondary.parent === W ? 'holsterSecondary'
       : this.weapon === 'primary' && this.armed && P.rifle.parent === W ? 'holsterRifle'
       : this.weapon === 'torch' && P.torch?.parent === W ? 'holsterRifle' : null;
@@ -3555,8 +3738,32 @@ export class OperatorFigure {
   arrange(name) {
     const P = this.parts, W = this.bones.weapon;
     const torch = this.loadout === 'torch';
+    // (the sidearm a pistol: the carbine's draw and put-away are the holster's)
+    if (this.sidearm === 'pistol' && name === 'drawSecondary') name = 'drawPistol';
+    if (this.sidearm === 'pistol' && name === 'holsterSecondary') name = 'holsterPistol';
+    // (anything else in his hands: the sidearm pistol back into its holster first, where it is)
+    const pistolOut = P.sidePistol?.parent === W;
+    if (pistolOut && (name === 'drawRifle' || name === 'drawKnife' || name === 'fistsUp')) {
+      this.stowHip(P.sidePistol);
+      this.unstowRifle();
+    }
     switch (name) {
+      case 'drawPistol': {
+        const sp = P.sidePistol;
+        if (!sp || sp.userData.pivot || (sp.parent !== this.bones.hips && sp.parent !== W)) return null;
+        // the long gun on his back (where holsterRifle left it), the pistol from the holster onto the weapon bone
+        this.stowSecondary();
+        this.stowRifle();
+        this.unstowHip(sp);
+        this.weapon = 'secondary';
+        this.armed = true;
+        this.drawing = true;
+        return name;
+      }
+      case 'holsterPistol':
+        return this.weapon === 'secondary' && pistolOut ? name : null;
       case 'holsterRifle':
+        if (this.weapon === 'secondary' && pistolOut) return 'holsterPistol';
         if (this.weapon === 'secondary') return P.secondary.parent === W ? 'holsterSecondary' : null;
         if (this.weapon === 'torch') return P.torch?.parent === W ? name : null;
         return !torch && this.weapon === 'primary' && this.armed && P.rifle.parent === W ? name : null;
@@ -3632,7 +3839,7 @@ export class OperatorFigure {
    * whether he does.
    */
   dropWeapon(physics, scene) {
-    const part = { primary: 'rifle', secondary: 'secondary', knife: 'knife', torch: 'torch' }[this.weapon];
+    const part = { primary: 'rifle', secondary: this.parts.sidePistol?.parent === this.bones.weapon ? 'sidePistol' : 'secondary', knife: 'knife', torch: 'torch' }[this.weapon];
     if (!part || this.shown === 'die' || !this.parts[part] || this.parts[part].userData.pivot) return false;
     this.play('dropWeapon', { fade: 0.12, restart: true });
     this.dropping = { part, physics, scene };
@@ -3744,7 +3951,7 @@ export class OperatorFigure {
    */
   get handling() {
     if (this.weapon === 'torch') return 'torch';
-    if (this.weapon === 'secondary') return 'carbine';
+    if (this.weapon === 'secondary') return this.sidearm === 'pistol' ? 'pistol' : 'carbine';
     if (this.weapon === 'knife' || this.weapon === 'none') return this.weapon;
     if (this.weapon === 'fists') return 'unarmed';
     return this.primaryKind;
@@ -3763,9 +3970,9 @@ export class OperatorFigure {
     this.primaryKind = kind;
     const rifle = this.parts.rifle;
     for (const g of Object.values(this.guns)) g.removeFromParent();
-    const own = PRIMARY_MESH[kind] === 'own';
+    const own = PRIMARY_MESH[kind] === 'own' || PRIMARY_MESH[kind] === 'ownMag';
     rifle.material = own ? HIDDEN : this.mat;
-    this.parts.mag.visible = !own;
+    this.parts.mag.visible = PRIMARY_MESH[kind] !== 'own';
     const g = this.gunMesh(kind);
     if (g) rifle.add(g);
     this.restyle();
@@ -4009,7 +4216,7 @@ export class OperatorFigure {
     const a = this.current;
     const hasRifle = this.armed && (this.weapon === 'secondary' || (this.weapon === 'primary' && !this.parts.rifle.userData.pivot));
     const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'kneelShoot' || this.shown === 'proneShoot' || this.shown === 'sitShoot') && a;
-    const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
+    const pk = this.weapon === 'secondary' ? (this.sidearm === 'pistol' ? 'pistol' : 'carbine') : this.primaryKind;
     this.flash.position.copy(rl2w(pk === 'carbine' ? 0.82 : WEAPON_STYLE[pk]?.muzzle ?? 1.03, pk === 'pistol' ? 0.012 : 0.045, 0));
     if (this.primaryKind === 'shotgun') this.updatePump();
     if (this.loadout === 'torch') this.updateFlame(dt);
@@ -4276,9 +4483,11 @@ export class OperatorFigure {
     for (const m of pads) m.visible = k.armour === 'heavy';
     flags.shoulders = k.armour === 'heavy';
     // the sidearm: the carbine across his back, a pistol in a holster on the right hip, or none
+    this.setSidearm(k.sidearm);
     this.parts.secondary.visible = k.sidearm === 'carbine';
     flags.sidearm = k.sidearm;
-    flags.holster = show('holster', k.sidearm === 'pistol', () => box(0.05, 0.17, 0.12, '#1d1f1c', [0.215, 0.86, 0.02], 'hips'));
+    // (the holster on the right thigh, where the pistol goes: HIP_SLOT)
+    flags.holster = show('holster', k.sidearm === 'pistol', () => box(0.05, 0.17, 0.11, '#1d1f1c', [-0.235, 0.9, 0.0], 'hips'));
     // grenades: frags (up to 4 shown) and smokes (up to 2) on the carrier; the flash-bang on the belt
     const frags = Math.min(4, k.frag ?? 0), smokes = Math.min(2, k.smoke ?? 0);
     make('frags', () => {
@@ -4338,7 +4547,7 @@ export class OperatorFigure {
   }
   /** Where the weapon light sits along the weapon in his hands (rifle-local x). */
   lampX() {
-    const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
+    const pk = this.weapon === 'secondary' ? (this.sidearm === 'pistol' ? 'pistol' : 'carbine') : this.primaryKind;
     return pk === 'carbine' ? 0.6 : (WEAPON_STYLE[pk]?.muzzle ?? 1.03) - 0.27;
   }
   /**
@@ -4526,6 +4735,12 @@ export class OperatorFigure {
       if (k === 'knife') {
         obj.position.copy(this.A.knifeSheath.p);
         obj.quaternion.copy(this.A.knifeSheath.q);
+      }
+      if (k === 'sidePistol') {
+        const H = holstered();
+        obj.position.copy(H.p);
+        obj.quaternion.copy(H.q);
+        if (this.weapon === 'secondary') this.weapon = 'fists';
       }
       if (k === 'secondary') {
         obj.position.copy(this.A.slungPos);

@@ -21,7 +21,8 @@
  * The total (with the uniform and boots) sets, through mobility(): walk / run / sprint speed and
  * acceleration (falling off past ~10 % of his body mass: Knapik's loaded-march data, roughly),
  * stamina drain and recovery, how high he can climb and vault, rope work, swimming (a heavy load
- * sinks him), how hard a fall lands (fallK) and the rattle he makes moving (noiseDb). Fitness
+ * sinks him: ai/swim.js), how hard a fall lands (fallK) and the rattle he makes moving (noiseDb:
+ * ai/perception.js stepNoise, his footsteps heard by the enemy). Fitness
  * (0..1, 0.5 a regular soldier's) carries a load better. Armour reduces what a hit does, per hit
  * area (armourPen, armourDamageK: sim/wounds.js).
  */
@@ -33,10 +34,10 @@ export const UNIFORM_KG = 4; // uniform, boots, belt
 /** Primary weapons: label, kg (empty, with its optic), the magazine (rounds, kg loaded), default spares, the AI's names. */
 export const PRIMARY = {
   rifle: { label: 'Rifle (5.56 mm)', kg: HANDLING.rifle.mass, mag: { rounds: 30, kg: 0.49 }, mags: 5, arms: 'rifle', loadout: undefined, rig: 'rifle' },
-  carbine: { label: 'Carbine (5.56 mm, short)', kg: 3.0, mag: { rounds: 30, kg: 0.49 }, mags: 5, arms: 'carbine', loadout: 'carbine', rig: 'rifle' },
+  carbine: { label: 'Carbine (5.56 mm, short)', kg: 3.0, mag: { rounds: 30, kg: 0.49 }, mags: 5, arms: 'carbine', loadout: 'carbine', rig: 'carbine' },
   mg: { label: 'Machine gun (7.62 mm)', kg: HANDLING.mg.mass, mag: { rounds: 100, kg: 3.1 }, mags: 2, arms: 'mg', loadout: 'mg', rig: 'mg' },
   shotgun: { label: 'Pump shotgun (12 gauge)', kg: HANDLING.shotgun.mass, mag: { rounds: 7, kg: 0.33 }, mags: 4, arms: 'shotgun', loadout: 'shotgun', rig: 'shotgun' },
-  marksman: { label: 'Marksman rifle (7.62 mm, scoped)', kg: 4.9, mag: { rounds: 20, kg: 0.72 }, mags: 5, arms: 'marksman', loadout: 'marksman', rig: 'rifle' },
+  marksman: { label: 'Marksman rifle (7.62 mm, scoped)', kg: 4.9, mag: { rounds: 20, kg: 0.72 }, mags: 5, arms: 'marksman', loadout: 'marksman', rig: 'marksman' },
   pistol: { label: 'Pistol (9 mm) only', kg: HANDLING.pistol.mass, mag: { rounds: 15, kg: 0.28 }, mags: 3, arms: 'pistol', loadout: 'pistol', rig: 'pistol' },
   flamer: { label: 'Flame gun (tanks on the back, filled)', kg: HANDLING.torch.mass, mag: null, mags: 0, arms: null, loadout: 'torch', rig: 'torch' },
   none: { label: 'None (hand-to-hand)', kg: 0, mag: null, mags: 0, arms: null, loadout: 'unarmed', rig: 'unarmed' },

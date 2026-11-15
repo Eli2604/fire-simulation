@@ -50,6 +50,7 @@ import { CarVoices } from './carVoices.js';
 import { hammerBlow, quenchSizzle, bellowsWhoosh } from './smithSound.js';
 import { heliCrashSound, heliHitSound } from './heliSound.js';
 import { RoomAcoustics } from './roomReverb.js';
+import { footstepVoice } from './footsteps.js';
 import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
 
 const MAX_VOICES = 28;
@@ -334,7 +335,15 @@ export class SoundScape {
     for (const en of state.enemies ?? []) {
       if (en.dead || !en.moving) continue;
       const d = Math.hypot(en.p[0] - pos[0], en.p[2] - pos[2]);
-      if (d > 15) continue;
+      if (d > 15 && !(en.lastStep && d < 60)) continue;
+      // a soldier's footfall (ai/squad.js footfall: his pace, the ground, his kit's rattle)
+      if (en.lastStep) {
+        if (en.lastStep.t !== en.heardStep) {
+          en.heardStep = en.lastStep.t;
+          this.footstep(en.p, en.lastStep);
+        }
+        continue;
+      }
       en.stepT = (en.stepT ?? 0) - 1 / 60;
       if (en.stepT <= 0) {
         en.stepT = en.state === 'flee' || en.state === 'retreat' ? 0.3 : 0.5;
@@ -658,6 +667,21 @@ export class SoundScape {
    * A dragon's foot coming down (footfall weight ~0.5-2 × k²): a foot of ~a quarter of its mass
    * meeting the ground at ~1-2 m/s, as an impact of scales on what is there (soil by default).
    */
+  /**
+   * A footfall (audio/footsteps.js): the heel on the ground there (its surface), the ground's own
+   * noise, the kit's rattle; at p (a soldier's) or your own (p null: o.own, at your feet, quieter
+   * to you than to the guards). o: { surface, pace, step, rattle } (ai/perception.js stepNoise).
+   */
+  footstep(p, o = {}) {
+    if (!this.running) return;
+    const lp = this.state?.listener?.pos;
+    const at = p ?? (lp ? [lp[0], lp[1] - 1.5, lp[2]] : null);
+    const layers = footstepVoice(o);
+    const pl = this.place(at, o.own ? 0.35 : 1, 0.45, { noDelay: !!o.own });
+    if (!pl) return;
+    for (const L of layers) this.noiseTo(pl.out, pl.t0 + L.delay, L.dur, L.filter, L.freq, L.q, Math.max(0.0002, L.level * pl.gain));
+  }
+
   stomp(p, weight = 1, material = 'soil') {
     if (!this.running) return;
     const w = Math.max(0.1, weight);
