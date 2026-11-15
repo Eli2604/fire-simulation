@@ -402,6 +402,21 @@ export class SoundScape {
         this.impact({ pos: e.pos, materials: ['glass', 'glass'], energy: 40, mass: 2, speed: 6, size: 0.8, sizeA: 0.05, radius: 0.01 });
       } else if (e.type === 'spall') {
         this.burst(t, 0.06, 'bandpass', 2500, 1.5, 0.4);
+      } else if (e.type === 'quench') {
+        // hot steel into the slack tub (sim/smithy.js): a sharp hiss, the boiling seething on
+        const pl = this.place(e.pos, 0.9, 4);
+        if (pl) {
+          this.noiseTo(pl.out, pl.t0, 1.2, 'highpass', 3500, 0.7, 0.7 * pl.gain);
+          this.noiseTo(pl.out, pl.t0 + 0.1, 3.5, 'bandpass', 1800, 1.2, 0.35 * pl.gain);
+        }
+      } else if (e.type === 'bellows') {
+        // a stroke of the forge's bellows: air rushing through the tuyere into the fire
+        const pl = this.place(e.pos, 0.5, 1);
+        if (pl) this.noiseTo(pl.out, pl.t0, 0.8, 'lowpass', 500, 0.8, 0.6 * pl.gain);
+      } else if (e.type === 'grind') {
+        // steel on the turning grindstone
+        const pl = this.place(e.pos, 0.35, 0.5);
+        if (pl) this.noiseTo(pl.out, pl.t0, 0.4, 'bandpass', 4200, 2, 0.5 * pl.gain);
       }
     }
   }

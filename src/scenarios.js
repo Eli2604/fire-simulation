@@ -230,18 +230,21 @@ function streetPlaces() {
 }
 
 export const SCENARIOS = {
+  // (the old "Metal bars on burners": the bars are now on the test hearth of a smithy)
   metalBars: {
-    name: 'Metal bars on burners',
-    description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt. Steel takes temper colours (straw, brown, purple, blue, grey) that spread out from the burner and glows dull red over it; copper tarnishes and darkens. Switch the view to thermal to see the temperatures.',
-    world: { size: [1.4, 0.6, 0.7], h: 0.02 },
-    exposure: 'indoor', // (a bench in a workshop: no wind, rain or sun on it)
-    weather: w({ ambient: 20 }),
-    timeScale: 20,
-    view: { camera: [0.2, 0.8, 1.1] },
+    name: 'Smithy: forging a blade',
+    description: "A smith's workshop. At the charcoal forge the smith works the bellows: more air through the tuyere means more oxygen to the fuel bed, so the charcoal burns faster and the fire climbs from ~900 °C (the chimney's draught alone) to 1200–1400 °C; the smoke and hot gas go up the hood and the chimney. When the blank glows yellow-orange (forging heat) he takes it out with the tongs and hammers it on the anvil (sparks, the ring of the anvil) until it cools to a dull cherry, then back into the fire; shaped, he heats it to cherry red and quenches it in the slack tub: a hiss, steam, the water warms, and the fast cooling turns the steel to hard, brittle martensite. He tempers it over the fire to its temper colour, grinds the edge and puts it in his shop next door (sword, axe, spear, dagger in turn: they pile up on the rack, the pegs and the counter). Walk in and press E at the bellows lever to blow the fire yourself; click the forge or the smith to see the temperatures, the hardness and the shop. On the test hearth by the front wall the old lesson: steel, aluminium and copper bars on burners. Copper conducts heat fastest; aluminium is first to melt; steel takes temper colours (straw, brown, purple, blue, grey) spreading from the burner. Switch the view to thermal to see the temperatures.",
+    world: { size: [8, 4.6, 7], h: 0.1 },
+    exposure: 'indoor', // (a workshop: its open doorway and windows let a little outside air in, no weather)
+    weather: w({ ambient: 18 }),
+    timeScale: 3,
+    view: { camera: [-1.5, 2.6, 5.2], walk: true },
     objects: [
-      { type: 'metalBar', params: { material: 'steel', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.15 },
-      { type: 'metalBar', params: { material: 'aluminium', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.35 },
-      { type: 'metalBar', params: { material: 'copper', thickness: 0.03, burnerPower: 6000 }, x: 0.7, z: 0.55 },
+      { type: 'smithy', params: {}, x: 4, z: 3.2 },
+      // the test hearth: bars as thick as a finger on gas burners (thinner than the voxels: models/metalBar.js)
+      { type: 'metalBar', params: { material: 'steel', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 4.85 },
+      { type: 'metalBar', params: { material: 'aluminium', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 5.15 },
+      { type: 'metalBar', params: { material: 'copper', length: 1, thickness: 0.04, elevation: 0.4, burnerPower: 4000, flameRadius: 0.06 }, x: 1.35, z: 5.45 },
     ],
   },
   foggyForest: {

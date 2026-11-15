@@ -21,6 +21,7 @@ import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
 import { peekOptions } from '../ai/peek.js';
 import { lightSource, TORCH_T } from '../ai/flashlight.js';
 import { emitSound, footstepDb, BEAM } from '../ai/perception.js';
+import { useSmithy } from '../sim/smithy.js';
 
 const EYE_STAND = 1.65;
 const EYE_CRAWL = 0.7;
@@ -324,7 +325,11 @@ export class Walkthrough {
     });
     const dk = nearestDoor(w, p, bd);
     if (dk >= 0) best = { door: dk };
-    if (!best) return this.say('Nothing to use here');
+    if (!best) {
+      // a smith's bellows: work the lever (sim/smithy.js)
+      const said = useSmithy(sim, p);
+      return this.say(said ?? 'Nothing to use here', said ? 3 : undefined);
+    }
     if (best.door !== undefined) {
       const d0 = w.doors[best.door];
       if (d0.locked && !d0.open) {

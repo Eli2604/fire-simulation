@@ -38,6 +38,7 @@ import { PatchRenderer } from './patches.js';
 import { SnowRenderer } from './snow.js';
 import { BreathRenderer } from './breath.js';
 import { TeaRenderer } from './tea.js';
+import { SmithyRenderer } from './smithy.js';
 import { MATERIALS } from '../sim/materials.js';
 import { SNOW_COVER } from './archipelago.js';
 import { HULL_SNOW } from './hull.js';
@@ -155,6 +156,7 @@ export class View {
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
+    this.smithy = new SmithyRenderer(this.root, this.flames); // a smith at his forge, the blade, the bellows, the shop (sim/smithy.js)
     this.enemies = new EnemyRenderer(this.root, this.flames);
     this.ropes = new RopeRenderer(this.root); // ropes and cables (ai/rope.js): fast ropes, ziplines, rappel ropes
     this.dragons = new DragonRenderer(this.root, this.flames);
@@ -243,6 +245,7 @@ export class View {
     this.patches.clear();
     this.breath.clear();
     this.tea.setWorld(world);
+    this.smithy.setWorld(world);
     this.snow.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
@@ -809,6 +812,7 @@ export class View {
     this.updateFireLight(stats);
     this.updateTorchLights();
     this.torches.update(this.time);
+    this.smithy.update(dt, this.time);
     this.vehicles.update(this.time);
     this.flights.update(this.time, dt);
     this.helis.update(this.time, dt);
@@ -1032,7 +1036,7 @@ export class View {
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const smooth = this.surfaceMode === 'smooth';
-    const drawings = [...(this.props.drawings ?? []), this.torches, this.doors, this.volcanoes];
+    const drawings = [...(this.props.drawings ?? []), this.torches, this.doors, this.volcanoes, this.smithy];
     return pickScene(this.raycaster, { world: this.world, root: this.root, voxels: this.voxels, surface: smooth ? this.surface : null, drawings, trees: this.trees });
   }
 }

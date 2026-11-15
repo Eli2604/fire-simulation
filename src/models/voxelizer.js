@@ -3,6 +3,7 @@ import { World, hash3 } from '../sim/world.js';
 import { MODELS, resolveParams } from './index.js';
 import { waterSurfaceAt } from '../sim/stirrers.js';
 import { resolveTree, rotationMatrix } from './composite.js';
+import { placeSmithy } from '../sim/smithy.js';
 
 /**
  * Primitive shapes, defined in a model's local frame (metres, y up, origin at
@@ -317,6 +318,8 @@ export function placeObject(world, obj, ownerIndex = -1) {
       }
   }
   for (const c of built.cups ?? []) world.cups.push({ ...c, p: toWorld(...c.p), owner: ownerIndex });
+  // a smith's forge, the smith and his shop (sim/smithy.js): kept on their own, drawn by render/smithy.js
+  for (const s of built.smithies ?? []) (world.smithies ??= []).push(placeSmithy(s, toWorld, rot, ownerIndex, world.ambient));
   for (const pr of built.props ?? []) world.props.push({ owner: ownerIndex, ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });
   // electric power (sim/power.js): generators (a wind turbine, a solar park) and loads (a camp) on a grid
   for (const g of built.generators ?? []) (world.generators ??= []).push({ ...g, owner: ownerIndex, p: toWorld(...g.p), check: g.check && toWorld(...g.check), ...(g.n ? { n: dirToWorld(g.n) } : {}), ...(g.panelChecks ? { panelChecks: g.panelChecks.map((q) => toWorld(...q)) } : {}), heading: rot });

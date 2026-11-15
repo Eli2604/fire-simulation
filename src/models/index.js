@@ -49,6 +49,7 @@ import rope from './rope.js';
 import helicopter from './helicopter.js';
 import terrain from './terrain.js';
 import rowBoat from './rowBoat.js';
+import smithy from './smithy.js';
 import { TREE_OBJECTS } from './treeObjects.js';
 
 /**
@@ -61,7 +62,7 @@ import { TREE_OBJECTS } from './treeObjects.js';
  *   }
  * See voxelizer.js for the primitive shapes; models/composite.js for objects in objects.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol, hedge, livingRoom, mill, rope, helicopter, terrain, rowBoat, ...TREE_OBJECTS };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol, hedge, livingRoom, mill, rope, helicopter, terrain, rowBoat, smithy, ...TREE_OBJECTS };
 
 export function resolveParams(model, given = {}) {
   const out = {};

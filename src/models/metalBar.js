@@ -14,7 +14,10 @@ export default {
     const L = p.length;
     const th = p.thickness;
     const y = p.elevation;
-    const prims = [{ shape: 'box', min: [-L / 2, y, -th / 2], max: [L / 2, y + th, th / 2], material: p.material }];
+    // (thinner than the voxels: one line of voxels, only partly metal, so that it holds and
+    // conducts the heat of a bar its real size)
+    const fill = th < h ? (th / h) ** 2 : 1;
+    const prims = [{ shape: 'box', min: [-L / 2, y, -th / 2], max: [L / 2, y + th, th / 2], material: p.material, ...(fill < 1 ? { density: fill } : {}) }];
     if (p.supports) {
       for (const sx of [-L * 0.25, L * 0.35]) {
         prims.push({ shape: 'box', min: [sx - 0.04, 0, -0.06], max: [sx + 0.04, y - h * 0.01, 0.06], material: 'brick', anchored: true });

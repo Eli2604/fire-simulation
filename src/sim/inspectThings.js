@@ -1,6 +1,7 @@
 import { MATERIALS } from './materials.js';
 import { F_BURNING, F_SMOLDER, F_LIQUID } from './world.js';
 import { doorGlassBroken, doorDeltaP } from './doors.js';
+import { describeSmithy } from './smithy.js';
 
 /**
  * What the inspector says about a thing clicked that is more than a voxel (render/pick.js hands
@@ -19,6 +20,8 @@ import { doorGlassBroken, doorDeltaP } from './doors.js';
  *   grid        a camp on a grid: what it makes and takes, the battery, ops and lights
  *   carrier     the ship (sim/water.js stepBuoyancy, sim/buoyancy.js): draft, list, trim,
  *               water aboard and coming in, GM, foundering
+ *   smithy      a smith's forge (sim/smithy.js): the fire, the bellows' air, the blade he works
+ *               (its heat, hardness and temper), the slack tub, the shop
  *   volcano     world.volcanoes (sim/volcano.js): asleep / erupting / spent, how long, the
  *               lava in the crater and how hot it is
  *
@@ -41,6 +44,8 @@ export function describeThing(sim, thing) {
       return grid(w, thing.grid);
     case 'carrier':
       return carrier(sim);
+    case 'smithy':
+      return describeSmithy(w.smithies?.[thing.index]);
     case 'volcano':
       return volcano(w, thing.index);
     default:
