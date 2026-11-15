@@ -470,7 +470,9 @@ export function stepDriver(car, dt, ctx = {}) {
       return;
     }
     D.backT = 2;
-    D.backSteer = Math.random() < 0.5 ? 1 : -1;
+    // backing off: lock to the side that swings the nose towards where it is going (in reverse the
+    // steering turns it the other way), the other side on the next try: no coin toss
+    D.backSteer = -Math.sign(alpha || 1) * (D.walls % 2 ? 1 : -1);
     return;
   }
   if (ob) {
