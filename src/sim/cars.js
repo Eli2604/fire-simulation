@@ -1,9 +1,9 @@
 import { MATERIALS, MAT } from './materials.js';
 import { carSpec, makeCar, subStep, carRot, carToWorld, setMode, startEngine, stopEngine, sfx, massOf, hasEnergy, wheelPhase, CAR_SUBSTEP } from './carPhysics.js';
 import { FRESH, crushCells } from './batteries.js';
-import { captureBody, stampBody, bodyLeft, regionState, bodyBurning } from './carBody.js';
+import { captureBody, stampBody, bodyLeft, regionState, bodyBurning, bodyPose } from './carBody.js';
+import { dragAir } from './bodyAir.js';
 import { impact } from './impact.js';
-import { F_LIQUID } from './world.js';
 import { stepDriver } from '../ai/carDriver.js';
 import { wheelContact, groundDrag, groundWork } from './groundContact.js';
 
@@ -21,7 +21,9 @@ import { wheelContact, groundDrag, groundWork } from './groundContact.js';
  *   carUsable(c)           fit to drive: not wrecked, not burning, the engine whole, fuel in it
  *
  * The voxels: a car stays the voxels it was built of until it first moves (or someone gets in);
- * then they become its body (sim/carBody.js) and are put back into the grid wherever it goes, so
+ * then they become its body (sim/carBody.js: a moving body, sim/movingBody.js, as a boat's) and
+ * are put back into the grid wherever it goes (its tank sealed as it turns, a panel burnt loose
+ * falling off, its cabin's air with it, the air round it dragged along: sim/bodyAir.js), so
  * its fire, its heat and what has burnt away go with it. On the move its voxels are hidden and
  * render/cars.js draws it (wheels turning and steering, the body on its springs); at rest they
  * are drawn as they are.
@@ -106,7 +108,6 @@ export function ensureBody(w, c) {
   c.body = captureBody(w, c.owner, [c.x, c.y, c.z], c.yaw, {
     region: (l, k, B) => (B.state.vesselTag[k] < 0 ? 'fuel' : B.state.mat[k] === MAT.liion ? 'battery' : l[0] > 0.2 * S.L + h * 0.5 && l[1] < 0.95 && Math.abs(l[2]) < S.W / 2 - h * 0.6 ? 'engine' : 'body'),
   });
-  c.body.pose = { x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: 0, roll: 0 };
   c.fuel0 = regionState(c.body, 'fuel').n;
   checkState(w, c);
   return c.body;
@@ -496,50 +497,21 @@ export function stepCarList(cars, dt, ctx = {}) {
 
 /** Its voxels put where it is now, when it has moved far enough to land in other cells. */
 function restamp(w, c) {
-  const B = c.body, P = B.pose, S = c.spec;
+  const B = c.body, P = B.carPose, S = c.spec;
   const moving = Math.hypot(c.vx, c.vz) > 0.25 || Math.abs(c.wz) > 0.05;
   if (moving) c.lastMoveT = c.t;
   const hide = c.t - (c.lastMoveT ?? -9) < 1.2;
+  // its velocity and spin (what falls off flies with it; the air round it is dragged along: sim/bodyAir.js)
+  const vel = { v: [c.vx, c.vy ?? 0, c.vz], w: [0, c.wz, 0] };
+  if (moving) dragAir(w, B, bodyPose(c), vel.v, vel.w);
   const d = Math.abs(c.x - P.x) + Math.abs(c.y - P.y) + Math.abs(c.z - P.z) + angle(c.yaw - P.yaw) * S.L * 0.5 + Math.abs(c.pitch - P.pitch) * S.L * 0.5 + Math.abs(c.roll - P.roll) * S.W * 0.5;
   if (d < w.h * 0.4 && hide === !!B.hidden) return;
-  const r = stampBody(w, B, { x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: c.pitch, roll: c.roll }, { hidden: hide });
+  // (its voxels, its tank sealed as it turns, its loose parts falling off, its cabin's air: sim/movingBody.js)
+  const r = stampBody(w, B, { x: c.x, y: c.y, z: c.z, yaw: c.yaw, pitch: c.pitch, roll: c.roll }, { hidden: hide, vel, air: CABIN });
   c.stampBlocked = r.blocked;
-  syncVessels(w, c);
 }
-
-/**
- * Its fuel tank (sim/vessels.js) after the voxels moved: the tank counts its shell's cells to see
- * a hole, and moved (turned) they are more or fewer than it was built with. So its count is
- * taken again each time; a shell voxel really gone (burnt or blown through) is a hole: it leaks.
- */
-function syncVessels(w, c) {
-  const B = c.body;
-  for (const v of w.vessels ?? []) {
-    if (v.owner !== c.owner || v.state === 'leaking' || v.state === 'ruptured' || v.state === 'empty') continue;
-    const tag = w.vessels.indexOf(v) + 1;
-    let alive = 0, cells = 0;
-    for (let k = 0; k < B.n; k++) if (B.state.vesselTag[k] === tag && B.alive[k]) alive++;
-    for (let j = 0; j < B.nCells; j++) if (B.state.vesselTag[B.cellK[j]] === tag) cells++;
-    v.carShell ??= alive;
-    if (alive < v.carShell) {
-      // a hole: the contents run out (as sim/vessels.js has a tank leak)
-      v.state = 'leaking';
-      v.pressure = 0;
-      for (let j = 0; j < B.nCells; j++) {
-        const i = B.cells[j];
-        if (w.vesselTag[i] === -tag) {
-          w.vesselTag[i] = 0;
-          w.flags[i] |= F_LIQUID;
-          w.melt[i] = 1;
-        }
-      }
-      w.events?.push({ type: 'leak', pos: [c.x, c.y + 0.4, c.z], time: w.time, name: v.name });
-      continue;
-    }
-    v.carShell = alive;
-    v.shellCount0 = cells;
-  }
-}
+// its cabin and engine bay: the inside of its box less a voxel all round (sim/bodyAir.js carryAir's default)
+const CABIN = {};
 const angle = (a) => Math.abs(((a + Math.PI) % TAU + TAU) % TAU - Math.PI);
 
 /** A seat's figure root (his feet: the seat's top less SEAT_DROP) in the car's frame. */
