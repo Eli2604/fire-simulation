@@ -11,6 +11,11 @@ when it is decided or done.
 
 ## Verification
 
+- Tests that fail now and then (random draws or timing under a loaded machine; each passes on its
+  own): squad against squad (squadSides "two squads engage"), catacomb guards closing doors
+  (fixes), a squad's drawn patrol (patrolDraw), hand-to-hand moves (melee), and the vehicle cost
+  budget (vehiclePerf, a wall-clock ratio). Seed their random draws and make the timing ones
+  measure work, not wall-clock time.
 - Look at the recent features in a real browser: poses, sounds, film cameras, sailing, driving,
   the gate, the smithy. Most are covered by node tests only.
 - Automated screenshot comparisons and frame-time budgets per scene.
