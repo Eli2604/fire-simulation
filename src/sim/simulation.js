@@ -1,4 +1,4 @@
-import { MATERIALS, TBL } from './materials.js';
+import { MATERIALS, TBL, CP, cpAt, cpCorrect, enthalpyAt, heatTo } from './materials.js';
 import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR, TMAX_STEP } from './world.js';
 import { deriveWeather } from './weather.js';
 import { skyState } from './sky.js';
@@ -892,7 +892,12 @@ export class Simulation {
       const m = mat[i];
       const M = MATERIALS[m];
       const rho = M.density * w.dens[i]; // thin sheets/panels have a lower effective density
-      const c = M.specificHeat;
+      // specific heat at its temperature (materials.js CP: steel's magnetic peak, wood rising
+      // with T...); the energy this step brings is turned back into temperature through the
+      // enthalpy of that c(T) at the end (cpCorrect), so no heat is made or lost on the way
+      const cpT = CP[m];
+      const c = cpT === null ? M.specificHeat : cpAt(m, temp[i]);
+      const me0 = melt[i];
       const res = M.residue;
       const comb = M.combustible;
       const massFrac = comb ? res + (1 - res) * fuel[i] : 1;
@@ -980,8 +985,9 @@ export class Simulation {
           const take = Math.min(rest, Math.max(0, (M.maxMoisture - mo) * dry));
           mo += take / dry;
           ws = 1;
-          // what it cannot absorb runs off and collects (puddles)
-          if (rest - take > 0 && M.name !== 'water') {
+          // what it cannot absorb runs off and collects (puddles; on water: it joins it, a puddle
+          // on its surface becomes a water voxel on top: sim/water.js)
+          if (rest - take > 0) {
             const c = x + nx * z;
             w.runoff[c] += rest - take;
             (w.runoffY ??= new Int16Array(nx * w.nz))[c] = y;
@@ -1266,6 +1272,14 @@ export class Simulation {
       hrrTotal += q;
 
       if (Cs === 0) T = Ts;
+      if (cpT !== null) {
+        // the step was taken with c at the start's temperature: the same energy through h(T)
+        // (not while melting or setting: the latent heat pins it at the melting point)
+        const cw = moist[i] * CW;
+        if (!(M.meltingPoint !== Infinity && (melt[i] !== me0 || T === M.meltingPoint))) T = cpCorrect(m, temp[i], T, c, cw);
+        if (Cs === 0 || f & F_LIQUID) Ts = T;
+        else if (Ts !== M.meltingPoint) Ts = cpCorrect(m, skin[i], Ts, c, cw);
+      }
       if (T > MAX_TEMP) T = MAX_TEMP;
       else if (T < -60) T = -60;
       if (Ts > MAX_TEMP) Ts = MAX_TEMP;
@@ -1301,8 +1315,8 @@ export class Simulation {
         if (R.combustible && T >= R.ignitionTemp) w.flags[i] |= F_BURNING;
       } else {
         // the voxel is consumed; its remaining heat goes into the gas
-        const C = M.density * w.dens[i] * V * 0.05 * M.specificHeat;
-        airQ[faceAir[i]] += ((temp[i] - Tamb) * C) / dt;
+        const mass = M.density * w.dens[i] * V * 0.05;
+        airQ[faceAir[i]] += (mass * (enthalpyAt(m, temp[i]) - enthalpyAt(m, Tamb))) / dt;
         w.clearVoxel(i);
       }
     }
@@ -1888,11 +1902,12 @@ export class Simulation {
       const M = MATERIALS[w.mat[i]];
       const dry = M.density * w.dens[i] * V;
       let water = perVoxel * (M.waterReach ?? 1);
-      const C = dry * M.specificHeat;
       if (w.temp[i] > 100) {
-        const need = ((w.temp[i] - 100) * C) / (CW * 85 + LV);
+        // the heat it has above 100 °C (its own c(T): materials.js) boils what it can
+        const m = w.mat[i];
+        const need = (dry * (enthalpyAt(m, w.temp[i]) - enthalpyAt(m, 100))) / (CW * 85 + LV);
         const used = Math.min(water, need);
-        w.temp[i] -= (used * (CW * 85 + LV)) / C;
+        w.temp[i] = heatTo(m, w.temp[i], -(used * (CW * 85 + LV)) / dry);
         w.skin[i] = Math.min(w.skin[i], w.temp[i]);
         water -= used;
         const [x, y, z] = w.coords(i);

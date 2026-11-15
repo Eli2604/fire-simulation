@@ -504,6 +504,128 @@ export const TBL = {
   count: n,
 };
 
+/* ---------- temperature-dependent specific heat ---------- */
+/**
+ * Specific heat c(T) (J/(kg·K)) for the materials where it changes a lot over the range the
+ * simulation sees, as [°C, c] points (linear between them, flat beyond the ends). `specificHeat`
+ * above stays the room-temperature reference; materials not listed here keep it at every T.
+ *
+ *  steel    carbon steel (EN 1993-1-2 / ASM data, the magnetic (Curie) peak at ~750 °C smoothed
+ *           to ~1400 J/kgK so the 10 K grid holds it; it carries the α→γ heat too): 460 at
+ *           20 °C, ~600 at 400 °C, ~640 mean over 760–1050 °C (a constant 490 cooled hot steel
+ *           ~25 % too fast); liquid ~820.
+ *  aluminium 900 → ~1180 just below its melting point; liquid 1090.
+ *  copper   385 → ~480 near melting; liquid 495.
+ *  brass    380 → ~440.
+ *  wood     dry wood rises with T (Simpson & TenWolde: c ≈ 0.103 + 0.00387 T[K] kJ/kgK: 1.24 at
+ *           20 °C, 2.3 at 300 °C; its mean over 20–300 °C is the old constant), the char it turns
+ *           into falls back to ~1.6 kJ/kgK. Scaled by each wood's own reference value / 1700.
+ *  concrete EN 1992-1-2 (dry): 900 to 100 °C, 1000 at 200, 1100 from 400 (its moisture's heat
+ *           is the voxel moisture's own), scaled by its reference / 900.
+ *  glass    soda-lime: 840 → ~1100 at 500 °C, ~1300 above the glass transition (~570 °C).
+ *
+ * The solvers store temperature; the energy↔temperature conversion goes through the enthalpy
+ * h(T) = ∫c dT of the same piecewise-linear c, so heat put in or taken out is conserved
+ * exactly (heatTo / cpCorrect), whatever the temperature steps.
+ */
+const CP_POINTS = {
+  steel: [[-100, 400], [20, 460], [100, 490], [200, 525], [300, 560], [400, 600], [500, 660], [600, 750], [650, 820], [700, 960], [730, 1250], [750, 1400], [760, 950], [780, 740], [800, 670], [850, 620], [900, 600], [1000, 605], [1100, 625], [1200, 640], [1450, 680], [1500, 820]],
+  aluminium: [[-100, 800], [20, 900], [100, 930], [200, 970], [300, 1010], [400, 1050], [500, 1100], [600, 1150], [660, 1180], [670, 1090]],
+  copper: [[-100, 350], [20, 385], [200, 400], [400, 415], [600, 430], [800, 450], [1000, 470], [1085, 480], [1095, 495]],
+  brass: [[-100, 350], [20, 380], [300, 405], [600, 425], [900, 440], [940, 460]],
+  glass: [[-100, 700], [20, 840], [100, 880], [200, 950], [300, 1000], [400, 1050], [500, 1100], [570, 1180], [650, 1300], [1000, 1350]],
+};
+const WOOD_CP = [[-100, 900], [20, 1240], [100, 1550], [200, 1930], [300, 2250], [400, 2000], [600, 1600], [1500, 1700]];
+const CONCRETE_CP = [[-100, 860], [20, 900], [100, 900], [200, 1000], [400, 1100]];
+const scaled = (pts, f) => pts.map(([T, c]) => [T, c * f]);
+for (const name of ['steelProfile', 'deckSteel']) CP_POINTS[name] = CP_POINTS.steel;
+for (const name of ['wood', 'oak', 'willow', 'pine', 'deadWood', 'shingles']) CP_POINTS[name] = scaled(WOOD_CP, DEFS[name].specificHeat / 1700);
+CP_POINTS.concrete = scaled(CONCRETE_CP, DEFS.concrete.specificHeat / 900);
+
+const CP_T0 = -100; // °C, the grid's first point
+const CP_DT = 5; // K, grid step
+const CP_N = 621; // up to 3000 °C
+/** Per material id: null (constant c) or { c: c on the grid, H: enthalpy (J/kg) on the grid, relative to CP_T0 }. */
+export const CP = MATERIALS.map((m) => {
+  const pts = CP_POINTS[m.name];
+  if (!pts) return null;
+  const at = (T) => {
+    if (T <= pts[0][0]) return pts[0][1];
+    for (let k = 1; k < pts.length; k++) if (T <= pts[k][0]) {
+      const [a, ca] = pts[k - 1];
+      const [b, cb] = pts[k];
+      return ca + ((cb - ca) * (T - a)) / (b - a);
+    }
+    return pts[pts.length - 1][1];
+  };
+  const c = new Float64Array(CP_N);
+  const H = new Float64Array(CP_N);
+  for (let k = 0; k < CP_N; k++) c[k] = at(CP_T0 + k * CP_DT);
+  for (let k = 1; k < CP_N; k++) H[k] = H[k - 1] + 0.5 * (c[k - 1] + c[k]) * CP_DT;
+  return { c, H };
+});
+
+/** Specific heat (J/(kg·K)) of material `id` at T °C. */
+export function cpAt(id, T) {
+  const t = CP[id];
+  if (t === null) return MATERIALS[id].specificHeat;
+  let u = (T - CP_T0) / CP_DT;
+  if (u <= 0) return t.c[0];
+  if (u >= CP_N - 1) return t.c[CP_N - 1];
+  const k = u | 0;
+  u -= k;
+  return t.c[k] + (t.c[k + 1] - t.c[k]) * u;
+}
+
+/** Specific enthalpy (J/kg) of material `id` at T °C (sensible heat only; any reference). */
+export function enthalpyAt(id, T) {
+  const t = CP[id];
+  if (t === null) return MATERIALS[id].specificHeat * T;
+  const u = (T - CP_T0) / CP_DT;
+  if (u <= 0) return t.c[0] * (T - CP_T0);
+  if (u >= CP_N - 1) return t.H[CP_N - 1] + t.c[CP_N - 1] * (T - CP_T0 - (CP_N - 1) * CP_DT);
+  const k = u | 0;
+  const s = (u - k) * CP_DT;
+  return t.H[k] + t.c[k] * s + (0.5 * (t.c[k + 1] - t.c[k]) * s * s) / CP_DT;
+}
+
+/**
+ * The temperature after adding dh J per kg of the material to it at T0 (dh < 0: taking it out),
+ * `cw` J/(kg·K) of something with a constant specific heat going along (its moisture: mo·c_water).
+ * Exact for the tabulated c(T): h(T1) + cw·T1 = h(T0) + cw·T0 + dh.
+ */
+export function heatTo(id, T0, dh, cw = 0) {
+  const t = CP[id];
+  if (t === null) return T0 + dh / (MATERIALS[id].specificHeat + cw);
+  if (dh === 0) return T0;
+  const G = enthalpyAt(id, T0) + cw * T0 + dh;
+  const g = (k) => t.H[k] + cw * (CP_T0 + k * CP_DT);
+  // below / above the grid: the end values go on
+  if (G <= g(0)) return CP_T0 + (G - g(0)) / (t.c[0] + cw);
+  if (G >= g(CP_N - 1)) return CP_T0 + (CP_N - 1) * CP_DT + (G - g(CP_N - 1)) / (t.c[CP_N - 1] + cw);
+  let k = Math.max(0, Math.min(CP_N - 2, Math.floor((T0 - CP_T0) / CP_DT)));
+  while (k > 0 && g(k) > G) k--;
+  while (k < CP_N - 2 && g(k + 1) < G) k++;
+  // in the cell: g(k) + (c_k + cw) s + ½ (c_k+1 − c_k)/Δ s² = G
+  const a = (0.5 * (t.c[k + 1] - t.c[k])) / CP_DT;
+  const b = t.c[k] + cw;
+  const r = G - g(k);
+  const s = Math.abs(a) < 1e-12 ? r / b : (2 * r) / (b + Math.sqrt(Math.max(0, b * b + 4 * a * r)));
+  return CP_T0 + k * CP_DT + s;
+}
+
+/**
+ * A solver that stepped T0 → T1 with the heat capacity c0 (+ cw, the moisture's) taken at the
+ * start: the temperature the same energy, (c0 + cw)(T1 − T0) per kg, really brings it to.
+ */
+export function cpCorrect(id, T0, T1, c0, cw = 0) {
+  if (CP[id] === null || T1 === T0) return T1;
+  const dT = T1 - T0;
+  // a small step (most of them): the midpoint rule, exact to O(dT³ c'') (c is piecewise linear)
+  if (dT < 1 && dT > -1) return T0 + ((c0 + cw) * dT) / (cpAt(id, T0 + 0.5 * dT) + cw);
+  return heatTo(id, T0, (c0 + cw) * dT, cw);
+}
+
 export function materialId(name) {
   const id = MAT[name];
   if (id === undefined) throw new Error(`Unknown material '${name}'`);
