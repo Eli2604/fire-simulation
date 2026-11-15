@@ -234,6 +234,7 @@ export const SCENARIOS = {
     name: 'Metal bars on burners',
     description: 'Steel, aluminium and copper bars heated at one end. Copper conducts heat fastest; aluminium is first to melt. Steel takes temper colours (straw, brown, purple, blue, grey) that spread out from the burner and glows dull red over it; copper tarnishes and darkens. Switch the view to thermal to see the temperatures.',
     world: { size: [1.4, 0.6, 0.7], h: 0.02 },
+    exposure: 'indoor', // (a bench in a workshop: no wind, rain or sun on it)
     weather: w({ ambient: 20 }),
     timeScale: 20,
     view: { camera: [0.2, 0.8, 1.1] },
