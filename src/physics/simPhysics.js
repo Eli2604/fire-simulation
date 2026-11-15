@@ -44,6 +44,7 @@ import { makeMovingBody, restamp } from '../sim/movingBody.js';
 import { MATERIALS, MAT, mechanics } from '../sim/materials.js';
 import { launchVoxel } from '../sim/vessels.js';
 import { stepChunkFire, chunkIsHot, chunkTopology } from './chunkFire.js';
+import { dragAir } from '../sim/bodyAir.js';
 
 const F_LIQUID = 1, F_FALLING = 2, F_ANCHOR = 4, F_HIDDEN = 64;
 const DEBRIS_GROUP = 1 << 1;
@@ -147,11 +148,12 @@ export class SimPhysics {
     const pos = new Map(cells.map((i, k) => [i, local[k]]));
     const B = makeMovingBody(w, cells, (i) => pos.get(i), { pose: { p: com, R: [1, 0, 0, 0, 1, 0, 0, 0, 1] } });
     // off the grid while it flies (its state held in B: restamp puts it back)
-    for (let k = 0; k < B.n; k++) {
-      const c = B.at[k];
-      if (c >= 0) w.clearVoxel(c);
-      B.at[k] = -1;
-    }
+    // (every copy it has in the grid cleared, and none counted: a voxel with no copies is held
+    // off the grid, not gone, by sim/movingBody.js syncBody)
+    for (let j = 0; j < B.nCells; j++) w.clearVoxel(B.cellList[j]);
+    B.nCells = 0;
+    B.copies.fill(0);
+    B.at.fill(-1);
     B.cells.clear();
     w.pieceOf && cells.forEach((i) => w.pieceOf.delete(i));
     const shape = new VoxelSet(h, local, masses);
@@ -388,6 +390,9 @@ export class SimPhysics {
     for (const c of this.chunks) {
       if (!c.hot) continue;
       const r = stepChunkFire(this.sim, c, dt);
+      // the air round it dragged along (sim/bodyAir.js, as a moving car does): its flames and
+      // smoke trail behind it rather than standing where they were put
+      if (r.burning) dragAir(w, c.B, { p: c.body.shapePos(), R: c.body.R }, c.body.vel, c.body.angVel);
       this.stats.flightHeat += r.q * dt;
       this.stats.flightFuel += r.fuelUsed;
       c.burning = r.burning;

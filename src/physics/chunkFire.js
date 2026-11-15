@@ -14,6 +14,10 @@
  *    up and catch; voxels that are not burning cool towards the air they fly through;
  *  - burnt out it turns into its residue (char, ash) or is gone, as in the grid.
  *
+ * The air round it is dragged along (simPhysics.js: sim/bodyAir.js dragAir, as a moving car).
+ * The heat and flames go into the air sources (airQ, flameAcc, radSrc) and the smoke into the
+ * smoke fields: both reach the GPU air (sim/gpu: sources each step, CPU edits uploaded).
+ *
  * Everything stays in the body's state (B.s), so the restamp when it lands puts it back into the
  * grid as it is now: still burning, with the fuel it has left.
  */
