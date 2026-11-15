@@ -42,12 +42,26 @@
  * not the squad AI's to move (its host's ownMove, ai/squad.js); a man on a rope is ai/rope.js's.
  * The host (the squad AI's, ai/squad.js) gives, besides the usual: ropeSim (the { world, solid }
  * ai/rope.js works on: the simulation), and optionally autoRig and teamRope (false: no team
- * rope-down).
+ * rope-down), path3d (a way between levels: the stairs; without it nobody looks for one).
+ *
+ *  - The drill's men walk as the squad routes them (wayFor): to the edge, to their place at a
+ *    rope, off its foot to the perimeter, along the squad's grid (ai/squad.js route) round walls
+ *    and gear on the roof, or the host's 3D path where the grid is not on their level; straight
+ *    only where the way is clear.
+ *  - Rope or stairs (chooseWayDown): before a rope is lowered (a man at a drop, the leader's team
+ *    rope-down) a walkable way down near (host.path3d: stairs, a ramp, a slope; STAIRS.reach) is
+ *    weighed against the rope's time (rigging, the queue, the descent): taken when not much dearer
+ *    (it is the safer way and the coil is kept), only when much quicker under fire or for a team
+ *    assault (the rope is the quicker, surprising way in), and always when nobody has a rope. The
+ *    decision is written down (sq.ropeLog; sq.log 'rope:decide:<how>:<why>'; the squad's status).
  *
  * API:
  *   stepRopeTeam(sq, dt)     each squad step (ai/squad.js step, after the senses)
  *   lowerRope(sq, m, dir)    host.rappel: at a drop too deep to jump ahead of m along dir
  *   edgeAhead(S, p, n, reach) the edge ahead of p and the ground below it, or null
+ *   wayFor(sq, m, to)        his way to `to` on his level ([points])
+ *   chooseWayDown(sq, m, ed, { ropeT, team, goal })  rope or stairs at edge ed
+ *   carriesCoil(m)           a coil to draw on him (render/enemies.js)
  */
 import { startRope, groundBelow, outward, ropeEnds, RAPPEL, ROPE_T } from './rope.js';
 import { kit, manage, aimPoint, canShoot, spend, weaponKind, recoilOf, skillOf, TIMES } from './soldier.js';
@@ -59,11 +73,25 @@ export const WATCH = { r: 4.5, rFast: 5, arc: 1.25, linger: 2.0, aimWalk: 1.0, r
 export const WAIT = { back: 1.4, row: 0.9, side: 0.7 };
 /** The team rope-down: spacing along the edge, how far back from it each kneels, how far to look for an edge, how often the leader looks, the longest wait for the ropes and for the bang, the go after it. */
 export const TEAM = { spacing: 1.7, back: 0.75, search: 22, every: 2, minCoils: 2, rigMax: 18, bangMax: 3.5, go: 0.25, signal: 1.6 };
+/**
+ * Rope or stairs (chooseWayDown): the longest way down on foot looked at (reach m), how near the
+ * drop his way's end must be to walk to it instead of to the foot of the wall (near), how long a
+ * look is remembered (memo s), the deepest step a way down may have (drop m: more is a jump), the
+ * pace on it (m/s), the rappel's pace down (slow, quick: ai/rope.js RAPPEL, RAPPEL_QUICK), what a
+ * coil used up counts for (gear s), and the factor on the rope's time the stairs must beat: calm
+ * (they are safer: more than the rope's time is still worth it), under fire, a team assault.
+ */
+export const STAIRS = { reach: 45, near: 15, memo: 8, drop: 1.3, pace: 2.6, slow: 0.95, quick: 2.8, gear: 4, calm: 1.25, fire: 0.45, team: 0.5 };
 
 const hyp = Math.hypot;
 const d2 = (a, b) => hyp(a[0] - b[0], a[2] - b[2]);
 const simOf = (sq) => sq.host.ropeSim ?? null;
 const solidOf = (S) => S?.solid ?? (S?.ai?.solidAt ? (x, y, z) => S.ai.solidAt(x, y, z) : null);
+/** A rope coil to draw on him (render/enemies.js → operator/rig.js setCoil): coils left (m.ropes), not the one in his hands being thrown down, not dead. */
+export function carriesCoil(e) {
+  if (e.dead || !(Number.isFinite(e.ropes) && e.ropes > 0)) return false;
+  return !(e.ropeTask?.kind === 'rig' && e.ropeTask.phase === 'throw');
+}
 /** How many rope coils he has (host.autoRig: a man with none listed rigs as many as he needs). */
 export const coils = (sq, m) => m.ropes ?? (sq.host.autoRig ? Infinity : 0);
 const rnd = (sq) => (sq.host.rand ?? Math.random)();
@@ -177,14 +205,14 @@ function spread(sq, site) {
 }
 
 /* ---------- moving and fighting while the drill has him ---------- */
-/** A step towards `to` on his own feet (running if far), over the floor the host gives; 'blocked' at a wall or a drop. */
-function walkTo(sq, m, to, dt, run) {
+/** A step towards `to` on his own feet (running if far: `left`, the way still to go), over the floor the host gives; 'blocked' at a wall or a drop. */
+function walkTo(sq, m, to, dt, run, left) {
   const dx = to[0] - m.p[0], dz = to[2] - m.p[2], d = hyp(dx, dz);
   if (d < 0.05) return true;
   let dy = Math.atan2(dx, dz) - (m.yaw ?? 0);
   dy = Math.atan2(Math.sin(dy), Math.cos(dy));
   m.yaw = (m.yaw ?? 0) + Math.max(-6 * dt, Math.min(6 * dt, dy));
-  const fast = run && d > 1.5;
+  const fast = run && (left ?? d) > 1.5;
   const sp = Math.min(fast ? WATCH.run : WATCH.aimWalk, d / Math.max(dt, 1e-3));
   const nx = m.p[0] + (dx / d) * sp * dt, nz = m.p[2] + (dz / d) * sp * dt;
   const fy = sq.host.floor(nx, nz, m);
@@ -199,14 +227,108 @@ function walkTo(sq, m, to, dt, run) {
   sq.setAnim(m, fast ? 'run' : 'aimWalk');
   return false;
 }
-/** To his spot; true once there (a spot he cannot get to: where he is). */
+/* ---------- the way there: the squad's routing, not a straight line ---------- */
+/** Straight from p to `to` on his level: no wall at body height, no step up or drop on the way (the floor the host gives). */
+function straightClear(sq, m, p, to) {
+  const H = sq.host, L = d2(p, to);
+  let y = p[1];
+  for (let s = 0.2; s < L + 0.1; s += 0.2) {
+    const u = Math.min(1, s / Math.max(L, 1e-6)), x = p[0] + (to[0] - p[0]) * u, z = p[2] + (to[2] - p[2]) * u;
+    const fy = H.floor(x, z, m) ?? y;
+    if (fy - y > 0.6 || y - fy > 0.8) return false;
+    y = fy;
+    if (H.solid) for (const hy of [0.5, 1.0, 1.45]) if (H.solid(x, y + hy, z)) return false;
+  }
+  return true;
+}
+/** Only the turns of a dense path (a point every 0.4 m: host.path3d's): where it changes direction or slope. */
+function turns(pts) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+    const u = [b[0] - a[0], b[2] - a[2]], v = [c[0] - b[0], c[2] - b[2]];
+    const lu = hyp(u[0], u[1]) || 1, lv = hyp(v[0], v[1]) || 1;
+    const bent = Math.abs(u[0] * v[1] - u[1] * v[0]) / (lu * lv) > 0.05;
+    const sloped = Math.abs((c[1] - b[1]) / lv - (b[1] - a[1]) / lu) > 0.15;
+    if (bent || sloped) out.push(b);
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+/** The length of a way (m, from `from` along its points; up and down counted). */
+export function wayLength(pts, from) {
+  let L = 0, a = from ?? pts[0];
+  for (const q of pts) {
+    L += hyp(q[0] - a[0], (q[1] ?? a[1]) - (a[1] ?? 0), q[2] - a[2]);
+    a = q;
+  }
+  return L;
+}
+/**
+ * His way to `to` on his own level (to the edge, to his place at a rope, off the rope's foot to
+ * the perimeter): as the squad routes its men (ai/squad.js route: its grid, round walls, keeping
+ * along them), or the host's 3D path (host.path3d: the guard AI's, on any floor) where the squad's
+ * grid is not on his level (it is built on the team's level: half of them up on the roof, half
+ * down, it may be on neither); straight at it when the way is clear or neither gets there.
+ * [points], the last one `to`.
+ */
+export function wayFor(sq, m, to) {
+  const p = m.p;
+  if (straightClear(sq, m, p, to)) return [to.slice()];
+  const fits = (pts) => {
+    if (!pts?.length) return false;
+    const e = pts[pts.length - 1], s = pts[0];
+    if (d2(e, to) > 1.0 || Math.abs((e[1] ?? to[1]) - to[1]) > 0.7) return false;
+    if (Math.abs((s[1] ?? p[1]) - p[1]) > 0.7 || d2(s, p) > 1.5) return false;
+    for (let i = 1; i < pts.length; i++) if (Math.abs((pts[i][1] ?? 0) - (pts[i - 1][1] ?? 0)) > 0.9) return false;
+    return !pts.some((q) => q.move); // (a parkour move on it: the drill's men walk)
+  };
+  const done = (pts) => {
+    const out = pts.filter((q, i) => i === pts.length - 1 || d2(q, p) > 0.35).map((q) => [q[0], q[1] ?? p[1], q[2]]);
+    if (d2(out[out.length - 1], to) > 0.05) out.push(to.slice());
+    return out;
+  };
+  if (sq.route) {
+    try {
+      const r = sq.route(p, to, m, { links: false });
+      if (r.length > 1 && fits(r)) return done(r);
+    } catch {
+      /* (no grid to route on: the next way) */
+    }
+  }
+  // (the 3D path is costly where there is no way: only near, and a failed look not again soon)
+  if (!sq.host.path3d || d2(p, to) > 15) return [to.slice()];
+  const key = [p, to].map((q) => q.map((v) => Math.round(v * 2)).join(',')).join('>');
+  const memo = (sq.wayMemo ??= new Map());
+  if (memo.has(key) && sq.time - memo.get(key) < STAIRS.memo) return [to.slice()];
+  const via = sq.host.path3d(p, to);
+  if (via?.length > 1 && fits(via)) return done(turns(via));
+  if (memo.size > 64) memo.clear();
+  memo.set(key, sq.time);
+  return [to.slice()];
+}
+
+/** Towards his spot along his way (wayFor; worked out again when the spot moves); true once there (a spot he cannot get to: where he is). */
 function toSpot(sq, m, T, dt, run = true) {
   if (d2(m.p, T.spot) <= 0.3) {
     m.moving = false;
     m.speed = 0;
     return true;
   }
-  if (walkTo(sq, m, T.spot, dt, run) === 'blocked') T.spot = m.p.slice();
+  if (!T.way || !T.wayTo || d2(T.wayTo, T.spot) > 0.25 || Math.abs(T.wayTo[1] - T.spot[1]) > 0.5) {
+    T.wayTo = T.spot.slice();
+    T.way = wayFor(sq, m, T.spot);
+    T.wayI = 0;
+    T.wayLen = wayLength(T.way, m.p);
+  }
+  while (T.wayI < T.way.length - 1 && d2(m.p, T.way[T.wayI]) < 0.3) T.wayI++;
+  const last = T.wayI === T.way.length - 1;
+  const tgt = last ? T.spot : T.way[T.wayI];
+  const left = last ? d2(m.p, T.spot) : wayLength(T.way.slice(T.wayI), m.p);
+  if (walkTo(sq, m, tgt, dt, run, left) === 'blocked') {
+    T.spot = m.p.slice();
+    T.way = null;
+  }
   return false;
 }
 /** The nearest hostile the team has identified (sq.seen: ai/perception.js through the squad's senses) that he can see from where he kneels. */
@@ -339,7 +461,8 @@ function rig(sq, m, T, dt, ms) {
   m.moving = false;
   m.speed = 0;
   if (T.phase === 'walk') {
-    if (!toSpot(sq, m, T, dt, false) && T.t < 12) return;
+    // (as long as the way there takes at a walk, and some)
+    if (!toSpot(sq, m, T, dt, false) && T.t < Math.max(12, (T.wayLen ?? 0) / WATCH.aimWalk + 4)) return;
     T.phase = 'anchor';
     T.t = 0;
   }
@@ -369,6 +492,95 @@ function rig(sq, m, T, dt, ms) {
   void ms;
 }
 
+/* ---------- rope or stairs: the way down ---------- */
+/** Under fire (taking hits in the team, rounds or a grenade coming at him, a hostile in sight): why, or null. */
+export function underFire(sq, m) {
+  const now = sq.host.now?.() ?? sq.time;
+  if (sq.members().some((o) => !o.dead && o.lastHitT != null && now - o.lastHitT < 6)) return 'taking hits';
+  if (m && sq.host.dangers?.(m)?.length) return 'rounds coming in';
+  if (sq.threat && (sq.seen ?? []).some((h) => !h.dead)) return 'enemy in sight';
+  return null;
+}
+/** Where a way down ends: his way's end when it is down there and near the drop (else the ground at the foot of the wall, a step out). */
+function landing(ed, goal) {
+  const foot = [ed.E[0] + ed.n[0] * (RAPPEL.wall + 1), ed.g, ed.E[2] + ed.n[1] * (RAPPEL.wall + 1)];
+  return goal && Math.abs(goal[1] - ed.g) < 1 && d2(goal, foot) < STAIRS.near ? goal.slice() : foot;
+}
+/**
+ * A walkable way down (stairs, a ramp, a slope: the host's 3D path, host.path3d) from `from` to
+ * `to` below: { path (its turns), len (m) } or null (none, or longer than STAIRS.reach, or it
+ * drops somewhere a man would have to jump). Looked up once a while for the same edge (sq.stairMemo).
+ */
+export function wayDown(sq, from, to) {
+  const H = sq.host;
+  if (!H.path3d || hyp(to[0] - from[0], to[2] - from[2]) > STAIRS.reach) return null;
+  const key = [from, to].map((q) => q.map((v) => Math.round(v)).join(',')).join('>');
+  const memo = (sq.stairMemo ??= new Map());
+  const hit = memo.get(key);
+  if (hit && sq.time - hit.t < STAIRS.memo) return hit.W;
+  let W = null;
+  const via = H.path3d(from, to);
+  if (via?.length > 1) {
+    const e = via[via.length - 1];
+    let ok = d2(e, to) < 1.5 && Math.abs((e[1] ?? to[1]) - to[1]) < 0.8 && d2(via[0], from) < 1 && Math.abs((via[0][1] ?? from[1]) - from[1]) < 0.6;
+    for (let i = 1; ok && i < via.length; i++) if ((via[i - 1][1] ?? 0) - (via[i][1] ?? 0) > STAIRS.drop) ok = false;
+    const len = ok ? wayLength(via, from) : Infinity;
+    if (ok && len <= STAIRS.reach) {
+      const path = turns(via).map((q) => [q[0], q[1], q[2]]);
+      if (d2(path[path.length - 1], to) > 0.05) path.push(to.slice());
+      W = { path, len };
+    }
+  }
+  if (memo.size > 32) memo.clear();
+  memo.set(key, { t: sq.time, W });
+  return W;
+}
+/** The time down a rope (s): to the edge and the rope ready (setup), over the edge, down the wall at the rappel's pace. */
+export function ropeTime(depth, setup = 0, quick = false) {
+  return setup + (quick ? 1.0 : 1.8) + depth / (quick ? STAIRS.quick : STAIRS.slow);
+}
+/**
+ * Rope or stairs: a walkable way down near enough (wayDown) is taken when its time on foot is no
+ * more than the rope's time ×k: k = STAIRS.calm normally (the stairs are the safer way: nobody
+ * hangs on a wall, the coil is kept), STAIRS.fire under fire, STAIRS.team for a team assault
+ * (the flashbang and all of them down at once: the rope is the assault, the stairs only when
+ * much quicker); ropeT Infinity: no rope to be had (the stairs whatever they take). Written down
+ * (noteWay). { how: 'stairs' | 'rope', W, why, stairsT, ropeT }.
+ */
+export function chooseWayDown(sq, m, ed, { ropeT, team = false, goal = null } = {}) {
+  const to = landing(ed, goal);
+  const W = wayDown(sq, m.p, to);
+  const fire = underFire(sq, m);
+  const k = Math.min(team ? STAIRS.team : STAIRS.calm, fire ? STAIRS.fire : Infinity);
+  const stairsT = W ? W.len / STAIRS.pace : Infinity;
+  let how = 'rope', why;
+  if (!W) why = !Number.isFinite(ropeT) ? 'no rope in the team, no way down on foot' : sq.host.path3d ? 'no way down on foot near' : 'no stairs known';
+  else if (!Number.isFinite(ropeT)) (how = 'stairs'), (why = 'no rope in the team');
+  else if (stairsT <= ropeT * k) (how = 'stairs'), (why = `${team ? 'team: ' : ''}the stairs ${stairsT.toFixed(0)} s against the rope ${ropeT.toFixed(0)} s${fire ? ` (${fire})` : ''}`);
+  else why = `${fire ? `${fire}: ` : team ? 'team assault: ' : ''}the rope ${ropeT.toFixed(0)} s against the stairs ${stairsT.toFixed(0)} s`;
+  const D = { how, W, why, stairsT, ropeT, fire, team, to };
+  noteWay(sq, m, D);
+  return D;
+}
+/** Write the decision down (as the other decisions are: sq.ropeLog always, the host's sq.log if it keeps one; the squad's status). */
+function noteWay(sq, m, D) {
+  const last = sq.ropeLog?.[sq.ropeLog.length - 1];
+  if (last && last.who === m?.squad && last.how === D.how && last.team === D.team && sq.time - last.t < 3) return; // (the same look again: once)
+  (sq.ropeLog ??= []).push({ t: sq.time, who: m?.squad, how: D.how, why: D.why, stairsT: D.stairsT, ropeT: D.ropeT, team: D.team });
+  if (sq.ropeLog.length > 40) sq.ropeLog.shift();
+  sq.log?.push(`rope:decide:${D.how}:${D.why}`);
+  sq.status = D.how === 'stairs' ? `Way down: by the stairs (${D.why}).` : `Way down: by rope (${D.why}).`;
+}
+/** Down by the stairs: along the way down (m.then on arrival when it ends where he was going). */
+function takeStairs(sq, m, W, goalReached, mode) {
+  const then = goalReached ? m.then : null;
+  sq.follow(m, W.path.map((q) => q.slice()), mode, (q) => {
+    q.arrived = true;
+    sq.navAge = Infinity; // (a new level: the grid on it)
+    then?.(q);
+  });
+}
+
 /**
  * host.rappel: m at a drop too deep to jump, ahead along dir. A rope there (within a few metres
  * along the edge): to it, and down when it is his turn; one being lowered: wait for it; his own
@@ -385,6 +597,22 @@ export function lowerRope(sq, m, dir) {
   const ms = sq.members();
   // a rope there already
   const r = (S.world.ropes ?? []).filter((x) => x.kind === 'rappel' && Math.abs(x.top[1] - ed.E[1]) < 0.6 && d2(x.top, ed.E) < 6).sort((a, b) => d2(a.top, ed.E) - d2(b.top, ed.E))[0];
+  // one of us lowering one near here; the nearest man with one (on this level)
+  const rg = !r && ms.find((o) => !o.dead && o.ropeTask?.kind === 'rig' && d2(o.ropeTask.ed.E, ed.E) < 6);
+  const c = !r && !rg && !(coils(sq, m) > 0) && ms
+    .filter((o) => o !== m && !o.dead && coils(sq, o) > 0 && !o.rope && !o.ropeTask && !o.guardCtl && !o.down && !o.rescueRole && Math.abs(o.p[1] - m.p[1]) < 1 && d2(o.p, m.p) < 14)
+    .sort((a, b) => d2(a.p, m.p) - d2(b.p, m.p))[0];
+  // rope or stairs: the rope's time in each case against a walkable way down near (chooseWayDown)
+  const depth = ed.E[1] - ed.g, rig = ROPE_T.anchor + ROPE_T.throw;
+  const queue = r ? ms.filter((o) => (o.ropeTask?.kind === 'wait' && o.ropeTask.rope === r) || o.rope?.rope === r).length : 0;
+  const ropeT = r ? ropeTime(depth, d2(r.top, ed.E) / WATCH.aimWalk + queue * ropeTime(depth)) : rg ? ropeTime(depth, rig) : coils(sq, m) > 0 ? ropeTime(depth, rig + STAIRS.gear) : c ? ropeTime(depth, d2(c.p, m.p) / WATCH.aimWalk + rig + STAIRS.gear) : Infinity;
+  const goal = m.path?.length ? m.path[m.path.length - 1] : null;
+  const D = chooseWayDown(sq, m, ed, { ropeT, goal });
+  if (D.how === 'stairs') {
+    takeStairs(sq, m, D.W, !!goal && d2(D.to, goal) < 0.01 && Math.abs(D.to[1] - goal[1]) < 0.01, D.fire ? 'run' : m.moveMode ?? 'run');
+    m.signal = { text: 'STAIRS', until: sq.time + 1.5 };
+    return true;
+  }
   if (r) {
     const queued = ms.some((o) => o.ropeTask?.kind === 'wait' && o.ropeTask.rope === r);
     save(m);
@@ -397,7 +625,6 @@ export function lowerRope(sq, m, dir) {
     return true;
   }
   // one of us lowering one near here: wait for it
-  const rg = ms.find((o) => !o.dead && o.ropeTask?.kind === 'rig' && d2(o.ropeTask.ed.E, ed.E) < 6);
   if (rg) {
     save(m);
     m.ropeTask = { kind: 'wait', rigger: rg, t0: sq.time, t: 0 };
@@ -410,9 +637,6 @@ export function lowerRope(sq, m, dir) {
     return true;
   }
   // the nearest man with one (on this level) comes and lowers it beside him
-  const c = ms
-    .filter((o) => o !== m && !o.dead && coils(sq, o) > 0 && !o.rope && !o.ropeTask && !o.guardCtl && !o.down && !o.rescueRole && Math.abs(o.p[1] - m.p[1]) < 1 && d2(o.p, m.p) < 14)
-    .sort((a, b) => d2(a.p, m.p) - d2(b.p, m.p))[0];
   if (c) {
     const t = [-n[1], n[0]];
     const ed2 = edgeAhead(S, [ed.E[0] - n[0] * 1.2 + t[0] * 1.3, m.p[1], ed.E[2] - n[1] * 1.2 + t[1] * 1.3], n, 2.5) ?? ed;
@@ -475,8 +699,24 @@ function considerTeam(sq, ms, dt) {
     if (e && Math.abs(e.E[1] - y0) < 0.3 && e.E[1] - e.g >= RAPPEL.minDepth) spots.push(e);
   }
   if (spots.length < Math.min(TEAM.minCoils, al.length)) return;
-  // go: the leader's signal; everyone down on a knee where he is, facing the edge
   const cmd = al.find((m) => m.squad === 'CMD') ?? al[0];
+  // rope or stairs: a walkable way down near, quicker by enough (a team assault favours the rope:
+  // the flashbang and all of them down at once) takes them down on foot instead
+  const walkIn = Math.max(...ropers.slice(0, spots.length).map((m) => d2(m.p, spots[0].E))) / WATCH.aimWalk;
+  const ropeT = ropeTime(ed.E[1] - ed.g, TEAM.signal + walkIn + ROPE_T.anchor + ROPE_T.throw + TEAM.bangMax + TEAM.go, true);
+  const D = chooseWayDown(sq, cmd, ed, { ropeT, team: true, goal: O[1] < y0 - RAPPEL.minDepth ? O : null });
+  if (D.how === 'stairs') {
+    sq.ropeDoneY = y0; // (not again from up here)
+    const mode = 'run';
+    for (const m of al) takeStairs(sq, m, m === cmd ? D.W : wayDown(sq, m.p, D.to) ?? { path: [cmd.p.slice(), ...D.W.path] }, false, mode);
+    sq.setAnim(cmd, 'signalMove');
+    cmd.signal = { text: 'STAIRS · ON ME', until: sq.time + 2.5 };
+    const text = `${sq.unit}, down the stairs, on me`;
+    if (sq.time >= (sq.silentUntil ?? 0)) sq.host.radio?.(cmd, text, 'order');
+    S.world.events?.push({ type: 'ropeTeam', pos: cmd.p.slice(), time: S.world.time, name: text });
+    return;
+  }
+  // go: the leader's signal; everyone down on a knee where he is, facing the edge
   sq.ropeTeam = { phase: 'signal', t: 0, ed, n, y0, cmd, men: al, spots, ropers: ropers.slice(0, spots.length) };
   for (const m of al) {
     m.path = null;
