@@ -95,7 +95,7 @@ builds the whole editor as one file.
 
 ## Using it
 
-- **Scenario**: metal bars on burners, a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
+- **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
   catacombs of
   limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,

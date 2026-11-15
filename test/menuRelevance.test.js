@@ -31,10 +31,11 @@ test('menuRelevance: rules on summaries', () => {
   assert.ok(sea.has('weather.ice') && sea.has('weather.water') && !sea.has('preset.coldSnap'));
 });
 
-test('metal bars on burners: no dragon, jets, squads, doors or ice', () => {
+test('the smithy (the old metal bars): indoors, its shop door; no dragon, jets, squads or ice (its slack tub is no pond)', () => {
   const { summary, menu } = menuOf('metalBars');
-  assert.equal(summary.water, false);
-  for (const k of ['dragon', 'flights', 'squads', 'tool.squadThreat', 'tool.door', 'weather.ice', 'weather.water', 'preset.coldSnap']) assert.ok(!menu.has(k), k);
+  assert.equal(summary.exposure, 'indoor');
+  assert.ok(menu.has('tool.door'));
+  for (const k of ['dragon', 'flights', 'squads', 'tool.squadThreat', 'weather.outdoor', 'weather.ice', 'weather.water', 'preset.coldSnap']) assert.ok(!menu.has(k), k);
 });
 
 test('squad range: the squads, no dragon or jets', () => {
