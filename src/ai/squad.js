@@ -85,7 +85,11 @@
  *   water(x, z, y)     the water standing over the ground at y there: { depth, surface } or null
  *                      (optional): they wade the shallows, swim the deep (ai/swim.js; a heavy load
  *                      makes them struggle, ditch gear or drown) and route round deep water unless
- *                      it saves a long way (only the light swim a stretch)
+ *                      it saves a long way (only the light swim a stretch); { vis } the water's
+ *                      visibility (m). They dive (ai/dive.js): under fire, to break the enemy's
+ *                      sight of them, under an obstacle across the water, or on the breathing set
+ *                      they took out of the pack and put on at the edge (gearing up, covered by
+ *                      the team), each logged (swimLog)
  *   surface(p, m)      the ground's material under a man ('concrete', 'grass'...: his footsteps) (optional)
  *   sound(n)           a sound in the world (ai/perception.js emitSound: { pos, loudness_dB, kind,
  *                      source }): their footsteps and gear rattle each stride (optional)
@@ -112,6 +116,7 @@ import { stepTraps } from './retreat.js';
 import { friendliesOf, sideOf } from './retreatRadio.js';
 import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM, stepNoise } from './perception.js';
 import { stepSwim, wadeK, waterCost, WADE, SWIM_DEPTH, FLOAT_Y, WATER_ANIMS, DRAIN_T } from './swim.js';
+import { diveReason, hasSet, breathHoldCap, packedDiveKit, gearUpTime, finishGearUp, diveKitName, DIVE_MIN } from './dive.js';
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
 import { stepRopeTeam } from './ropeTeam.js';
@@ -801,7 +806,7 @@ export class SquadAI {
     if (!this.host.water) return null;
     const fy = this.host.floor(x, z, m) ?? m?.p[1] ?? 0;
     const W = this.host.water(x, z, fy);
-    return W && W.depth > 0 ? { depth: W.depth, surface: W.surface ?? fy + W.depth, floor: fy } : null;
+    return W && W.depth > 0 ? { depth: W.depth, surface: W.surface ?? fy + W.depth, floor: fy, vis: W.vis } : null;
   }
   /**
    * A man in the water, each step (ai/swim.js): swimming, treading water, struggling under his
@@ -812,16 +817,19 @@ export class SquadAI {
     kit(m);
     const W = this.waterAt(m.p[0], m.p[2], m);
     const was = m.swimming;
+    const log = (q, text) => {
+      this.logWater(q, text);
+      if (!q.dead && / ditches /.test(text)) this.host.shout?.(q, `Ditching my ${q.ditched?.[q.ditched.length - 1] ?? 'kit'}!`);
+    };
+    // a dive (ai/dive.js): under fire, on his breathing set, a quiet approach; over once he is out
+    if (m.swimming && !m.dead) this.considerDive(m, W, log);
     const r = stepSwim(m, dt, W ?? { depth: 0 }, {
       now: this.time,
       moving: !!m.path && !this.busy(m),
       name: (q) => this.name(q),
-      log: (q, text) => {
-        (this.swimLog ??= []).push({ t: this.time, who: this.name(q), unit: this.unit, text });
-        this.host.log?.(q, text);
-        if (!q.dead) this.host.shout?.(q, q.drowned ? text : `Ditching my ${q.ditched?.[q.ditched.length - 1] ?? 'kit'}!`);
-      },
+      log,
       drown: this.host.drown ? (q, hp) => this.host.drown(q, hp) : null,
+      sound: (q, dB) => this.host.sound?.({ pos: q.p.slice(), loudness_dB: dB, kind: 'bubbles', source: q }),
     });
     if (r) {
       if (!m.trav) m.p[1] = r.y;
@@ -841,6 +849,94 @@ export class SquadAI {
         this.setAnim(m, 'reload', DRAIN_T);
       }
     }
+  }
+  /** A line in the swimming log (this.swimLog, host.log): what they do in the water. */
+  logWater(q, text) {
+    (this.swimLog ??= []).push({ t: this.time, who: this.name(q), unit: this.unit, text });
+    this.host.log?.(q, text);
+  }
+  /**
+   * Under fire in the water? Hit or rounds cracking past him lately (m.lastHitT, m.shotAt), or the
+   * team in contact with an enemy seen a moment ago.
+   */
+  underFire(m) {
+    const now = this.host.now?.() ?? this.time;
+    return (m.lastHitT != null && now - m.lastHitT < 6) || (!!m.shotAt && now - m.shotAt.time < 6) || (!!this.threat && this.contacted && this.time - this.lastSeen < 8);
+  }
+  /**
+   * Swimming: go under (ai/dive.js diveReason: under fire, to break the enemy's sight of him; on
+   * the breathing set he geared up for; a quiet approach with fins), logged; come up again when
+   * the reason is gone (under fire: a while after the firing stops; under an obstacle: past it).
+   */
+  considerDive(m, W, log) {
+    const fire = this.underFire(m);
+    if (fire) m.diveFireT = this.time;
+    const deep = (W?.depth ?? 0) >= DIVE_MIN;
+    const why = deep ? diveReason(m, { underFire: fire, stealthy: this.stealthy() }) : null;
+    if (why && !m.diving) {
+      m.diving = true;
+      m.diveWhy = why;
+      m.diveSince = this.time;
+      const k = m.kit ?? {};
+      const how = hasSet(m) ? `on his ${k.breather === 'scuba' ? 'scuba set, bubbles rising' : 'rebreather, no bubbles'}` : `holding his breath, ~${Math.round(breathHoldCap(m))} s`;
+      const what = { 'under fire': 'to cross under fire', unseen: 'to cross unseen', 'on his breathing set': 'to swim across under water' }[why] ?? why;
+      log(m, `${this.name(m)} dives ${what} (${how}${k.diveWorn && k.fins ? ', finning' : ''})`);
+      if (why === 'under fire') this.host.shout?.(m, 'Going under!');
+    } else if (!why && m.diving) {
+      const keep = (m.diveWhy === 'under fire' && this.time - (m.diveFireT ?? -Infinity) < 15) || (m.diveWhy === 'under an obstacle' && this.time - (m.diveObstacleT ?? -Infinity) < 3);
+      if (!keep) {
+        m.diving = false;
+        if (deep) log(m, `${this.name(m)} surfaces (${m.diveWhy === 'under fire' ? 'the firing over' : 'past it'})`);
+      }
+    }
+  }
+  /**
+   * Diving kit packed in his pack (ai/dive.js) and deep water just ahead on his path: if it is a
+   * long swim (or a quiet one with a breathing set), he stops at the edge and gears up (the time it
+   * takes, logged), the men near him covering him (out of contact). Decided once a path.
+   */
+  gearUpAhead(m) {
+    if (m.gearScan === m.path) return false;
+    const pts = [m.p, ...m.path.slice(m.pathI)];
+    let s = 0, start = null, len = 0;
+    for (let i = 1; i < pts.length && s < 200; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const L = Math.hypot(b[0] - a[0], b[2] - a[2]), n = Math.max(1, Math.ceil(L / 0.5));
+      for (let j = 1; j <= n; j++) {
+        s += L / n;
+        const deep = (this.waterAt(a[0] + ((b[0] - a[0]) * j) / n, a[2] + ((b[2] - a[2]) * j) / n, m)?.depth ?? 0) > SWIM_DEPTH;
+        if (start == null) {
+          if (deep) start = s;
+          else if (s > 3) return false; // (not yet at the water)
+        } else if (deep) len = s - start;
+        else return this.startGearUp(m, len);
+      }
+    }
+    return start == null ? false : this.startGearUp(m, len);
+  }
+  startGearUp(m, len) {
+    m.gearScan = m.path;
+    const k = m.kit ?? {};
+    if (!(len >= 12 && (k.breather !== 'none' || k.fins))) return false;
+    const T = gearUpTime(m);
+    m.gearUp = { until: this.time + T, T, len };
+    m.anim = null;
+    this.setAnim(m, 'gearUp', T);
+    // the men near him hold and cover him while he is at it (not in a fight: there he is on his own)
+    const team = this.threat ? [] : this.members().filter((o) => o !== m && !o.dead && !this.host.ownMove?.(o) && !this.busy(o) && Math.hypot(o.p[0] - m.p[0], o.p[2] - m.p[2]) < 30);
+    for (const o of team) {
+      o.coverFor = m;
+      this.setAnim(o, 'crouchAim', T);
+    }
+    this.logWater(m, `${this.name(m)} gears up at the water's edge: ${diveKitName(k)} out of his ${k.pack === 'rucksack' ? 'rucksack' : 'pack'} (${Math.round(T)} s${team.length ? ', the team covering him' : ''}) for a ${Math.round(len)} m swim`);
+    return true;
+  }
+  /** Geared up (ai/dive.js finishGearUp): the kit on, the pack towed in the dry bag or left at the edge. */
+  gearedUp(m) {
+    const r = finishGearUp(m);
+    m.gearUp = null;
+    for (const o of this.members()) if (o.coverFor === m) o.coverFor = null;
+    this.logWater(m, `${this.name(m)} is geared up${r.towed ? `, his ${r.towed} towed in the dry bag` : ''}${r.left ? `, his ${r.left} left at the edge` : ''}${m.weaponBagged ? ', his weapon sealed in the dry bag' : ''}`);
   }
   /**
    * His footsteps and his gear's rattle (ai/perception.js stepNoise): a sound in the world each
@@ -866,10 +962,14 @@ export class SquadAI {
     m.moving = false;
     m.speed = 0;
     // his load and his wind (ai/loadout.js; with a loadout from the scene): running drains him, rest brings it back
-    if (m.paceK) m.tired = stepStamina(m, dt, m.path && !m.trav && !this.busy(m) ? (m.crawling ? 'crawl' : m.moveMode) : 'still');
+    // (in deep water his wind is the swim's: ai/swim.js)
+    if (m.paceK && !m.swimming) m.tired = stepStamina(m, dt, m.path && !m.trav && !this.busy(m) ? (m.crawling ? 'crawl' : m.moveMode) : 'still');
     if (m.trav?.ext) return; // (a roll the dragon's snatch carries him through: ai/dragonAir.js)
     if (m.trav) return this.traverse(m, dt);
+    // gearing up at the water's edge (ai/dive.js): done when the time is up; deep water ahead with the kit still packed: start
+    if (m.gearUp && this.time >= m.gearUp.until) this.gearedUp(m);
     if (!m.path || this.busy(m)) return;
+    if (!m.swimming && !m.gearUp && this.host.water && packedDiveKit(m) && this.gearUpAhead(m)) return;
     const mode = m.crawling ? 'crawl' : m.moveMode;
     const tgt = m.path[m.pathI];
     const dx = tgt[0] - m.p[0], dz = tgt[2] - m.p[2], dist = Math.hypot(dx, dz);
@@ -976,6 +1076,23 @@ export class SquadAI {
   }
   /** Swimming along his path (ai/swim.js: m.swimSpeed), out onto the bank where it is low enough to climb out. */
   swimMove(m, dt, dx, dz, dy) {
+    // something across the water ahead at his head (a gate, a boom, a hull) with water under it: he dives under it (ai/dive.js)
+    if (this.host.solid && m.swim !== 'sinks' && !m.noDive) {
+      const W0 = this.waterAt(m.p[0], m.p[2], m);
+      if (W0 && W0.depth >= DIVE_MIN) {
+        const ax = m.p[0] + Math.sin(m.yaw) * 0.9, az = m.p[2] + Math.cos(m.yaw) * 0.9;
+        const S = (x, z, y) => this.host.solid(x, y, z);
+        const over = (x, z) => S(x, z, W0.surface + 0.15) && !S(x, z, W0.surface - 1.3);
+        if (over(ax, az) || (m.diveWhy === 'under an obstacle' && over(m.p[0], m.p[2]))) {
+          m.diveObstacleT = this.time;
+          if (!m.diving) {
+            m.diving = true;
+            m.diveWhy = 'under an obstacle';
+            this.logWater(m, `${this.name(m)} dives under an obstacle in the water`);
+          }
+        }
+      }
+    }
     const sp = (m.swimSpeed ?? 0.3) * Math.max(0, Math.cos(dy)) ** 2;
     const nx = m.p[0] + Math.sin(m.yaw) * sp * dt, nz = m.p[2] + Math.cos(m.yaw) * sp * dt;
     const W = this.waterAt(nx, nz, m);
@@ -1029,7 +1146,7 @@ export class SquadAI {
    */
   dodge(m) {
     // (nor one the retreat moves: carrying a man, stringing a wire, ai/retreat.js)
-    if (m.dead || m.down || m.rescueRole === 'rescuer' || m.rescueRole === 'retreat' || m.trav || !this.host.dangers) return false;
+    if (m.dead || m.down || m.rescueRole === 'rescuer' || m.rescueRole === 'retreat' || m.trav || m.swimming || !this.host.dangers) return false;
     const H = this.host;
     const rand = H.rand ?? Math.random;
     for (const t of H.dangers(m)) {

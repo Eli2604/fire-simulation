@@ -46,7 +46,8 @@ import { ROLLS, rollPoint } from '../ai/evade.js';
 import { recoilSpec, GUNS } from '../ai/recoil.js';
 import { HANDLING, PRIMARIES, whyNot, carried } from '../ai/weapons.js';
 import { SKILL, SKILL_INFO } from '../ai/soldier.js';
-import { ROLES, ROLE_KEYS, KIT_FIELDS, PRIMARY as KIT_PRIMARY, SIDEARM, PACK, ARMOUR, RADIO, MEDKIT, fullKit, kitMass, mobility, loadSummary } from '../ai/loadout.js';
+import { ROLES, ROLE_KEYS, KIT_FIELDS, PRIMARY as KIT_PRIMARY, SIDEARM, PACK, ARMOUR, RADIO, MEDKIT, BREATHER, fullKit, kitMass, mobility, loadSummary, diveStowage } from '../ai/loadout.js';
+import { diveSummary } from '../ai/dive.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 import { BODY_MASS, impactsOf } from './objects.js';
@@ -988,7 +989,7 @@ export function mountRig(root, opts = {}) {
   var loReady = false;
   const loCtl = {};
   for (const r of ROLE_KEYS) $('loRole').appendChild(Object.assign(document.createElement('option'), { value: r, textContent: ROLES[r].label }));
-  const LO_LABELS = { primary: KIT_PRIMARY, sidearm: SIDEARM, pack: PACK, armour: ARMOUR, radio: RADIO, medkit: MEDKIT };
+  const LO_LABELS = { primary: KIT_PRIMARY, sidearm: SIDEARM, pack: PACK, armour: ARMOUR, radio: RADIO, medkit: MEDKIT, breather: BREATHER };
   for (const [key, F] of Object.entries(KIT_FIELDS)) {
     const lab = document.createElement('label');
     lab.className = 'sl';
@@ -1062,7 +1063,7 @@ export function mountRig(root, opts = {}) {
     $('loFit').value = fit;
     $('loFitO').textContent = fit.toFixed(2);
     const W = kitMass(kit), M = mobility(W.total, { fitness: fit });
-    $('loInfo').textContent = `${loadSummary(kit, fit)}. Accel ${M.accel.toFixed(1)} m/s²; vaults ${M.vault.toFixed(2)} m; ${M.ropeClimb ? 'climbs a rope' : 'too heavy to climb a rope'}; landings ×${M.fallK.toFixed(2)}; gear noise +${M.noiseDb.toFixed(1)} dB.`;
+    $('loInfo').textContent = `${loadSummary(kit, fit)}. Accel ${M.accel.toFixed(1)} m/s²; vaults ${M.vault.toFixed(2)} m; ${M.ropeClimb ? 'climbs a rope' : 'too heavy to climb a rope'}; landings ×${M.fallK.toFixed(2)}; gear noise +${M.noiseDb.toFixed(1)} dB.${diveStowage(kit).bulk > 0 ? ' ' + diveSummary(kit, fit, e.skill) : ''}`;
     $('loItems').textContent = W.items.map(([n, kg]) => `${n}: ${kg} kg`).join(' · ');
   }
   loReady = true;

@@ -25,6 +25,7 @@ import { peekOptions } from '../ai/peek.js';
 import { lightSource, TORCH_T } from '../ai/flashlight.js';
 import { emitSound, stepNoise, BEAM } from '../ai/perception.js';
 import { playerGear, swimAbility, ditchGear } from '../ai/swim.js';
+import { hasSet, stepGas, breathHoldCap, breathRate, diveAbility, waterLoad, packedDiveKit, gearUpTime, finishGearUp, diveKitName, WATER_VIS } from '../ai/dive.js';
 import { useSmithy } from '../sim/smithy.js';
 
 const EYE_STAND = 1.65;
@@ -47,6 +48,11 @@ const AIR_LITRES = 2040;
  * 7 (or Q, to swap to it and back) is the rifle: hold the right mouse button to bring it up
  * to your eye, looking along its sight, the view zoomed in a little.
  * Hand-to-hand (ai/melee.js): G punches, V kicks, B throws the man in front of you.
+ * In deep water: C / Ctrl dives, Space comes up, K ditches kit. Under water the mask's air goes
+ * faster the deeper you are (the ambient pressure); without it you hold your breath as long as a
+ * soldier would (ai/dive.js breathHoldCap). Diving kit in your pack (the scene's loadout): J puts
+ * it on (it takes its time); fins swim you faster, a rebreather or scuba set gives you air under
+ * water (ai/dive.js stepGas: the rebreather's oxygen turns toxic below 6 m, the scuba bubbles).
  *
  * The mask view shows the remaining air (consumption depends on effort and
  * heat), the gas temperature at your face, a rough visibility estimate and
@@ -179,6 +185,7 @@ export class Walkthrough {
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)
       if (e.code === 'KeyK' && !e.repeat && this.swimming) this.ditch(); // in deep water: ditch the heaviest of your kit
+      if (e.code === 'KeyJ' && !e.repeat && !this.swimming) this.gearUp(); // diving kit in your pack: out and on (ai/dive.js)
       if (e.code === 'KeyT') this.setThermal(!this.thermal);
       if (e.code === 'KeyL') this.lampOn = !this.lampOn;
       if (e.code === 'KeyN') this.toggleFlashlight();
@@ -1249,6 +1256,19 @@ export class Walkthrough {
     if (!this.gearState || this.gearState.src !== (this.kit ?? null)) this.gearState = Object.assign(playerGear(this.kit), { src: this.kit ?? null });
     return this.gearState;
   }
+  /**
+   * J: the diving kit in your pack (the scene's loadout for you: ai/dive.js) out and on, as a
+   * soldier gears up at the edge: it takes its time (done in step: gearUpAt). Fins swim you faster
+   * under water; a rebreather or scuba set gives you air there instead of your cylinder.
+   */
+  gearUp() {
+    const G = this.gear();
+    if (this.gearUpAt) return;
+    if (!packedDiveKit(G)) return this.say(G.kit.diveWorn && G.kit.breather !== 'none' ? 'Your diving kit is on' : 'No diving kit in your pack', 2);
+    const T = gearUpTime(G);
+    this.gearUpAt = (this.hooks.getSim()?.world.time ?? 0) + T;
+    this.say(`Gearing up: ${diveKitName(G.kit)} out of your pack (${Math.round(T)} s)`, 3);
+  }
   /** Ditch the heaviest of your kit (in deep water, to stay up). */
   ditch() {
     const g = this.gear();
@@ -1454,7 +1474,9 @@ export class Walkthrough {
     const wet = this.water?.depth ?? 0;
     // (swimming: your pace from your load, as the soldiers': ai/swim.js; struggling, a crawl)
     const swimK = this.swimAb ? (this.swimAb.cls === 'swims' ? Math.min(1.25, Math.max(0.5, this.swimAb.speed / 0.6)) : this.swimAb.cls === 'struggles' ? 0.45 : 0.15) : 1;
-    const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 * swimK : Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
+    // (under water with fins on: faster, ai/dive.js)
+    const finK = this.dive > 0.2 && this.gearState?.kit?.diveWorn && this.gearState.kit.fins ? 1.45 : 1;
+    const wade = wet < 0.15 ? 1 : this.swimming ? 0.4 * swimK * finK :Math.max(0.3, 1 - 0.5 * Math.min(wet, 1.3));
     // deep snow holds you back too (fresh powder more than a trodden trail: sim/snow.js)
     const sn = this.hooks.getSim()?.world.snow;
     let trudge = 1;
@@ -1605,6 +1627,12 @@ export class Walkthrough {
         }
       } else this.onIceSaid = false;
     }
+    // geared up (J): the diving kit on, the pack towed in the dry bag or left here
+    if (this.gearUpAt && w.time >= this.gearUpAt) {
+      this.gearUpAt = null;
+      const r = finishGearUp(this.gear());
+      this.say(`Geared up${r.towed ? `, your ${r.towed} towed in the dry bag` : ''}${r.left ? `, your ${r.left} left here` : ''}`, 3);
+    }
     const floor = this.floorAt(this.pos.x, this.pos.z, this.pos.y + 0.45);
     // deep water: you float with your head out, as long as there is air above it;
     // with the space full to the ceiling your gear takes you down and you walk the bottom
@@ -1622,7 +1650,7 @@ export class Walkthrough {
       if (this.crawl) this.crawl = false;
       // what you carry (ai/swim.js, the soldiers' rule): light you float up; heavy you keep up only
       // while your wind lasts; too heavy you go down (K: ditch the heaviest of your kit)
-      const G = this.gear(), S = (this.swimAb = swimAbility(G.loadKg, G.fitness));
+      const G = this.gear(), S = (this.swimAb = swimAbility(waterLoad(G), G.fitness)); // (worn diving kit about neutral: ai/dive.js)
       this.swimWind = Math.max(0, (this.swimWind ?? 1) - S.drain * (moving ? 1 : 0.6) * dt);
       let vy = S.cls === 'swims' ? 0.25 : S.cls === 'struggles' && this.swimWind > 0 ? 0.04 : -0.35; // drifting up (or down)
       if (S.cls !== 'swims' && !this.heavySaid) {
@@ -1755,15 +1783,34 @@ export class Walkthrough {
     // --- breathing air: litres per minute by effort and heat stress
     // under water: the mask is all the air there is (cold and effort: you breathe harder)
     this.underwater = this.isWater(head[0], head[1], head[2]);
-    const lpm = 35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0) + (this.underwater ? 20 + 15 * (this.swimming ? 1 : 0) : 0); // a broken mask leaks
+    // (how deep your head is: the demand valve gives air at the pressure round you, 1 bar more each
+    // 10 m, so a cylinder goes that much faster deeper: the soldiers' scuba rule, ai/dive.js)
+    this.headDepth = this.underwater ? Math.max(0, (this.water?.surface ?? head[1]) - head[1]) : 0;
+    // a diving set of your own (the scene's loadout for you, worn: ai/dive.js): under water you breathe from it, not the cylinder
+    const G = this.gear();
+    const onSet = this.underwater && hasSet(G);
+    const lpm = (35 + moving * 45 + heat * 30 + (this.spraying ? 10 : 0) + (this.maskBurst ? 400 : 0) + (this.underwater ? 20 + 15 * (this.swimming ? 1 : 0) : 0)) * (1 + this.headDepth / 10); // a broken mask leaks
     // (the mask off, the cylinder is shut: what you breathe is the air round you)
-    this.air = Math.max(0, this.air - ((this.sealed ? lpm : 0) / 60) * dt * (sim.world.time > 0 ? 1 : 0));
+    this.air = Math.max(0, this.air - ((this.sealed && !onSet ? lpm : 0) / 60) * dt * (sim.world.time > 0 ? 1 : 0));
     const bar = (this.air / AIR_LITRES) * 300;
+    this.bubbles = false;
     if (this.underwater && !this.downed) {
-      if (!this.wasUnder) this.say(this.sealed ? 'Under water – you are breathing from your mask' : 'Under water without your mask – hold your breath, M to put it on!', 3);
-      // without the mask you hold your breath (half a minute, less when working hard)
-      this.breathHeld = this.sealed ? 0 : (this.breathHeld ?? 0) + dt * (1 + moving);
-      if (this.air <= 0 || this.maskBurst || this.breathHeld > 30) {
+      let fromSet = false;
+      if (onSet) {
+        const g = stepGas(G, dt, this.headDepth, moving);
+        if (g.event === 'convulsion') this.say('Oxygen toxicity – you convulse and lose the mouthpiece! Up, now!', 4);
+        else if (g.event === 'empty') this.say(`Your ${G.kit.breather === 'scuba' ? 'tank' : 'rebreather'} is empty – up!`, 3);
+        fromSet = g.breathing;
+        this.bubbles = g.bubbles;
+      }
+      if (!this.wasUnder) {
+        // (a held breath lasts as long as a soldier's would: your fitness, your wind, your health, ai/dive.js)
+        this.breathCap = breathHoldCap({ ...G, stamina: this.swimWind ?? 1, health: this.health });
+        this.say(fromSet ? `Under water – breathing from your ${G.kit.breather === 'scuba' ? 'scuba set (bubbles)' : 'rebreather (no bubbles; not below 6 m)'}` : this.sealed ? 'Under water – you are breathing from your mask' : `Under water without your mask – hold your breath (~${Math.round(this.breathCap)} s), M to put it on!`, 3);
+      }
+      // without the mask (or a set) you hold your breath: used faster working hard
+      this.breathHeld = this.sealed || fromSet ? 0 : (this.breathHeld ?? 0) + dt * breathRate(diveAbility(G, this.headDepth).effort, moving > 0.1);
+      if ((this.sealed && !fromSet && (this.air <= 0 || this.maskBurst)) || this.breathHeld > (this.breathCap ?? 30)) {
         this.hurt(18 * dt);
         if (w.time > this.messageUntil) this.say('DROWNING – get your head above the water!', 2);
       }
@@ -1834,7 +1881,9 @@ export class Walkthrough {
       this.draw = undefined;
     }
     // where you are, for the enemies (they see your head)
-    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving, lightOn: !!(this.lampOn || this.flashLit), beam: this.flashLit ? w.playerBeam : null, crouch: this.crawl };
+    sim.ai.player = this.downed ? null : { p: [this.pos.x, this.pos.y, this.pos.z], head, moving: this.moving, lightOn: !!(this.lampOn || this.flashLit), beam: this.flashLit ? w.playerBeam : null, crouch: this.crawl,
+      // (under water: hidden from above beyond what the water lets one see, bubbles from a scuba set: ai/perception.js)
+      submerged: this.headDepth ?? 0, waterVis: WATER_VIS, bubbles: !!this.bubbles };
     // the rifle: held trigger fires ~9 rounds a second, 30 to a magazine and 4 spare
     // magazines (ammunition is limited, as for the soldiers), R reloads
     this.ammo ??= 30;
