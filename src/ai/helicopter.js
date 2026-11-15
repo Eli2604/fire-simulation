@@ -64,6 +64,11 @@
  *    crash hurts the crew by how hard it was, the fuel can catch (sim.ignite and a torch: the fire
  *    simulation burns there), the survivors climb out and fight on the ground.
  *
+ * On the rigid-body core (the default; this.physics = 'legacy' for the above alone) its airframe is
+ * a body (physics/heliCore.js) carried where this model flies it; what it flies into stops it (into
+ * something above the ground: its crash), and once crashed it is a free body that lands on its skids
+ * or rolls over; the wreck lies where it comes to rest.
+ *
  * The cables (ai/rope.js does the men on them): each is a plain object in w.ropes,
  *   { id, kind: 'fastrope', top: [x,y,z], bottom: [x,y,z], owner, attached: true }
  * The helicopter writes bottom once, when it throws the cable out (to the ground, or its length),
@@ -93,6 +98,8 @@ import { explode } from '../sim/explosions.js';
 import { emitSound, perceive, senses } from './perception.js';
 import { startRope } from './rope.js';
 import { sideOf, hostile } from './sides.js';
+import { isCore } from '../physics/vehicleCore.js';
+import { heliStep } from '../physics/heliCore.js';
 
 const G = 9.81;
 /**
@@ -714,12 +721,10 @@ export class Helicopter {
     this.time += dt;
     this.t += dt;
     this.stepFire(dt);
-    if (!this.crashed) {
-      if (!this.failure && !this.player && this.pilots().length === 0 && !this.landed) this.fail('pilot', 'both pilots are down');
-      if (this.failure && this.mode === 'falling') this.stepFailure(dt);
-      else this.stepMission(dt);
-      this.stepGround(dt);
-    } else this.stepWreck(dt);
+    // (on the rigid-body core its airframe is a body carried where this flies it, free once it has
+    // crashed: physics/heliCore.js; unless this.physics = 'legacy')
+    if (isCore(this, 'heli')) heliStep(this, dt, () => this.stepMotion(dt));
+    else this.stepMotion(dt);
     this.stepRotor(dt);
     this.stepDoors(dt);
     this.stepCables(dt);
@@ -733,6 +738,16 @@ export class Helicopter {
       this.noiseT = 1.5;
       emitSound(this.world, { pos: this.toWorld([0, 3, 0]), loudness_dB: 125 * this.omega, kind: 'enemy' });
     }
+  }
+
+  /** How it moves: flown (the mission, you, a failure's descent), on the ground, or a wreck. */
+  stepMotion(dt) {
+    if (!this.crashed) {
+      if (!this.failure && !this.player && this.pilots().length === 0 && !this.landed) this.fail('pilot', 'both pilots are down');
+      if (this.failure && this.mode === 'falling') this.stepFailure(dt);
+      else this.stepMission(dt);
+      this.stepGround(dt);
+    } else this.stepWreck(dt);
   }
 
   stepFire(dt) {
@@ -1172,6 +1187,9 @@ export class Helicopter {
 
   /** It hits the ground: how hard decides what is left of it, of the men in it, and whether it burns. */
   crash() {
+    // (what it hit with: a core airframe goes on from there as a free body, physics/heliCore.js)
+    this.crashV = this.v.slice();
+    this.crashRates = [this.pitchRate ?? 0, this.rollRate ?? 0, this.yawRate ?? 0];
     const vy = Math.max(0, -this.v[1]);
     const speed = len(this.v);
     const sev = vy < HELI.hard && speed < 14 ? 'hard' : vy < HELI.fatal && speed < 25 ? 'crash' : 'destroyed';
@@ -1214,10 +1232,13 @@ export class Helicopter {
     this.omegaWant = 0;
   }
   stepWreck(dt) {
-    this.v = [0, 0, 0];
-    this.p[1] = this.ground(this.p[0], this.p[2]);
-    this.roll += ((this.rollTo ?? 0) - this.roll) * Math.min(1, dt * 3);
-    this.pitch += ((this.pitchTo ?? 0) - this.pitch) * Math.min(1, dt * 3);
+    // (a core airframe lies where its body came to rest: its skids, its side; physics/heliCore.js)
+    if (!this.core?.free) {
+      this.v = [0, 0, 0];
+      this.p[1] = this.ground(this.p[0], this.p[2]);
+      this.roll += ((this.rollTo ?? 0) - this.roll) * Math.min(1, dt * 3);
+      this.pitch += ((this.pitchTo ?? 0) - this.pitch) * Math.min(1, dt * 3);
+    }
     this.doorsWant = { L: 0, R: 0 };
     if (this.blowAt != null && this.time >= this.blowAt) {
       this.blowAt = null;

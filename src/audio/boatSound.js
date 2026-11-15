@@ -168,6 +168,14 @@ export function boatSfxSound(e, m = 200) {
       for (let i = 0; i < 5; i++) n(0.07 * i * (1 + i * 0.3), 0.05, 'lowpass', 300, 0.8, 0.4 * (1 - i / 6));
       return { kind: 'stall', gain: 0.4, layers: L };
     }
+    case 'bump': {
+      // the hull knocking against another boat, a pier, a rock (physics/boatCore.js): a hollow thud
+      const v = Math.max(0, e.v ?? 0.5);
+      const g = clamp(0.15 + 0.35 * v, 0.15, 1.4);
+      n(0, 0.12 + 0.04 * v, 'lowpass', 140 + 60 * v, 1.2, g); // (the hull's boom)
+      n(0.005, 0.06, 'bandpass', e.material === 'stone' ? 1400 : 700, 2, 0.4 * g); // (what it met)
+      return { kind: 'bump', gain: g, layers: L };
+    }
     case 'hit':
       // a round through the planking: the impact (audio/sound.js impact), wood or metal
       return { kind: 'hit', impact: { energy: 1500, materials: ['steel', e.material === 'aluminium' ? 'aluminium' : 'wood'], mass: 0.01, speed: 800, size: 1.5, sizeA: 0.02, radius: 0.004 } };

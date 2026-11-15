@@ -89,6 +89,11 @@ import { G, RHO_AIR, RHO_SEA, rot, toWorld, framePose, updateMass, stepBody, bod
  *                              afloat outside a simulation (the tests, the rig)
  *   stepBoat(f, dt, env)       one step: Archimedes (stepBody), then drift, mooring and oars
  *                              (env: stepBody's, plus current: [vx, vz] | (x, z) → [vx, vz])
+ *   stepBoats(fs, dt, env)     several at once: on the rigid-body core they meet (hull against hull)
+ *
+ * On the rigid-body core (the default; f.physics = 'legacy' for the old model alone) the hull is a
+ * body carried where this model moves it (physics/boatCore.js): another boat, a pier, a rock in the
+ * way is a contact whose change goes back into its velocities; the painter is a rope joint.
  *
  * The simulation (sim/buoyancy.js stepFloats) steps every boat of the world this way, with the
  * current where it is, keeps it off the shore, finds the water's level and the bottom under it as
@@ -109,6 +114,8 @@ export function makeMotor(spec = {}) {
   return { kind: 'outboard', power, cyl: spec.cyl ?? (power > 15 ? 3 : 2), strokes: spec.strokes ?? 4, n: 0, rpm: 0, running: false, cranking: 0, throttle: 0, steer: 0, load: 0, cav: 0, imm: 1, thrust: 0, racing: false, stalled: false, why: '' };
 }
 const clamp = (v, a = -1, b = 1) => (v < a ? a : v > b ? b : v);
+import { isCore } from '../physics/vehicleCore.js';
+import { stepBoatsCore } from '../physics/boatCore.js';
 
 /** Seats, oars, the mooring: what a float needs to be a boat (once, when it is first stepped). */
 export function initBoat(f) {
@@ -457,12 +464,29 @@ function draftNow(b) {
   return Math.min(b.hull.D, Math.max(0.03, (b.M + b.rho * b.water) / (b.rho * Awp)));
 }
 
-/** One step of a boat: afloat (Archimedes), then drift, mooring and oars. */
+/**
+ * One step of a boat: afloat (Archimedes), then drift, mooring and oars. On the rigid-body core
+ * (physics/boatCore.js; unless f.physics = 'legacy') its hull is a body that carries it there: its
+ * painter a rope joint, what it bumps into a contact.
+ */
 export function stepBoat(f, dt, env = {}) {
   if (!f.row) initBoat(f);
+  if (isCore(f, 'boat')) stepBoatsCore([f], dt, env, stepBoatModel);
+  else stepBoatModel(f, dt, env);
+  return f;
+}
+/** Boats stepped together (outside a simulation): on the core they meet each other (one world). */
+export function stepBoats(fs, dt, env = {}) {
+  for (const f of fs) if (!f.row) initBoat(f);
+  const core = fs.filter((f) => isCore(f, 'boat'));
+  if (core.length) stepBoatsCore(core, dt, env, stepBoatModel);
+  for (const f of fs) if (!isCore(f, 'boat')) stepBoatModel(f, dt, typeof env === 'function' ? env(f) : env);
+  return fs;
+}
+/** The model's step (afloat, then drift, mooring and oars). */
+function stepBoatModel(f, dt, env = {}) {
   stepBody(f.body, dt, f.sail ? { ...env, external: f.heelTorque } : env);
   stepDrift(f, dt, env);
-  return f;
 }
 
 /**
@@ -541,9 +565,9 @@ export function stepDrift(f, dt, env = {}) {
         force(k * rx, k * rz, 0, 0);
       }
     }
-    // the mooring line
+    // the mooring line (on the rigid-body core a rope joint holds it: physics/boatCore.js)
     const m = f.mooring;
-    if (m) {
+    if (m && !(f.coreMooring && isCore(f, 'boat'))) {
       const p = toWorld(b, m.at);
       const rx = p[0] - b.X, rz = p[2] - b.Z;
       const dx = m.anchor[0] - p[0], dz = m.anchor[2] - p[2];

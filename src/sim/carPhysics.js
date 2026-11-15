@@ -61,11 +61,19 @@
  *    The springs show it: the body pitches under braking and acceleration and rolls in a turn
  *    (a damped spring, for looks).
  *  - Collisions: env.collide(c, prev) (the world: voxels, other cars, people) may push it back.
+ *  - On the rigid-body core (the default; c.physics = 'legacy' for the above alone): the chassis
+ *    is a body on four springs (physics/carCore.js) and this model, run inside its force generator
+ *    with env.core, gives only the tyres' change to its velocity and yaw rate (the axles' loads the
+ *    springs'); the pose, the ground following, the slope, the falls and what it hits are the
+ *    engine's. stepCar does that on a world of its own (env.ground as a heightfield).
  *
  *   const c = makeCar(carSpec({ length: 4.2, powertrain: 'electric', drivetrain: 'fwd' }), { x, y, z, yaw });
  *   c.input = { throttle: 1, brake: 0, steer: 0, handbrake: false };   // steer +1: full left
  *   stepCar(c, dt, env);       // env: { ground(x, z, yFrom) → { y, mu, road }, collide?(c, prev) }
  */
+
+import { isCore } from '../physics/vehicleCore.js';
+import { stepCarCore } from '../physics/carCore.js';
 
 export const G = 9.81;
 const RHO_AIR = 1.2;
@@ -358,6 +366,7 @@ function autoShift(c, thr) {
 
 /** Advance dt (sub-stepped). env: { ground(x, z, yFrom) → { y, mu, road } | null, collide?(c, prev) }. */
 export function stepCar(c, dt, env = {}) {
+  if (isCore(c, 'car')) return stepCarCore(c, dt, env);
   let left = dt;
   while (left > 1e-9) {
     const h = Math.min(CAR_SUBSTEP, left);
@@ -448,8 +457,10 @@ export function subStep(c, dt, env) {
   const L = S.a + S.b;
   const gN = G * Math.cos(c.pitchG) * Math.cos(c.rollG);
   const shift = (m * c.ax * S.cgH) / L;
-  const FzF = air ? 0 : Math.max(0, (m * gN * S.b) / L - shift);
-  const FzR = air ? 0 : Math.max(0, (m * gN * S.a) / L + shift);
+  // (on the rigid-body core, physics/carCore.js: what its springs carry on each axle: the load moved
+  // across in a turn and onto the low side on a slope too, nothing on a wheel off the ground)
+  const FzF = air ? 0 : env.core ? env.loadF : Math.max(0, (m * gN * S.b) / L - shift);
+  const FzR = air ? 0 : env.core ? env.loadR : Math.max(0, (m * gN * S.a) / L + shift);
   // the load moved across in a turn: the more loaded outer tyre grips less per unit load (tyre load
   // sensitivity), so an axle's grip falls with it; the front takes most of it (it understeers at the limit)
   const dLat = (m * Math.abs(c.ay) * S.cgH) / S.track;
@@ -573,7 +584,7 @@ export function subStep(c, dt, env) {
     if (c.wheels) for (const q of c.wheels) q.omega = 0;
   }
   const yaw0 = c.yaw;
-  c.yaw += c.wz * dt;
+  if (!env.core) c.yaw += c.wz * dt;
   // (what the springs and the load transfer feel: smoothed)
   c.ax += (au - c.ax) * Math.min(1, dt * 12);
   c.ay += (av - c.ay) * Math.min(1, dt * 12);
@@ -581,22 +592,26 @@ export function subStep(c, dt, env) {
   c.vz = vz;
   c.u = vx * fx + vz * fz;
   c.v = vx * rx + vz * rz;
-  const prev = { x: c.x, y: c.y, z: c.z, yaw: yaw0 };
-  c.x += c.vx * dt;
-  c.z += c.vz * dt;
   const ds = Math.hypot(c.vx, c.vz) * dt;
   c.odo += ds;
-  // ---- the ground: the body on its wheels
-  followGround(c, dt, env);
-  // ---- what it hits (the world's: voxels, other cars, people)
-  env.collide?.(c, prev, dt);
+  // (on the rigid-body core the body moves itself: its pose, the ground under it and what it hits are
+  // the engine's, physics/carCore.js; here only the velocities the tyres give it)
+  if (!env.core) {
+    const prev = { x: c.x, y: c.y, z: c.z, yaw: yaw0 };
+    c.x += c.vx * dt;
+    c.z += c.vz * dt;
+    // ---- the ground: the body on its wheels
+    followGround(c, dt, env);
+    // ---- what it hits (the world's: voxels, other cars, people)
+    env.collide?.(c, prev, dt);
+  }
   // ---- the wheels' turn (drawn), the skid, the springs, the fuel and the charge
   c.spinF += c.omegaF * dt;
   c.spinR += c.omegaR * dt;
   const latSlide = Math.max(Math.abs(c.alphaF), Math.abs(c.alphaR)) - 0.12;
   const kappa = Math.max(Math.abs(c.slipR), lockF ? 0 : Math.abs(c.slipF));
   c.skid = clamp(Math.max(0, kappa - 0.12) * 3 + (lockF ? 0.8 : 0) + (hand && Math.abs(u) > 1 ? 0.6 : 0) + Math.max(0, latSlide) * 5, 0, 1.5) * (air ? 0 : 1) * clamp(Math.hypot(u, v) / 3 + kappa * 0.3, 0, 1);
-  springs(c, dt);
+  if (!env.core) springs(c, dt);
   c.thr = pedal; // (the driver's foot; what the engine got: c.thrOut)
   c.thrOut = thr;
   if (cl) {

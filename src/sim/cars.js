@@ -6,6 +6,8 @@ import { dragAir } from './bodyAir.js';
 import { impact } from './impact.js';
 import { stepDriver } from '../ai/carDriver.js';
 import { wheelContact, groundDrag, groundWork } from './groundContact.js';
+import { isCore } from '../physics/vehicleCore.js';
+import { carCoreWorld, attachCar, prepareCar, syncCar, pushCarVelocity, takeImpacts, carBodyMoving, stepWorld } from '../physics/carCore.js';
 
 /**
  * Cars in the world: every object of type 'car' (models/car.js: the street's cars, the military
@@ -41,6 +43,11 @@ import { wheelContact, groundDrag, groundWork } from './groundContact.js';
  * charge it has is no more than its cells not yet gone (thermal runaway); an EV whose pack has
  * mostly gone is dead. A crash crushes the cells near where it hits (crushCells: hard enough,
  * they short and go into runaway).
+ *
+ * On the rigid-body core (the default: physics/carCore.js) each car is a chassis body on springs in
+ * the world's car world: what it hits (voxels, other cars) is a contact whose impact comes back
+ * here (hitSomething, carsCollided); people stay this layer's (collidePeople). c.physics = 'legacy'
+ * puts a car back on the planar model above.
  *
  * The people in it (placeAboard): the driver at the wheel (the clip 'carDrive', its phase the
  * steering wheel's angle: operator/rig.js carClipPose), the others seated ('carSit').
@@ -462,6 +469,13 @@ function controls(c, dt, ctx) {
 /** Step a list of cars by dt in ctx ({ world?, sim?, people?() }: sim/cars.js stepCars; a test). */
 export function stepCarList(cars, dt, ctx = {}) {
   const w = ctx.world;
+  // (on the rigid-body core, physics/carCore.js, unless a car is set to c.physics = 'legacy')
+  const core = cars.filter((c) => isCore(c, 'car'));
+  if (core.length) {
+    stepCoreCars(core, dt, ctx);
+    if (core.length === cars.length) return;
+    cars = cars.filter((c) => !isCore(c, 'car'));
+  }
   const active = [];
   for (const c of cars) {
     controls(c, dt, ctx);
@@ -492,6 +506,89 @@ export function stepCarList(cars, dt, ctx = {}) {
       checkState(w, c);
     }
     restamp(w, c);
+  }
+}
+
+/**
+ * Cars on the rigid-body core (physics/carCore.js): the drivers, then one step of their world
+ * (the chassis bodies on their springs, the tyres of carPhysics, what they hit: the voxels and each
+ * other), then what the world layer does as before: the impacts (damage, the crash, crushed cells,
+ * sim/impact.js), the ground worked (ruts, snow, grass), people in the way, the seats, the state
+ * from the voxels, the voxels moved.
+ */
+function stepCoreCars(cars, dt, ctx) {
+  const w = ctx.world;
+  const PW = carCoreWorld(cars, ctx);
+  const awake = [];
+  for (const c of cars) {
+    controls(c, dt, ctx);
+    const inp = c.input ?? {};
+    const active = c.running || c.crank > 0 || (inp.throttle ?? 0) > 0;
+    if ((active || carBodyMoving(c)) && w?.mat) ensureBody(w, c);
+    carEnv(c, ctx);
+    attachCar(c, PW, c._env, w?.h ?? 0);
+    c.core.groundDrag = !!w?.mat;
+    prepareCar(c, active);
+  }
+  stepWorld(PW, dt);
+  for (const c of cars) {
+    syncCar(c);
+    if (c.core.body.sleeping && !carBodyMoving(c) && !c.running && !(c.crank > 0)) {
+      takeImpacts(c);
+      if (c.body && w?.mat) restamp(w, c);
+      continue;
+    }
+    awake.push(c);
+  }
+  // what they hit: the voxels (n from the world into the car), the other cars (once an impact)
+  const pairs = new Set();
+  for (const c of cars)
+    for (const { e, other } of takeImpacts(c)) {
+      const n = e.b === c.core.body ? e.normal.map((x) => -x) : e.normal.slice();
+      const oc = other?.userData?.car;
+      if (oc) {
+        if (pairs.has(e)) continue;
+        pairs.add(e);
+        carsCollided(c, oc, e, ctx);
+        continue;
+      }
+      const mat = e.materials.find((m) => m && m !== 'unknown' && m !== 'steel') ?? (e.materials.includes('steel') ? 'steel' : 'concrete');
+      hitSomething(c, ctx, e.point, e.speed, n, mat);
+    }
+  for (const c of awake) {
+    if (w?.mat) groundWork(w, c, dt, ctx);
+    collidePeople(c, ctx);
+    pushCarVelocity(c);
+    placeAboard(c);
+    if (!w?.mat || !c.body) continue;
+    c.checkT = (c.checkT ?? 0) - dt;
+    if (c.checkT <= 0) {
+      c.checkT = 0.5;
+      checkState(w, c);
+    }
+    restamp(w, c);
+  }
+}
+
+/** Two cars' bodies met (closing at e.speed): damage, the crash sound, crushed cells, one impact. */
+function carsCollided(a, b, e, ctx) {
+  const v = e.speed;
+  const p = e.point.slice();
+  for (const c of [a, b]) {
+    if (v < 2 || c.t - (c._hitT ?? -9) < 0.35) continue;
+    c._hitT = c.t;
+    c.damage = Math.min(1, c.damage + (v / 30) ** 2);
+    sfx(c, 'crash', { v, p, material: 'steel' });
+    if (c.spec.battery && ctx.world?.mat) crushCells(ctx.world, p, 0.6 + v * 0.05, clamp((v - 8) / 12, 0, 1.2));
+    if (c.damage >= 1 && !c.dead) {
+      c.dead = true;
+      c.wrecked = true;
+      c.why = 'wrecked';
+    }
+  }
+  if (v >= 2 && ctx.sim) {
+    const ma = massOf(a), mb = massOf(b);
+    impact(ctx.sim, { pos: p, mass: (ma * mb) / (ma + mb), velocity: e.normal.map((x) => x * v), materials: ['steel', 'steel'], kind: 'vehicle', name: 'cars', radius: 0.4, size: 1.5, effects: { crush: false } });
   }
 }
 
