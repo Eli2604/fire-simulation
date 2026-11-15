@@ -806,6 +806,31 @@ from a blast than solid construction; steel deck plate takes a rocket. The flash
 blast lasts 0.8 s on the clock and, indoors, lights the place up without washing it out.
 `&blast=x,y,z,energy` sets one off (for testing; a grenade is ~6e5 J).
 
+A **waterfall** (models/islandFall.js, sim/river.js, render/waterworks.js) is on the other side
+of the island from the volcano, in the west: a stream on a rocky height pours over a 4.4 m cliff
+into a plunge pool. The sheet of water leaves the brink at the speed of critical flow there
+(depth ≈ 0.715·(q²/g)^⅓) and falls free in a parabola, white with air lower down, with spray and
+mist rising off its foot (it keeps the rocks and the ledge wet). Behind it a **walkway** is cut into
+the cliff: from the level rock beside the pool you step up onto a ledge in an alcove under the brink
+and walk behind the falling water (it passes ~0.8 m in front of you at head height) and out the
+other side. From the pool a **river** runs down through the land to the sea, in level reaches held
+by sills of rock it pours over (small cascades), and out over the beach into the sea. Its water is
+voxels (it soaks, boils off, freezes); the source gives a steady 1 m³/s, and through every
+cross-section of the river v = Q / A (A the open water there, less any ice): slow in the deep
+pool, faster in the narrow race at the mill. What floats (a crate, a swimmer) is carried down to
+the sea. A dam (anything solid filling a section) stops the river below it; frozen to the bottom
+it is shut too; dried out (lava, a crater in the bank) the source fills it again. Running water
+freezes more slowly than still water.
+
+A **water mill** (models/mill.js) stands on the river: a rubble-stone mill house with a timbered
+gable, millstones, a hopper and sacks inside, and an undershot water wheel on its river side, its
+outer bearing on a race wall that narrows the river at the wheel. The wheel turns with the water:
+the drag of the current on its immersed paddles, ½ρ·Cd·A·(v−u)|v−u| (u its rim speed), against
+the friction of its gearing and grinding stones, with the inertia of the wheel and the runner
+stone: it spins up over seconds, runs a little slower than the water (~4 rpm), and runs down and
+stops when the river is dammed or dry, the ice grips it, or it is out of the water. The mill is an
+object of its own: put it on any river bank, or in a whirlpool's current.
+
 A **volcano** (models/volcano.js, sim/volcano.js) stands on the island's main hill. It sleeps
 until a dragon moves within 6 m of its crater; then it erupts: a blast in the crater (heard
 far off), lava welling up in the vent at 1.5 m³/s (molten basalt at 1200 °C, which fills the
@@ -896,7 +921,8 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Group | nothing of its own: the objects in it, moved and turned as one |
 | Place | a room of its own (a zone) inside an object or a world: its world (size, voxels), view and objects |
 | Jet fighter | paint, fuel (a pressure vessel of jet fuel), rockets. Aluminium airframe, glass canopy, rubber tyres. Flyable |
-| Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, seed |
+| Island | size, sea level, main hill height, plateau height, canal, pond, which zones the catacomb stairs and the boat lead to, waterfall (where, which way its river runs, height, width, river width, flow), seed |
+| Water mill | house size, wall height, wheel radius, width, paddles and their depth, axle height, race wall, millstones grinding (a load) |
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |

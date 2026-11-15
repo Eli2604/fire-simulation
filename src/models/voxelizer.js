@@ -272,6 +272,17 @@ export function placeObject(world, obj, ownerIndex = -1) {
   for (const ld of built.loads ?? []) (world.loads ??= []).push({ ...ld, owner: ownerIndex, p: toWorld(...ld.p) });
   // what stirs the water and the air (sim/stirrers.js), and the loose things it can carry
   for (const st of built.stirrers ?? []) world.stirrers.push({ ...st, owner: ownerIndex, p: toWorld(...st.p), ...(st.dir ? { dir: Array.isArray(st.dir) ? dirToWorld(st.dir) : st.dir } : {}), ...(st.kind === 'hose' ? { p0: toWorld(...st.p) } : {}) });
+  // a waterfall's stream, its pool and the river down to the sea (sim/river.js), water mills on it
+  for (const rv of built.rivers ?? []) {
+    const F = rv.fall;
+    (world.rivers ??= []).push({
+      ...rv,
+      owner: ownerIndex,
+      stations: rv.stations.map((s) => ({ ...s, p: toWorld(...s.p), t: dirToWorld(s.t), bed: oy + s.bed })),
+      fall: F && { ...F, lip: toWorld(...F.lip), dir: dirToWorld(F.dir), across: dirToWorld(F.across), pool: toWorld(...F.pool), ledge: F.ledge && { ...F.ledge, y: oy + F.ledge.y, ceil: oy + F.ledge.ceil, mid: toWorld(...F.ledge.mid) } },
+    });
+  }
+  for (const m of built.mills ?? []) (world.mills ??= []).push({ omega: 0, angle: 0, ...m, owner: ownerIndex, p: toWorld(...m.p), axis: dirToWorld(m.axis) });
   for (const lo of built.loose ?? []) {
     const p = toWorld(...lo.p);
     if (lo.onWater) p[1] = (waterSurfaceAt(world, p[0], p[2]) ?? p[1]) + (lo.half ?? 0.3) * 0.3;

@@ -1,8 +1,12 @@
+import { islandFall } from './islandFall.js';
+
 /**
  * An island in the sea: sandy shores, grassy slopes, two hills (rocky tops),
  * a flat plateau for buildings, a canal winding from the hills to the sea,
  * a pond on the hillside, a wooden pier with a boat (back to the ship) and the
- * stone entrance down to the catacombs at the shore.
+ * stone entrance down to the catacombs at the shore. Optionally a waterfall: a
+ * stream on a rocky height falling over a cliff into a pool, a walkway behind the
+ * falling water, and a river from the pool down to the sea (models/islandFall.js).
  *
  * The terrain is a height field. To keep the simulation small only its top
  * layers are voxels (the hills are hollow inside, nobody digs there).
@@ -33,6 +37,14 @@ export default {
     ferryLabel: { value: 'Boat: to the islet', label: 'What the second boat is (its hint)' },
     hut: { value: true, label: 'Stone hut on the north shore (the old catacomb entrance)' },
     canalStart: { value: -0.2, min: -1, max: 1, step: 0.05, label: 'Canal starts at (share of half width)' },
+    waterfall: { value: false, label: 'Waterfall, walkway behind it and a river to the sea' },
+    fallX: { value: -0.3, min: -0.9, max: 0.9, step: 0.01, label: 'Waterfall at X (share of half width)' },
+    fallZ: { value: -0.35, min: -0.9, max: 0.9, step: 0.01, label: 'Waterfall at Z (share of half depth)' },
+    fallHeading: { value: 155, min: -180, max: 180, step: 5, label: 'The river runs off towards (degrees from +X to +Z)' },
+    fallHeight: { value: 4.4, min: 2, max: 9, step: 0.1, label: 'Height of the fall (m)' },
+    fallWidth: { value: 2.4, min: 1, max: 5, step: 0.1, label: 'Width of the fall (m)' },
+    riverWidth: { value: 2, min: 1, max: 4, step: 0.1, label: 'River width (m)' },
+    flow: { value: 1, min: 0, max: 5, step: 0.05, label: 'Water over the fall (m³/s)' },
     seed: { value: 5, min: 1, max: 999, step: 1, label: 'Random seed' },
   },
   build(p, { h, rng }) {
@@ -53,7 +65,7 @@ export default {
     // distance from the pond's centre, in metres along its X radius (an ellipse)
     const pondDist = (x, z) => Math.hypot(x - pondC.x, ((z - pondC.z) * pondC.r) / pondC.rz);
     let pondBase = null;
-    const height = (x, z, noDip = false) => {
+    const ground = (x, z, noDip = false) => {
       const r = Math.hypot(x / W, z / D);
       const land = Math.min(1, Math.max(0, (0.95 - r) / 0.25));
       let y = sea - 1.6 + land * (p.plateau + 1.6 + 0.3 * Math.sin(x * 0.4) * Math.cos(z * 0.3));
@@ -75,13 +87,16 @@ export default {
       const dp = pondDist(x, z);
       if (p.pond && !noDip && dp < pondC.r + 2.5) {
         // a level terrace on the hillside, with the pond dug into it
-        const base = pondBase ?? (pondBase = height(pondC.x, pondC.z, true));
+        const base = pondBase ?? (pondBase = ground(pondC.x, pondC.z, true));
         const t = Math.min(1, Math.max(0, (dp - pondC.r - 0.8) / 1.7));
         y = base + (y - base) * t * t * (3 - 2 * t);
         if (dp < pondC.r) y -= p.pondDepth * Math.min(1, 2 * (1 - dp / pondC.r));
       }
       return y;
     };
+    // the waterfall, its pool and the river (models/islandFall.js): it reshapes the terrain round it
+    const fall = p.waterfall ? islandFall(p, { h, sea, W, D, ground: (x, z) => ground(x, z) }) : null;
+    const height = fall ? (x, z) => fall.shape(x, z, ground(x, z)) : ground;
     const prims = [];
     const step = h;
     let pondLevel = -Infinity;
@@ -95,11 +110,12 @@ export default {
         const cz = z + step / 2;
         const y = Math.max(h, height(cx, cz));
         const n = rng() * 0.08;
-        const rock = y > sea + p.plateau + p.hill * 0.55;
-        const sand = y < sea + 0.45;
+        const flowing = fall?.water(cx, cz);
+        const rock = y > sea + p.plateau + p.hill * 0.55 || !!fall?.rock(cx, cz);
+        const sand = !rock && y < sea + 0.45;
         const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
         // the green slopes are grass (it burns: a lighter or a spark sets it going), on soil
-        const sward = !rock && !sand && !(p.pond && pondDist(cx, cz) < pondC.r);
+        const sward = !rock && !sand && !(p.pond && pondDist(cx, cz) < pondC.r) && !flowing;
         // down at least to its lowest neighbour's top: where the ground steps down (the shore,
         // the canal banks) there is no gap to see through under the thin shell of voxels
         const nb = Math.min(height(cx - step, cz), height(cx + step, cz), height(cx, cz - step), height(cx, cz + step));
@@ -108,7 +124,9 @@ export default {
         if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
         if (p.pond && y < pondLevel && pondDist(cx, cz) < pondC.r)
           prims.push({ shape: 'box', min: [x, y, z], max: [x + step, pondLevel, z + step], material: 'water' });
+        if (flowing && flowing[1] > y) prims.push({ shape: 'box', min: [x, y, z], max: [x + step, flowing[1], z + step], material: 'water' });
       }
+    if (fall) prims.push(...fall.prims);
     // the pier and a boat on the west shore
     const px = -W * 0.98;
     const pz = D * 0.35;
@@ -149,6 +167,7 @@ export default {
     }
     return {
       prims,
+      ...(fall ? { rivers: [fall.river], loose: fall.loose } : {}),
       sea: { level: sea, box: [0, 0, 0, 0] },
       heaters: p.hut
         ? [

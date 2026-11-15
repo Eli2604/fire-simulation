@@ -464,7 +464,10 @@ export const SCENARIOS = {
         view: { camera: [71.4, 30, 78.6], walk: true, sun: [0.544, 0.64, 0.544] },
         proxy: { shape: 'hill', color: '#5f7a3a', height: 7, fill: 0.95, sea: 2.9 },
         objects: [
-          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 9, catacombs: '', boatTo: 'deck', ferryTo: 'islet', hut: false }, x: 34, z: 31 },
+          // (on the far side from the volcano, in the west: a waterfall off a rocky height with a walkway behind it, a river from its pool to the sea)
+          { type: 'island', params: { width: 64, depth: 58, seaLevel: 2.5, plateauEast: 0.6, pierLength: 9, catacombs: '', boatTo: 'deck', ferryTo: 'islet', hut: false, waterfall: true }, x: 34, z: 31 },
+          // a water mill on the river, its wheel turned by the water running down from the fall to the sea
+          { type: 'mill', params: { axleHeight: 0.4 }, x: 15.34, z: 26.94, y: 4.0, rotation: -167.3 },
           // a gothic church being built on the plateau: tower and south arm still in scaffolding
           { type: 'church', params: { crypt: 'catacombs' }, x: 24.1, z: 42.2, y: 'auto' },
           { type: 'house', params: { width: 5, depth: 4 }, x: 49.3, z: 47, y: 'auto' },
@@ -477,7 +480,7 @@ export const SCENARIOS = {
           { type: 'tree', params: { species: 'willow', height: 5, crownRadius: 2, seed: 2 }, x: 40.8, z: 27.6, y: 'auto' },
           { type: 'tree', params: { species: 'pine', height: 5, crownRadius: 1.5, seed: 7 }, x: 23, z: 14.9, y: 'auto' },
           { type: 'tree', params: { species: 'oak', height: 7, crownRadius: 2.8, seed: 11 }, x: 58, z: 41, y: 'auto' },
-          { type: 'tree', params: { species: 'pine', height: 7.5, crownRadius: 1.9, seed: 12 }, x: 16, z: 22, y: 'auto' },
+          { type: 'tree', params: { species: 'pine', height: 7.5, crownRadius: 1.9, seed: 12 }, x: 15, z: 20.4, y: 'auto' }, // (on the river's north bank)
           { type: 'tree', params: { species: 'pine', height: 6, crownRadius: 1.6, seed: 13 }, x: 29, z: 9.5, y: 'auto' },
           { type: 'tree', params: { species: 'willow', height: 5.5, crownRadius: 2.2, seed: 14 }, x: 42.5, z: 56, y: 'auto' },
           { type: 'tree', params: { species: 'oak', height: 5.5, crownRadius: 2.2, seed: 15 }, x: 8.5, z: 31, y: 'auto' },

@@ -3,6 +3,7 @@ import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR, 
 import { deriveWeather } from './weather.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepStirrers } from './stirrers.js';
+import { stepRivers } from './river.js';
 import { stepProjectiles, stepGasPipes, explode } from './explosions.js';
 import { updateActivity } from './activity.js';
 import { stepWounds } from './wounds.js';
@@ -202,6 +203,7 @@ export class Simulation {
     this.structure(dt);
     stepDebris(this, dt);
     stepStirrers(this, dt); // whirlpools and wind hoses: what floats and what is light goes with them
+    if (w.rivers?.length || w.mills?.length) stepRivers(this, dt); // rivers, the waterfall, water mills (sim/river.js)
     stepProjectiles(this, dt);
     stepWounds(this, dt); // bleeding, drops of blood
     if (w.volcanoes.length) stepVolcanoes(this, dt);

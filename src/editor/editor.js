@@ -43,7 +43,7 @@ export const GROUPS = [
   ['Vehicles', ['car']],
   ['Furniture & props', ['couch', 'livingRoom', 'sideTable', 'teaCup', 'clothesline', 'statue', 'scannedProp']],
   ['Nature', ['tree', 'grass', 'hedge', 'volcano']],
-  ['Water & air', ['waterVortex', 'windHose', 'windJet']],
+  ['Water & air', ['waterVortex', 'windHose', 'windJet', 'mill']],
   ['Camp & power', ['droneCamp', 'solarPark', 'windTurbine', 'campPatrol', 'campIsland']],
   ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
   // objects of objects (models/composite.js): a group to move things as one; a place inside an object or a world

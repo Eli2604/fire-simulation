@@ -15,6 +15,7 @@
  * All of it is a function of the world's time and the stirrers' settings: deterministic.
  */
 import { MAT } from './materials.js';
+import { riverCurrent } from './river.js';
 
 const TAU = Math.PI * 2;
 const LO = 1.256; // Lamb-Oseen: the peak of (1 - e^(-a x²)) / x is at x = 1 for this a
@@ -159,9 +160,10 @@ export function airStirAt(w, p, out = [0, 0, 0]) {
   return out;
 }
 
-/** The surface current of all whirlpools at (x, z): [vx, vz]. */
+/** The surface current of all whirlpools and rivers (sim/river.js) at (x, z): [vx, vz]. */
 export function waterStirAt(w, x, z, out = [0, 0]) {
   out[0] = out[1] = 0;
+  if (w.rivers?.length) riverCurrent(w, x, z, out);
   const t = [0, 0];
   for (const s of w.stirrers ?? []) {
     if (s.kind !== 'vortex') continue;
@@ -173,12 +175,20 @@ export function waterStirAt(w, x, z, out = [0, 0]) {
 }
 
 /** The height of the water's surface at (x, z): the top of a column of water there, or the sea (null: none). */
-export function waterSurfaceAt(w, x, z) {
+export function waterSurfaceAt(w, x, z, from = Infinity) {
   const cx = Math.floor(x / w.h);
   const cz = Math.floor(z / w.h);
   if (cx >= 0 && cz >= 0 && cx < w.nx && cz < w.nz && w.colTop) {
-    const y = w.colTop[cx + w.nx * cz];
-    if (y >= 0 && w.mat[w.idx(cx, y, cz)] === MAT.water) return (y + 1) * w.h;
+    const top = w.colTop[cx + w.nx * cz];
+    if (top >= 0 && w.mat[w.idx(cx, top, cz)] === MAT.water) return (top + 1) * w.h;
+    // (from a height down: under a tree's crown or a bridge over it, the water below)
+    if (from < Infinity)
+      for (let y = Math.min(top, Math.floor(from / w.h)); y >= 0; y--) {
+        const m = w.mat[w.idx(cx, y, cz)];
+        if (!m) continue;
+        if (m === MAT.water) return (y + 1) * w.h;
+        break;
+      }
   }
   return w.sea && !w.vacuum ? w.sea.level : null;
 }
@@ -269,8 +279,8 @@ const floats = (o) => o.kind !== 'cylinder' && !o.burst;
  */
 export function stepStirrers(sim, dt) {
   const w = sim.world;
-  const list = w.stirrers;
-  if (!list?.length || !(dt > 0)) return;
+  const list = w.stirrers ?? [];
+  if ((!list.length && !w.rivers?.length) || !(dt > 0)) return;
   for (const s of list) if (s.kind === 'hose') s.p = hoseCentre(s, w.time, w.size);
   const u = [0, 0, 0];
   const cur = [0, 0];
@@ -279,7 +289,7 @@ export function stepStirrers(sim, dt) {
     // the air: drag ½ρ·Cd·A·|u-v|·(u-v) against its weight
     airStirAt(w, o.p, u);
     const ground = groundUnder(w, o);
-    const water = waterSurfaceAt(w, o.p[0], o.p[2]);
+    const water = waterSurfaceAt(w, o.p[0], o.p[2], o.p[1] + o.half);
     const afloat = water != null && floats(o) && water > ground && o.p[1] - o.half <= water + 0.05 && !o.whirled;
     const A = Math.PI * o.r * Math.max(o.r, o.half) * 1.2;
     const m = o.mass ?? 50;
@@ -319,6 +329,19 @@ export function stepStirrers(sim, dt) {
         o.flying = false;
       }
       continue;
+    }
+    // over a river's sill (the water running thin over the rock): swept along and over it
+    if (!afloat && w.rivers?.length && floats(o) && o.p[1] - o.half <= ground + 0.3) {
+      cur[0] = cur[1] = 0;
+      riverCurrent(w, o.p[0], o.p[2], cur);
+      if (Math.hypot(cur[0], cur[1]) > 0.1) {
+        o.p[0] += cur[0] * dt;
+        o.p[2] += cur[1] * dt;
+        o.p[1] = groundUnder(w, { ...o, p: [o.p[0], o.p[1] + 0.3, o.p[2]] }) + o.half * 0.6;
+        o.v[0] = cur[0];
+        o.v[2] = cur[1];
+        continue;
+      }
     }
     if (!afloat && o.p[1] - o.half <= ground + 0.05) {
       // on the ground: pushed along (round and in) when the wind's drag beats its friction

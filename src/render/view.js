@@ -26,6 +26,7 @@ import { BloodRenderer } from './blood.js';
 import { Ocean } from './ocean.js';
 import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
+import { WaterworksRenderer } from './waterworks.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
 import { LooseRenderer } from './loose.js';
@@ -116,6 +117,7 @@ export class View {
     this.doors = new DoorRenderer(this.root); // doors drawn as doors
     this.trees = new TreeRenderer(this.root); // trees: bark and leaves
     this.volcanoes = new VolcanoRenderer(this.root); // volcanoes: basalt cones, glowing craters
+    this.waterworks = new WaterworksRenderer(this.root); // waterfalls, rivers, water wheels (sim/river.js)
     this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
@@ -216,6 +218,7 @@ export class View {
     this.doors.setWorld(world);
     this.trees.setWorld(world);
     this.volcanoes.setWorld(world);
+    this.waterworks.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.patches.clear();
@@ -701,6 +704,7 @@ export class View {
     this.doors.update(dt);
     this.trees.update(this.time, this.cameraLocal());
     this.volcanoes.update(this.time);
+    this.waterworks.update(dt, this.world.time ?? this.time);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);

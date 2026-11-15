@@ -276,6 +276,8 @@ export function stepIce(sim, dt, D) {
       dd = ((q * T) / RL) * (bank[c] ? 1.3 : 1) * (sea ? I.shelter[c] * 0.7 : 1); // (the sea: the swell, its salt)
       // (open water must be cooled to freezing first: a skin only forms once the air is well under)
       if (d <= 0 && Ta > (sea ? -2.3 : -0.5)) dd = 0;
+      // (running water keeps stirring the cold surface water down: it skins over more slowly, sim/river.js)
+      if (I.run && I.run[c] > 0) dd /= 1 + (I.run[c] / 0.3) ** 2;
     } else if (d > 0) dd = -((hc * Te) * T) / RL;
     if (d > 0) dd -= ((0.9 * radField[a]) * T) / RL; // a fire's heat melts it
     // the water under it, warmer than freezing (lava in the river): from below
