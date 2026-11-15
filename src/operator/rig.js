@@ -429,6 +429,112 @@ function burst(t) {
   for (const ts of [0, 0.12, 0.24]) if (t >= ts) r = Math.max(r, Math.exp(-(t - ts) / 0.035));
   return r;
 }
+
+/* ---------- in a boat (sim/boatCrew.js) ---------- */
+/**
+ * Seated on a low thwart (its top sim/boatCrew.js SIT_DROP = 0.24 m over his feet, on the
+ * floorboards): the hips down to ~0.32 m, the thighs rising to the knees, the shins down to the
+ * boards. push 0..1: the legs driving (straighter), as a rower's do through the stroke.
+ */
+function thwartLegs(p, push = 0) {
+  p.hipsPos = [0, -0.65, -0.02];
+  p.thighR = [-1.92 + 0.18 * push, 0, -0.08]; p.thighL = [-1.92 + 0.18 * push, 0, 0.08];
+  p.shinR = [1.41 - 0.3 * push, 0, 0]; p.shinL = [1.41 - 0.3 * push, 0, 0];
+  p.footR = [0.5 + 0.1 * push, 0, 0]; p.footL = [0.5 + 0.1 * push, 0, 0];
+  return p;
+}
+/** Both hands off the weapon (slung on his back), to figure-space targets. */
+function freeHands(p, l, r, lp = [1, -0.6, -0.5], rp = [-1, -0.6, -0.5]) {
+  p.sling = 1; p.lG = 0; p.rG = 0; p.lH = 0; p.rH = 0; p.lW = 1; p.rW = 1;
+  p.lTW = l; p.rTW = r; p.lPole = lp; p.rPole = rp;
+  return p;
+}
+/** The boat clips that hold no weapon (it is slung: both hands at work). */
+export const BOAT_WORK = { boatRow: 1, boatPaddle: 1, boatHelm: 1, boatHike: 1, boatSit: 1 };
+/** The fraction of a rowing stroke spent in the drive (sim/boats.js OARS.drive). */
+export const ROW_DRIVE = 0.42;
+/**
+ * A boat clip's pose at u (0..1: the boat's phase, see sim/boatCrew.js; t: the clip's seconds).
+ *   boatRow     u the stroke: the catch at 0 (leaning to the stern he faces, arms out), the drive to
+ *               ROW_DRIVE (legs and back, then the arms: the handles to his chest, leaning back), the
+ *               recovery (hands away first, then the body swings forward)
+ *   boatPaddle  0..0.5 a stroke on his left, 0.5..1 on his right: the lower hand on the shaft over
+ *               the side, the top hand on the grip, the body turned into it
+ *   boatHelm    the tiller's end across him (u 0.5 amidships; 0 / 1: 0.4 m to his right / left)
+ *   boatHike    u 0.5 upright; to 0 / 1 leaning out over his right / left side
+ */
+export function boatClipPose(name, u, t = 0) {
+  const p = pose0(), f = TAU * u;
+  if (name === 'boatRow') {
+    const D = ROW_DRIVE;
+    let lean, z, y, push;
+    if (u < D) {
+      const s = u / D;
+      // the back and legs first, the arms finishing it
+      lean = 0.5 - 0.85 * sm01(s * 1.25);
+      z = 0.66 - 0.68 * sm01((s - 0.2) / 0.8) - 0.08 * sm01(s / 0.4);
+      y = 0.6 + 0.05 * sin(Math.PI * s);
+      push = sin(Math.PI * Math.min(1, s * 1.3));
+    } else {
+      const s = (u - D) / (1 - D);
+      // the hands away, then the body swinging forward over them
+      z = -0.1 + 0.76 * sm01(s / 0.45);
+      lean = -0.35 + 0.85 * sm01((s - 0.2) / 0.8);
+      y = 0.54 + 0.06 * sm01((s - 0.8) / 0.2);
+      push = 0;
+    }
+    thwartLegs(p, push);
+    p.spine = [0.6 * lean, 0, 0]; p.chest = [0.4 * lean, 0, 0]; p.head = [-0.7 * lean, 0, 0];
+    return freeHands(p, [0.17, y, z], [-0.17, y, z]);
+  }
+  if (name === 'boatPaddle') {
+    const side = u < 0.5 ? 1 : -1; // (his left: +x)
+    const s = u < 0.5 ? 2 * u : 2 * u - 1;
+    let low, top, turn;
+    if (s < 0.5) {
+      const q = sm01(s / 0.5);
+      low = [side * 0.34, 0.5, 0.5 - 0.75 * q];
+      top = [side * 0.04, 0.95, 0.38 - 0.5 * q];
+      turn = side * (0.35 - 0.6 * q);
+    } else {
+      const q = sm01((s - 0.5) / 0.5);
+      low = [side * 0.34, 0.62, -0.25 + 0.75 * q];
+      top = [side * 0.04, 0.9, -0.12 + 0.5 * q];
+      turn = side * (-0.25 + 0.6 * q);
+    }
+    thwartLegs(p);
+    p.spine = [0.3, 0.6 * turn, 0]; p.chest = [0.1, 0.4 * turn, 0]; p.head = [-0.35, -0.8 * turn, 0];
+    // (the lower hand is the one on his paddling side)
+    return side > 0 ? freeHands(p, low, top, [1, -0.6, -0.3], [-0.6, 0.2, -0.6]) : freeHands(p, top, low, [0.6, 0.2, -0.6], [-1, -0.6, -0.3]);
+  }
+  if (name === 'boatHelm') {
+    const x = (u - 0.5) * 0.8;
+    thwartLegs(p);
+    p.spine = [0.1, -0.12, 0]; p.head = [-0.1, 0.12, 0];
+    return freeHands(p, [0.14, 0.52, 0.32], [-0.22 + x, 0.6, -0.12], [1, -0.6, -0.5], [-1, -0.5, -0.4]);
+  }
+  if (name === 'boatHike') {
+    const L = (u - 0.5) * 2; // (+: out over his left side)
+    thwartLegs(p);
+    p.thighR[0] += 0.15; p.thighL[0] += 0.15;
+    p.hips = [0, 0, -0.35 * L]; p.spine = [0.05, 0, -0.35 * L]; p.chest = [0, 0, -0.2 * L]; p.head = [0, 0, 0.45 * L];
+    return freeHands(p, [0.18 + 0.32 * L, 0.6, 0.34], [-0.18 + 0.32 * L, 0.62, 0.28]);
+  }
+  if (name === 'boatSit') {
+    thwartLegs(p);
+    p.spine = [0.15, 0.08 * sin(f), 0]; p.head = [-0.08 + 0.04 * sin(2 * f), 0.4 * sin(f) + 0.1 * sin(3 * f), 0];
+    return freeHands(p, [0.13, 0.52, 0.34], [-0.13, 0.52, 0.34]);
+  }
+  // sitAim, sitShoot: up with the weapon, seated; a burst
+  thwartLegs(p);
+  aimUpper(p, 1);
+  p.spine[1] += 0.05 * sin(f); p.chest[1] += 0.04 * sin(f); p.wOff = [0.003 * sin(f), 0.003 * sin(2 * f), 0];
+  if (name === 'sitShoot') {
+    const r = burst(t);
+    p.recoil = r; p.chest[0] -= 0.03 * r; p.head[0] -= 0.02 * r;
+  }
+  return p;
+}
 /**
  * The firing clips for a weapon's recoil R (ai/recoil.js recoilSpec: its kick, its muzzle rise,
  * its recovery, the fire mode's rounds) and the shooter's control (1 a regular; less, a better
@@ -1854,6 +1960,15 @@ const CLIPS = {
     p.lTW = [0.17 + 0.015 * sin(f * 4), 0.79, 0.44]; p.rTW = [-0.19 + 0.04 * sin(f * 3 + 1), 0.79, 0.42 + 0.03 * sin(f * 5)];
     return p;
   }],
+  // in a boat (sim/boatCrew.js; boatClipPose): rowing, paddling, at the helm, hiking out, sitting,
+  // aiming and firing over the side. The phase of the first four is the boat's (OperatorFigure.setPhase)
+  boatRow: [2.0, (t, u) => boatClipPose('boatRow', u)],
+  boatPaddle: [2.6, (t, u) => boatClipPose('boatPaddle', u)],
+  boatHelm: [2.0, (t, u) => boatClipPose('boatHelm', u)],
+  boatHike: [2.0, (t, u) => boatClipPose('boatHike', u)],
+  boatSit: [6.0, (t, u) => boatClipPose('boatSit', u)],
+  sitAim: [2.6, (t, u) => boatClipPose('sitAim', u)],
+  sitShoot: [1.2, (t, u) => boatClipPose('sitShoot', u, t)],
   // flying the drone on a search: bigger stick inputs, the head turning with it
   droneScout: [4.0, (t, u) => {
     const p = droneKneel(pose0(), 1);
@@ -2212,6 +2327,11 @@ const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RE
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
 const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1, die: 1 };
 Object.assign(NO_STYLE, RETREAT, ROPE_DRILL);
+// in a boat (boatClipPose): at work the weapon is slung, as at a desk; seated, up with it, as kneeling
+Object.assign(NO_UNARMED, BOAT_WORK);
+Object.assign(NO_STYLE, BOAT_WORK);
+Object.assign(AIMING, { sitAim: 1, sitShoot: 1 });
+Object.assign(LABELS, { boatRow: 'Rowing (boat)', boatPaddle: 'Paddling (canoe)', boatHelm: 'At the helm (boat)', boatHike: 'Hiking out (dinghy)', boatSit: 'Sitting (boat)', sitAim: 'Seated aim', sitShoot: 'Seated fire' });
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
@@ -2907,7 +3027,7 @@ const ROPE_L = V3(P.rw(P.fgp.c)).sub(REST.handL); // the left palm (where it hol
 const ROPE_H = V3([0, 0.92, 0.17]).sub(REST.hips); // the belay device on the harness
 // aiming at a point on the ground (where the target stands): at his chest, from the shooter's eyes
 const AIM_H = 1.2;
-const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0, kneelAim: 1.0, kneelShoot: 1.0 };
+const EYE_H = { crouchAim: 1.0, crouchShoot: 1.0, kneelAim: 1.0, kneelShoot: 1.0, sitAim: 1.05, sitShoot: 1.05 };
 /**
  * An operator: build it from loaded assets, add .group to the scene, and each frame call
  * update(dt). play(name) cross-fades to a clip; setAim(point) twists the upper body towards a
@@ -3727,6 +3847,22 @@ export class OperatorFigure {
     this.current?.setEffectiveTimeScale(k);
   }
   /**
+   * Hold the clip playing at phase u (0..1 of it) instead of running it on its clock: the boat's
+   * clips (boatRow in step with the oars, the tiller, the hike: sim/boatCrew.js). null: its clock again.
+   */
+  setPhase(u) {
+    const a = this.current;
+    if (!a) return this;
+    if (u == null) {
+      if (a.getEffectiveTimeScale() === 0) a.setEffectiveTimeScale(this.clipSpeed[this.shown] ?? 1);
+      return this;
+    }
+    const d = a.getClip().duration;
+    a.setEffectiveTimeScale(0);
+    a.time = Math.max(0, Math.min(d - 1e-4, u * d));
+    return this;
+  }
+  /**
    * World point the upper body turns to while it moves (null: look where you go). Taken as where
    * the target stands: while aiming he pitches the rifle up or down at its chest (1.2 m above it).
    */
@@ -3809,7 +3945,7 @@ export class OperatorFigure {
     // muzzle flash: told (flashUntil) or from the firing clips
     const a = this.current;
     const hasRifle = this.armed && (this.weapon === 'secondary' || (this.weapon === 'primary' && !this.parts.rifle.userData.pivot));
-    const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'kneelShoot' || this.shown === 'proneShoot') && a;
+    const firing = this.autoFlash && (this.shown === 'shoot' || this.shown === 'crouchShoot' || this.shown === 'kneelShoot' || this.shown === 'proneShoot' || this.shown === 'sitShoot') && a;
     const pk = this.weapon === 'secondary' ? 'carbine' : this.primaryKind;
     this.flash.position.copy(rl2w(pk === 'carbine' ? 0.82 : WEAPON_STYLE[pk]?.muzzle ?? 1.03, pk === 'pistol' ? 0.012 : 0.045, 0));
     if (this.primaryKind === 'shotgun') this.updatePump();

@@ -167,6 +167,7 @@ export class Walkthrough {
         if (e.code === 'Space') this.flight.fireRequested = true;
         if (e.code === 'KeyF') this.flight.flaresRequested = true;
         if (e.code === 'KeyG' && !e.repeat) this.flight.ropes?.(); // (a helicopter: the troops down the ropes)
+        if (e.code === 'KeyV' && !e.repeat) this.flight.toggleView?.(); // (a boat: your eyes / from outside)
         return;
       }
       if ((e.code === 'KeyC' || e.code === 'ControlLeft') && !this.swimming) this.toggleCrawl(); // in deep water: dive (held)

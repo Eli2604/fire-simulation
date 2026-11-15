@@ -51,6 +51,8 @@ export const ROW_BOAT_PARAMS = {
 };
 
 const PERSON = 80; // kg
+/** The rowlocks: this far along the boat from the rowing thwart (aft of it: in front of the rower, who faces aft; the handles come to his chest at the finish). */
+export const ROWLOCK_X = -0.25;
 const OAR = 4.5; // kg: a 2.3 m spruce oar
 
 /** Where its thwarts are (x along it) and their seat height over the keel (hull frame). */
@@ -128,7 +130,7 @@ function floorSeat(p, hull) {
   return { x, y: hull.keel(x) + 0.12, z: 0, role: 'floor' };
 }
 function rowlocksAt(hull, x0) {
-  const x = x0 + 0.32;
+  const x = x0 + ROWLOCK_X;
   const s = hull.sheer(x);
   return [-1, 1].map((sd) => [x, s + 0.01, sd * hull.half(x, s - 0.01)]);
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rowBoatHull } from '../sim/buoyancy.js';
-import { thwartsOf, sailRigOf } from '../models/rowBoat.js';
+import { thwartsOf, sailRigOf, ROWLOCK_X } from '../models/rowBoat.js';
 
 /**
  * A rowing boat drawn (models/rowBoat.js; render/floats.js puts it in its pose on the water, the
@@ -91,7 +91,7 @@ export function buildRowBoatMesh(params = {}) {
   const mid = th.length ? th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a)) : null;
   if (mid)
     for (const sd of [-1, 1]) {
-      const x = mid.x + 0.32;
+      const x = mid.x + ROWLOCK_X;
       const s = hull.sheer(x);
       const r = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.006, 5, 10, Math.PI), iron);
       r.position.set(x, s + 0.01, sd * hull.half(x, s - 0.01));
@@ -120,7 +120,7 @@ export function buildRowBoatMesh(params = {}) {
   // rowlock), the blade dipped in for the drive and lifted for the recovery
   const sweeps = [];
   if (p.oars && mid) {
-    const x = mid.x + 0.32;
+    const x = mid.x + ROWLOCK_X;
     const s = hull.sheer(x);
     for (const sd of [-1, 1]) {
       const pivot = new THREE.Group();

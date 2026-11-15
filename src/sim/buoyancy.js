@@ -1,6 +1,9 @@
-import { MAT } from './materials.js';
+import { MAT, MATERIALS } from './materials.js';
 import { waterStirAt } from './stirrers.js';
 import { initBoat, stepDrift, updateHoles } from './boats.js';
+import { makeMovingBody, needsRestamp, restamp, syncBody, ownsCell, displaceLiquid } from './movingBody.js';
+import { F_BURNING, F_SMOLDER } from './world.js';
+import { placeCrew } from './boatCrew.js';
 
 /**
  * Floating bodies: Archimedes for a rigid hull (a rowing boat, the aircraft carrier).
@@ -47,8 +50,11 @@ import { initBoat, stepDrift, updateHoles } from './boats.js';
  *
  * In the simulation (stepFloats): world.floats (models/rowBoat.js; island.js makes its boats of
  * it) float on the sea or a pond of their world; their voxels (hidden: render/floats.js draws
- * the hull in its pose) burn as their material does, and where planking has burnt away below
- * the waterline the water comes in. The carrier (sim/water.js stepBuoyancy) floats by the same
+ * the hull in its pose) burn as their material does, and go with it wherever it goes (a moving
+ * body, sim/movingBody.js: stampFloat restamps them at its pose when it has moved half a voxel,
+ * with their heat, fire and char; the pond's water is pushed out of the hull and closes in where
+ * it was). Where planking has burnt away below the waterline the water comes in, and with less
+ * planking it has less shell to float on (shellLoss); what is under the water does not burn. The carrier (sim/water.js stepBuoyancy) floats by the same
  * law, see carrierBody.
  */
 
@@ -424,6 +430,7 @@ export function hydro(b, pose, surf, ampMax = Infinity) {
   let V = 0, mx = 0, my = 0, mz = 0, minY = Infinity;
   const dy = c.dy;
   const still = surf.still;
+  const shell = b.shellLoss || 0;
   // the water's height over each column of the hull (its middle in this pose), when it has waves
   const eta = (b._eta && b._eta.length === c.ncol ? b._eta : (b._eta = new Float32Array(c.ncol))).fill(NaN);
   for (let i = 0; i < c.n; i++) {
@@ -448,7 +455,8 @@ export function hydro(b, pose, surf, ampMax = Infinity) {
       f = f < 0 ? 0 : f > 1 ? 1 : f;
     }
     if (!f) continue;
-    const v = c.v[i] * f;
+    // (its planking burnt away: less of its shell to float on, checkPlanking)
+    const v = (shell ? c.v[i] - shell * (c.v[i] - c.vin[i]) : c.v[i]) * f;
     V += v;
     mx += v * wx; my += v * wy; mz += v * wz;
   }
@@ -813,7 +821,7 @@ export function stepFloats(sim, dt) {
     if (!f.water) continue; // (on dry land: it stays as it was put)
     // its planking: burnt or blown away below the sheer it lets the water in (every half second)
     f.check = (f.check ?? 0) - dt;
-    if (f.check <= 0 && f.voxels?.length && !f.detached) {
+    if (f.check <= 0 && f.mb) {
       f.check = 0.5;
       checkPlanking(w, f);
     }
@@ -844,6 +852,10 @@ export function stepFloats(sim, dt) {
     }
     stepBody(f.body, dt, env);
     if (f.row) moveBoat(sim, f, dt, env);
+    // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
+    f.stampT = (f.stampT ?? 0) - dt;
+    if (f.mb && f.stampT <= 0) stampFloat(w, f);
+    if (f.seats) placeCrew(f);
     if (f.body.sunk && !f.sunkNoted) {
       f.sunkNoted = true;
       w.events.push({ type: 'sinking', pos: f.body.pose.p, time: w.time, name: f.label ?? 'a boat' });
@@ -889,17 +901,20 @@ export function initFloat(sim, f) {
     b.aground = true;
     b.pose = framePose(b);
   }
-  // its planking voxels in its own frame (where they were built: at rest, level)
-  if (f.voxels?.length) {
+  // its voxels in its own frame (where they were built: at rest, level), their state with them:
+  // a moving body (sim/movingBody.js) stamped into the grid wherever it is (stampFloat)
+  if (f.own?.length || f.voxels?.length) {
     const h = w.h;
-    f.voxLocal = f.voxels.map((i) => {
+    const local = (i) => {
       const [x, y, z] = w.coords(i);
       const dx = (x + 0.5) * h - keel[0], dy = (y + 0.5) * h - keel[1], dz = (z + 0.5) * h - keel[2];
       // (the inverse of the heading: its transpose)
       return [R0[0] * dx + R0[6] * dz, dy, R0[2] * dx + R0[8] * dz];
-    });
-    f.voxMat = f.voxels.map((i) => w.mat[i]);
-    f.n0 = f.voxels.length;
+    };
+    const cells = f.own?.length ? f.own : f.voxels;
+    const hullSet = new Set(f.voxels ?? []);
+    f.mb = makeMovingBody(w, cells, local, { pose: { p: keel, R: R0 }, tags: (k) => (hullSet.has(cells[k]) ? 1 : 0) });
+    f.n0 = hullSet.size;
   }
   b.pose = framePose(b);
   if (f.model === 'rowBoat' || f.seats) initBoat(f);
@@ -911,7 +926,7 @@ export function initFloat(sim, f) {
  * (rivers, whirlpools; on the sea w.sea.current) and the wind's surface drift (~3 % of the wind on
  * the sea, 1.5 % on a pond); kept off the shore (it stops against what is solid at its waterline);
  * the water's level and the bottom under it found again as it goes (a river's reaches, over the
- * fall); off its berth, its voxels out of the grid (they would stay behind where it was built).
+ * fall); f.detached once it is off its berth (its voxels go with it: stampFloat).
  */
 function moveBoat(sim, f, dt, env) {
   const w = sim.world;
@@ -949,12 +964,9 @@ function moveBoat(sim, f, dt, env) {
     b.pose = framePose(b);
     return;
   }
-  // off its berth: its voxels out of the grid (from now on its own mesh is all of it)
+  // off its berth (its voxels go with it: stampFloat)
   const home = f.home;
-  if (!f.detached && home && (Math.hypot(b.X - home.X, b.Z - home.Z) > 0.4 || Math.abs(b.yaw - home.yaw) > 0.12)) {
-    f.detached = true;
-    for (const i of f.own ?? []) if (w.mat[i] && w.mat[i] !== MAT.water) w.clearVoxel(i);
-  }
+  if (!f.detached && home && (Math.hypot(b.X - home.X, b.Z - home.Z) > 0.4 || Math.abs(b.yaw - home.yaw) > 0.12)) f.detached = true;
   // where it is now: the water's level (not the sea: a pond, a river's reach) and the bottom
   f.look = (f.look ?? 0) - dt;
   if (f.look <= 0) {
@@ -972,7 +984,6 @@ function moveBoat(sim, f, dt, env) {
 function boatBlocked(w, f) {
   const b = f.body;
   const hull = b.hull;
-  const own = f.detached ? null : (f.ownSet ??= new Set(f.own ?? []));
   const lvl = f.water.level;
   for (const [x, z] of [[hull.x1 - 0.05, 0], [hull.x0 + 0.05, hull.B * 0.3], [hull.x0 + 0.05, -hull.B * 0.3], [0, hull.B / 2], [0, -hull.B / 2], [hull.L * 0.3, hull.B * 0.35], [hull.L * 0.3, -hull.B * 0.35]]) {
     const p = toWorld(b, [x, 0, z]);
@@ -981,7 +992,7 @@ function boatBlocked(w, f) {
       const i = w.voxelAt(p[0], y, p[2]);
       if (i < 0) continue;
       const m = w.mat[i];
-      if (m && m !== MAT.water && !(own && own.has(i))) return true;
+      if (m && m !== MAT.water && !floatOwns(f, i)) return true;
     }
   }
   return false;
@@ -1002,32 +1013,76 @@ function surfaceUnder(w, x, z, from) {
 
 function bottomUnder(w, x, z, level, f) {
   const cx = Math.max(0, Math.min(w.nx - 1, Math.floor(x / w.h))), cz = Math.max(0, Math.min(w.nz - 1, Math.floor(z / w.h)));
-  const own = new Set(f.own ?? f.voxels ?? []);
   for (let y = Math.min(w.ny - 1, Math.floor(level / w.h)); y >= 0; y--) {
     const i = w.idx(cx, y, cz);
     const m = w.mat[i];
-    if (m && m !== MAT.water && !own.has(i)) return (y + 1) * w.h;
+    if (m && m !== MAT.water && !floatOwns(f, i)) return (y + 1) * w.h;
   }
   return 0;
 }
 
-/** What is left of its planking: its mass, and the holes where it is gone (below the sheer). */
+/** Cell i holds one of this float's own voxels (its planking, thwarts, oars: wherever it is now). */
+export function floatOwns(f, i) {
+  return f.mb ? ownsCell(f.mb, i) : (f.ownSet ??= new Set(f.own ?? f.voxels ?? [])).has(i);
+}
+
+/** Its envelope (hull frame): the planking and the open inside it encloses. */
+const inHullEnvelope = (hull) => (x, y, z) => x > hull.x0 && x < hull.x1 && Math.abs(z) < hull.half(x, y);
+
+/**
+ * Its voxels where it is now (sim/movingBody.js restamp), once it has moved half a voxel or more
+ * (at most ten times a second): their heat, fire and char go with them; the pond's water is
+ * pushed out of its hull and comes back where it was. → the restamp's counts, or null (no need).
+ */
+export function stampFloat(w, f, force = false) {
+  const b = f.body, mb = f.mb;
+  if (!mb || !b?.pose) return null;
+  const hull = b.hull;
+  const pond = !!f.water && !f.water.sea;
+  const opts = {
+    displace: (m) => m === MAT.water,
+    inside: inHullEnvelope(hull),
+    bounds: [[hull.x0, -0.02, -hull.B / 2], [hull.x1, hull.D + 0.02, hull.B / 2]],
+    liquid: MAT.water,
+    refill: pond ? { mat: MAT.water, below: f.water.level } : null,
+  };
+  if (!force && !needsRestamp(mb, b.pose, w.h, 0.5)) {
+    // (lying still off its berth: the pond's water that ran in through the gaps between its voxels, out again)
+    if (pond && mb.stamps > 0) {
+      f.stampT = 0.3;
+      displaceLiquid(w, mb, opts);
+    }
+    return null;
+  }
+  f.stampT = 0.1;
+  return restamp(w, mb, b.pose, opts);
+}
+
+/**
+ * What is left of its planking: its mass, its shell's volume, and the holes where it is gone (below
+ * the sheer); what is under the water is wet through (it does not burn: a burning boat burns down
+ * to its waterline).
+ */
 function checkPlanking(w, f) {
-  let left = 0, ch = 0;
+  const mb = f.mb;
+  syncBody(w, mb);
+  let left = 0, ch = 0, n = 0;
   const holes = [];
   const area = w.h * w.h;
-  for (let k = 0; k < f.voxels.length; k++) {
-    const i = f.voxels[k];
-    const m = w.mat[i];
-    if (m && m !== MAT.water) {
+  const hull = f.body.hull;
+  const S = mb.s;
+  for (let k = 0; k < mb.n; k++) {
+    if (mb.tag[k] !== 1) continue;
+    n++;
+    if (S.mat[k]) {
       left++;
-      ch += w.char[i];
+      ch += S.char[k];
       continue;
     }
-    const p = f.voxLocal[k];
-    if (p[1] < f.body.hull.sheer(p[0]) - 0.02) holes.push({ p, area });
+    const p = [mb.local[3 * k], mb.local[3 * k + 1], mb.local[3 * k + 2]];
+    if (p[1] < hull.sheer(p[0]) - 0.02) holes.push({ p, area });
   }
-  f.left = f.n0 ? left / f.n0 : 1;
+  f.left = n ? left / n : 1;
   f.char = left ? ch / left : 1;
   // (a hole is no bigger than the hull: the planks gone, at most the bottom's area)
   if (holes.length > 40) {
@@ -1037,9 +1092,33 @@ function checkPlanking(w, f) {
   }
   f.plankHoles = holes;
   updateHoles(f);
+  // (its shell burnt away: less wood to float on once it is swamped: hydro)
+  f.body.shellLoss = 1 - f.left;
   const m = f.body.hullMass0 * (0.3 + 0.7 * f.left);
   if (Math.abs(m - f.body.hullMass) > 1) {
     f.body.hullMass = m;
     updateMass(f.body);
+  }
+  if (f.water) quenchBelow(w, f, f.water.level);
+}
+
+/** Its voxels under the water's surface: wet through, no hotter than boiling, not burning. */
+function quenchBelow(w, f, level) {
+  const mb = f.mb;
+  const { nx, ny, h } = w;
+  for (let k = 0; k < mb.n; k++) {
+    const c = mb.at[k];
+    if (c < 0) continue;
+    const y = ((Math.floor(c / nx) % ny) + 0.5) * h;
+    if (y > level - 0.25 * h) continue;
+    const m = w.mat[c];
+    if (!m) continue;
+    w.flags[c] &= ~(F_BURNING | F_SMOLDER);
+    w.hrr[c] = 0;
+    if (w.temp[c] > 100) w.temp[c] = 100;
+    if (w.skin[c] > 100) w.skin[c] = 100;
+    const wet = (MATERIALS[m]?.maxMoisture ?? 0) * 0.9;
+    if (w.moist[c] < wet) w.moist[c] = wet;
+    w.wetSkin[c] = 1;
   }
 }
