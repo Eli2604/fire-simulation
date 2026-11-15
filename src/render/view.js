@@ -30,6 +30,7 @@ import { ArchipelagoRenderer } from './archipelago.js';
 import { VolcanoRenderer } from './volcano.js';
 import { WaterworksRenderer } from './waterworks.js';
 import { FloatRenderer } from './floats.js';
+import { CarRenderer } from './cars.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
 import { LooseRenderer } from './loose.js';
@@ -135,6 +136,7 @@ export class View {
     this.volcanoes = new VolcanoRenderer(this.root); // volcanoes: basalt cones, glowing craters
     this.waterworks = new WaterworksRenderer(this.root); // waterfalls, rivers, water wheels (sim/river.js)
     this.floats = new FloatRenderer(this.root); // rowing boats afloat (sim/buoyancy.js)
+    this.cars = new CarRenderer(this.root); // cars on the move (sim/cars.js): wheels turning and steering
     this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
@@ -240,6 +242,7 @@ export class View {
     this.volcanoes.setWorld(world);
     this.waterworks.setWorld(world);
     this.floats.setWorld(world);
+    this.cars.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.patches.clear();
@@ -822,6 +825,7 @@ export class View {
     this.volcanoes.update(this.time);
     this.waterworks.update(dt, this.world.time ?? this.time);
     this.floats.update(dt);
+    this.cars.update(dt);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);

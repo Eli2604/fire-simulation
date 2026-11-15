@@ -557,6 +557,44 @@ to put it down; rounds through your side of the cockpit hit you. A crash puts yo
 hurt by how hard it was. Chase camera; the instruments show the collective, rotor speed, height,
 speed, attitude, troops, contacts and damage.
 
+### Driving a car
+
+Every `car` object (the street's cars, the military base's jeep and trucks) can be driven. Walk up
+to a front door and press **E** (`walk/carDrive.js`): you take the driver's seat and turn the key.
+**W/S** on / brake (an automatic: S held at a standstill puts it in reverse, then S drives and W
+brakes), **A/D** steer, **Space** the handbrake, **H** the horn, **R** the engine off / on, the
+**mouse** looks round it, **E** gets you out once it is slow. Chase camera; the HUD shows the speed,
+the gear, the revs and the fuel.
+
+- **Dynamics** (`sim/carPhysics.js`, pure): an engine torque curve (petrol for a car, a diesel for
+  the jeep and trucks) with an idle governor, a rev limiter, engine braking and stalling; an
+  automatic gearbox (a slipping clutch from rest, shifts that come later the harder you press);
+  the driven rear wheels' spin integrated against the tyre's force (slip ratio: wheelspin, locked
+  wheels), lateral tyre forces from the slip angles (a bicycle model: understeer at speed), all in
+  the friction circle of the surface's grip; brakes (front-biased, they lock and skid), rolling
+  resistance, air drag, the load moved on and off the axles, the slope. A hatchback does 0-100 km/h
+  in ~10 s and ~190 km/h. Fuel is burnt from its power (~250 g/kWh) and idle flow.
+- **In the world** (`sim/cars.js`): the ground under each wheel is the top of the voxels there
+  (steps of a coarse grid smoothed into ramps), the grip from its material; its body stops on
+  solid voxels above its ground clearance (an impact: damage, sim/impact.js crushes what it hits
+  and makes the sound); cars push each other (momentum along the normal); a man in the way is
+  knocked down at speed, stopped for when it is slow. Its **voxels move with it**
+  (`sim/carBody.js`): taken out of the grid and put back at its pose with all their state, so a
+  burning car keeps burning as it drives (and its fuel tank stays a sealed vessel). The engine dies
+  when its bay has burnt or the car is wrecked; the fuel left is what the tank's petrol voxels hold.
+  On the move its voxels are hidden and `render/cars.js` draws it with its wheels turning and
+  steering and its body on its springs.
+- **AI drivers** (`ai/carDriver.js`): `driveTo(car, target, { speed })` plans a route over the
+  ground (A* on 1 m cells: roads cost less, walls, trees and water are out, steps of more than
+  ~0.6 m too), follows it by pure pursuit, slows for bends, stops for what is ahead and steers
+  round cars and men just off its line, backs out when stuck. A squad falling back to a car, or
+  mounting up to back up a team that called, is driven by the man at its wheel
+  (`ai/vehicles.js` car adapter: seats with their weight).
+- **Sound** (`audio/carSound.js`, `audio/carVoices.js`): the engine at its firing frequency (rpm /
+  60 × cylinders / 2), louder and brighter under load, the intake, a diesel's rattle, the starter,
+  the gear shifts; the tyres' roll and squeal from their slip, scrub off the road; the wind; the
+  brakes; the horn; crashes; for every car, with distance and the Doppler shift.
+
 ### Flying the jet (carrier scenario)
 
 Walk up to any of the jets on the flight deck and press **E** (the two on the bow catapults

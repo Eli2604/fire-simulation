@@ -6,7 +6,8 @@
  *
  *   findVehicles(sq)        the vehicles round a squad: the host's (host.vehicles(): raw objects or
  *                           adapters), else its world's (host.world or host.ropeSim.world: w.helis
- *                           (their .ai), w.floats (rowing boats), w.vehicles of type 'car')
+ *                           (their .ai), w.floats (rowing boats), w.cars (sim/cars.js: driven for
+ *                           real), w.vehicles of type 'car')
  *   vehicleOf(x)            the adapter for x (made once, kept): V
  *
  *   V.kind                  'helicopter' | 'boat' | 'car' | 'vehicle'
@@ -20,9 +21,12 @@
  *   V.usable(), V.stationary()   fit to go (not crashed, sunk or burning; a pilot); sitting still
  *   V.entry(i)              where a man gets in to seat i (beside it, on the ground)
  *   V.go(to), V.step(dt), V.arrived(), V.moving()   off it goes: its own pilot flies a helicopter
- *                           (a 'land' mission to `to`: it spins up, flies, lands); a boat is rowed and
- *                           a car driven here (kinematic: turn, then on at its speed), unless the
- *                           object has its own (rowTo / driveTo / goTo) which is used instead
+ *                           (a 'land' mission to `to`: it spins up, flies, lands); a car of the
+ *                           world (sim/cars.js) is driven by the man at its wheel (ai/carDriver.js:
+ *                           on the roads, round what is in the way, its dynamics sim/carPhysics.js);
+ *                           a plain boat is rowed and a plain car driven here (kinematic: turn,
+ *                           then on at its speed), unless the object has its own (rowTo / driveTo /
+ *                           goTo) which is used instead
  *   V.place()               the men aboard put in their seats (a helicopter does that itself)
  *
  * Frames: a helicopter its own (ai/helicopter.js heliToWorld: x forward, z right). Everything else
@@ -40,6 +44,9 @@
 import { heliToWorld } from './helicopter.js';
 import { framePose, toWorld as hullToWorld } from '../sim/buoyancy.js';
 import { initBoat, boardSeat, leaveSeat, rower } from '../sim/boats.js';
+import { boardCar, leaveCar, carUsable, placeAboard } from '../sim/cars.js';
+import { carToWorld, startEngine } from '../sim/carPhysics.js';
+import { driveTo } from './carDriver.js';
 
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const ADAPTER = new WeakMap();
@@ -66,7 +73,7 @@ export function vehicleOf(x) {
   if (ADAPTER.has(x)) return ADAPTER.get(x);
   const kind = kindOfVehicle(x);
   if (!kind) return null;
-  const V = kind === 'helicopter' ? heliAdapter(x) : kind === 'boat' && x.spec?.hull && Array.isArray(x.seats) && typeof x.seats[0]?.x === 'number' ? floatAdapter(x) : plainAdapter(x, kind);
+  const V = kind === 'helicopter' ? heliAdapter(x) : kind === 'car' && x.isCar ? carAdapter(x) : kind === 'boat' && x.spec?.hull && Array.isArray(x.seats) && typeof x.seats[0]?.x === 'number' ? floatAdapter(x) : plainAdapter(x, kind);
   ADAPTER.set(x, V);
   return V;
 }
@@ -80,7 +87,7 @@ export function findVehicles(sq) {
 /** A world's vehicles: its helicopters, its boats, its cars. */
 export function worldVehicles(w) {
   if (!w) return [];
-  return [...(w.helis ?? []).map((h) => h.ai ?? h), ...(w.floats ?? []), ...(w.vehicles ?? []).filter((v) => /car|truck|jeep/.test(String(v.type ?? v.kind ?? '')))];
+  return [...(w.helis ?? []).map((h) => h.ai ?? h), ...(w.floats ?? []), ...(w.cars ?? []), ...(w.vehicles ?? []).filter((v) => /car|truck|jeep/.test(String(v.type ?? v.kind ?? '')))];
 }
 
 /* ------------------------------------------------------------------ the helicopter */
@@ -240,6 +247,66 @@ function floatAdapter(x) {
         if (!m.dead && !m.vehFiring) m.anim = m.down ? 'woundedDown' : S.shoot ? 'kneelAim' : 'deskSit';
       });
     },
+  };
+  V.free = () => freeSeats(V);
+  V.entry = (i) => entryOf(V, i);
+  return V;
+}
+
+/**
+ * A car of the world (sim/cars.js: driven by the dynamics of sim/carPhysics.js): its own seats
+ * (their weight in it), the man in its drive seat takes it there by ai/carDriver.js driveTo (on
+ * the roads where there are any), the world steps it (sim/cars.js stepCars; a test steps it
+ * itself: stepCarList). Closed: no one fires out of it.
+ */
+function carAdapter(c) {
+  const seats = c.seats.map((s, i) => ({ i, role: s.role, label: s.label, at: s.at.slice(), side: Math.sign(s.at[2]) || 1, drive: !!s.drive, shoot: false, crewed: false }));
+  const V = {
+    isVehicleAdapter: true, kind: 'car', ref: c, id: c.id, seats, radius: Math.max(2.6, c.spec.L / 2 + 0.6), halfW: c.spec.W / 2,
+    speed: c.cruise ?? VEH_SPEED.car,
+    p: () => [c.x, c.y, c.z],
+    yaw: () => c.yaw,
+    toWorld: (l) => carToWorld(c, l),
+    occupant: (i) => c.seats[i]?.who ?? null,
+    holds: (m) => c.seats.some((s) => s.who === m),
+    usable: () => carUsable(c) && !c.player,
+    stationary: () => Math.hypot(c.vx, c.vz) < 0.5 && !(c.drive && !c.drive.done),
+    driver: () => c.seats.find((s) => s.drive)?.who ?? null,
+    needsDriver: () => true,
+    board(m, i) {
+      if (boardCar(c, m, i) < 0) return false;
+      Object.assign(m, { aboard: V.id, seat: i, path: null, moving: false });
+      V.place();
+      return true;
+    },
+    leave(m) {
+      leaveCar(c, m);
+      // out of his door, on the ground beside it
+      const s = seats[m.seat] ?? seats[0];
+      if (s) {
+        const q = V.toWorld([s.at[0], 0, s.side * (V.halfW + 0.9)]);
+        m.p = [q[0], c.y, q[2]];
+      }
+      m.aboard = null;
+      m.seat = null;
+      m.frame = null;
+      m.squadInit = undefined;
+    },
+    go(to) {
+      V.dest = to.slice();
+      V.started = true;
+      startEngine(c);
+      driveTo(c, to, { speed: V.speed, radius: 4 });
+    },
+    // (the car itself is stepped by the world: sim/cars.js; its driver takes it to c.drive.target)
+    step() {
+      if (!V.dest) return;
+      if (!c.drive || (c.drive.done && Math.hypot(c.vx, c.vz) < 0.4)) V.dest = null;
+      V.place();
+    },
+    moving: () => !!V.dest,
+    arrived: () => !!V.started && !V.dest,
+    place: () => placeAboard(c),
   };
   V.free = () => freeSeats(V);
   V.entry = (i) => entryOf(V, i);

@@ -11,6 +11,7 @@ import { stepWounds } from './wounds.js';
 import { stepVolcanoes } from './volcano.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
 import { stepFloats } from './buoyancy.js';
+import { stepCars } from './cars.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
@@ -236,6 +237,7 @@ export class Simulation {
     stepWater(this, dt);
     stepFlood(this, dt);
     stepFloats(this, dt); // rowing boats afloat (Archimedes: sim/buoyancy.js), on the waves, taking water
+    stepCars(this, dt); // cars driven (you, an AI): their dynamics, their voxels moved with them (sim/cars.js)
     stepLeaks(this, dt);
     stepBreach(this, dt); // a hull breach: the sea pushes loose things in, the escaping air pulls them out
     stepSmithies(this, dt); // a smith at his forge (sim/smithy.js): the fire, the blade, the quench, the shop

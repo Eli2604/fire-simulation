@@ -11,6 +11,7 @@ import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { HeliFlight } from './heliFlight.js';
 import { BoatRow } from './boatRow.js';
+import { CarDrive } from './carDrive.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
@@ -320,6 +321,9 @@ export class Walkthrough {
     // a helicopter on the ground: into the pilot's seat (walk/heliFlight.js)
     const heli = this.heliNear(w);
     if (heli) return this.boardHeli(heli);
+    // a car: by its front door, into the driver's seat (walk/carDrive.js)
+    const car = CarDrive.near(w, [this.pos.x, this.pos.y, this.pos.z]);
+    if (car) return this.boardCar(car);
     let best = null;
     let bd = 1.7;
     w.pickups.forEach((pk) => {
@@ -424,6 +428,27 @@ export class Walkthrough {
     this.lamp.intensity = 0;
     const how = f.kind === 'sail' ? 'W/S sheet in / out, Q trim it for me, A/D tiller' : f.motor ? 'R start the motor, W/S throttle, A/D tiller' : f.kind === 'canoe' ? 'W/S paddle, A/D turn' : 'W/S pull / back water, A/D port / starboard';
     this.say(`${how}, mouse to look, C cast off / make fast, E step ashore (Shift+E: over the side)`, 6);
+  }
+
+  /** Into a car's driver's seat and drive it (see carDrive.js). */
+  boardCar(c) {
+    const sim = this.hooks.getSim();
+    this.spraying = false;
+    this.arm = null;
+    this.flight = new CarDrive(this, sim, c);
+    if (this.flight.seat < 0) {
+      this.flight.dispose();
+      this.flight = null;
+      return this.say('Someone is at the wheel', 2);
+    }
+    if (this.gun) this.gun.visible = false;
+    this.aiming = false;
+    this.aimK = 0;
+    this.view.camera.fov = 70;
+    this.view.camera.updateProjectionMatrix();
+    this.el.mask.hidden = true;
+    this.lamp.intensity = 0;
+    this.say(`W/S on / brake (S held at a standstill: reverse), A/D steer, Space handbrake, H horn, R engine, mouse to look, E get out${c.burning ? '. IT IS ON FIRE' : c.dead ? `. It will not go: ${c.why ?? 'wrecked'}` : ''}`, 6);
   }
 
   /** Into the helicopter's pilot seat and fly it (see heliFlight.js). */
@@ -838,6 +863,8 @@ export class Walkthrough {
       helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
       // the boats: motor, hull, oars, sail from each one's state (audio/boatSound.js)
       boats: (w.floats ?? []).filter((f) => f.row),
+      // the cars: engine, tyres, wind from each one's state (audio/carSound.js)
+      cars: w.cars ?? [],
       effort: 0,
       heat: 0,
       airFraction: 1,
@@ -1333,6 +1360,11 @@ export class Walkthrough {
         if (this.downed) this.flight.pilotDown();
         // and you hear it (and the others): audio/heliSound.js
         this.flightSound(sim);
+      } else if (this.flight instanceof CarDrive) {
+        // at the wheel: rounds reach you; down, you fall out of it; you hear it (and the others)
+        this.takeHits(w);
+        if (this.downed) this.flight.tryExit(true);
+        this.flightSound(sim);
       } else if (this.flight instanceof BoatRow) {
         // in a boat: you hear it (and the others) from your thwart
         this.takeHits(w);
@@ -1362,7 +1394,7 @@ export class Walkthrough {
     {
       const pt = w.portals.find((q) => Math.hypot(q.p[0] - this.pos.x, q.p[2] - this.pos.z) < q.r + 0.8 && Math.abs(q.p[1] - this.pos.y) < 1.5);
       const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
-      const near = pt ? `E: ${pt.label}` : veh ? 'E: climb into the jet' : this.heliNear(w) ? 'E: fly the helicopter' : null;
+      const near = pt ? `E: ${pt.label}` : veh ? 'E: climb into the jet' : this.heliNear(w) ? 'E: fly the helicopter' : (w.cars?.length && CarDrive.near(w, [this.pos.x, this.pos.y, this.pos.z])) ? `E: drive the ${CarDrive.near(w, [this.pos.x, this.pos.y, this.pos.z]).label}` : null;
       if (near && near !== this.near) this.say(near, 3);
       this.near = near;
     }
@@ -1899,6 +1931,8 @@ export class Walkthrough {
       helis: (w.helis ?? []).map((s) => s.ai).filter(Boolean),
       // the boats: motor, hull, oars, sail from each one's state (audio/boatSound.js)
       boats: (w.floats ?? []).filter((f) => f.row),
+      // the cars: engine, tyres, wind from each one's state (audio/carSound.js)
+      cars: w.cars ?? [],
       sprinkler: nearestSprinkler(w, head),
       inflow: sim.stats.flooding ? { pos: this.breachPos(w), rate: sim.stats.flooding } : null,
     });

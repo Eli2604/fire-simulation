@@ -29,10 +29,15 @@
  *    frequency, cavitating, racing; the hull's hiss, the bow slapping onto the waves, the oars'
  *    and paddles' catches and splashes, the mooring line creaking, water sloshing aboard, the sail
  *    flogging and the rigging humming, rounds through the hull; with the Doppler shift.
+ *  - cars (audio/carSound.js, audio/carVoices.js: state.cars): the engine at its firing frequency
+ *    from its revs and cylinders, its load, the gear shifts, the exhaust and intake, the starter;
+ *    the tyres rolling and squealing with their slip, the wind, the brakes, the horn, crashes;
+ *    with the Doppler shift.
  *  - CPU: a voice budget (MAX_VOICES one-shots at a time; quieter ones are dropped).
  */
 import { HeliVoices } from './heliVoices.js';
 import { BoatVoices } from './boatVoices.js';
+import { CarVoices } from './carVoices.js';
 import { heliCrashSound, heliHitSound } from './heliSound.js';
 import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
 
@@ -123,6 +128,7 @@ export class SoundScape {
     this.seenEvents = 0;
     this.heliVoices = new HeliVoices(this);
     this.boatVoices = new BoatVoices(this);
+    this.carVoices = new CarVoices(this);
   }
 
   stop() {
@@ -130,6 +136,7 @@ export class SoundScape {
     this.running = false;
     this.heliVoices = null;
     this.boatVoices = null;
+    this.carVoices = null;
     this.ctx.close();
     this.ctx = null;
   }
@@ -326,6 +333,8 @@ export class SoundScape {
     if (state.helis) this.updateHelis(state.helis);
     // the boats (motor, hull, oars, sail, from each one's state: audio/boatSound.js)
     if (state.boats) this.updateBoats(state.boats);
+    // the cars (engine, tyres, wind, horn from each one's state: audio/carSound.js)
+    if (state.cars) this.updateCars(state.cars);
     // breathing (not at the controls of a helicopter: no breathing set on)
     if (state.flying) this.nextBreath = t + 1;
     else if (t >= this.nextBreath - 0.05) {
@@ -472,6 +481,13 @@ export class SoundScape {
     if (!this.running) return;
     const pos = listener?.pos ?? this.state?.listener?.pos;
     this.boatVoices?.update(boats, { pos, vel: listener?.vel ?? this.lVel ?? [0, 0, 0], underwater: !!this.state?.underwater });
+  }
+
+  /** The cars heard from where the listener is (its velocity: as updateHelis found it). */
+  updateCars(cars, listener = null) {
+    if (!this.running) return;
+    const pos = listener?.pos ?? this.state?.listener?.pos;
+    this.carVoices?.update(cars, { pos, vel: listener?.vel ?? this.lVel ?? [0, 0, 0], underwater: !!this.state?.underwater });
   }
 
   /** A helicopter's event (ai/helicopter.js): a round through its skin, its blades flying off, its crash. */
