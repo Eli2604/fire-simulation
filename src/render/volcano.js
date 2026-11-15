@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PATTERN_UNIFORMS, PHOTO_GLSL, PHOTO, photoAtlas } from './patterns.js';
+import { raycastDrawn, nearestVoxel, toSim } from './pickThings.js';
 
 /**
  * Volcanoes drawn as mountains (models/volcano.js, sim/volcano.js). The cone's
@@ -216,6 +217,23 @@ totalEmissiveRadiance += vec3(1.0, 0.32, 0.06) * glow * 2.2;`,
     mesh.receiveShadow = true;
     this.group.add(mesh);
     return { v, mesh, uniforms };
+  }
+
+  /**
+   * A click on the cone (render/pick.js): its voxels are hidden under this surface (which lies
+   * half a voxel over them, ridges and gullies a little more): the rock nearest the hit, and the
+   * volcano itself. { distance, point, normal, voxel, thing: { kind: 'volcano', index } } or null.
+   */
+  pick(ray, root) {
+    const w = this.world;
+    let best = null;
+    for (const it of this.items) {
+      const h = raycastDrawn(ray, it.mesh);
+      if (h && (!best || h.distance < best.distance)) best = { ...h, it };
+    }
+    if (!best) return null;
+    const voxel = nearestVoxel(w, toSim(root, best.point), Math.max(0.5, w.h * 3), (i) => w.mat[i]);
+    return { distance: best.distance, point: best.point, normal: best.normal, voxel, thing: { kind: 'volcano', index: w.volcanoes.indexOf(best.it.v) } };
   }
 
   update(time) {

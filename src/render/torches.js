@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { torchWall } from '../sim/patches.js';
 import { lod } from './lod.js';
+import { raycastDrawn, nearestVoxel, toSim } from './pickThings.js';
 
 /**
  * Their level of detail (render/lod.js), by size on the screen: 0 everything; 1 (under ~8 px)
@@ -189,6 +190,36 @@ export class TorchRenderer {
     for (const m of [wax, wick]) m.castShadow = true;
     this.group.add(obj);
     return { obj, flame, core, head: wax, halo, body, wick, seed: Math.random() * 100, candle: true, radius: Math.max(c.height / 2, c.radius * 2.2), lod: {} };
+  }
+
+  /**
+   * A click on a torch or candle (render/pick.js): its handle, bracket and head (hidden voxels
+   * under the mesh: mapped to the one there) or its flame (drawn only). { distance, point,
+   * normal, voxel (-1: the flame, the iron), thing: { kind: 'torch', heater } } or null.
+   */
+  pick(ray, root) {
+    let best = null;
+    const sph = new THREE.Sphere();
+    for (const [ht, it] of this.items) {
+      if (!it.obj.visible) continue;
+      it.obj.updateMatrixWorld(true);
+      let h = raycastDrawn(ray, it.obj);
+      // the flame: a soft billboard, picked as a ball round its middle
+      if (it.flame.visible && it.flame.scale.y > 0.01) {
+        it.flame.getWorldPosition(sph.center);
+        sph.radius = Math.max(0.03, Math.max(it.flame.scale.x, it.flame.scale.y) * 0.45);
+        const q = ray.intersectSphere(sph, new THREE.Vector3());
+        if (q) {
+          const d = q.distanceTo(ray.origin);
+          if (!h || d < h.distance) h = { distance: d, point: q, normal: ray.direction.clone().negate(), flame: true };
+        }
+      }
+      if (!h || (best && h.distance >= best.distance)) continue;
+      best = { ...h, ht };
+    }
+    if (!best) return null;
+    const voxel = best.flame ? -1 : nearestVoxel(this.world, toSim(root, best.point), Math.max(0.12, (this.world?.h ?? 0.05) * 2));
+    return { distance: best.distance, point: best.point, normal: best.normal, voxel, thing: { kind: 'torch', heater: best.ht } };
   }
 
   update(time) {

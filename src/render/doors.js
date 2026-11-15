@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MATERIALS } from '../sim/materials.js';
 import { F_HIDDEN } from '../sim/world.js';
 import { doorGlassBroken } from '../sim/doors.js';
+import { raycastDrawn, nearestOf, toSim } from './pickThings.js';
 
 /**
  * Doors drawn as doors. A door is simulated as voxels (they burn, char, break,
@@ -289,6 +290,26 @@ export class DoorRenderer {
     for (const [w2, h2, x, y] of [[W, f, W / 2, f / 2], [W, f, W / 2, H - f / 2], [f, H, f / 2, H / 2], [f, H, W - f / 2, H / 2]]) this.box(leaf, this.m.alu, w2, h2, T, x, y, 0);
     for (const s of [-1, 1]) this.box(leaf, this.m.alu, W * 0.7, 0.03, 0.03, W / 2, 1.0, s * (T / 2 + 0.04));
     return { glass };
+  }
+
+  /**
+   * A click on a door (render/pick.js): its leaf as drawn, shut or swung open. Shut, the door is
+   * its hidden voxels (the one nearest the hit); open, they are out of the grid (sim/doors.js
+   * keeps them): no voxel, the door itself. { distance, point, normal, voxel, thing: { kind:
+   * 'door', k } } or null.
+   */
+  pick(ray, root) {
+    const w = this.world;
+    let best = null;
+    for (const it of this.items) {
+      if (it.gone) continue;
+      const h = raycastDrawn(ray, it.pivot);
+      if (h && (!best || h.distance < best.distance)) best = { ...h, it };
+    }
+    if (!best) return null;
+    const { d, k } = best.it;
+    const voxel = d.open ? -1 : nearestOf(w, d.voxels, toSim(root, best.point), (i) => w.mat[i] && w.doorTag[i] === k + 1);
+    return { distance: best.distance, point: best.point, normal: best.normal, voxel, thing: { kind: 'door', k } };
   }
 
   update(dt) {
