@@ -54,6 +54,15 @@ when it is decided or done.
 
 - Mobile tuning; consoles are out of reach for a browser app.
 
+## Physics bugs found along the way
+
+- `sim/water.js` makes up 0.5 kg/m²·s of new water wherever water touches a solid that cannot soak
+  it up; it runs off into puddles, and the puddle code stacks water up to 5 cells above the floor,
+  even on solids. The smithy clears the run-off round its tub; every other scene still floods slowly.
+  Fix: wet only as much as the solid can absorb.
+- Steel's heat capacity is a constant 490 J/kg·K; over 760–1050 °C it averages ~620, so hot steel
+  cools ~25 % too fast everywhere. Fix: temperature-dependent heat capacity per material.
+
 ## Known limits of features already built
 
 - Blue and red soldiers look the same; you can shoot blue soldiers.
