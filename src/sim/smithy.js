@@ -67,7 +67,7 @@ export const FORGE = {
   stroke: 0.012, // kg of air per stroke of the bellows
   blastMax: 0.015, // kg/s the bellows can blow through the tuyere
   jet: 0.004, // m²: the tuyere's jet where it comes up into the bed (~7 cm across)
-  restock: 0.5, // he tops the pot up when it is down to this share of its charcoal
+  restock: 0.85, // he tops the pot up when this share of its charcoal voxels is left (the heart burns out first)
 };
 
 export const HEATS = {
@@ -78,6 +78,7 @@ export const HEATS = {
   pumpForge: 1250, // he keeps the bed at least this hot while he forges
   pumpHarden: 1050,
   cold: 60, // °C: the quenched blade is cold; a blade on the rack this cool joins the display
+  burning: 1250, // °C: steel this hot starts to burn (sparkles, scale): he takes it out of the fire
 };
 
 /** What he makes (the sword is the one he forges here: its voxels; the others stock the shop). */
@@ -478,6 +479,7 @@ function readForge(w, S) {
   F.coal = kg;
   if (!F.coal0) F.coal0 = kg;
   F.voxels = n;
+  if (!F.voxels0) F.voxels0 = n;
   F.burning = nb;
   F.T = nb ? Tb / nb : n ? Tall / n : w.ambient;
   F.combustion = q;
@@ -823,7 +825,7 @@ export function stepSmith(S, dt, env) {
     }
     case 'heat': {
       // at the bellows lever until it is hot enough (topping up the charcoal when it is low)
-      if (F.coal0 > 0 && F.coal < F.coal0 * FORGE.restock && !S.stoked) {
+      if (F.voxels0 > 0 && F.voxels < F.voxels0 * FORGE.restock && !S.stoked) {
         go(S, 'coal', 'stoke');
         break;
       }
@@ -831,8 +833,10 @@ export function stepSmith(S, dt, env) {
       const harden = b?.stage === 'harden';
       const want = harden ? HEATS.hardening : HEATS.forging;
       const keep = harden ? HEATS.pumpHarden : HEATS.pumpForge;
-      // hot enough (or as hot as this fire will make it after a long wait)
-      if (b && (b.T >= want || (b.inFire > 240 && b.T >= (harden ? HEATS.austenite : HEATS.working) + 40))) {
+      // hot enough (or as hot as this fire will make it after a long wait; or the point is
+      // getting white hot: he takes it out before it burns)
+      const enough = (harden ? HEATS.austenite : HEATS.working) + 40;
+      if (b && (b.T >= want || ((b.inFire > 240 || b.Tpeak > HEATS.burning) && b.T >= enough))) {
         go(S, 'forge', 'take');
         break;
       }

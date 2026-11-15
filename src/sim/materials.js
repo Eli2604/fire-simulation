@@ -438,12 +438,12 @@ const DEFS = {
     // a smith's forge charcoal (lump charcoal in a fire pot: sim/smithy.js). It glows more than it
     // flames, and how fast it burns is set by how fast air reaches it (the oxygen diffusing to the
     // glowing surface): in still air it holds ~950 °C, in the bellows' blast through the tuyere it
-    // burns faster and hotter (to ~1400 °C). draught / draughtHeat / maxBlastTemp: see DEFAULTS
+    // burns faster and hotter (to ~1350 °C). draught / draughtHeat / maxBlastTemp: see DEFAULTS
     label: 'Forge charcoal', color: [0.08, 0.075, 0.07], density: 250, specificHeat: 1000, conductivity: 0.12,
     combustible: true, ignitionTemp: 380, pyrolysisTemp: Infinity, heatOfCombustion: 30e6, burnRate: 0.0025,
     selfHeating: 0.6, residue: 0.05, residueMaterial: 'ash', smokeYield: 0.0008, smokeColor: [0.55, 0.55, 0.55],
     maxMoisture: 1.0, extinctionMoisture: 0.3, charColor: [0.08, 0.075, 0.07], maxBurnTemp: 950,
-    draught: 3, draughtHeat: 160, maxBlastTemp: 1420, glows: true,
+    draught: 3, draughtHeat: 160, maxBlastTemp: 1350, glows: true,
   },
 };
 
