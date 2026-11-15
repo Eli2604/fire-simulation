@@ -48,8 +48,9 @@ function temps(w, b) {
 }
 
 test('the scene: a compact smithy at fine voxels, the forge a fire of charcoal voxels, a trough of water voxels; no metal bars', () => {
-  assert.deepEqual(resolveScenario('metalBars'), { scenario: 'metalBars', zone: null });
-  const desc = SCENARIOS.metalBars;
+  assert.deepEqual(resolveScenario('metalBars'), { scenario: 'fantasy', zone: 'smithy' });
+  assert.match(SCENARIOS.fantasy.zones.smithy.name, /sword/);
+  const desc = SMITHY_SCENE;
   assert.match(desc.name, /[Ss]mith/);
   assert.match(desc.name, /sword/);
   assert.equal(desc.exposure, 'indoor');
