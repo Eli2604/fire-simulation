@@ -4,6 +4,7 @@
  * hand signal or radio call he is giving (a speech bubble), and each team's threat marker.
  */
 import * as THREE from 'three';
+import { RANK_ABBR } from '../ai/experience.js';
 
 export const ROLE_COLOR = { UAV: '#b48ce6', CMD: '#e7c35a', MG: '#e0604a', R1: '#5aa9e6', R2: '#7cc46a' };
 
@@ -90,7 +91,8 @@ export class SquadViz {
       path: new THREE.Mesh(quadGeo(900), mat(0.95)),
       trail: new THREE.Mesh(quadGeo(1600), mat(0.4)),
       ring: new THREE.Mesh(new THREE.RingGeometry(0.3, 0.38, 32), mat(0.9)),
-      tag: textSprite((m.unit ? m.unit[0] + '·' : '') + m.squad, ROLE_COLOR[m.squad] ?? '#fff', 0.42, 0.14),
+      // (his rank too, when the scene gave him one: models/squad.js, ai/experience.js)
+      tag: textSprite((m.unit ? m.unit[0] + '·' : '') + m.squad + (RANK_ABBR[m.rank] ? ` ${RANK_ABBR[m.rank]}` : ''), ROLE_COLOR[m.squad] ?? '#fff', RANK_ABBR[m.rank] ? 0.62 : 0.42, 0.14),
       // the commander's plan (ai/strategy.js): the flank route he has picked for a team, dashed orange
       plan: new THREE.Mesh(quadGeo(900), new THREE.MeshBasicMaterial({ color: '#ff9a3c', transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, toneMapped: false, side: THREE.DoubleSide })),
       bubble: null, signal: null, until: 0,

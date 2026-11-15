@@ -88,7 +88,8 @@ export function feasible(sq, cas, al) {
   if (!safe) return { ok: false, why: 'no cover near him' };
   // the rescuer: the nearest (not the gunner if anyone else can); the coverer: the gunner, else the nearest other
   const byDist = fit.slice().sort((a, b) => d2(a.p, cas.p) - d2(b.p, cas.p));
-  const rescuer = byDist.find((m) => m.squad !== 'MG') ?? byDist[0];
+  // (the team's medic, models/squad.js role, if he is within 25 m: it is his job)
+  const rescuer = byDist.find((m) => m.squadRole === 'medic' && d2(m.p, cas.p) < 25) ?? byDist.find((m) => m.squad !== 'MG') ?? byDist[0];
   const coverer = fit.find((m) => m.squad === 'MG' && m !== rescuer) ?? byDist.find((m) => m !== rescuer);
   return { ok: true, safe, rescuer, coverer };
 }

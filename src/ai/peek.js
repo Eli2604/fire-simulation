@@ -19,18 +19,15 @@
  *    is there, and his head shows to the enemy while it lasts (headOf).
  */
 import { HANDLING, handKind } from './weapons.js';
+import { EXPERIENCE } from './experience.js';
 
 /** The clips (s, at speed 1) and what each does to the eye (perception: peek.kind). */
 export const PEEK_CLIPS = { peekWall: 2.6, leanLeft: 2.2, leanRight: 2.2, sliceLeft: 2.8, sliceRight: 2.8 };
 export const PEEK_KIND = { peekWall: 'over', leanLeft: 'left', leanRight: 'right', sliceLeft: 'sliceLeft', sliceRight: 'sliceRight' };
 export const PEEK_LABELS = { peekWall: 'Peek over (low wall)', leanLeft: 'Peek round the corner (left)', leanRight: 'Peek round the corner (right)', sliceLeft: 'Slice the pie (left)', sliceRight: 'Slice the pie (right)' };
 /** Exposure (s, the whole peek) by experience, and the wait between peeks: [min, spread]. */
-export const PEEK_T = {
-  recruit: { dur: 2.6, wait: [3.0, 0.4], vary: 0.2 },
-  regular: { dur: 2.0, wait: [2.6, 1.5], vary: 0.5 },
-  veteran: { dur: 1.5, wait: [2.0, 3.0], vary: 0.8 },
-  elite: { dur: 1.1, wait: [1.6, 4.0], vary: 1.0 },
-};
+// (from the one experience table, ai/experience.js)
+export const PEEK_T = Object.fromEntries(Object.entries(EXPERIENCE).map(([k, E]) => [k, E.peek]));
 const WALL_LOW = [0.55, 1.35]; // a wall to peek over: its top between these (m above his feet)
 const REACH = [0.25, 1.1]; // how far ahead the wall may be (m)
 

@@ -37,6 +37,7 @@
  * world.lightLevel, world.ambient, world.sun.light) and falls back to the world's `dark` flag.
  */
 import { traceVoxels } from './sight.js';
+import { EXPERIENCE } from './experience.js';
 import { MATERIALS } from '../sim/materials.js';
 
 const { hypot, min, max, log10, sqrt, acos } = Math;
@@ -57,12 +58,8 @@ export const SENSES = {
   player: { sightRange: 400, fov: 120, peripheral: 0.5, react: 0.25, nightSight: 1, hearing: 1, hearingPad: 0, investigate: 0 },
 };
 /** What experience does to the senses: sight (range), hearing (range), react (time to notice). */
-export const SKILL_SENSES = {
-  recruit: { sight: 0.85, hearing: 0.9, react: 1.5 },
-  regular: { sight: 1, hearing: 1, react: 1 },
-  veteran: { sight: 1.1, hearing: 1.05, react: 0.8 },
-  elite: { sight: 1.2, hearing: 1.1, react: 0.65 },
-};
+// (from the one experience table, ai/experience.js: react is its 'notice', the time to make a threat out)
+export const SKILL_SENSES = Object.fromEntries(Object.entries(EXPERIENCE).map(([k, E]) => [k, { sight: E.sight, hearing: E.hearing, react: E.notice }]));
 /** The parameters an agent may carry (the editor's and the rig's), with their meaning. */
 export const SENSE_PARAMS = {
   sightRange: 'How far he picks up an enemy in clear sight, in daylight (m)',

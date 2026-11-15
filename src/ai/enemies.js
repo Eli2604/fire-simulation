@@ -6,6 +6,7 @@ import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js
 import { impact, groundMaterial, bodyLanding } from '../sim/impact.js';
 import { nextLeg, areaGoal, holdAt, paceOf, leashHolds, insideZone } from './patrol.js';
 import { sideOf, hostile, PLAYER_SIDE } from './sides.js';
+import { applyKit } from './loadout.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -214,6 +215,8 @@ export class EnemyAI {
         m.armour ??= false;
         m.unit = unit;
         m.guardCtl = true;
+        // (a loadout from the scene, models/enemy.js: his load sets his pace on patrol too, ai/loadout.js)
+        if (m.kit) applyKit(m);
       }
     }
   }
@@ -522,7 +525,9 @@ export class EnemyAI {
       // (on patrol: the pace of the drawn path's leg, or running back on the leash: ai/patrol.js)
       const pace = e.state === 'patrol' ? paceOf(e) : ((e.pace = null), 1);
       if (e.state !== 'patrol' || e.moving) e.holdStance = null;
-      if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * pace * (e.speedFactor ?? 1));
+      const running = e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent);
+      // (his load: ai/loadout.js, with a loadout from the scene)
+      if (!e.aiming) this.move(e, dt, (running ? RUN : SPEED) * pace * (e.speedFactor ?? 1) * (running ? e.paceK?.run ?? 1 : e.paceK?.walk ?? 1));
       this.closeBehind(e);
       const tr = (e.trail ??= []);
       const last = tr[tr.length - 1];

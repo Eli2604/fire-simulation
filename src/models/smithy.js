@@ -26,6 +26,9 @@ export default {
     coal: { value: 1, min: 0, max: 1, step: 0.05, label: 'Fire pot filled with charcoal (share)' },
     fireTemp: { value: 900, min: 20, max: 1100, step: 10, label: 'Charcoal glowing at the start (°C)' },
     smith: { value: true, label: 'The smith at work' },
+    // the smith himself (sim/smithy.js): how briskly he works, how much steel a blow moves
+    smithPace: { value: 1, min: 0.5, max: 2, step: 0.05, label: 'Work pace (× his timings and hammer rhythm)', group: 'The smith' },
+    smithSkill: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Skill (how much a blow shapes the blade: fewer heats, 0.5 a journeyman)', group: 'The smith' },
     weapons: { value: 3, min: 0, max: 7, step: 1, label: 'Finished weapons on the rack at the start' },
   },
   build(p, { h }) {
@@ -112,6 +115,8 @@ export default {
       coal: p.coal,
       fireTemp: p.fireTemp,
       smith: p.smith,
+      pace: p.smithPace ?? 1,
+      skill: p.smithSkill ?? 0.5,
       weapons: p.weapons,
       fire: at(-0.86, 0.66, -0.92), // the middle of the fire
       // the fire pot (its charcoal: what the smith tops up) and the blade's groove in it

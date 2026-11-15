@@ -34,6 +34,7 @@ import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } f
 import { TerrainEditing } from './terrainPanel.js';
 import { PatrolEditing } from './patrolPanel.js';
 import { CinemaEditing } from './cinemaPanel.js';
+import { squadFolders, guardFolders, remember } from './settingsPanel.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
@@ -538,17 +539,33 @@ export class Editor {
     if (M?.paramGroups) return void this.cinema.folder(gui, ob);
     const fp = gui.addFolder('Parameters');
     ob.params ??= {};
+    // (a param's `group`: a folder of its own in Parameters, the first open, the others closed)
+    const groups = {};
+    const folderOf = (g) => {
+      if (!g) return fp;
+      // (open or closed as it was before the last change: editor/settingsPanel.js remember)
+      if (!groups[g]) groups[g] = remember(fp.addFolder(g), `group:${ob.type}:${g}`, !Object.keys(groups).length);
+      return groups[g];
+    };
+    // (the settings panels' readouts follow every change: weight and speeds, editor/settingsPanel.js)
+    let refresh = () => {};
+    const changed = () => (change(), refresh());
     for (const [key, spec] of Object.entries(M?.params ?? {})) {
       if (spec.list) continue; // (a list: a panel of its own, below)
       ob.params[key] ??= spec.value;
+      const f = folderOf(spec.group);
       let c;
-      if (spec.options) c = fp.add(ob.params, key, spec.options);
-      else if (spec.color) c = fp.addColor(ob.params, key);
-      else if (typeof spec.value === 'boolean') c = fp.add(ob.params, key);
-      else if (typeof spec.value === 'string') c = fp.add(ob.params, key);
-      else c = fp.add(ob.params, key, spec.min, spec.max, spec.step);
-      c.name(spec.label ?? key).onFinishChange(change);
+      if (spec.options) c = f.add(ob.params, key, spec.options);
+      else if (spec.color) c = f.addColor(ob.params, key);
+      else if (typeof spec.value === 'boolean') c = f.add(ob.params, key);
+      else if (typeof spec.value === 'string') c = f.add(ob.params, key);
+      else c = f.add(ob.params, key, spec.min, spec.max, spec.step);
+      // (the squad's size and roles change its makeup: the Men panel is made again)
+      const makeup = (ob.type === 'squad' && ['size', 'droneOperator', 'flameTrooper'].includes(key)) || (ob.type === 'enemy' && key === 'loadout');
+      c.name(spec.label ?? key).onFinishChange(makeup ? () => (change(), this.buildProps()) : changed);
     }
+    if (ob.type === 'squad') refresh = squadFolders(gui, ob, change, () => this.buildProps());
+    else if (ob.type === 'enemy') refresh = guardFolders(gui, ob);
     if (ob.type === 'terrain') this.terrain.folder(gui, ob, change);
     this.patrol.folder(gui, ob); // (a squad's, a guard post's: its drawn patrol)
     if (RIG_TYPES[ob.type] && rigTargetFor(ob)) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);

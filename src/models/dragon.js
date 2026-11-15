@@ -11,6 +11,8 @@
  *              the air: ai/dragonAir.js). Empty: it rests in its lair and now and
  *              then flies round and lands somewhere to crawl about.
  */
+/** What its age does: health ×, scales (of a wound taken off). */
+const AGE = { young: { health: 0.6, armour: 0 }, adult: { health: 1, armour: 0 }, ancient: { health: 1.6, armour: 0.2 } };
 export default {
   label: 'Dragon (lair)',
   params: {
@@ -26,8 +28,13 @@ export default {
     hearing: { value: 1.6, min: 0, max: 5, step: 0.1, label: 'Hearing (× how far a sound carries)' },
     // its impacts (sim/impact.js: landings, stamps, crashes): the closing speed ×, so force ×, energy ײ
     force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (landings, stamps: shockwave, sound)' },
+    // its nature (ai/dragon.js): age scales its health and scales, the fire gland, how fiercely it fights
+    age: { value: 'adult', options: ['young', 'adult', 'ancient'], label: 'Age (young: ×0.6 health, thin scales; ancient: ×1.6 health, thick scales)', group: 'Nature' },
+    fireCapacity: { value: 1, min: 0.3, max: 3, step: 0.1, label: 'Fire breath capacity (× how long its jets last; refills slower when bigger)', group: 'Nature' },
+    aggression: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'Aggression (how long it fights on before it flees: 0.5 at a quarter of its health)', group: 'Nature' },
+    scaleArmour: { value: 0, min: 0, max: 0.8, step: 0.05, label: 'Armour scales (of each wound they take off; added to its age)', group: 'Nature' },
   },
   build(p) {
-    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: p.health, startState: p.start, route: p.route, seed: p.seed, sightRange: p.sightRange, fov: p.fov, hearing: p.hearing, forceScale: p.force ?? 1 }] };
+    return { prims: [], dragons: [{ p: [0, 0, 0], yaw: 0, length: p.length, colours: p.colours, health: Math.round((p.health ?? 600) * (AGE[p.age]?.health ?? 1)), scaleArmour: Math.min(0.9, (p.scaleArmour ?? 0) + (AGE[p.age]?.armour ?? 0)), fireCapacity: p.fireCapacity ?? 1, aggression: p.aggression ?? 0.5, age: p.age ?? 'adult', startState: p.start, route: p.route, seed: p.seed, sightRange: p.sightRange, fov: p.fov, hearing: p.hearing, forceScale: p.force ?? 1 }] };
   },
 };

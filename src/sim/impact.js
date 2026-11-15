@@ -300,7 +300,7 @@ export function bodyLanding(simOrWorld, who, o = {}) {
   if (!p || !w) return null;
   const speed = o.speed ?? Math.sqrt(2 * 9.81 * Math.max(0, o.height ?? 0.5));
   if (speed < 1.5) return null;
-  return impact(simOrWorld, { pos: p.slice(), normal: [0, 1, 0], mass: o.mass ?? who.mass ?? PERSON_KG, velocity: [0, -speed, 0], materials: ['flesh', groundMaterial(w, p)], radius: o.roll ? 0.3 : 0.12, contactTime: o.roll ? 0.35 : 0.09, source: who, target: 'ground', kind: 'landing', name: o.name ?? 'a landing', effects: { damage: !!o.damage, crush: false } });
+  return impact(simOrWorld, { pos: p.slice(), normal: [0, 1, 0], mass: o.mass ?? who.mass ?? PERSON_KG * (who.fallK ?? 1) /* (a soldier's load lands with him: ai/loadout.js) */, velocity: [0, -speed, 0], materials: ['flesh', groundMaterial(w, p)], radius: o.roll ? 0.3 : 0.12, contactTime: o.roll ? 0.35 : 0.09, source: who, target: 'ground', kind: 'landing', name: o.name ?? 'a landing', effects: { damage: !!o.damage, crush: false } });
 }
 
 /* ---------------- acts: their impact keyframes ---------------- */

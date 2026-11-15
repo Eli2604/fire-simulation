@@ -862,7 +862,7 @@ export class DragonAI {
       pose(d, w, dt);
       return;
     }
-    d.fuel = Math.min(1, d.fuel + dt * 0.045);
+    d.fuel = Math.min(1, d.fuel + (dt * 0.045) / Math.sqrt(d.fireCapacity ?? 1));
     d.breathCool -= dt;
     d.biteCool -= dt;
     d.sated = Math.max(0, d.sated - dt);
@@ -916,7 +916,8 @@ export class DragonAI {
     }
 
     // --- behaviour
-    if (d.health < d.maxHealth * 0.25 && d.state !== 'devour' && d.state !== 'snatch') d.state = 'flee';
+    // (an aggressive one fights on longer before it flees: models/dragon.js aggression, 0.5 → a quarter of its health)
+    if (d.health < d.maxHealth * (0.4 - 0.3 * (d.aggression ?? 0.5)) && d.state !== 'devour' && d.state !== 'snatch') d.state = 'flee';
     else if (d.state === 'flee' && d.health > d.maxHealth * 0.6) d.state = 'rest';
     const T = d.target;
     if (T && d.state !== 'devour' && d.state !== 'flee' && d.state !== 'snatch' && d.state !== 'fight' && (d.sated <= 0 || d.anger > 0)) d.state = 'hunt';
@@ -1531,7 +1532,7 @@ export class DragonAI {
     }
     if (d.breathT <= 0) return;
     d.breathT -= dt;
-    d.fuel -= dt * 0.17;
+    d.fuel -= (dt * 0.17) / (d.fireCapacity ?? 1); // (a bigger gland: longer jets)
     if (d.fuel <= 0) {
       d.fuel = 0;
       d.breathT = 0;
@@ -2152,7 +2153,8 @@ export class DragonAI {
 
   wound(d, amount, by = null) {
     const w = this.world;
-    d.health -= amount;
+    // (its scales take some of it: the editor's armour setting, models/dragon.js)
+    d.health -= amount * (1 - Math.max(0, Math.min(0.9, d.scaleArmour ?? 0)));
     d.hurtFlash = 0.3;
     d.anger = 30;
     d.sated = 0;

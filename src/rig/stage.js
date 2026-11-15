@@ -46,6 +46,7 @@ import { ROLLS, rollPoint } from '../ai/evade.js';
 import { recoilSpec, GUNS } from '../ai/recoil.js';
 import { HANDLING, PRIMARIES, whyNot, carried } from '../ai/weapons.js';
 import { SKILL, SKILL_INFO } from '../ai/soldier.js';
+import { ROLES, ROLE_KEYS, KIT_FIELDS, PRIMARY as KIT_PRIMARY, SIDEARM, PACK, ARMOUR, RADIO, MEDKIT, fullKit, kitMass, mobility, loadSummary } from '../ai/loadout.js';
 import squadModel from '../models/squad.js';
 import { ensureStageFonts } from '../stageFonts.js';
 import { BODY_MASS, impactsOf } from './objects.js';
@@ -207,6 +208,12 @@ s.fig.parts.rifle / .helmet / .pack / .mag</pre></details>
     <p class="hint" data-id="skillInfo"></p>
     <label class="sl"><span>Primary</span><select data-id="primarySel" style="grid-column:2/4" aria-label="Primary weapon"></select></label>
     <p class="hint" data-id="handlingInfo"></p>
+    <div class="lab">Loadout (what he carries: its weight sets his pace)</div>
+    <label class="sl"><span>Role</span><select data-id="loRole" style="grid-column:2/4" aria-label="Role: its default loadout"></select></label>
+    <div data-id="loFields" style="display:grid;gap:6px"></div>
+    <label class="sl"><span>Fitness</span><input type="range" data-id="loFit" min="0" max="1" step="0.05" value="0.5"><output data-id="loFitO">0.50</output></label>
+    <p class="hint" data-id="loInfo"></p>
+    <details><summary class="lab">Items and their weight</summary><p class="hint" data-id="loItems"></p></details>
     <div class="lab">Weapon in hand</div>
     <div class="grid" data-id="weapons"></div>
     <div class="row"><button data-id="tgArmour" type="button" aria-pressed="true">Armour</button></div>
@@ -514,6 +521,7 @@ export function mountRig(root, opts = {}) {
       f.onFlashRelease = (p) => throwGrenade(p.toArray(), aimVel(p.toArray(), aheadOf(this)), 'flash');
       f.onFinished = (name) => name === 'pickup' && f.reequip(['rifle']);
       applyGear(f, this.skill);
+      if (this.kit) f.setLoadout(this.kit); // (the Loadout panel's: what he carries, drawn)
       scene.add(f.group);
       old?.dispose();
     }
@@ -973,7 +981,91 @@ export function mountRig(root, opts = {}) {
     showWeapons(e);
     showLights(e);
     if (document.activeElement !== $('skillSel')) $('skillSel').value = e.skill ?? 'regular';
+    showLoadout(e);
   }
+  /* ---------- the loadout (ai/loadout.js): role, every item, fitness; the weight and what it does ---------- */
+  // eslint-disable-next-line no-var
+  var loReady = false;
+  const loCtl = {};
+  for (const r of ROLE_KEYS) $('loRole').appendChild(Object.assign(document.createElement('option'), { value: r, textContent: ROLES[r].label }));
+  const LO_LABELS = { primary: KIT_PRIMARY, sidearm: SIDEARM, pack: PACK, armour: ARMOUR, radio: RADIO, medkit: MEDKIT };
+  for (const [key, F] of Object.entries(KIT_FIELDS)) {
+    const lab = document.createElement('label');
+    lab.className = 'sl';
+    const name = Object.assign(document.createElement('span'), { textContent: F.label.replace(/ \(.*\)$/, '') });
+    lab.appendChild(name);
+    let input;
+    if (F.options) {
+      input = document.createElement('select');
+      input.style.gridColumn = '2/4';
+      for (const o of F.options) input.appendChild(Object.assign(document.createElement('option'), { value: o, textContent: LO_LABELS[key]?.[o]?.label ?? o }));
+      lab.appendChild(input);
+    } else if (F.bool) {
+      input = Object.assign(document.createElement('input'), { type: 'checkbox' });
+      input.style.justifySelf = 'start';
+      lab.appendChild(input);
+    } else {
+      input = Object.assign(document.createElement('input'), { type: 'range', min: F.min, max: F.max, step: F.step });
+      const out = document.createElement('output');
+      lab.append(input, out);
+      loCtl[key + 'O'] = out;
+    }
+    input.setAttribute('aria-label', F.label);
+    input.addEventListener(F.options || F.bool ? 'change' : 'input', () => {
+      const v = F.bool ? input.checked : F.options ? input.value : +input.value;
+      for (const t of gearTargets()) wearKit(t, { ...currentKit(t), [key]: v });
+      onChange();
+    });
+    loCtl[key] = input;
+    $('loFields').appendChild(lab);
+  }
+  $('loRole').onchange = () => {
+    for (const t of gearTargets()) {
+      t.role = $('loRole').value;
+      wearKit(t, fullKit(t.role));
+    }
+    onChange();
+  };
+  $('loFit').oninput = () => {
+    for (const t of gearTargets()) t.fitness = +$('loFit').value;
+    onChange();
+  };
+  /** Put a kit on him: drawn (a new figure for the flame gun or bare hands), the primary in his hands. */
+  function wearKit(e, kit) {
+    e.kit = fullKit(undefined, kit);
+    const lo = KIT_PRIMARY[e.kit.primary].rig;
+    if ((lo === 'torch') !== (e.loadout === 'torch') || (lo === 'unarmed') !== (e.loadout === 'unarmed')) return e.setLoadout(lo);
+    e.loadout = lo;
+    e.fig.setLoadout(e.kit);
+    applyGear(e.fig, e.skill);
+    e.fig.setArmour(e.kit.armour !== 'none');
+    recoilChanged();
+  }
+  let loShown = '';
+  /** His kit: the one put on him, else his role's with the weapon he has. */
+  const currentKit = (e) => e.kit ?? fullKit(e.role ?? 'rifleman', e.loadout === 'torch' ? { primary: 'flamer' } : e.loadout === 'unarmed' ? { primary: 'none' } : KIT_PRIMARY[e.loadout] ? { primary: e.loadout } : {});
+  function showLoadout(e) {
+    if (!loReady) return; // (not before the panel is made)
+    const kit = currentKit(e);
+    const fit = e.fitness ?? 0.5;
+    const key = JSON.stringify([kit, fit, e.role]);
+    if (key === loShown) return;
+    loShown = key;
+    if (document.activeElement !== $('loRole')) $('loRole').value = e.role ?? 'rifleman';
+    for (const [k, F] of Object.entries(KIT_FIELDS)) {
+      const c = loCtl[k];
+      if (document.activeElement === c) continue;
+      if (F.bool) c.checked = !!kit[k];
+      else c.value = kit[k];
+      if (loCtl[k + 'O']) loCtl[k + 'O'].textContent = String(kit[k]);
+    }
+    $('loFit').value = fit;
+    $('loFitO').textContent = fit.toFixed(2);
+    const W = kitMass(kit), M = mobility(W.total, { fitness: fit });
+    $('loInfo').textContent = `${loadSummary(kit, fit)}. Accel ${M.accel.toFixed(1)} m/s²; vaults ${M.vault.toFixed(2)} m; ${M.ropeClimb ? 'climbs a rope' : 'too heavy to climb a rope'}; landings ×${M.fallK.toFixed(2)}; gear noise +${M.noiseDb.toFixed(1)} dB.`;
+    $('loItems').textContent = W.items.map(([n, kg]) => `${n}: ${kg} kg`).join(' · ');
+  }
+  loReady = true;
   /** The Gear tab's primary select and the handling of the weapon in his hands: grip, carry, aim, what it rules out. */
   function showHandling(e) {
     const sel = $('primarySel');
@@ -1096,6 +1188,8 @@ export function mountRig(root, opts = {}) {
   $('primarySel').onchange = () => {
     const k = $('primarySel').value;
     for (const e of gearTargets()) {
+      // (his loadout follows: the Loadout panel shows the weapon, its weight counts)
+      if (e.kit) e.kit = fullKit(undefined, { ...e.kit, primary: k === 'torch' ? 'flamer' : k === 'unarmed' ? 'none' : k });
       if (k === 'torch' || e.loadout === 'torch' || k === 'unarmed' || e.loadout === 'unarmed') e.setLoadout(k);
       else {
         e.loadout = k;
@@ -1287,7 +1381,8 @@ export function mountRig(root, opts = {}) {
   function formation() {
     const p = Object.fromEntries(Object.entries(squadModel.params).map(([k, s]) => [k, s.value]));
     Object.assign(p, squadOpts, { level: 0 });
-    return squadModel.build(p).enemies.map((m) => ({ role: m.squad, loadout: m.loadout ?? 'rifle', position: [-m.p[0], 0, -m.p[2]] }));
+    // (each with his loadout and role, models/squad.js: drawn as he carries it)
+    return squadModel.build(p).enemies.map((m) => ({ role: m.squad, squadRole: m.squadRole, kit: m.kit, loadout: m.loadout === 'torch' || m.loadout === 'unarmed' || m.loadout === 'mg' || m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle', position: [-m.p[0], 0, -m.p[2]] }));
   }
   /** Soldier: one man at the middle. Squad: the team in formation, playing together. */
   function arrange(kind) {
@@ -1304,6 +1399,11 @@ export function mountRig(root, opts = {}) {
         e.reset(kind === 'squad' ? m.loadout : e.loadout);
       }
       e.name = name;
+      if (m.kit) {
+        e.role = m.squadRole;
+        e.kit = m.kit;
+        e.fig.setLoadout(m.kit);
+      }
     });
     const ms = $('memberSel');
     ms.replaceChildren(...soldiers.map((e, i) => Object.assign(document.createElement('option'), { value: String(i), textContent: e.name })));

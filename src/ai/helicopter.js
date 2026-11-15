@@ -95,9 +95,19 @@ import { startRope } from './rope.js';
 import { sideOf, hostile } from './sides.js';
 
 const G = 9.81;
+/**
+ * What it weighs (kg): HELI.mass is a UH-60-sized machine fuelled, six men in the back, two door
+ * guns and the standard armour; less fuel (1360 kg full), fewer men (110 kg each with kit), guns
+ * (45 kg each with ammunition), armour (none -150, armoured +450) change it.
+ */
+export function heliMass(o = {}) {
+  const guns = { both: 2, left: 1, right: 1, none: 0 }[o.doorGuns ?? 'both'] ?? 2;
+  return HELI_MASS + ((o.fuel ?? 1) - 1) * 1360 + ((o.soldiers ?? 6) - 6) * 110 + (guns - 2) * 45 + ({ none: -150, standard: 0, armoured: 450 }[o.armour ?? 'standard'] ?? 0);
+}
+const HELI_MASS = 7000;
 /** The helicopter's numbers (a UH-60-sized machine). */
 export const HELI = {
-  mass: 7000, // kg, loaded
+  mass: HELI_MASS, // kg, loaded (heliMass: with what it carries)
   rotorR: 8, // main rotor radius (m)
   rotorRev: 4.3, // main rotor rev/s at 100 % (258 rpm)
   tailRev: 19.8, // tail rotor rev/s
@@ -388,6 +398,9 @@ export class Helicopter {
     this.attacks = []; // rounds at it or past its men: { from, who, t }
     this.mission = o.mission ?? 'insert';
     this.cruise = o.cruise ?? HELI.cruise;
+    // experience of the pilot and of the men in the back (ai/experience.js)
+    this.pilotSkill = o.pilotSkill;
+    this.troopSkill = o.troopSkill;
     this.altitude = o.altitude ?? 40;
     this.hoverAlt = Math.min(o.hoverAlt ?? HELI.hoverAlt, (o.ropeLength ?? HELI.ropeLength) - 1);
     this.ropeLength = o.ropeLength ?? HELI.ropeLength;
@@ -423,7 +436,10 @@ export class Helicopter {
     this.fire = 0; // the fuel burning (0..1)
     this.burnT = 0;
     this.leak = 0;
-    this.fuel = 1;
+    // the fuel load (the editor's, 0..1 of full) and what it all weighs: lighter climbs and turns quicker (heliMass)
+    this.fuel = Math.max(0.05, Math.min(1, o.fuel ?? 1));
+    this.mass = heliMass({ ...o, fuel: this.fuel });
+    this.perf = Math.max(0.55, Math.min(1.3, (HELI.mass / this.mass) ** 0.8));
     this.smoke = 0; // engine smoke (0..1)
     this.vibration = 0;
     this.glass = false; // the cockpit glass shattered
@@ -480,7 +496,7 @@ export class Helicopter {
     return {
       p: [0, 0, 0], home: [0, 0, 0], health: 100, state: 'patrol', yaw: 0,
       squad, unit: air ? `${this.call} crew` : this.call, loadout: !air && squad === 'MG' ? 'mg' : 'rifle',
-      skill: seat.role === 'pilot' ? 'veteran' : 'regular', armour: true, helmet: true,
+      skill: seat.role === 'pilot' ? this.pilotSkill ?? 'veteran' : air ? 'regular' : this.troopSkill ?? 'regular', armour: true, helmet: true,
       guardCtl: true, // neither the guard AI nor the squad AI moves him while he is aboard (ai/squad.js ownMove)
       heliCrew: this.id, aboard: this.id, seat: i, role: seat.role, anim: seat.anim, name: `${this.call} ${seat.label.toLowerCase()}`,
       side: this.side,
@@ -1023,7 +1039,8 @@ export class Helicopter {
    * that goes with it.
    */
   fly(dt, g) {
-    const P = this.omega < 0.9 ? 0 : 1 - 0.5 * (this.dmg.engine ?? 0);
+    // (× its performance at its weight: fuel, men, guns, armour, heliMass)
+    const P = (this.omega < 0.9 ? 0 : 1 - 0.5 * (this.dmg.engine ?? 0)) * (this.perf ?? 1);
     let vd = [0, 0];
     if (g.orbit) {
       const c = g.orbit.c;

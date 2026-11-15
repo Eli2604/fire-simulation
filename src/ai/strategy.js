@@ -31,6 +31,7 @@
 import { badlyHit, roundsLeft, ARMS } from './soldier.js';
 import { retreatWanted, startRetreat, stepRetreat } from './retreat.js';
 import { friendliesOf } from './retreatRadio.js';
+import { experienceOf, aggressionOf, moraleK } from './experience.js';
 
 export const STRATEGIES = {
   suppressFlank: 'Suppress and flank',
@@ -149,15 +150,21 @@ export function assess(sq) {
 /** The strategy for what the leader sees: { kind, side?, why }. */
 export function choose(sq, a, not = null) {
   const can = (k) => k !== not;
+  // the leader's experience and the team's temper (ai/experience.js; a regular, 0.5 and 0.5: as it always was):
+  // morale, how far outmatched before they give ground; aggression, attack or hold; experience, how
+  // exposed a way round he will still take (a recruit sees fewer, an old hand more)
+  const lead = sq.members().find((m) => m.squad === 'CMD' && !m.dead) ?? sq.members().find((m) => !m.dead);
+  const mk = moraleK(lead), agg = aggressionOf(lead), coverK = experienceOf(lead).cover;
   // ordered back, or too hurt to hold (ai/retreat.js)
   // (the friendly teams fighting beside them count for their strength: two teams against one, it is not the two that fall back)
   const r = can('retreat') ? retreatWanted(sq, a.friends ? { ...a, fit: a.fit + a.friends } : a) : null;
   if (r) return { kind: 'retreat', why: r.why };
   // (a man on his own fights where he is: a team down to one man standing breaks contact)
-  const outmatched = a.enemies >= 2 * Math.max(1, a.fit + (a.friends ?? 0)) || (a.fit <= 1 && a.men > 1) || a.ammo < 0.15;
+  const outmatched = a.enemies >= 2 * mk * Math.max(1, a.fit + (a.friends ?? 0)) || (a.fit <= 1 && a.men > 1) || a.ammo < 0.15;
   if (outmatched && can('withdraw')) return { kind: 'withdraw', why: a.ammo < 0.15 ? 'low on ammunition' : 'outnumbered' };
-  if ((a.fit < 3 || a.down >= 2) && a.enemies >= a.fit - 1 && can('defend')) return { kind: 'defend', why: 'men down' };
-  const good = a.fixed === false ? [] : [1, -1].filter((s) => a.flanks[s]?.ok && a.flanks[s].expo < 0.4);
+  if ((a.fit < 3 || a.down >= 2) && a.enemies >= a.fit - 1 && !(agg > 0.75 && a.fit >= 2) && can('defend')) return { kind: 'defend', why: 'men down' };
+  if (agg < 0.25 && a.enemies >= a.fit && can('defend')) return { kind: 'defend', why: 'a cautious leader, as many against them' };
+  const good = a.fixed === false ? [] : [1, -1].filter((s) => a.flanks[s]?.ok && a.flanks[s].expo < coverK);
   // between two equally good flanks: the less exposed, ties by the squad's own numbers
   good.sort((x, y) => a.flanks[x].expo - a.flanks[y].expo || a.flanks[x].L - a.flanks[y].L);
   if (good.length === 2 && Math.abs(a.flanks[1].expo - a.flanks[-1].expo) < 0.05 && Math.abs(a.flanks[1].L - a.flanks[-1].L) < 3 && srand(sq) < 0.5) good.reverse();

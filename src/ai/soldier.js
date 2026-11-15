@@ -19,18 +19,16 @@
  *    being hit), someone throws a grenade that way and shouts it ("Frag out!").
  */
 import { recoilSpec } from './recoil.js';
+import { EXPERIENCE, nerveOf } from './experience.js';
+import { applyKit, PRIMARY, SIDEARM } from './loadout.js';
 import { FIGHT_D, pickMelee, startMelee, resolveMelee, applyMelee, defendAgainst } from './melee.js';
 
 /** Expertise: scatter (x a regular's), reload and weapon-switch time (x), reaction (x). */
 // (control: how long he takes to bring the muzzle back down after a round, x a regular's: ai/recoil.js)
 // (nerve: how readily he flinches into a roll under fire, x a regular's; melee: his hand-to-hand
 // (damage x, ai/melee.js); judgement: how well he picks his move in a fight, 0..1)
-export const SKILL = {
-  recruit: { aim: 1.8, reload: 1.35, react: 1.5, control: 1.4, nerve: 1.5, melee: 0.75, judgement: 0.55 },
-  regular: { aim: 1.0, reload: 1.0, react: 1.0, control: 1.0, nerve: 1.0, melee: 1.0, judgement: 0.75 },
-  veteran: { aim: 0.7, reload: 0.82, react: 0.8, control: 0.85, nerve: 0.75, melee: 1.15, judgement: 0.9 },
-  elite: { aim: 0.5, reload: 0.7, react: 0.65, control: 0.7, nerve: 0.55, melee: 1.3, judgement: 1.0 },
-};
+// (one table for all of experience's effects: ai/experience.js; this is it, under its old name)
+export const SKILL = EXPERIENCE;
 /** What the experience level does (the editor's and the rig's tooltip). */
 export const SKILL_INFO = 'Experience (recruit, regular, veteran, elite) sets: how far his rounds scatter (aim), how fast he pulls the muzzle back down after a round (recoil control, ai/recoil.js), how quickly he reacts (and blocks or slips a blow), how fast he reloads, switches weapons and picks things up, how readily he flinches into a roll under fire (nerve), and how hard and how well he fights hand-to-hand.';
 export const SKILLS = Object.keys(SKILL);
@@ -43,6 +41,9 @@ export const ARMS = {
   // a pump shotgun: 7 shells in the tube, loaded one at a time (reload: x the magazine change)
   shotgun: { size: 7, mags: 4, kind: 'shotgun', burst: 1, reload: 1.4 },
   pistol: { size: 15, mags: 3, kind: 'pistol', burst: 1, reload: 0.65 },
+  // (from a loadout, ai/loadout.js: a short 5.56 carbine as the primary; a scoped 7.62 marksman rifle, single shots)
+  carbine: { size: 30, mags: 5, kind: 'rifle', burst: 3 },
+  marksman: { size: 20, mags: 5, kind: 'marksman', burst: 1 },
 };
 
 // Base times (s) of the animations (operator/rig.js), scaled by the expertise
@@ -52,22 +53,34 @@ export const KNIFE_REACH = 1.6; // m: he stabs from here
 const CLOSE = 2.0; // m: an enemy this close (in arm's reach and a step): the knife
 const CLEAR = 4.5; // m: no one this close any more: back to the rifle
 
-/** Kit a member out once: expertise, weapon, ammunition, armour. */
+/**
+ * Kit a member out once: expertise, weapon, ammunition, armour. With a loadout (m.kit, ai/loadout.js:
+ * the scene's per-man list) his weapons, magazines, grenades, armour and load come from it (and with
+ * them his pace, carry and landings: applyKit); without one, the old defaults by role.
+ */
 export function kit(m) {
   if (m.kitted) return;
   m.kitted = true;
   m.skill = SKILL[m.skill] ? m.skill : 'regular';
+  const given = m.kit != null;
+  if (!given) m.armour ??= false;
+  applyKit(m);
+  const K = m.kit;
+  if (given && m.loadout === undefined) m.loadout = PRIMARY[K.primary].loadout;
   // (unarmed: no weapon at all, he fights hand-to-hand: ai/melee.js)
   m.weapon = m.loadout === 'torch' ? 'torch' : m.loadout === 'unarmed' ? 'fists' : 'rifle';
   // his primary: the gunner's MG, else what his loadout says (a shotgun, a pistol), else a rifle
-  m.primary = m.squad === 'MG' ? 'mg' : m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle';
+  m.primary = given ? PRIMARY[K.primary].arms ?? 'rifle' : m.squad === 'MG' ? 'mg' : m.loadout === 'shotgun' || m.loadout === 'pistol' ? m.loadout : 'rifle';
   const A = ARMS[m.primary];
   m.mag ??= A.size;
-  m.mags ??= A.mags;
-  m.secMag ??= ARMS.secondary.size;
-  m.secMags ??= ARMS.secondary.mags;
-  m.armour ??= false;
-  m.helmet ??= !!m.armour; // the helmet comes with the armour kit
+  m.mags ??= given ? K.mags : A.mags;
+  // the sidearm: the compact carbine across his back (always, without a loadout), a pistol, or none
+  const S = given ? SIDEARM[K.sidearm] ?? SIDEARM.carbine : SIDEARM.carbine;
+  m.secArms = S.arms ?? 'secondary';
+  if (!S.arms) m.secondary = false;
+  const SA = ARMS[m.secArms];
+  m.secMag ??= S.arms ? SA.size : 0;
+  m.secMags ??= S.arms ? (given ? K.sideMags : SA.mags) : 0;
   if (m.loadout === 'unarmed') m.mag = m.mags = m.secMag = m.secMags = 0;
 }
 
@@ -88,7 +101,7 @@ export function recoilOf(m) {
 /** Total rounds he has left (magazine + spares, primary and secondary). */
 export function roundsLeft(m) {
   const A = ARMS[m.primary ?? 'rifle'];
-  return (m.mag ?? 0) + (m.mags ?? 0) * A.size + (m.secMag ?? 0) + (m.secMags ?? 0) * ARMS.secondary.size;
+  return (m.mag ?? 0) + (m.mags ?? 0) * A.size + (m.secMag ?? 0) + (m.secMags ?? 0) * ARMS[m.secArms ?? 'secondary'].size;
 }
 
 /**
@@ -106,6 +119,7 @@ export function aimPoint(m, T, rand = Math.random) {
   const wk = weaponKind(m);
   if (wk === 'shotgun') s = Math.max(s, 0.025 * d) + 0.01 * d;
   else if (wk === 'pistol') s *= 1 + d / 20;
+  else if (wk === 'marksman') s *= 0.55; // (scoped, single aimed shots)
   // the muzzle still climbing from the rounds before (ai/recoil.js: a burst, a long string): wider, and high
   const c = m.climb ?? 0;
   s += 0.6 * c * d;
@@ -115,7 +129,7 @@ export function aimPoint(m, T, rand = Math.random) {
 
 /** The weapon in his hands and its magazine. */
 function current(m) {
-  if (m.weapon === 'secondary') return { A: ARMS.secondary, mag: 'secMag', mags: 'secMags' };
+  if (m.weapon === 'secondary') return { A: ARMS[m.secArms ?? 'secondary'], mag: 'secMag', mags: 'secMags' };
   return { A: ARMS[m.primary ?? 'rifle'], mag: 'mag', mags: 'mags' };
 }
 
@@ -132,7 +146,7 @@ export function spend(m) {
 }
 
 /** The weapon kind for sim/wounds.js. */
-export const weaponKind = (m) => (m.weapon === 'secondary' ? 'carbine' : m.weapon === 'knife' ? 'knife' : m.weapon === 'fists' ? 'fist' : ARMS[m.primary ?? 'rifle'].kind);
+export const weaponKind = (m) => (m.weapon === 'secondary' ? ARMS[m.secArms ?? 'secondary'].kind : m.weapon === 'knife' ? 'knife' : m.weapon === 'fists' ? 'fist' : ARMS[m.primary ?? 'rifle'].kind);
 
 /**
  * Each step for each member (not busy with another one-shot animation): reloading, running
