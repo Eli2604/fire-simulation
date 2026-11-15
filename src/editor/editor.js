@@ -27,6 +27,7 @@ import { TREE_OBJECTS } from '../models/treeObjects.js';
 import { MATERIAL_NAMES } from '../sim/materials.js';
 import { SCENARIOS, cloneScene } from '../scenarios.js';
 import { defaultWeather, EXPOSURES, VARY, INSIDE_AIR, exposureOf, WATER_SETTINGS } from '../sim/weather.js';
+import { skyFolder } from '../skyGui.js';
 import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } from '../models/composite.js';
@@ -591,6 +592,8 @@ export class Editor {
     fw.add(speed, 'iceSpeed', 1, 2000, 1).name('Ice forms / melts faster (×)').onFinishChange(change);
     fw.add(speed, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)').onFinishChange(change);
     for (const s of WATER_SETTINGS) fw.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label).onFinishChange(change);
+    // the date, the time of day, the place on the Earth, the clock (sim/sky.js): as in Play
+    skyFolder(fw, W, { finish: true, change: () => change() });
   }
 
   showPalette() {

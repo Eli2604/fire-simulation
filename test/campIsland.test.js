@@ -185,7 +185,7 @@ test('the camp on its power: wind or sun keeps it running; neither, and its moni
   };
   const grid = () => w.power.camp;
   // night, no wind, no battery: dark (monitors and floodlights)
-  sim.weather.sunDir = [0.3, -0.4, 0.2];
+  sim.weather.time = 23; // (the sky's clock: sim/sky.js)
   run(3);
   assert.equal(grid().gen, 0);
   assert.equal(grid().ops, false, 'the monitors dark');
@@ -200,7 +200,7 @@ test('the camp on its power: wind or sun keeps it running; neither, and its moni
   assert.ok(w.loads[0].lit);
   // a calm sunny noon: the panels run it (no lights needed by day)
   sim.weather.windSpeed = 0;
-  sim.weather.sunDir = [0, 0.85, 0.53];
+  sim.weather.time = 13;
   run(40);
   assert.equal(grid().wind, 0);
   assert.ok(grid().solar > 2000, `solar ${Math.round(grid().solar)} W`);
@@ -216,7 +216,7 @@ test('the camp on its power: wind or sun keeps it running; neither, and its moni
   assert.equal(grid().ops, false);
   // with a battery, the camp carries on a while through a still night, then goes dark
   const s2 = createSimulation(scene(0.05)); // 50 Wh: ~1.5 min of the operations at 1.6 kW (lights first)
-  s2.weather.sunDir = [0.3, -0.4, 0.2];
+  s2.weather.time = 23;
   for (let k = 0; k < 30; k++) s2.step(0.1);
   assert.equal(s2.world.power.camp.ops, true, 'on the battery');
   for (let k = 0; k < 1500; k++) s2.step(0.1);
