@@ -24,6 +24,7 @@ import { PropsRenderer } from './props.js';
 import { DoorRenderer } from './doors.js';
 import { TreeRenderer } from './trees.js';
 import { pickScene } from './pick.js';
+import { vehiclePicker } from './pickVehicles.js';
 import { BloodRenderer } from './blood.js';
 import { Ocean } from './ocean.js';
 import { ArchipelagoRenderer } from './archipelago.js';
@@ -1052,7 +1053,9 @@ export class View {
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const smooth = this.surfaceMode === 'smooth';
-    const drawings = [...(this.props.drawings ?? []), this.torches, this.doors, this.volcanoes, this.smithy];
+    // (the boats and cars: their meshes over their moving bodies' voxels, the people in them: render/pickVehicles.js)
+    this.vehiclePick ??= vehiclePicker({ floats: this.floats, cars: this.cars });
+    const drawings = [...(this.props.drawings ?? []), this.torches, this.doors, this.volcanoes, this.smithy, this.vehiclePick];
     return pickScene(this.raycaster, { world: this.world, root: this.root, voxels: this.voxels, surface: smooth ? this.surface : null, drawings, trees: this.trees });
   }
 }
