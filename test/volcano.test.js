@@ -11,7 +11,7 @@ const run = (sim, t) => {
 };
 
 test('the volcano on the island sleeps until a dragon passes, then erupts: lava runs down its flanks and sets things alight', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'island' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'island' });
   const w = sim.world;
   assert.equal(w.volcanoes.length, 1);
   const v = w.volcanoes[0];
@@ -46,7 +46,7 @@ test('the volcano on the island sleeps until a dragon passes, then erupts: lava 
 });
 
 test('lava that runs into the sea is quenched: it sets in seconds and boils the sea off in steam', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'island' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'island' });
   const w = sim.world;
   const v = w.volcanoes[0];
   v.state = 'spent';

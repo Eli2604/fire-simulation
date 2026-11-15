@@ -18,7 +18,7 @@ const box = (n) => boxes.find((b) => b.name === n);
 // lake house) and the Catacombs are places of it
 test('the carrier world: every place a box with a label; the lake house, its garden and its meadow side by side', () => {
   assert.ok(sc.places && sc.zones, 'a world of places');
-  for (const k of ['teaGarden', 'laundry', 'winterTea', 'grassFire', 'catacombs', 'hallwaySprinklers']) assert.ok(!SCENARIOS[k], `${k}: no longer a scene of its own`);
+  for (const k of ['teaGarden', 'laundry', 'winterTea', 'grassFire', 'catacombs', 'hallwaySprinklers', 'foggyForest']) assert.ok(!SCENARIOS[k], `${k}: no longer a scene of its own`);
   // every place shows as a box (those inside or under another at a schematic spot)
   assert.deepEqual(boxes.map((b) => b.name).sort(), Object.keys(sc.zones).sort());
   for (const b of boxes) {
@@ -26,7 +26,7 @@ test('the carrier world: every place a box with a label; the lake house, its gar
     assert.ok(b.max.every((v, k) => v > b.min[k]), `${b.name}: a box`);
     assert.equal(b.schematic, !sc.zones[b.name].origin);
   }
-  assert.deepEqual(boxes.filter((b) => b.schematic).map((b) => b.name).sort(), ['below', 'catacombs', 'headquarters', 'lower']);
+  assert.deepEqual(boxes.filter((b) => b.schematic).map((b) => b.name).sort(), ['below', 'headquarters', 'lower']);
   assert.equal(box('garden').label, 'Washing line & barbecue');
   // the places in the open do not overlap
   const open = boxes.filter((b) => !b.schematic);
@@ -43,18 +43,12 @@ test('the carrier world: every place a box with a label; the lake house, its gar
   }
   // neighbours: one group; the ship, the islands and orbit are not
   for (const n of ['lake', 'garden', 'meadow']) assert.equal(sc.zones[n].group, 'lake');
-  for (const n of ['deck', 'below', 'lower', 'island', 'islet', 'spaceship', 'catacombs']) assert.equal(sc.zones[n].group, undefined);
-  // the schematic spots: below deck in the hull under the flight deck, the lower decks under
-  // it, the catacombs under the church on the island
+  for (const n of ['deck', 'below', 'lower', 'islet', 'spaceship', 'camp']) assert.equal(sc.zones[n].group, undefined);
+  // the schematic spots: below deck in the hull under the flight deck, the lower decks under it
+  // (the catacombs under the church: the Fantasy world, test/fantasy.test.js)
   assert.ok(inside(box('below'), box('deck')) && inside(box('lower'), box('deck')));
   assert.ok(box('below').max[1] <= sc.zones.deck.origin[1] + 11 && box('lower').max[1] <= box('below').min[1] + 1e-9);
-  const church = sc.zones.island.objects.find((o) => o.type === 'church');
-  const [cx, cz] = [sc.zones.island.origin[0] + church.x, sc.zones.island.origin[2] + church.z];
-  const cat = box('catacombs');
-  assert.ok(Math.abs((cat.min[0] + cat.max[0]) / 2 - cx) < 1 && Math.abs((cat.min[2] + cat.max[2]) / 2 - cz) < 1, 'under the church');
-  assert.ok(cat.max[1] <= sc.zones.island.origin[1] + 1e-9, 'underground');
-  assert.equal(placeOrigin(sc.zones.catacombs), sc.zones.catacombs.box);
-  assert.equal(sc.zones.catacombs.origin, undefined, 'no origin: the jet and the stand-ins do not go by it');
+  assert.equal(placeOrigin(sc.zones.below), sc.zones.below.box);
 });
 
 test('the lake house places: a mild early-autumn day of their own (the garden shares it), the meadow hot, dry and windy', () => {
@@ -82,7 +76,8 @@ test('old scenario keys open the carrier world at their place', () => {
   assert.deepEqual(resolveScenario('laundry'), { scenario: 'carrier', zone: 'garden' });
   assert.deepEqual(resolveScenario('teaGarden'), { scenario: 'carrier', zone: 'lake' });
   assert.deepEqual(resolveScenario('grassFire'), { scenario: 'carrier', zone: 'meadow' });
-  assert.deepEqual(resolveScenario('catacombs'), { scenario: 'carrier', zone: 'catacombs' });
+  assert.deepEqual(resolveScenario('catacombs'), { scenario: 'fantasy', zone: 'catacombs' });
+  assert.deepEqual(resolveScenario('foggyForest'), { scenario: 'fantasy', zone: 'forest' });
   assert.deepEqual(resolveScenario('hallwaySprinklers'), { scenario: 'carrier', zone: 'headquarters' });
   assert.equal(resolveScenario('winterTea').zone, 'lake');
   assert.deepEqual(resolveScenario('carrier'), { scenario: 'carrier', zone: null });
@@ -104,7 +99,8 @@ test('old scenario keys open the carrier world at their place', () => {
 });
 
 test('the catacombs under the church are the old Catacombs scene: the same passages, guards, torches, doors and air', () => {
-  const zd = sc.zones.catacombs;
+  const fw = SCENARIOS.fantasy;
+  const zd = fw.zones.catacombs;
   assert.deepEqual(zd.world, { size: [36, 4.2, 34], h: 0.2, ground: 'quarrySand' });
   assert.equal(zd.view.dark, true);
   assert.equal(zd.timeScale, 1);
@@ -118,7 +114,7 @@ test('the catacombs under the church are the old Catacombs scene: the same passa
   assert.equal(zd.objects.filter((o) => o.type === 'enemy').reduce((n, o) => n + o.params.count, 0), 5, 'five guards');
   assert.ok(zd.objects.some((o) => o.type === 'enemy' && o.params.key), 'the jailer with the key');
   assert.equal(zd.objects[0].params.exitTo, 'island', 'the stairs up into the church');
-  const sim = createSimulation({ ...cloneScene(sc), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(fw), zone: 'catacombs' });
   const w = sim.world;
   assert.ok(w.dark && w.indoor, 'dark, no sky');
   assert.ok(Math.abs(sim.weather.ambient - 12) < 1e-9 && Math.abs(sim.weather.humidity - 0.8) < 1e-9, 'its cool damp air');
@@ -198,7 +194,7 @@ test('the overview: boxes and names far off, the scenery close up; close to a ne
   // Edit world: the outlines all the time
   ov.editing = true;
   ov.update(list, [11, 6, 9]);
-  assert.ok(ov.items.get('garden').edges.visible && ov.items.get('catacombs').edges.visible);
+  assert.ok(ov.items.get('garden').edges.visible && ov.items.get('below').edges.visible);
   assert.ok(farDistance([7, 3, 5]) < farDistance([22, 7, 19]));
   // a click on the garden's box from above goes there
   const g = box('garden');
@@ -222,7 +218,7 @@ test('the overview: boxes and names far off, the scenery close up; close to a ne
 });
 
 test('the places list says of every place where it is, its size in metres and its voxels', () => {
-  const f = (n) => placeFacts(sc.zones[n]);
+  const f = (n) => placeFacts(sc.zones[n] ?? SCENARIOS.fantasy.zones[n]);
   assert.deepEqual([f('catacombs').where, f('below').where, f('spaceship').where, f('deck').where, f('garden').where], ['Underground', 'Indoors', 'Sealed', 'Outdoors', 'Outdoors']);
   assert.equal(f('catacombs').size, '36 × 34 × 4.2 m');
   assert.equal(f('catacombs').voxels, '20 cm voxels');

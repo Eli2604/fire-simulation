@@ -154,20 +154,27 @@ place you are in.
 
 ## Using it
 
-- **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), a wind-driven grass fire, a forest fire in fog, gas cylinders in a bonfire,
+- **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), gas cylinders in a bonfire,
   what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
-  catacombs of
-  limestone and stacked bones lit by wall torches (with guards), an aircraft carrier with a flyable jet, a server room below deck,
+  the **Fantasy world** (`?scenario=fantasy`, src/fantasyWorld.js, models/fantasyIsland.js): the dragon isle in a sea of its
+  own, one land of several places: the dragon island (hills, a canal, a pond, a gothic church under construction, a campfire,
+  a house, the volcano, the waterfall with its walkway, river and mill, the dragons) with the catacombs of limestone and
+  stacked bones under the church (torches, guards), the harbour village where you arrive (its landing stage, a boat
+  round the coast) with the smithy off its square, a castle on a hill (models/castle.js: curtain walls, towers, a
+  gatehouse with a portcullis and gates, the keep, a timber hall and stables) and below it the forest fire in fog in the
+  valley between the castle hill and the ridge on the south coast; roads join them (signposts: E), the ground between
+  the places drawn from the same height function as their voxels;
+  an aircraft carrier with a flyable jet, a server room below deck,
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
-  in an island group with an island nearby (hills, a canal, a gothic church under construction, a campfire, a house, and the catacombs under it), and a
+  in an island group (an islet with a campfire, the military base on the camp island), and a
   spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
   with the washing line and the barbecue, a meadow with a wind-driven grass fire, and beside it
   oak, willow and pine in a grass fire) and the street
   beside it (a car fire next to a house, a garden on a dry day), all places of
   the carrier's world, and a house fire in the rain.
-  (Old links to scenes that are now places of that world, `?scenario=laundry`, `teaGarden`,
-  `winterTea` (the lake frozen), `grassFire`, `threeTrees`, `catacombs`, `carHouse` and `neighbourhood`,
-  open it at the place.)
+  (Old links to scenes that are now places of a world, `?scenario=laundry`, `teaGarden`,
+  `winterTea` (the lake frozen), `grassFire`, `threeTrees`, `carHouse` and `neighbourhood` (the carrier's), `catacombs`
+  and `foggyForest` (the Fantasy world's), open it at the place.)
 - **Simulation**: pause and time scale. The HUD shows the speed actually reached; big
   scenes run slower than real time on slow machines.
 - **Weather**: air temperature, humidity, wind speed and direction, rain and fog. All of
@@ -292,7 +299,7 @@ there, degrees), `&lamp=0` (helmet lamp off), `&freeze=1` (paused), `&shot=1` (o
 view, for screenshots), `&wind=12&winddir=90&rain=8&fog=0.3` (the weather: m/s, degrees,
 mm/h, 0–1), `&storm=1` (a gale with rain), `&time=21:30&day=240` (or `&date=2026-08-28`),
 `&clock=running&timeSpeed=60`, `&lat=51.5` (the sky's clock), `&erupt=1` (the island volcano erupts straight
-away). For example `?scenario=carrier&zone=island&wind=8&erupt=1`.
+away). For example `?scenario=fantasy&zone=island&wind=8&erupt=1`.
 
 **F1** shows or hides the information pane (the scene, its description and the figures); it
 is hidden at the start. In a scene of several zones (the carrier), *Scene objects › Zone*

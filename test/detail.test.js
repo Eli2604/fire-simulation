@@ -8,7 +8,7 @@ import { deriveWeather, SEASONS } from '../src/sim/weather.js';
 
 
 const catacombs = () => {
-  const sc = cloneScene(SCENARIOS.carrier);
+  const sc = cloneScene(SCENARIOS.fantasy);
   sc.zone = 'catacombs';
   return createSimulation(sc);
 };
@@ -138,13 +138,15 @@ test('a fire melts the snow round it; grass under snow does not catch', () => {
 });
 
 test('no snow indoors or underground', () => {
-  const sc = cloneScene(SCENARIOS.carrier);
+  const sc = cloneScene(SCENARIOS.fantasy);
   sc.zone = 'catacombs';
   sc.weather = { ...(sc.weather ?? {}), snowCover: 0.3 };
   assert.equal(createSimulation(sc).world.snow ?? null, null);
-  sc.zone = 'below';
-  assert.equal(createSimulation(sc).world.snow ?? null, null);
-  assert.equal(initSnow(createSimulation(sc).world, 0.2), null);
+  const ship = cloneScene(SCENARIOS.carrier);
+  ship.weather = { ...(ship.weather ?? {}), snowCover: 0.3 };
+  ship.zone = 'below';
+  assert.equal(createSimulation(ship).world.snow ?? null, null);
+  assert.equal(initSnow(createSimulation(ship).world, 0.2), null);
 });
 
 test("the voxel size is a scene setting: a factor on each scene's (zone's) own", () => {
@@ -218,7 +220,7 @@ test('a burning campfire gets a patch started from its coarse voxels; an unlit p
   P.update([eye[0] + 30, eye[1], eye[2]], 10);
   assert.ok(!f.awake && f.coarseVoxels().every((i) => !(w.flags[i] & 64)), 'drawn again');
   // the island's woodpile by the house is not lit: no patch runs for it
-  const sc2 = cloneScene(SCENARIOS.carrier);
+  const sc2 = cloneScene(SCENARIOS.fantasy);
   sc2.zone = 'island';
   const s2 = createSimulation(sc2);
   const piles = s2.patches.list.filter((p) => p.type === 'campfire');
@@ -340,7 +342,7 @@ test('lightning in a storm strikes what stands highest, sets it alight, splits a
   sim.advance(20, 1e9);
   assert.ok(w.events.filter((e) => e.type === 'lightning').length - n0 >= 4, 'strikes in the storm');
   // under cover: none
-  const sc = cloneScene(SCENARIOS.carrier);
+  const sc = cloneScene(SCENARIOS.fantasy);
   sc.zone = 'catacombs';
   const under = createSimulation(sc);
   under.weather.lightning = 60;

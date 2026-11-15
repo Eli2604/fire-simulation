@@ -17,7 +17,7 @@ import { hqCorridorPlace } from './models/militaryBase.js';
  * the wind turbine (models/windTurbine.js) whose cables feed the camp (sim/power.js: no sun and no
  * wind, and its monitors and lights go dark). Across the middle of the island a ridge; behind it,
  * on the east side, the landing ground where you are put down ("Deploy here" in the places list,
- * or ?scenario=campIsland&walk=1): out of their sight. A pier with a boat to the island on the
+ * or ?scenario=campIsland&walk=1): out of their sight. A pier with a boat to the ship on the
  * east shore.
  *
  *   north (-z)        turbine        solar park                      (power yard)
@@ -32,7 +32,7 @@ import { hqCorridorPlace } from './models/militaryBase.js';
 
 const H = 0.5; // m voxels (the island's 0.4 for a bigger place: about as many cells)
 // (the island grown for the base: a wider pad in the west, the ridge and the landing moved east)
-export const CAMP_ISLAND_TERRAIN = { ...defaultParams('campIsland'), width: 124, depth: 92, padEast: 0.1, ridgeX: 0.26, landingX: 0.66 };
+export const CAMP_ISLAND_TERRAIN = { ...defaultParams('campIsland'), width: 124, depth: 92, padEast: 0.1, ridgeX: 0.26, landingX: 0.66, boatTo: 'deck', boatLabel: 'Boat: to the ship' };
 const T = CAMP_ISLAND_TERRAIN;
 /** Where the island's centre is in the zone, and the zone in the world. */
 export const CAMP_ISLAND_CENTRE = [64, 48];

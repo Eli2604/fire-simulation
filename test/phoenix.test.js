@@ -8,7 +8,7 @@ import { shoot } from '../src/sim/wounds.js';
 import { PhoenixRenderer } from '../src/render/phoenix.js';
 
 const catacombs = (guards = true) => {
-  const sc = zoneScene(cloneScene(SCENARIOS.carrier), 'catacombs'); // (the catacombs under the church, on their own)
+  const sc = zoneScene(cloneScene(SCENARIOS.fantasy), 'catacombs'); // (the catacombs under the church, on their own)
   sc.noFire = true;
   if (!guards) sc.objects = sc.objects.filter((o) => o.type !== 'enemy');
   return createSimulation(sc);

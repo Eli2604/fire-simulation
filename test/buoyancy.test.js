@@ -197,8 +197,8 @@ test('the islet\'s red and blue boats are rowing boats afloat at the pier, and t
   assert.equal(w.floats.length, 2, 'two boats');
   assert.deepEqual(w.floats.map((f) => f.model), ['rowBoat', 'rowBoat']);
   assert.deepEqual(w.floats.map((f) => f.params.hullColor), ['#b3332a', '#33598f'], 'red and blue');
-  // each a portal: to the island and to the lake house, landing you on the pier
-  for (const to of ['island', 'lake']) {
+  // each a portal: back to the ship and to the lake house, landing you on the pier
+  for (const to of ['deck', 'lake']) {
     const pt = w.portals.find((p) => p.to === to);
     assert.ok(pt?.arrive, `a boat to ${to}`);
     const [x, y, z] = pt.arrive.p;
@@ -226,10 +226,10 @@ test('the islet\'s red and blue boats are rowing boats afloat at the pier, and t
   for (const i of low.slice(0, 6)) w.clearVoxel(i);
   for (let k = 0; k < 300; k++) sim.step(1 / 30);
   assert.ok(red.body.holes.length > 0 && red.body.water > 0.002, `${(red.body.water * 1000).toFixed(1)} l aboard through the hole`);
-  // the trip there and back: the island's boat back to the islet lands you on its pier
-  const island = createSimulation({ ...scene, zone: 'island' });
-  assert.equal(island.world.floats.length, 2);
-  assert.ok(island.world.portals.some((p) => p.to === 'islet' && p.arrive) && island.world.portals.some((p) => p.to === 'deck' && p.arrive));
+  // the trip there and back: the lake island's blue boat back to the islet lands you on its pier
+  const lake = createSimulation({ ...scene, zone: 'lake' });
+  assert.equal(lake.world.floats.length, 2);
+  assert.ok(lake.world.portals.some((p) => p.to === 'islet' && p.arrive) && lake.world.portals.some((p) => p.to === 'deck' && p.arrive));
 });
 
 test('a rowing boat on a pond floats in fresh water, still', () => {
