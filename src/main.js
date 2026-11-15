@@ -10,6 +10,8 @@ import { createSimulation } from './sim/createSimulation.js';
 import { MODELS, defaultParams } from './models/index.js';
 import { defaultWeather, SEASONS, EXPOSURES, VARY, INSIDE_AIR, exposureOf, liveWeather, WeatherDrift, WATER_SETTINGS } from './sim/weather.js';
 import { initSnow } from './sim/snow.js';
+import { skyFolder } from './skyGui.js';
+import { dayOfDate } from './sim/sky.js';
 import { PATCH } from './sim/patches.js';
 import { lod } from './render/lod.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
@@ -133,6 +135,7 @@ function activateZone(name, keepView = false) {
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
   view.sunDir = zd.view?.sun;
+  view.weatherNow = sim.weather; // (the sun where the sky's clock puts it: sim/sky.js)
   view.groundAround = zd.view?.around ?? null;
   view.archSpec = scene.archipelago ?? null;
   view.zoneOrigin = zd.origin ?? null;
@@ -307,6 +310,7 @@ function load(desc, fresh = true) {
     useZone(fresh ? scene.startZone ?? Object.keys(scene.zones)[0] : scene.zone);
   }
   const wanted = { ...(scene.weather ?? {}) }; // copy first: on restart this is `weather` itself
+  drift.clock = 0; // (the sky's clock from its start again)
   weather = Object.assign(weather, defaultWeather(), wanted);
   scene.weather = weather;
   for (const o of scene.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
@@ -316,6 +320,7 @@ function load(desc, fresh = true) {
   view.dark = !!scene.view?.dark;
   view.space = !!scene.view?.space;
   view.sunDir = scene.view?.sun;
+  view.weatherNow = sim.weather; // (the sun where the sky's clock puts it: sim/sky.js)
   view.groundAround = scene.view?.around ?? null;
   view.archSpec = scene.archipelago ?? null;
   view.zoneOrigin = scene.zones?.[scene.zone]?.origin ?? (scene.archipelago ? [0, 0, 0] : null);
@@ -387,6 +392,7 @@ const fW = gui.addFolder('Weather');
 let wc = [];
 const wNow = { here: '', now: '' };
 let wNowCtl = null;
+let skyCtl = null; // the sky's clock (skyGui.js)
 const wUpdate = () => wc.forEach((c) => c.updateDisplay());
 // weather presets: a gale with driving rain and a high sea, or a calm
 const setWeather = (o) => {
@@ -402,6 +408,7 @@ function setSeason(s) {
   const p = SEASONS[s];
   if (!p) return;
   Object.assign(settingsNow(), p, { season: s });
+  if (!settingsNow().seasonFollowsDate) settingsNow().day = null; // (its typical day: sim/sky.js)
   restart();
   wUpdate();
 }
@@ -448,6 +455,7 @@ function buildWeatherFolder() {
   for (const c of [...fW.folders]) c.destroy();
   wc = [];
   wNowCtl = null;
+  skyCtl = null;
   const W = settingsNow();
   const exp = exposureOf(placeNow());
   wNow.here = EXPOSURES[exp];
@@ -489,6 +497,14 @@ function buildWeatherFolder() {
   live(fW.add(W, 'snowSpeed', 1, 600, 1).name('Snow builds / melts faster (×)'));
   // the water: clarity, turbidity, grease, turbulence (render/waterOptics.js)
   for (const s of WATER_SETTINGS) live(fW.add((W[s.key] ??= defaultWeather()[s.key], W), s.key, s.min, s.max, s.step).name(s.label));
+  // the date, the time of day, the sun and the moon; the clock fixed or running (sim/sky.js)
+  skyCtl = skyFolder(fW, W, {
+    now: () => sim?.weather,
+    change: (key) => {
+      if (['day', 'year', 'time', 'clock', 'timeSpeed'].includes(key)) drift.clock = 0; // (it runs from the new start)
+      syncWeather();
+    },
+  });
   const fP = fW.addFolder('Presets').close();
   fP.add({ storm: () => setWeather({ windSpeed: 24, rain: 25, humidity: 0.97, fog: 0.15, lightning: 3 }) }, 'storm').name('Storm (gale, rain, high sea, lightning)');
   // lightning: strikes per minute (it hits what stands highest: trees, towers, masts; sets fire, splits, fells)
@@ -909,6 +925,7 @@ canvas.addEventListener('pointerup', (e) => {
 // ---------------------------------------------------------------------------
 let last = performance.now();
 let weatherClock = 0;
+let skyClock = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -925,7 +942,19 @@ function frame(now) {
     const simDt = dt * (walk.active ? 1 : state.timeScale);
     // the weather changing by itself (outdoors, when set to): gusts, the wind veering, showers
     const W = settingsNow();
-    if (W.vary && W.vary !== 'fixed' && exposureOf(placeNow()) === 'outdoor') {
+    const outdoor = exposureOf(placeNow()) === 'outdoor';
+    // the sky's clock (sim/sky.js): the sun and the moon move, the light and the sky follow
+    if (W.clock === 'running' && outdoor) {
+      drift.stepClock(simDt, W);
+      syncWeather(false);
+      view.applySky(sim.weather);
+      skyClock += dt;
+      if (skyClock > 0.5) {
+        skyClock = 0;
+        skyCtl?.update();
+      }
+    }
+    if (W.vary && W.vary !== 'fixed' && outdoor) {
       drift.step(simDt, W.vary);
       syncWeather(false);
       weatherClock += dt;
@@ -1039,6 +1068,21 @@ if (asked && !SCENARIOS[asked.scenario].page) state.scenario = asked.scenario;
   if (qs.get('freeze')) startWeather({ ambient: -15, rain: 0, windSpeed: 4, sunshine: 0.3, iceCover: 0, iceSpeed: 600, season: 'winter' });
   if (Number.isFinite(Number(qs.get('ice'))) && qs.get('ice')) startWeather({ iceCover: Number(qs.get('ice')), ambient: Math.min(startWeather().ambient ?? 0, -2) });
   if (qs.get('dew')) startWeather({ humidity: 0.99, fog: 0.2, windSpeed: 0.5, rain: 0 });
+  // ...&time=21:30&day=172 (or &date=2026-06-21)&clock=running&timeSpeed=60&lat=51.5: the sky's
+  // clock (sim/sky.js): the time of day, the date, fixed or running and how fast, the latitude
+  {
+    const o = {};
+    const tm = /^(\d{1,2})(?::(\d{2}))?$/.exec(qs.get('time') ?? '');
+    if (tm) o.time = (Number(tm[1]) % 24) + Number(tm[2] ?? 0) / 60;
+    const dt = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(qs.get('date') ?? '');
+    if (dt) Object.assign(o, { year: Number(dt[1]), day: dayOfDate(Number(dt[1]), Number(dt[2]), Number(dt[3])) });
+    if (Number(qs.get('day')) >= 1) o.day = Math.min(366, Math.round(Number(qs.get('day'))));
+    if (Number(qs.get('year')) > 0) o.year = Math.round(Number(qs.get('year')));
+    if (['fixed', 'running'].includes(qs.get('clock'))) o.clock = qs.get('clock');
+    if (Number(qs.get('timeSpeed')) > 0) o.timeSpeed = Number(qs.get('timeSpeed'));
+    for (const [k, key] of [['lat', 'latitude'], ['lon', 'longitude'], ['tz', 'utcOffset']]) if (qs.get(k) !== null && Number.isFinite(Number(qs.get(k)))) o[key] = Number(qs.get(k));
+    if (Object.keys(o).length) startWeather(o);
+  }
   load(sc);
 }
 // ...&snow=0.4: that much snow lying

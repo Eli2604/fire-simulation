@@ -1,6 +1,7 @@
 import { MATERIALS, TBL } from './materials.js';
 import { F_LIQUID, F_FALLING, F_ANCHOR, F_BURNING, F_SMOLDER, F_BROKEN, O2_AIR } from './world.js';
 import { deriveWeather } from './weather.js';
+import { skyState } from './sky.js';
 import { stepVessels, stepDebris, launchVoxel } from './vessels.js';
 import { stepStirrers } from './stirrers.js';
 import { stepProjectiles, stepGasPipes, explode } from './explosions.js';
@@ -66,6 +67,23 @@ export const AGENTS = {
  *  5. structure: liquids flow, ash piles, unsupported parts fall
  */
 export class Simulation {
+  /**
+   * The sun and the moon now, by the sky's clock of the weather (sim/sky.js): sunDir (unit,
+   * towards the sun, y up; also `sun`), its elevation and azimuth (°), moonDir, the moon's
+   * illumination, night 0..1. (What solar panels and the like follow.) Cached per moment.
+   */
+  get sky() {
+    const W = this.weather;
+    if (!W || !Number.isFinite(W.time)) return null;
+    const key = `${W.day}|${W.season}|${W.year}|${W.time}|${W.latitude}|${W.longitude}|${W.utcOffset}`;
+    if (this._skyKey !== key) {
+      const S = skyState(W);
+      this._skyKey = key;
+      this._sky = { sunDir: S.sun.dir, sun: S.sun.dir, elevation: S.sun.elevation, azimuth: S.sun.azimuth, moonDir: S.moon.dir, moonIllumination: S.moon.illumination, night: S.night, outdoors: W.sky !== false };
+    }
+    return this._sky;
+  }
+
   constructor(world, weather) {
     this.world = world;
     this.weather = weather;

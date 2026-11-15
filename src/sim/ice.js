@@ -245,7 +245,8 @@ export function stepIce(sim, dt, D) {
     I.seenGeom = w.geomVersion;
   }
   const solar = w.dark || w.indoor ? 0 : D.solar ?? 0;
-  const skyLoss = 40 * Math.min(1, solar / 500) + 5 + (sim.weather.rain > 0 ? 0 : 25); // (a clear night sky takes the most)
+  const clear = w.dark || w.indoor ? 0 : D.clear ?? Math.min(1, solar / 500);
+  const skyLoss = 40 * clear + 5 + (sim.weather.rain > 0 ? 0 : 25); // (a clear night sky takes the most)
   const { thick, top, bank } = I;
   const { airT, radField, temp, vx, vz } = w;
   const RL = ICE.rho * ICE.latent;

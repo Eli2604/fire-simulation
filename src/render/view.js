@@ -38,6 +38,8 @@ import { MATERIALS } from '../sim/materials.js';
 import { SNOW_COVER } from './archipelago.js';
 import { HULL_SNOW } from './hull.js';
 import { deriveWeather } from '../sim/weather.js';
+import { skyState } from '../sim/sky.js';
+import { SkyRenderer, sunColor } from './sky.js';
 import { lod, projection } from './lod.js';
 import { InlandWaterRenderer, WATER_UNIFORMS, setWaterWeather, setWaterSun, setWaterSea } from './waterSurface.js';
 import { StirrerRenderer } from './stirrers.js';
@@ -46,6 +48,11 @@ const SKY_CLEAR = new THREE.Color(0x8fb7dc);
 const SKY_GREY = new THREE.Color(0x8d939a);
 const SKY_FOG = new THREE.Color(0xb9bec2);
 const SKY_STORM = new THREE.Color(0x3b434c);
+const MOON_LIGHT = new THREE.Color(0xa9bde8);
+const smooth = (a, b, x) => {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
 /** Owns the three.js scene and all renderers of the simulation state. */
 export class View {
@@ -76,6 +83,9 @@ export class View {
     this.sun.shadow.mapSize.set(2048, 2048);
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
+    // the sky by the time of day: the dome, the stars, the moon (render/sky.js; outdoors)
+    this.skyR = new SkyRenderer(this.scene);
+    for (const o of [this.skyR.dome, this.skyR.moon]) o.userData.noAO = true;
     this.fireLight = new THREE.PointLight(0xff8a3a, 0, 0, 1.6);
     this.root.add(this.fireLight);
     // lights for wall torches and similar small flames (the nearest few get one)
@@ -211,7 +221,7 @@ export class View {
     this.vehicles.setWorld(world);
     this.flights.setWorld(world);
     this.props.sunLight = this.sun; // stained glass: where its light falls, and how bright
-    this.props.sunDir = new THREE.Vector3(...(this.sunDir ?? [0.6, 1.2, 0.4])).normalize();
+    this.props.sunDir = new THREE.Vector3(...this.lightDir(this.weatherNow)).normalize();
     this.props.setWorld(world);
     this.doors.setWorld(world);
     this.trees.setWorld(world);
@@ -371,13 +381,31 @@ export class View {
     s.near = 0.01;
     s.far = diag * 4;
     s.updateProjectionMatrix();
-    // the direction the sunlight comes from: the scene's own (view.sun), or a high sun from the south-east
-    const sd = new THREE.Vector3(...(this.sunDir ?? [0.6, 1.2, 0.4])).normalize();
-    this.sun.position.set(sx * 0.5 + sd.x * diag * 1.4, sd.y * diag * 1.4, sz * 0.5 + sd.z * diag * 1.4);
-    this.sun.target.position.set(sx / 2, 0, sz / 2);
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = world.h * 0.5;
     this.diag = diag;
+    this.placeSun(this.lightDir(this.weatherNow));
+  }
+
+  /**
+   * The direction the light comes from: outdoors the sun where the sky's clock puts it (sim/sky.js),
+   * or the moon when the sun is down and it is up; elsewhere the scene's own (view.sun), or a
+   * high sun from the south-east.
+   */
+  lightDir(weather) {
+    const S = weather && !this.dark && weather.sky !== false && Number.isFinite(weather.time) ? skyState(weather) : null;
+    if (!S) return this.sunDir ?? [0.6, 1.2, 0.4];
+    return S.sun.elevation > -2 || S.moon.elevation < 1 ? [S.sun.dir[0], Math.max(0.02, S.sun.dir[1]), S.sun.dir[2]] : S.moon.dir;
+  }
+
+  /** The sun (the moon) light from a direction: round the world, its shadows over it. */
+  placeSun(dir) {
+    if (!this.world) return;
+    const [sx, , sz] = this.world.size;
+    const diag = this.diag;
+    const sd = (this._sd ??= new THREE.Vector3()).set(dir[0], dir[1], dir[2]).normalize();
+    this.sun.position.set(sx * 0.5 + sd.x * diag * 1.4, sd.y * diag * 1.4, sz * 0.5 + sd.z * diag * 1.4);
+    this.sun.target.position.set(sx / 2, 0, sz / 2);
   }
 
   applyWeather(weather) {
@@ -386,30 +414,22 @@ export class View {
     const storm = Math.min(1, Math.max(0, (weather.windSpeed - 11) / 11)) * Math.min(1, 0.4 + weather.rain / 15);
     this.storm = storm;
     const grey = Math.min(1, weather.rain / 12 + weather.fog * 0.6 + storm);
-    const sky = SKY_CLEAR.clone().lerp(SKY_GREY, grey).lerp(SKY_FOG, weather.fog * 0.7).lerp(SKY_STORM, storm * 0.85);
-    this.scene.background = sky;
+    this.grey = grey;
+    this.weatherNow = weather;
     const fogDensity = weather.fog > 0 ? (weather.fog * 3.5) / this.diag : 0.02 / this.diag;
-    this.scene.fog = new THREE.FogExp2(sky, fogDensity);
+    this.scene.fog = new THREE.FogExp2(0x050505, this.dark ? 0.02 / this.diag : fogDensity);
     // underground / indoor scenes: hardly any daylight
-    const light = (1 - 0.55 * grey) * (1 - 0.45 * storm) * (this.dark ? 0.06 : 1);
-    if (this.dark) {
-      this.scene.background = new THREE.Color(0x050505);
-      this.scene.fog = new THREE.FogExp2(0x050505, 0.02 / this.diag);
-    }
-    this.skyBase = this.scene.background.clone();
+    this.light = (1 - 0.55 * grey) * (1 - 0.45 * storm) * (this.dark ? 0.06 : 1);
     this.fogBase = this.scene.fog.density;
     this.spaceT = 0;
+    this.rh = D.rh;
+    this.applySky(weather);
     if (this.space) this.setSpaceBlend(1);
     else if (this.stars) this.stars.visible = false;
-    this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog) * (0.3 + 0.7 * Math.max(0, Math.min(1, weather.sunshine ?? 1)));
-    this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
-    this.smoke.light = 0.55 + 0.45 * light;
-    this.rh = D.rh;
     this.ocean.setWeather(weather, this.scene.background, grey);
     // the water's clarity, turbidity, grease, turbulence (render/waterOptics.js)
     this.waterWeather = weather;
     setWaterWeather(weather);
-    WATER_UNIFORMS.uWSky.value.copy(this.scene.background);
     this.trees.setWind(D.windX, D.windZ); // the grass bends in it
     // the season: the leaves and the grass, a lower and weaker sun in winter
     this.season = weather.season ?? 'summer';
@@ -420,8 +440,81 @@ export class View {
     const sat = Math.max(0, Math.min(1, (D.rh - 0.9) / 0.08));
     const cold = weather.ambient <= 0.5;
     this.trees.setDew(cold ? 0 : sat, cold ? Math.max(sat, weather.ambient < -2 && D.rh > 0.8 ? 0.5 : 0) : 0);
-    const sunK = { spring: 0.95, summer: 1, autumn: 0.85, winter: 0.7 }[this.season] ?? 1;
-    this.sun.intensity *= sunK;
+  }
+
+  /**
+   * The sky and its light for the time of day (sim/sky.js): outdoors the sun where it stands
+   * (its colour low down, its strength through the air), the moon by night (its phase), the
+   * sky's colours from day blue through the sunset to the night, the light from the sky and the
+   * eye's adaptation (the night dark, never so dark you cannot see); elsewhere (no clock,
+   * underground) the scene's own fixed light. Cheap: called each frame while the clock runs.
+   */
+  applySky(weather = this.weatherNow) {
+    if (!weather) return;
+    const grey = this.grey ?? 0;
+    const storm = this.storm ?? 0;
+    const light = this.light ?? 1;
+    const S = !this.dark && weather.sky !== false && Number.isFinite(weather.time) ? skyState(weather) : null;
+    this.skyState = S;
+    const sunshine = 0.3 + 0.7 * Math.max(0, Math.min(1, weather.sunshine ?? 1));
+    const sky = (this._skyC ??= new THREE.Color());
+    let dayF = 1; // 1 by day .. 0 at night (the sun 12° under)
+    if (S) {
+      const el = S.sun.elevation;
+      this.skyR.set(S, grey, sky);
+      // fog and a storm: their grey, as bright as the sky is now
+      const lum = Math.min(1, (0.3 * sky.r + 0.59 * sky.g + 0.11 * sky.b) / (0.3 * SKY_CLEAR.r + 0.59 * SKY_CLEAR.g + 0.11 * SKY_CLEAR.b));
+      const U = this.skyR.uniforms;
+      const fc = (this._fc ??= new THREE.Color());
+      for (const c of [U.uZenith.value, U.uHorizon.value]) {
+        c.lerp(fc.copy(SKY_FOG).multiplyScalar(lum), weather.fog * 0.7);
+        c.lerp(fc.copy(SKY_STORM).multiplyScalar(lum), storm * 0.85);
+      }
+      sky.copy(U.uHorizon.value);
+      dayF = smooth(-12, 6, el);
+      // the sunlight: fading in and out at the horizon, stronger the higher it stands, golden low down
+      const sunUp = smooth(-1.5, 4, el);
+      const sunK = sunUp * (0.3 + 0.7 * Math.min(1.1, Math.sqrt(Math.max(0, Math.sin((el * Math.PI) / 180)) / Math.sin((50 * Math.PI) / 180))));
+      // the moonlight: by its phase, when it is up and the sun is down
+      const moonK = 0.2 * S.moon.illumination * smooth(-1, 8, S.moon.elevation) * (1 - sunUp);
+      const useMoon = el <= -2 && S.moon.elevation >= 1;
+      this.sun.color.copy(useMoon ? MOON_LIGHT : sunColor(el, (this._sc ??= new THREE.Color())));
+      this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog) * sunshine * (useMoon ? moonK : sunK);
+      this.placeSun(this.lightDir(weather));
+      this.skyR.group.visible = !(this.spaceT > 0.02);
+      // the sky's light: blue by day, a dim blue by night (more under a full moon)
+      const nightHemi = 0.32 + 0.3 * S.moon.illumination * smooth(-2, 15, S.moon.elevation);
+      this.hemi.intensity = nightHemi + (0.9 + 0.3 * light - nightHemi) * dayF;
+      this.hemi.color.set(0x5a6ea8).lerp((this._hc ??= new THREE.Color(0xdfeeff)), dayF);
+      // the eye adapts: the night is dark, not black (the fires, the torches, the windows stand out)
+      this.renderer.toneMappingExposure = 1 + 0.7 * (1 - dayF);
+    } else {
+      this.skyR.group.visible = false;
+      sky.copy(SKY_CLEAR).lerp(SKY_GREY, grey).lerp(SKY_FOG, weather.fog * 0.7).lerp(SKY_STORM, storm * 0.85);
+      if (this.dark) sky.set(0x050505);
+      this.sun.color.set(0xfff2dd);
+      // (a lower and weaker sun in winter)
+      const sunK = { spring: 0.95, summer: 1, autumn: 0.85, winter: 0.7 }[weather.season ?? 'summer'] ?? 1;
+      this.sun.intensity = 2.4 * light * (1 - 0.6 * weather.fog) * sunshine * sunK;
+      this.hemi.intensity = this.dark ? 0.32 : 0.9 + 0.3 * light;
+      this.hemi.color.set(0xdfeeff);
+      this.renderer.toneMappingExposure = 1;
+      this.placeSun(this.lightDir(weather));
+    }
+    this.dayF = dayF;
+    this.hemiBase = this.dark ? 0.12 : this.skyState ? this.hemi.intensity : 1.1;
+    this.scene.background = sky.clone();
+    if (this.scene.fog) this.scene.fog.color.copy(sky);
+    this.skyBase = sky.clone();
+    this.smoke.light = (0.55 + 0.45 * light) * (0.35 + 0.65 * dayF);
+    this.ocean.uniforms.uSky.value.copy(sky);
+    WATER_UNIFORMS.uWSky.value.copy(sky);
+    if (this.spaceT > 0) {
+      // (above the atmosphere: the black sky over it)
+      const t = this.spaceT;
+      this.spaceT = -1;
+      this.setSpaceBlend(t);
+    }
   }
 
   /**
@@ -488,6 +581,7 @@ export class View {
     const on = b.t < b.len && (b.t < b.len * 0.35 || b.t > b.len * 0.6);
     this.hemi.intensity = b.hemi + (on ? 5 : 0);
     this.scene.background = on ? this.skyBase.clone().lerp(new THREE.Color(0xdfe6f2), 0.7) : this.skyBase;
+    this.skyR.uniforms.uFlash.value = on ? 0.6 : 0;
     if (b.t > b.len) this.endBolt();
   }
 
@@ -495,6 +589,7 @@ export class View {
     if (!this.bolt) return;
     this.hemi.intensity = this.bolt.hemi;
     this.scene.background = this.skyBase;
+    this.skyR.uniforms.uFlash.value = 0;
     this.bolt = null;
   }
 
@@ -542,7 +637,8 @@ export class View {
     this.fireLight.intensity = 6 * k * flick * (this.diag / 3) ** 2;
     // out in daylight a fire (an eruption) lights its surroundings orange, it does not outshine
     // the sun: at most about twice the daylight a third of the scene away
-    if (!this.dark) this.fireLight.intensity = Math.min(this.fireLight.intensity, 2 * Math.max(0.2, this.sun.intensity) * (this.diag / 3) ** 1.6 * flick);
+    // (by night as by day: in the dark it is all the light there is)
+    if (!this.dark) this.fireLight.intensity = Math.min(this.fireLight.intensity, 2 * Math.max(0.2, this.sun.intensity, 2.4 * (1 - (this.dayF ?? 1))) * (this.diag / 3) ** 1.6 * flick);
     // underground / indoors: a big fire lights the space up strongly, but not white (a blast's
     // fireball and the flames it starts would otherwise wash the whole place out)
     else this.fireLight.intensity = Math.min(this.fireLight.intensity, 14 * flick);
@@ -577,6 +673,7 @@ export class View {
     }
     this.spaceT = t;
     this.stars.visible = t > 0.02;
+    this.skyR.group.visible = !!this.skyState && t <= 0.02;
     this.stars.material.opacity = t;
     this.stars.position.copy(this.camera.position);
     if (this.skyBase) this.scene.background = this.skyBase.clone().lerp(new THREE.Color(0x000004), t);
@@ -590,7 +687,7 @@ export class View {
       this.camera.updateProjectionMatrix();
     }
     // no sky light up there: hard sunlight, dark shadows (a little fill so you can see inside)
-    this.hemi.intensity = (this.dark ? 0.12 : 1.1) * (1 - 0.6 * t);
+    this.hemi.intensity = (this.dark ? 0.12 : this.hemiBase ?? 1.1) * (1 - 0.6 * t);
   }
 
   /**
@@ -659,6 +756,7 @@ export class View {
     if (this.sea) this.ocean.update(this.time);
     if (this.sea) this.ocean.updateIce(this.world?.ice);
     this.updateWater(dt);
+    this.skyR.update(this.camera);
     this.lightning(dt);
     // underground the torches and the lamp cast the shadows; the whole voxel world going into
     // their six-sided shadow maps would cost far too much (and its walls block the light anyway)

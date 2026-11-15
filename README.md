@@ -178,7 +178,8 @@ builds the whole editor as one file.
 `&zone=…` (a zone of it), `&walk=1` (in the walk-through), `&at=x,y,z,yaw,pitch` (standing
 there, degrees), `&lamp=0` (helmet lamp off), `&freeze=1` (paused), `&shot=1` (only the 3D
 view, for screenshots), `&wind=12&winddir=90&rain=8&fog=0.3` (the weather: m/s, degrees,
-mm/h, 0–1), `&storm=1` (a gale with rain), `&erupt=1` (the island volcano erupts straight
+mm/h, 0–1), `&storm=1` (a gale with rain), `&time=21:30&day=240` (or `&date=2026-08-28`),
+`&clock=running&timeSpeed=60`, `&lat=51.5` (the sky's clock), `&erupt=1` (the island volcano erupts straight
 away). For example `?scenario=carrier&zone=island&wind=8&erupt=1`.
 
 **F1** shows or hides the information pane (the scene, its description and the figures); it
@@ -639,6 +640,28 @@ in the link): a factor on every scene's (and zone's) own voxel size, one on the 
 detail's, how many close-up objects run at once, how many candles go finest, and torches and
 campfires close up on or off. Coarser is faster (1.5×: about a fifth of the work), finer is
 more detailed (half the size: ~16× the work: 8× the voxels, twice the steps).
+
+**The time of day and the date** (Weather › Sky: date, time of day, sun and moon; the same in
+Edit world; `&time=hh:mm&day=N&clock=running&timeSpeed=60&lat=…`; sim/sky.js, render/sky.js):
+outdoors the sun and the moon stand where they would for the date, the time and the place on
+the Earth (latitude, longitude, time zone; by default 51.5° N on Greenwich time): the sun by
+the Astronomical Almanac's formulas (its elevation within ~0.1° of NOAA's, sunrise and sunset
+within a minute or two), the moon to a degree or so with its phase (from where the two stand).
+The sunlight and its shadows come from the sun (golden low down, orange at the horizon), by
+night from the moon (as bright as its phase); the sky goes from day blue through the golden
+hour, the sunset's red round the sun, the civil and nautical twilight to a dark blue night
+with stars and the moon's disc lit on the sun's side. The sky's light and the eye's adaptation
+dim the night but never so far that you cannot see; fires, torches and candles stand out.
+The fog, the sea's and the ponds' mirror and the glitter on the water follow (the moon's at
+night). The sun on the ground follows its height (Haurwitz's clear-sky curve through the
+clouds): it melts the snow and the ice; by night a clear sky cools them (frost) and the air
+at the ground is nearer its dew point (dew; dead fuels take up a little water). The clock is
+fixed (planned) or running from its start (× a time speed: 60 is a minute a second, with the
+simulation's own time speed on top); running, the air is warmer in the afternoon and cooler
+before dawn. With "Season follows the date" the leaves and the grass follow the date. Without
+a date set a scene stands on its season's typical day; the carrier's world on 28 August at
+09:48 (its old south-eastern late-morning sun). Indoors and underground nothing changes (their
+own light), though the church's stained glass takes the sun's direction when the place is built.
 
 **Seasons and snow** (Weather: "Season", "Snow lying (m)", "Sunshine", "Snowfall", "Thaw";
 `&season=winter`, `&snow=0.4`, `&thaw=1`; sim/snow.js, render/snow.js): spring, summer, autumn

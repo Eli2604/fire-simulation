@@ -293,8 +293,10 @@ export function stepSnow(sim, dt, D) {
   }
   const fall = D.snowRate ?? 0; // kg/(m²·s) of water falling as snow
   const solar = w.dark || w.indoor ? 0 : D.solar ?? 0;
-  // longwave to the sky: ~40 W/m² under a clear one, little under cloud (or while it snows)
-  const skyLoss = 40 * Math.min(1, solar / 500) + 5;
+  // longwave to the sky: ~40 W/m² under a clear one (by day and by night: frost), little under
+  // cloud (or while it snows)
+  const clear = w.dark || w.indoor ? 0 : D.clear ?? Math.min(1, solar / 500);
+  const skyLoss = 40 * clear + 5;
   const { depth, rho, base, cover, air, top } = S;
   const { airT, radField, temp, skin, airQ } = w;
   const A = S.sh * S.sh;
