@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { F_BURNING } from '../sim/world.js';
 import { blackbody } from './colors.js';
 import { GLOW_EPS, GLOW_OX } from './heatColor.js';
+import { MATERIALS, MAT } from '../sim/materials.js';
 
 /** Fragments flying after an explosion, tumbling, glowing when hot. */
 export class DebrisRenderer {
@@ -55,6 +56,47 @@ export class DebrisRenderer {
     this.mesh.instanceMatrix.needsUpdate = true;
     this.mesh.instanceColor.needsUpdate = true;
     this.updateChunks(world);
+    this.updateFragments(world);
+  }
+
+  /**
+   * Rigid fragments (world.rigidFragments, physics/simPhysics.js launchFragment: a burst
+   * cylinder's shell pieces, shrapnel): each drawn as its own hull at the body's pose, its
+   * material's colour, glowing while it is hot.
+   */
+  updateFragments(world) {
+    const list = world.rigidFragments;
+    if (!list?.length && !this.frags?.size) return;
+    this.frags ??= new Map();
+    const alpha = world.rigid?.physics.alpha ?? 1;
+    const live = new Set();
+    for (const f of list ?? []) {
+      const b = f.body;
+      live.add(b);
+      let m = this.frags.get(b);
+      if (!m) {
+        m = new THREE.Mesh(hullGeometry(b.shape), new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.6, color: 0x6e7176 }));
+        m.castShadow = true;
+        m.userData.mat = MAT[f.material] ?? MAT.steel;
+        const M = MATERIALS[m.userData.mat];
+        if (M?.color) m.material.color.setRGB(M.color[0], M.color[1], M.color[2]);
+        this.mesh.parent.add(m);
+        this.frags.set(b, m);
+      }
+      const ip = b.interpolated(alpha);
+      m.position.set(ip.position[0], ip.position[1], ip.position[2]);
+      m.quaternion.set(ip.quaternion[0], ip.quaternion[1], ip.quaternion[2], ip.quaternion[3]);
+      blackbody(f.temp, this.c);
+      const ge = 0.6 * (GLOW_EPS[m.userData.mat] ?? 0.3);
+      m.material.emissive.setRGB(this.c[0] * ge, this.c[1] * ge, this.c[2] * ge);
+    }
+    for (const [b, m] of this.frags)
+      if (!live.has(b)) {
+        m.parent?.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+        this.frags.delete(b);
+      }
   }
 
   /**
@@ -106,4 +148,21 @@ export class DebrisRenderer {
     this.chunkMesh.instanceMatrix.needsUpdate = true;
     this.chunkMesh.instanceColor.needsUpdate = true;
   }
+}
+
+/** A convex hull shape (physics/shapes.js: verts, faces with vertex loops) as a flat-shaded mesh. */
+function hullGeometry(shape) {
+  const pos = [];
+  for (const f of shape.faces ?? []) {
+    const vi = f.vi;
+    for (let k = 1; k + 1 < vi.length; k++)
+      for (const j of [vi[0], vi[k], vi[k + 1]]) {
+        const v = shape.verts[j];
+        pos.push(v[0], v[1], v[2]);
+      }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
 }

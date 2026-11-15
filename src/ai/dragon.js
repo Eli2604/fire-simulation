@@ -5,6 +5,7 @@ import { iceBears } from '../sim/ice.js';
 import { splatter } from '../sim/wounds.js';
 import { stepSnatch, stepFight, stepThrown, startSnatch, startFight, rival, holdCarried, BLOWS } from './dragonAir.js';
 import { sense as senseEvade, stepEvade, evadeRollHit } from './dragonEvade.js';
+import { DragonRagdoll, DRAGON_RAGDOLL } from '../physics/dragonRagdoll.js';
 
 const DRAGON_KG = 3000; // what it weighs (k = 1): ice must be ~30 cm to bear it
 import { MATERIALS } from '../sim/materials.js';
@@ -44,7 +45,8 @@ import { perceive, senses, hears, headOf, SENSES, beamsIn } from './perception.j
  *    soldier's does (sim/wounds.js): its health drains, slowing as it clots, blood
  *    drips from the wound (a trail of drops on the ground where it walks or flies),
  *    sprays onto whatever is behind the hit, and stains its scales there.
- *    Badly hurt it flies back to its lair to rest; killed, it falls.
+ *    Badly hurt it flies back to its lair to rest; killed, it falls (with the simulation's
+ *    rigid bodies on it goes limp: a ragdoll from the pose it died in, physics/dragonRagdoll.js).
  *
  *  - Its round: a route of waypoints (`route`: "x,z action; x,z action; ..." in
  *    the zone's metres). Actions: `rest` (lie down a while), `climb` (crawl up and
@@ -306,6 +308,7 @@ function clearance(s, k, crouch) {
  * and the mouth. Also used by the renderer between steps and by the hit tests.
  */
 export function pose(d, w, dt) {
+  if (d.ragdoll) return; // (limp: its pose comes from the ragdoll, physics/dragonRagdoll.js)
   const k = d.k;
   const ds = PLAN.ds * k;
   const body = resample(d.trail, ds, (PLAN.trunk + PLAN.tail) * k);
@@ -492,6 +495,9 @@ export const canFly = (d) => wingDamage(d)[0] < WING.hurt;
  * Returns { amp, fold, droop } for the wing `key`, from the dragon's own amp and fold.
  */
 export function wingPose(d, key, amp, fold) {
+  // limp (a ragdoll: physics/dragonRagdoll.js): as the ragdoll's wing plates lie
+  const rw = d.ragWing?.[key];
+  if (rw && d.ragdoll) return { amp: 0, fold: rw.fold, droop: rw.droop };
   const limp = Math.min(1, (d.wingHurt?.[key] ?? 0) / WING.hp);
   if (limp <= 0) return { amp, fold, droop: 0 };
   const weak = Math.max(0, (limp - 0.25) / 0.75);
@@ -636,7 +642,10 @@ export function dragonZones(d, w = null) {
     // the elbow / knee: out and up, sprawling
     const knee = add3(add3(lerp3(root, foot, 0.5), out, 0.25 * k * d.groundF), fr.u, 0.15 * k);
     const r = front ? [0.2, 0.14, 0.12] : [0.26, 0.17, 0.13];
-    add(key, [root, knee, foot].map((p, j) => ({ p, r: r[j] * k, up: fr.u })));
+    // (limp: where the ragdoll has the leg)
+    const RL = d.ragdoll && d.ragLegs?.[key];
+    const pts = RL ? [RL.root, RL.knee, RL.foot] : [root, knee, foot];
+    add(key, pts.map((p, j) => ({ p, r: r[j] * k, up: fr.u })));
   }
   // --- the wings: the bones by the fold and the wingbeat (as render/dragon.js), the skin behind
   {
@@ -859,7 +868,7 @@ export class DragonAI {
     d.hurtFlash = Math.max(0, d.hurtFlash - dt);
     if (d.health <= 0) {
       this.dead(d, w, dt);
-      pose(d, w, dt);
+      if (!d.ragdoll) pose(d, w, dt);
       return;
     }
     d.fuel = Math.min(1, d.fuel + (dt * 0.045) / Math.sqrt(d.fireCapacity ?? 1));
@@ -1478,6 +1487,9 @@ export class DragonAI {
     d.lunge = 0;
     d.flapAmp = approach(d.flapAmp, 0, 2, dt);
     d.undulate = 0;
+    // with rigid bodies (physics/simPhysics.js) it goes limp: a ragdoll from the pose it died in
+    if (!d.ragdoll && this.sim.rigid && DRAGON_RAGDOLL.on && !d.held && !d.airAct && d.spine) this.goLimp(d, w);
+    if (d.ragdoll) return this.limp(d, w, dt);
     if (d.mode === 'air' || d.mode === 'falling') {
       d.mode = 'falling';
       d.vy -= G * dt;
@@ -1511,6 +1523,58 @@ export class DragonAI {
     d.jaw = approach(d.jaw, 0.35, 2, dt);
     d.glow = approach(d.glow, 0, 2, dt);
     for (const t of d.trail) t[3] = approach(t[3], 1.25, 1.5, dt);
+  }
+
+  /** Killed: its body handed to a ragdoll (physics/dragonRagdoll.js), moving as it was. */
+  goLimp(d, w) {
+    const air = d.mode === 'air' || d.mode === 'falling';
+    const v = air ? [Math.sin(d.yaw) * d.speed, d.vy ?? 0, Math.cos(d.yaw) * d.speed] : [0, 0, 0];
+    // (its legs where they are: the feet on the ground, or tucked up in flight)
+    const Z = dragonZones(d, w);
+    const legs = {};
+    for (const key of ['foreL', 'foreR', 'hindL', 'hindR']) {
+      const z = Z.find((q) => q.k === key);
+      if (z) legs[key] = z.pts.map((q) => q.p);
+    }
+    d.ragdoll = new DragonRagdoll(d, this.sim.rigid.physics, { velocity: v, legs });
+    d.ragImpacts = [];
+    if (!this.ragListen) {
+      // (its bodies hitting the ground: the crash)
+      this.ragListen = this.sim.rigid.onImpact((e) => {
+        const dd = e.b?.userData?.dragon ?? e.a?.userData?.dragon;
+        if (dd?.ragImpacts && !(e.a?.userData?.dragon && e.b?.userData?.dragon)) dd.ragImpacts.push(e);
+      });
+    }
+    d.mode = air ? 'falling' : 'dead';
+    if (!air) w.events.push({ type: 'dragonDown', pos: d.p.slice(), time: w.time, name: 'the dragon' });
+  }
+
+  /** Limp: its pose from the ragdoll; killed in flight, the crash when it hits the ground. */
+  limp(d, w, dt) {
+    const R = d.ragdoll;
+    const v = R.velocity();
+    R.apply(d);
+    d.speed = 0;
+    d.vy = v[1];
+    d.jaw = approach(d.jaw, 0.35, 2, dt);
+    d.glow = approach(d.glow, 0, 2, dt);
+    d.flapAmp = 0;
+    d.groundF = 0;
+    if (d.mode === 'falling') {
+      // the first hard hit on the ground (not a wingtip brushing it): the crash
+      const hit = d.ragImpacts.find((e) => (!e.a || !e.b) && e.impulse > 50 * (d.k ?? 1) ** 3 && !e.b?.userData?.part?.startsWith('wing'));
+      if (hit) {
+        const body = hit.b ?? hit.a;
+        const vel = d.lastVel ?? v;
+        d.mode = 'dead';
+        this.impactOf(d, w, 'fall', [vel[0], Math.min(-1, vel[1]), vel[2]], hit.point, body.mass / R.spec.mass > 0.15 ? 1 : 0.5);
+        w.events.push({ type: 'dragonDown', pos: d.p.slice(), time: w.time, name: 'the dragon' });
+        w.noises.push({ p: d.p.slice(), loud: 40, time: w.time, kind: 'dragon' });
+        this.sim.ai?.blast?.(d.p, 2.5 * d.k); // whoever it lands on
+      }
+    }
+    d.lastVel = v;
+    d.ragImpacts.length = 0;
   }
 
   // ---------------------------------------------------------------------------

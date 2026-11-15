@@ -563,6 +563,21 @@ function ruptureLumped(sim, v, a, k, gauge) {
   const blastR = Math.max(3 * h, 0.4 * Math.cbrt(E / 1000));
   v.blastRadius = blastR;
   v.fragmentSpeed = v0;
+  // with rigid bodies (physics/simPhysics.js): the shell flies as a few real pieces of its steel
+  // (the blast pushes the bodies that are there first, not the pieces it makes)
+  sim.rigid?.explosion(center, E, blastR * 1.5);
+  const rigidShell = !!sim.rigid && v.radius > 0 && v.height > 0;
+  if (rigidShell) {
+    const level = Math.max(0, Math.min(1, v.fill ?? 0.8));
+    v.fragmentBodies = cylinderFragments(sim, {
+      center, radius: v.radius, height: v.height, wall: v.wall ?? 0.003, mShell, eKin: 0.1 * E, gauge,
+      Tdry: v.Tv ?? 15, Twet: v.Tw ?? 15, level, fluid, carried: 0.05 * m, valve: true,
+    });
+    for (const i of a.shell) {
+      w.pieceOf?.delete(i);
+      w.clearVoxel(i);
+    }
+  }
   const launch = (i, speed, up = 0) => {
     const p = w.center(...w.coords(i));
     let dx = p[0] - center[0];
@@ -576,11 +591,12 @@ function ruptureLumped(sim, v, a, k, gauge) {
     launchVoxel(w, i, [(dx / l2) * speed, (dy / l2) * speed, (dz / l2) * speed]);
   };
   const topRow = v.rows?.[1] ?? Infinity;
-  for (const i of a.shell) {
-    const y = ((i / w.nx) | 0) % w.ny;
-    if (y >= topRow) launch(i, v0 * (1.2 + 0.4 * sim.rand()), 3);
-    else launch(i, v0 * (0.5 + sim.rand() * 0.7));
-  }
+  if (!rigidShell)
+    for (const i of a.shell) {
+      const y = ((i / w.nx) | 0) % w.ny;
+      if (y >= topRow) launch(i, v0 * (1.2 + 0.4 * sim.rand()), 3);
+      else launch(i, v0 * (0.5 + sim.rand() * 0.7));
+    }
   // the rest of the liquid: burning droplets, the rest spills
   for (const i of a.contents) {
     w.vesselTag[i] = 0;
@@ -697,7 +713,11 @@ function rupture(sim, v, a, gauge, Tf) {
     const l2 = Math.hypot(dx, dy, dz);
     launchVoxel(w, i, [(dx / l2) * speed, (dy / l2) * speed, (dz / l2) * speed]);
   };
-  for (const i of a.shell) launch(i, v0 * (0.5 + sim.rand() * 0.7));
+  // with rigid bodies: the shell's voxels torn into a few pieces (by sector round the middle),
+  // each a hull body of its voxels' mass; without, every shell voxel flies on its own
+  sim.rigid?.explosion(center, E, blastR * 1.5);
+  if (sim.rigid && a.shell.length >= 2) v.fragmentBodies = shellFragments(sim, a.shell, center, v0);
+  else for (const i of a.shell) launch(i, v0 * (0.5 + sim.rand() * 0.7));
   // part of the remaining liquid is thrown out as burning droplets, the rest spills
   for (const i of a.contents) {
     w.vesselTag[i] = 0;
@@ -770,6 +790,131 @@ function impact(sim, d, x, y, z, M) {
     // (its sound: the fragment's material on what it hit, from its mass and speed: audio/physics.js)
     if (E > 300) w.events.push({ type: 'impact', pos: d.p.slice(), time: w.time, energy: E, name: M.label, materials: [M.name, hitName], mass: m, speed: Math.hypot(d.v[0], d.v[1], d.v[2]), size: 1, sizeA: w.h, radius: w.h * 0.3, kind: 'debris' });
   }
+}
+
+/**
+ * A burst cylinder's shell as rigid fragments (sim.rigid.launchFragment: hull bodies with
+ * continuous collision). The steel (mShell) tears as cylinders do in a BLEVE: the two ends come
+ * off and the side splits lengthwise into strips (two, three at higher pressure), each a curved
+ * plate of the wall's thickness with its share of the steel. The kinetic energy given to the
+ * fragments (eKin: a share of the burst energy, Baker / Brode partition) is shared out by mass
+ * (the same speed each, ±30 %); the strips fly out sideways, the bottom into the ground, the
+ * valve end up along the axis, and with `carried` kg of liquid still in it flashing out of its
+ * open end it rockets: thrust = carried · u / 0.5 s, u = √(2Δp/ρ) (the two-phase jet). Each piece
+ * is as hot as the wall it was (the dry wall above the liquid, the wetted wall below).
+ * → the bodies.
+ */
+function cylinderFragments(sim, { center, radius: r, height: H, wall: t, mShell, eKin, gauge, Tdry, Twet, level, fluid, carried = 0, valve = true }) {
+  const R = sim.rigid;
+  const rnd = () => sim.rand();
+  const Aside = 2 * Math.PI * r * H;
+  const Aend = Math.PI * r * r;
+  const A = Aside + 2 * Aend;
+  const pieces = [];
+  // the side: strips torn lengthwise
+  const nb = gauge > 25e5 ? 3 : 2;
+  const th0 = rnd() * Math.PI * 2;
+  for (let j = 0; j < nb; j++) {
+    const arc = (Math.PI * 2) / nb;
+    const a0 = th0 + j * arc;
+    const pts = [];
+    for (let s = 0; s <= 4; s++) {
+      const th = a0 + (arc * s) / 4;
+      for (const y of [-H / 2, H / 2]) for (const rr of [r, r - t]) pts.push([rr * Math.cos(th), y, rr * Math.sin(th)]);
+    }
+    const tc = a0 + arc / 2;
+    pieces.push({ pts, mass: (mShell * Aside) / A / nb, dir: [Math.cos(tc), 0.3 + 0.3 * rnd(), Math.sin(tc)], temp: Twet * level + Tdry * (1 - level), name: 'shell', area: (Aside / nb) * 2 });
+  }
+  // the ends: dished discs (the top with the valve and its collar)
+  const end = (sgn, extra) => {
+    const pts = [];
+    for (let s = 0; s < 10; s++) {
+      const th = (s / 10) * Math.PI * 2;
+      pts.push([r * Math.cos(th), 0, r * Math.sin(th)], [r * Math.cos(th), -sgn * t, r * Math.sin(th)]);
+    }
+    pts.push([0, sgn * 0.22 * r, 0], [0, sgn * (0.22 * r - t), 0]);
+    for (const q of extra) pts.push(q);
+    return pts.map((q) => [q[0], q[1] + sgn * H * 0.5, q[2]]);
+  };
+  const collar = valve ? [[0.05, 0.22 * r + 0.07, 0], [-0.05, 0.22 * r + 0.07, 0], [0, 0.22 * r + 0.07, 0.05], [0, 0.22 * r + 0.07, -0.05]] : [];
+  const hx = rnd() - 0.5, hz = rnd() - 0.5;
+  pieces.push({ pts: end(-1, []), mass: ((mShell * Aend) / A) * 1.3, dir: [hx, -0.5, hz], temp: Twet, name: 'bottom', area: Aend * 2 });
+  const top = { pts: end(1, collar), mass: (mShell * Aend) / A + (valve ? 0.6 : 0), dir: [(rnd() - 0.5) * 0.4, 1, (rnd() - 0.5) * 0.4], temp: Tdry, name: valve ? 'valve end' : 'top', area: Aend * 2, top: true };
+  pieces.push(top);
+  // the speeds: eKin shared out by mass
+  const M = pieces.reduce((s, p) => s + p.mass, 0);
+  const vBase = Math.min(45, Math.sqrt((2 * eKin) / Math.max(0.5, M)));
+  const rhoL = fluid?.vapor ? liquidDensity(fluid, 20) : 500;
+  const u = Math.max(20, Math.min(120, Math.sqrt((2 * Math.max(0, gauge)) / rhoL)));
+  const bodies = [];
+  for (const P of pieces) {
+    const c = [0, 0, 0];
+    for (const q of P.pts) for (let a = 0; a < 3; a++) c[a] += q[a] / P.pts.length;
+    const pts = P.pts.map((q) => [q[0] - c[0], q[1] - c[1], q[2] - c[2]]);
+    const l = Math.hypot(...P.dir) || 1;
+    const sp = vBase * (0.7 + 0.6 * rnd()) * (P.top ? 1.15 : 1);
+    const v = P.dir.map((x) => (x / l) * sp + (rnd() - 0.5) * 0.15 * sp);
+    const av = P.top ? [(rnd() - 0.5) * 2, 15 + 10 * rnd(), (rnd() - 0.5) * 2] : [(rnd() - 0.5) * 25, (rnd() - 0.5) * 25, (rnd() - 0.5) * 25];
+    const thrust = P.top && carried > 0 ? { force: (carried * u) / 0.5, time: 0.5, axis: [0, 1, 0] } : null;
+    bodies.push(R.launchFragment({ p: [center[0] + c[0], center[1] + c[1], center[2] + c[2]], v, av, points: pts, mass: P.mass, material: 'steel', temp: P.temp, area: P.area, thrust, life: 600, name: P.name }));
+  }
+  return bodies;
+}
+
+/**
+ * A ruptured vessel's own shell voxels torn into a few pieces (by sector round its middle), each
+ * a rigid hull of its voxels with their mass, thrown out from the middle at about v0. → the bodies.
+ */
+function shellFragments(sim, shell, center, v0) {
+  const w = sim.world;
+  const h = w.h;
+  const V = h ** 3;
+  const nb = Math.max(2, Math.min(6, Math.round(shell.length / 25)));
+  const th0 = sim.rand() * Math.PI * 2;
+  const groups = Array.from({ length: nb }, () => []);
+  for (const i of shell) {
+    const p = w.center(...w.coords(i));
+    let th = Math.atan2(p[2] - center[2], p[0] - center[0]) - th0;
+    th = ((th % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    groups[Math.min(nb - 1, Math.floor((th / (Math.PI * 2)) * nb))].push(i);
+  }
+  const bodies = [];
+  for (const g of groups) {
+    if (!g.length) continue;
+    let M = 0;
+    let T = 0;
+    const c = [0, 0, 0];
+    const cs = g.map((i) => w.center(...w.coords(i)));
+    const counts = new Map();
+    g.forEach((i, k) => {
+      const m = MATERIALS[w.mat[i]].density * w.dens[i] * V;
+      M += m;
+      T += Math.max(w.temp[i], w.skin[i]) * m;
+      for (let a = 0; a < 3; a++) c[a] += cs[k][a] * m;
+      counts.set(w.mat[i], (counts.get(w.mat[i]) ?? 0) + 1);
+    });
+    for (let a = 0; a < 3; a++) c[a] /= M;
+    const mat = [...counts].sort((x, y) => y[1] - x[1])[0][0];
+    const pts = [];
+    const step = Math.max(1, Math.floor(g.length / 30));
+    for (let k = 0; k < g.length; k += step)
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) pts.push([cs[k][0] - c[0] + (dx * h) / 2, cs[k][1] - c[1] + (dy * h) / 2, cs[k][2] - c[2] + (dz * h) / 2]);
+    for (const i of g) {
+      w.pieceOf?.delete(i);
+      w.clearVoxel(i);
+    }
+    let dx = c[0] - center[0];
+    let dy = c[1] - center[1] + 0.3 * Math.hypot(c[0] - center[0], c[2] - center[2]) + 0.05;
+    let dz = c[2] - center[2];
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx = dx / l + (sim.rand() - 0.5) * 0.3;
+    dy = Math.abs(dy / l) + 0.2;
+    dz = dz / l + (sim.rand() - 0.5) * 0.3;
+    const l2 = Math.hypot(dx, dy, dz);
+    const sp = v0 * (0.5 + sim.rand() * 0.7);
+    bodies.push(sim.rigid.launchFragment({ p: c, v: [(dx / l2) * sp, (dy / l2) * sp, (dz / l2) * sp], points: pts, mass: M, material: MATERIALS[mat].name, temp: T / M, life: 600, name: 'shell' }));
+  }
+  return bodies;
 }
 
 /** Take a voxel out of the grid and make it a flying fragment. */

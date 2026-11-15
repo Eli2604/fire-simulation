@@ -188,6 +188,36 @@ export class FlameRenderer {
       );
     }
 
+    // --- flames on burning chunks in flight (world.rigidChunks: physics/chunkFire.js burns them
+    // where they are): from their burning voxels at the body's pose, trailing behind as it flies
+    for (const c of w.rigidChunks ?? []) {
+      if (!c.burning) continue;
+      const ip = c.body.interpolated(w.rigid?.physics.alpha ?? 1);
+      const q = ip.quaternion;
+      const bv = c.body.vel;
+      const S = c.B.s, L = c.B.local;
+      const per = Math.min(4, (60 * dt) / Math.max(1, Math.sqrt(c.burning)));
+      for (let v = 0; v < c.B.n; v++) {
+        if (!(S.flags[v] & F_BURNING) || !S.mat[v]) continue;
+        if (Math.random() > per) continue;
+        // (body frame → world: q·l)
+        const lx = L[3 * v], ly = L[3 * v + 1], lz = L[3 * v + 2];
+        const ix = q[3] * lx + q[1] * lz - q[2] * ly, iy = q[3] * ly + q[2] * lx - q[0] * lz, iz = q[3] * lz + q[0] * ly - q[1] * lx, iw = -q[0] * lx - q[1] * ly - q[2] * lz;
+        const px = ip.position[0] + ix * q[3] + iw * -q[0] + iy * -q[2] - iz * -q[1];
+        const py = ip.position[1] + iy * q[3] + iw * -q[1] + iz * -q[0] - ix * -q[2];
+        const pz = ip.position[2] + iz * q[3] + iw * -q[2] + ix * -q[1] - iy * -q[0];
+        if (this.skip.length && this.skipped(px, py, pz)) continue;
+        this.spawn(
+          px + (Math.random() - 0.5) * h, py + (Math.random() - 0.5) * h, pz + (Math.random() - 0.5) * h,
+          bv[0] * 0.35 + (Math.random() - 0.5) * 0.3, bv[1] * 0.35 + 0.6 + Math.random() * 0.4, bv[2] * 0.35 + (Math.random() - 0.5) * 0.3,
+          lifeBase * (0.4 + Math.random() * 0.6),
+          h * (2 + Math.random() * 1.5),
+          0,
+          0.8,
+        );
+      }
+    }
+
     // --- integrate & write attributes
     const pos = this.pos;
     const vel = this.vel;
