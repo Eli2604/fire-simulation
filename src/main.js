@@ -28,6 +28,8 @@ import { Editor } from './editor/editor.js';
 import { FORMATIONS } from './ai/flight.js';
 import { playSnatch, playFight, AIR_EVENT_TEXT } from './ai/dragonAir.js';
 import { summarizeWorld, menuRelevance } from './ui/menuRelevance.js';
+import { AIR_BACKEND_MODES } from './sim/solverBackend.js';
+import { sharedGpu, initGpu } from './sim/gpu/gpuContext.js';
 
 const $ = (id) => document.getElementById(id);
 const view = new View($('view'));
@@ -64,6 +66,7 @@ const state = {
   torchShadows: true,
   detail: !/[?&]patches=0/.test(location.search), // fine detail close up (candles: sim/patches.js)
   voxelScale: 1, // factor on every scene's voxel size
+  solver: 'auto', // where the air model runs: 'auto' (the GPU when there is WebGPU), 'cpu', 'gpu' (sim/solverBackend.js)
   patchScale: 1, // factor on the fine detail's voxel size
 };
 
@@ -149,9 +152,11 @@ function activateZone(name, keepView = false) {
   const from = scene.zones[scene.zone]?.origin;
   const next = zoneSim(name);
   zoneSims[scene.zone] = sim; // frozen while you are away
+  sim.airSolver.release(); // (its GPU memory: sent again when it runs again)
   useZone(name);
   const zd = scene.zones[name];
   sim = next;
+  useSolver(sim);
   syncWeather(false);
   view.dark = !!zd.view?.dark;
   view.space = !!zd.view?.space;
@@ -348,6 +353,18 @@ function switchZone(pt) {
   walk.say(scene.zones[pt.to].name, 3);
 }
 
+/**
+ * Where the scene's air model runs (Simulation › Grid solvers): on the GPU (WebGPU compute,
+ * sim/gpu/gpuAir.js) when the setting allows it and the browser has WebGPU, else the CPU. The
+ * device is asked for once; until it is there (and after a device loss) the CPU runs it.
+ */
+function useSolver(s) {
+  if (!s) return;
+  const ctx = sharedGpu();
+  if (state.solver !== 'cpu') initGpu(ctx);
+  s.airSolver.configure(state.solver, ctx);
+}
+
 // ---------------------------------------------------------------------------
 function load(desc, fresh = true) {
   scene = desc;
@@ -364,7 +381,9 @@ function load(desc, fresh = true) {
   weather = Object.assign(weather, defaultWeather(), wanted);
   scene.weather = weather;
   for (const o of scene.objects) o.params = { ...defaultParams(o.type), ...(o.params ?? {}) };
+  sim?.airSolver.release();
   sim = createSimulation(scene);
+  useSolver(sim);
   syncWeather(false);
   if (walk?.active) walk.exit();
   view.dark = !!scene.view?.dark;
@@ -436,6 +455,11 @@ const fSim = gui.addFolder('Simulation');
 fSim.add(state, 'running').name('Running');
 fSim.add(state, 'timeScale', 0.1, 200, 0.1).name('Time scale (×)');
 fSim.add({ step: () => sim.advance(1, 2000) }, 'step').name('Advance 1 s');
+// the grid solvers (the air: gas temperature, flow, smoke, oxygen, the radiation field) on the
+// CPU or the GPU (WebGPU); what runs them now is shown below it (sim/solverBackend.js)
+const solverNow = { now: 'CPU' };
+fSim.add(state, 'solver', AIR_BACKEND_MODES).name('Grid solvers (air)').onChange(() => useSolver(sim));
+fSim.add(solverNow, 'now').name('Air runs on').disable().listen();
 // the dragons' acts in the air (ai/dragonAir.js): a snatch and a throw, a fight between two dragons
 const fDragon = gui.addFolder('Dragon').close();
 fDragon.add({ snatch: () => walk.say(playSnatch(sim), 3) }, 'snatch').name('🐉 Snatch target (grab, carry, throw)');
@@ -611,7 +635,9 @@ fV.add(state, 'detail').name('Fine detail close up');
 fV.add(lod, 'bias', 0.25, 3, 0.05).name('Detail (LOD bias)');
 // voxel sizes, to suit the hardware: the scene's (rebuilt), the fine detail's (patches rebuilt)
 const fD = gui.addFolder('Voxel size (performance vs detail)');
-fD.add(state, 'voxelScale', { 'Finer (0.75×: ~3× the work)': 0.75, 'As designed (1×)': 1, 'Coarser (1.5×: ~1/5)': 1.5, 'Coarse (2×: ~1/16)': 2 })
+// (finer than 0.75×: for the GPU, which takes the air; the solids, combustion and the rest stay
+// on the CPU, so it still costs there: README › Grid solvers on the GPU)
+fD.add(state, 'voxelScale', { 'Fine (0.5×: 8× the air cells; with the air on the GPU)': 0.5, 'Finer (0.75×: ~3× the work)': 0.75, 'As designed (1×)': 1, 'Coarser (1.5×: ~1/5)': 1.5, 'Coarse (2×: ~1/16)': 2 })
   .name('Scene voxels')
   .onChange(() => restart());
 fD.add(state, 'patchScale', { 'Finer (0.7×)': 0.7, 'As designed (1×: candles and torches 1 cm, thin candles 5 mm, campfires 4 cm)': 1, 'Coarser (1.5×)': 1.5 })
@@ -811,10 +837,21 @@ function updateHud(dt) {
     ...(state.tool === 'extinguisher' ? [['Extinguisher', `${AGENTS[state.agent].label}: ${tank.remaining.toFixed(1)} left${spraying ? ' (spraying)' : ''}`]] : []),
     ...eventRows(w),
     ['Voxels', `${w.solidCount.toLocaleString()} @ ${(w.h * 100).toFixed(1)} cm`],
+    ['Air solver', airSolverText()],
     ['FPS', fps.toFixed(0)],
   ];
+  solverNow.now = sim.airSolver.label;
   $('stats').innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
   if (inspected >= 0 || inspectedCloth || inspectedThing) showInspect();
+}
+
+/** What runs the air (and, on the GPU, how long its step takes there and back, what it sends). */
+function airSolverText() {
+  const a = sim.airSolver;
+  const g = a.gpu;
+  const cells = `${sim.world.NA.toLocaleString()} cells`;
+  if (a.active === 'gpu' && g) return `${a.label}, ${cells}: ${g.stats.roundTripMs.toFixed(1)} ms round trip, ${g.stats.uploadKB.toFixed(0)} KB up`;
+  return `${a.label}, ${cells}`;
 }
 
 const VESSEL_STATE = { sealed: 'sealed', holed: 'holed – burning jet', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
@@ -1172,6 +1209,8 @@ function startWalk() {
 const qs = new URLSearchParams(location.search);
 // ...&voxel=1.5: every scene's voxels 1.5x their size; ...&detailvoxel=0.7: the close-up detail's
 if (Number(qs.get('voxel')) > 0) state.voxelScale = Number(qs.get('voxel'));
+// ...&solver=cpu|gpu|auto: where the air model runs (Simulation › Grid solvers)
+if (['cpu', 'gpu', 'auto'].includes(qs.get('solver'))) state.solver = qs.get('solver');
 // ...&lod=2: the level-of-detail bias (render/lod.js; 0.25..3)
 if (Number(qs.get('lod')) > 0) lod.bias = Number(qs.get('lod'));
 if (Number(qs.get('detailvoxel')) > 0) state.patchScale = PATCH.scale = Number(qs.get('detailvoxel'));
