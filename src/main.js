@@ -19,6 +19,7 @@ import { PATCH } from './sim/patches.js';
 import { lod } from './render/lod.js';
 import { describeCloth, clothRows } from './sim/cloth.js';
 import { describeThing } from './sim/inspectThings.js';
+import { vehicleOfVoxel } from './sim/inspectVehicles.js';
 import { heatmapCss, legendTemps } from './render/colors.js';
 import { ProxyRenderer } from './render/proxies.js';
 import { PlacesOverlay, placeNear } from './render/places.js';
@@ -879,7 +880,9 @@ function showInspect() {
   const th = inspectedThing && describeThing(sim, inspectedThing);
   if (th) {
     el.hidden = false;
-    el.innerHTML = [`<b>${th.title}</b> <span style="color:var(--muted)">(${th.sub})</span>`, ...th.rows, d ? `<span style="color:var(--muted)">This voxel: ${d.material}, ${d.temperature.toFixed(0)} °C, ${d.state}${d.fuel !== null ? `, fuel ${(d.fuel * 100).toFixed(0)} %` : ''}</span>` : ''].filter(Boolean).join('<br>');
+    // (a boat's or a car's voxel: followed in its moving body as it goes, sim/inspectVehicles.js)
+    const vox = th.voxelRows ? th.voxelRows.map((r) => `<span style="color:var(--muted)">${r}</span>`) : null;
+    el.innerHTML = [`<b>${th.title}</b> <span style="color:var(--muted)">(${th.sub})</span>`, ...th.rows, ...(vox ?? []), !vox && d ? `<span style="color:var(--muted)">This voxel: ${d.material}, ${d.temperature.toFixed(0)} °C, ${d.state}${d.fuel !== null ? `, fuel ${(d.fuel * 100).toFixed(0)} %` : ''}</span>` : ''].filter(Boolean).join('<br>');
     return;
   }
   // a garment on the line: the whole of it (its voxels summed), then the voxel clicked
@@ -1024,7 +1027,8 @@ canvas.addEventListener('pointerup', (e) => {
       inspected = hit.voxel;
       inspectedCloth = hit.cloth ?? null; // (the wash on a line: its garment, as a whole)
       // (a gas cylinder, a fuel tank: the vessel as a whole, its pressure and why it did or did not burst)
-      inspectedThing = w.vesselTag[hit.voxel] ? { kind: 'vessel', k: Math.abs(w.vesselTag[hit.voxel]) - 1 } : null;
+      // (a parked car's voxel, what is left of a burnt boat: the car or the boat as a whole, sim/inspectVehicles.js)
+      inspectedThing = w.vesselTag[hit.voxel] ? { kind: 'vessel', k: Math.abs(w.vesselTag[hit.voxel]) - 1 } : vehicleOfVoxel(w, hit.voxel);
       showInspect();
       break;
     case 'ignite':

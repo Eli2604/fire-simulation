@@ -2,6 +2,7 @@ import { MATERIALS } from './materials.js';
 import { F_BURNING, F_SMOLDER, F_LIQUID } from './world.js';
 import { doorGlassBroken, doorDeltaP } from './doors.js';
 import { describeSmithy } from './smithy.js';
+import { describeBoat, describeCar, describePerson } from './inspectVehicles.js';
 
 /**
  * What the inspector says about a thing clicked that is more than a voxel (render/pick.js hands
@@ -28,8 +29,16 @@ import { describeSmithy } from './smithy.js';
  *   vessel      world.vessels[k] (sim/vessels.js): a gas cylinder (a fuel tank): its pressure,
  *               liquid and wall temperatures, fill, relief valve, jet flame, and why it did or
  *               did not burst (burst: at what pressure, its energy, the fireball, the blast)
+ *   boat        world.floats[index] (sim/boats.js, sim/inspectVehicles.js): afloat / aground /
+ *               swamped / sunk, draft, freeboard, heel, trim, water aboard and coming in, holes,
+ *               speed, moored or adrift, who is aboard, the outboard, the sail or the oars
+ *   car         world.cars[index] (sim/cars.js): powertrain, speed, gear, rpm, fuel or charge,
+ *               the pack, the engine, damage, fire, the ground under it, who is in it
+ *   person      someone seated in a boat or a car ({ vehicle, index, seat }): who, health...
+ *   (boat and car: k, the voxel of their moving body clicked, sim/movingBody.js; their
+ *   description's voxelRows say what it is, read from its copy in the grid or from the body)
  *
- * describeThing(sim, thing) -> { title, sub, rows: [string] } or null (gone). Plain data in,
+ * describeThing(sim, thing) -> { title, sub, rows: [string], voxelRows? } or null (gone). Plain data in,
  * text out: tested without a view.
  */
 export function describeThing(sim, thing) {
@@ -54,6 +63,12 @@ export function describeThing(sim, thing) {
       return volcano(w, thing.index);
     case 'vessel':
       return vessel(w, thing.k);
+    case 'boat':
+      return describeBoat(sim, thing.index, thing.k ?? -1, thing.cell ?? -1);
+    case 'car':
+      return describeCar(sim, thing.index, thing.k ?? -1, thing.cell ?? -1);
+    case 'person':
+      return describePerson(sim, thing);
     default:
       return null;
   }
