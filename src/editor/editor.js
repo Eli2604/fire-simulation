@@ -32,10 +32,11 @@ import { rigTargetFor, RIG_TYPES, RIG_BUTTON } from '../rig/objects.js';
 import { recordToPose, poseToRecord, applyRecord } from './gizmoPose.js';
 import { flattenObjects, toLocal, isPlace, kidsOf, uniquifyPlaces, placeKeys } from '../models/composite.js';
 import { TerrainEditing } from './terrainPanel.js';
+import { PatrolEditing } from './patrolPanel.js';
 
 const STORE = 'fireEditor.scenes';
 /** Objects that are characters (no voxels of their own): rigged figures, shown in the rig. */
-const CHARACTERS = { squad: 'soldier', enemy: 'soldier', dragon: 'dragon' };
+const CHARACTERS = { squad: 'soldier', enemy: 'soldier', campPatrol: 'soldier', dragon: 'dragon' };
 // no voxels either: a whirlpool, a wind hose, a jet (sim/stirrers.js) are picked within 3 m
 const STIRRERS = { waterVortex: 1, windHose: 1, windJet: 1 };
 /** The palette, by kind (a model not named here goes under Other). */
@@ -157,6 +158,8 @@ export class Editor {
     v.root.add(this.box);
     // a terrain's areas: their outlines, the gizmo on the picked one, their panel (editor/terrainPanel.js)
     this.terrain = new TerrainEditing(this);
+    // a squad's patrol path and area: drawn on the ground, their handles, their panel (editor/patrolPanel.js)
+    this.patrol = new PatrolEditing(this);
     // picking in the view (a click without a drag, so orbiting still works)
     const cv = v.renderer.domElement;
     cv.addEventListener('pointerdown', (e) => {
@@ -214,6 +217,7 @@ export class Editor {
     this.gizmo.enabled = editing && this.sel >= 0;
     this.gizmoHelper.visible = this.gizmo.enabled;
     this.terrain.group.visible = editing;
+    this.patrol.setMode(m);
     this.box.visible = editing && this.sel >= 0;
     C.playGui.domElement.style.display = m === 'play' ? '' : 'none';
     if (editing) {
@@ -536,6 +540,7 @@ export class Editor {
       c.name(spec.label ?? key).onFinishChange(change);
     }
     if (ob.type === 'terrain') this.terrain.folder(gui, ob, change);
+    this.patrol.folder(gui, ob); // (a squad's, a guard post's: its drawn patrol)
     if (RIG_TYPES[ob.type] && rigTargetFor(ob)) gui.add({ rig: () => this.setMode('rig', this.rigTarget()) }, 'rig').name(RIG_BUTTON[RIG_TYPES[ob.type]]);
   }
 
@@ -641,6 +646,8 @@ export class Editor {
   /* ---------------- selection and the gizmo ---------------- */
   clickView(e) {
     const C = this.ctx;
+    // drawing a patrol: the click is a point of it (editor/patrolPanel.js)
+    if (!this.placing && this.patrol.click(e)) return;
     // a world of places: a click on another place's box or name goes there
     if (!this.placing && C.pickPlace?.(e)) return;
     const hit = C.view.pick(e.clientX, e.clientY);
@@ -707,6 +714,7 @@ export class Editor {
 
   select(i, fromUser = false) {
     this.terrain.selectObject(i, this.sel);
+    this.patrol.selectObject(i, this.sel);
     this.sel = i;
     const on = this.mode === 'edit' && i >= 0;
     this.gizmo.enabled = on;
@@ -714,6 +722,7 @@ export class Editor {
     this.box.visible = on;
     if (on) this.placeGizmo();
     else this.terrain.drawOutlines();
+    this.patrol.draw();
     if (fromUser || this.mode === 'edit') this.refresh();
   }
 
@@ -930,6 +939,7 @@ export class Editor {
     }
     if (this.mode !== 'edit') return;
     if (this.terrain.key(e)) return; // (Esc, Del, Ctrl+D on a terrain's picked area)
+    if (this.patrol.key(e)) return; // (Esc, Enter, Del while drawing a patrol, on its picked point)
     if (e.code === 'Escape') {
       if (this.placing) {
         this.placing = null;

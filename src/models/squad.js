@@ -3,7 +3,11 @@
  * the threat by bounding overwatch, from cover to cover. The threat is a point (offset from the
  * squad's position); set it in the scene or with the "Squad: set the threat" tool.
  * Drawn as the sculpted operator (operator/rig.js).
+ * With a patrol drawn for them (in the editor's view, ai/patrol.js: a path, an area) they patrol
+ * that instead, in file, as guards of their own team, until contact (then the squad AI as ever,
+ * on the leash); the threat offset is then not used.
  */
+import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
 /** A member's primary from the Riflemen option (undefined: a rifle; the gunner keeps his MG). */
 function loadoutOf(opt, squad) {
   if (squad === 'MG' || squad === 'UAV' || !opt || opt === 'rifle') return undefined;
@@ -43,12 +47,14 @@ export default {
     // ropes (ai/ropeTeam.js): coils carried, one a man (rifleman one, rifleman two, the commander, the gunner, the drone operator)
     ropes: { value: 2, min: 0, max: 5, step: 1, label: 'Rope coils carried (one a man: the riflemen first); a man with one can lower a rope down a drop too deep to jump' },
     teamRope: { value: true, label: 'Team rope-down: on a roof or a cliff with the objective below, the leader can take them all down together (ropes side by side, a flashbang first)' },
+    ...PATROL_PARAMS,
   },
   build(p) {
     const roles = [['CMD', -1, 0], ['MG', 1, 0.2], ['R1', -1.4, 1.6], ['R2', 1.4, 1.8]];
     if (p.droneOperator) roles.push(['UAV', 0, 3.2]);
     // who carries a rope coil: the riflemen first, then the commander, the gunner, the drone operator
     const ROPE_ORDER = ['R1', 'R2', 'CMD', 'MG', 'UAV'];
+    const area = drawnPatrol(p);
     return {
       prims: [],
       enemies: roles.map(([squad, x, z]) => ({
@@ -56,7 +62,8 @@ export default {
         squad,
         unit: p.unit,
         loadout: p.flameTrooper && squad === 'R2' ? 'torch' : loadoutOf(p.riflemen, squad),
-        threat: [p.threatX, p.level, p.threatZ],
+        threat: area ? undefined : [p.threatX, p.level, p.threatZ],
+        ...(area ? { area, routeStart: -1, guard: true } : {}),
         skill: p.skill !== 'mixed' ? p.skill : { CMD: 'veteran', MG: 'regular', R1: 'regular', R2: 'recruit', UAV: 'regular' }[squad],
         armour: p.armour !== false,
         recoil: p.recoil ?? 1,

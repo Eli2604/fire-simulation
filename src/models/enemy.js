@@ -5,9 +5,12 @@
  *           the group's position)
  *  route    walk the rectangle's corners in turn, like a guard round
  * After investigating a noise or luring you, they go back to their area.
+ * A path or an area drawn in the editor's view (ai/patrol.js) takes the place of all three.
  * key: the first of the group is the jailer and carries the key to the dungeon cell
  * (models/catacombs.js); killed, he drops it.
  */
+import { PATROL_PARAMS, drawnPatrol } from '../ai/patrol.js';
+
 /** The k-th guard's weapon (undefined: a rifle). */
 const weaponOf = (w, k) => (w === 'mixed' ? [undefined, 'shotgun', 'pistol'][k % 3] : w && w !== 'rifle' ? w : undefined);
 export default {
@@ -37,6 +40,7 @@ export default {
     weaponLight: { value: 'standard', options: ['standard', 'all', 'none'], label: 'Weapon lights (standard: rifle, carbine, shotgun; all: the pistol and MG too)' },
     flashlight: { value: true, label: 'A hand torch on the belt (used with the knife, a pistol or bare hands)' },
     force: { value: 1, min: 0, max: 5, step: 0.05, label: 'Force × (their blows, landings: sim/impact.js)' },
+    ...PATROL_PARAMS,
   },
   build(p, { rng }) {
     const enemies = [];
@@ -44,11 +48,12 @@ export default {
     const hd = p.patrolDepth / 2;
     const ox = p.patrolOffsetX;
     const oz = p.patrolOffsetZ;
-    const area = p.patrol === 'wander' ? null : { mode: p.patrol, corners: [[ox - hw, p.level, oz - hd], [ox + hw, p.level, oz - hd], [ox + hw, p.level, oz + hd], [ox - hw, p.level, oz + hd]] };
+    const drawn = drawnPatrol(p);
+    const area = drawn ?? (p.patrol === 'wander' ? null : { mode: p.patrol, corners: [[ox - hw, p.level, oz - hd], [ox + hw, p.level, oz - hd], [ox + hw, p.level, oz + hd], [ox - hw, p.level, oz + hd]] });
     for (let k = 0; k < p.count; k++) {
       const a = rng() * Math.PI * 2;
       const r = rng() * p.spread;
-      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false, forceScale: p.force ?? 1 });
+      enemies.push({ p: [Math.cos(a) * r, p.level, Math.sin(a) * r], area, routeStart: drawn ? -1 : k, key: p.key && k === 0 ? 'dungeon' : undefined, recoil: p.recoil ?? 1, fireMode: p.fireMode && p.fireMode !== 'weapon' ? p.fireMode : undefined, loadout: weaponOf(p.weapon, k), skill: p.skill && p.skill !== 'mixed' ? p.skill : undefined, sightRange: p.sightRange !== 22 ? p.sightRange : undefined, fov: p.fov, hearing: p.hearing, weaponLight: p.weaponLight === 'all' ? true : p.weaponLight === 'none' ? false : undefined, flashlight: p.flashlight !== false, forceScale: p.force ?? 1 });
     }
     return { prims: [], enemies };
   },

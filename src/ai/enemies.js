@@ -4,6 +4,7 @@ import { toggleDoor } from '../sim/doors.js';
 import { hitZone, wound, shoot } from '../sim/wounds.js';
 import { dangers, pickRoll, startRoll, stepRoll, worthRolling } from './evade.js';
 import { impact, groundMaterial, bodyLanding } from '../sim/impact.js';
+import { nextLeg, areaGoal, holdAt, paceOf, leashHolds, insideZone } from './patrol.js';
 
 /**
  * Enemies: people in the building who do not want to be found.
@@ -356,7 +357,8 @@ export class EnemyAI {
             } else e.lureCooldown = 5;
           }
         }
-        if (sq && (sq.threat || sq.inv) && !['flee', 'lure', 'retreat'].includes(e.state)) {
+        // (a drawn patrol's leash, ai/patrol.js: too far out of it, he breaks off and goes back)
+        if (sq && (sq.threat || sq.inv) && !['flee', 'lure', 'retreat'].includes(e.state) && !leashHolds(e, sq.threat ?? sq.inv?.p)) {
           if (e.guardCtl) {
             e.guardCtl = false;
             e.route = e.goal = e.follow = e.fuel = null;
@@ -412,7 +414,7 @@ export class EnemyAI {
         const leader = team.find((g) => !g.dead);
         const rank = team.filter((g) => !g.dead).indexOf(e);
         e.follow = null;
-        if (rank > 0 && leader && ['patrol', 'investigate'].includes(e.state) && !['flee', 'retreat'].includes(leader.state)) {
+        if (rank > 0 && leader && ['patrol', 'investigate'].includes(e.state) && !['flee', 'retreat'].includes(leader.state) && !e.leashBack) {
           const gap = 3.5 * rank;
           const dl = Math.hypot(leader.p[0] - e.p[0], leader.p[2] - e.p[2]);
           e.follow = leader;
@@ -452,6 +454,8 @@ export class EnemyAI {
               back.goal = e.goal;
               back.timer = e.timer;
               back.leg = e.leg;
+              back.legDir = e.legDir; // (there and back: the way along it; ai/patrol.js)
+              back.sweepI = e.sweepI;
               back.route = this.path(back.p, e.goal);
               back.repath = 3;
               back.trail = [back.p.slice()];
@@ -497,10 +501,14 @@ export class EnemyAI {
           e.urgent = false;
           e.timer = 3 + Math.random() * 3;
         } else if (e.state === 'patrol' && e.area?.mode === 'route') {
-          // a guard round: straight on to the next corner
-          e.goal = this.patrolGoal(e);
-          e.timer = 30;
-          e.repath = 0;
+          // a guard round: straight on to the next corner (a drawn path's waypoint may hold him
+          // a while first, looking round, crouched; the end of a one-way path for good: ai/patrol.js)
+          if (holdAt(e, e.area, w.time)) e.timer = Math.max(e.timer, 1);
+          else {
+            e.goal = this.patrolGoal(e);
+            e.timer = 30;
+            e.repath = 0;
+          }
         }
       }
       // --- they fire back while they see you (or the escaped phoenix); otherwise walk along the route (limping if a leg is hit)
@@ -508,7 +516,10 @@ export class EnemyAI {
       if (bird && !e.sawBird) w.events.push({ type: 'shout', pos: head, time: w.time, name: 'enemy' });
       e.sawBird = !!bird;
       e.aiming = (seesPlayer && this.fireAt(e, pl, dt)) || (!!bird && this.fireAt(e, bird, dt));
-      if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * (e.speedFactor ?? 1));
+      // (on patrol: the pace of the drawn path's leg, or running back on the leash: ai/patrol.js)
+      const pace = e.state === 'patrol' ? paceOf(e) : ((e.pace = null), 1);
+      if (e.state !== 'patrol' || e.moving) e.holdStance = null;
+      if (!e.aiming) this.move(e, dt, (e.state === 'flee' || e.state === 'retreat' || (e.state === 'investigate' && e.urgent) ? RUN : SPEED) * pace * (e.speedFactor ?? 1));
       this.closeBehind(e);
       const tr = (e.trail ??= []);
       const last = tr[tr.length - 1];
@@ -696,9 +707,12 @@ export class EnemyAI {
     if (!a) return [e.home[0] + (Math.random() - 0.5) * 12, e.home[1], e.home[2] + (Math.random() - 0.5) * 12];
     const c = a.corners;
     if (a.mode === 'route') {
-      e.leg = ((e.leg ?? 0) + 1) % c.length;
+      // (in order: round, there and back, or one way: ai/patrol.js)
+      e.leg = nextLeg(e, a);
       return c[e.leg].slice();
     }
+    // a drawn area (any polygon): a random spot in it, or the next of its sweep
+    if (a.poly) return areaGoal(e, a);
     // a random point in the (possibly rotated) rectangle
     const u = Math.random();
     const v = Math.random();
@@ -709,6 +723,8 @@ export class EnemyAI {
   inArea(e, p) {
     const a = e.area;
     if (!a) return Math.hypot(p[0] - e.home[0], p[2] - e.home[2]) < 8;
+    const z = insideZone(a, p);
+    if (z !== null) return z; // (a drawn area or zone: ai/patrol.js)
     const [c0, c1, , c3] = a.corners;
     const ux = c1[0] - c0[0];
     const uz = c1[2] - c0[2];
