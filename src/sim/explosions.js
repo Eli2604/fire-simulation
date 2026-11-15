@@ -2,7 +2,7 @@ import { MATERIALS, MAT } from './materials.js';
 import { emitSound, LOUDNESS } from '../ai/perception.js';
 
 // loose ground a blast digs a crater in (soil, sand, grass, gravel; weathered rock only cracks)
-const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock'].map((n) => MAT[n]).filter(Boolean));
+const GROUND = new Set(['soil', 'quarrySand', 'grass', 'beachSand', 'sand', 'gravel', 'hillRock', 'mud', 'tephra'].map((n) => MAT[n]).filter(Boolean));
 // a tree's wood and its foliage (models/tree.js)
 const TREE_WOOD = new Set(['oak', 'pine', 'willow', 'bark', 'deadWood'].map((n) => MAT[n]).filter(Boolean));
 const FOLIAGE = new Set(['leaves', 'needles', 'twigs'].map((n) => MAT[n]).filter(Boolean));

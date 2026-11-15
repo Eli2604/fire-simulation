@@ -16,6 +16,7 @@ import { resolveTree, rotationMatrix } from './composite.js';
  *  { shape: 'cone', base: [x,y,z], r, height }            vertical
  *  { shape: 'gable', x0, x1, y0, half, rise, shell?, along? }  roof prism along x (or z)
  *  { shape: 'prism', poly: [[x,z],...], y0, y1, hole? } polygon extruded upwards
+ *  { shape: 'columns', x0, z0, cell, nx, nz, lo, hi }   a height field: a column per cell (terrain)
  *
  * Common options:
  *  material   material name
@@ -153,6 +154,32 @@ function insideFn(p, h) {
         test: (x, y, z) => y >= p.y0 - EPS && y <= p.y1 + EPS && inPoly(p.poly, x, z) && !(p.hole && inPoly(p.hole, x, z)),
       };
     }
+    case 'columns': {
+      // a height field (a terrain, models/terrain.js): nx × nz square cells of `cell` metres from
+      // (x0, z0), each a column from lo[c] up to hi[c] (c = i + nx k; lo >= hi: none there)
+      const { x0, z0, cell, nx, nz, lo, hi } = p;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (let c = 0; c < nx * nz; c++)
+        if (hi[c] > lo[c]) {
+          if (lo[c] < y0) y0 = lo[c];
+          if (hi[c] > y1) y1 = hi[c];
+        }
+      if (y1 < y0) y0 = y1 = 0;
+      return {
+        bounds: [
+          [x0, y0, z0],
+          [x0 + nx * cell, y1, z0 + nz * cell],
+        ],
+        test: (x, y, z) => {
+          const i = Math.floor((x - x0) / cell);
+          const k = Math.floor((z - z0) / cell);
+          if (i < 0 || k < 0 || i >= nx || k >= nz) return false;
+          const c = i + nx * k;
+          return y > lo[c] - EPS && y < hi[c] + EPS && hi[c] > lo[c];
+        },
+      };
+    }
     default:
       throw new Error(`Unknown shape '${p.shape}'`);
   }
@@ -264,6 +291,19 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const V = built.volcano;
     const sh = V.shape && { ...V.shape, base: toWorld(...V.shape.base), bowl: toWorld(...V.shape.bowl), ridges: V.shape.ridges.map((r) => ({ ...r, a: toWorld(...r.a), b: toWorld(...r.b) })) };
     world.volcanoes.push({ ...V, shape: sh, crater: toWorld(...V.crater), rim: oy + V.rim, state: 'dormant' });
+  }
+  // snow a terrain lays on its snowfields (models/terrain.js): its depth (m) per voxel column of
+  // the world, sampled in the model's frame; the snow field takes it when it starts (sim/snow.js)
+  if (built.snow) {
+    const S = (world.snowDepth0 ??= new Float32Array(world.nx * world.nz));
+    for (let cz = 0; cz < world.nz; cz++)
+      for (let cx = 0; cx < world.nx; cx++) {
+        const wx = (cx + 0.5) * h - ox;
+        const wz = (cz + 0.5) * h - oz;
+        const d = built.snow(R[0] * wx + R[6] * wz, R[2] * wx + R[8] * wz);
+        const c = cx + world.nx * cz;
+        if (d > S[c]) S[c] = d;
+      }
   }
   for (const c of built.cups ?? []) world.cups.push({ ...c, p: toWorld(...c.p), owner: ownerIndex });
   for (const pr of built.props ?? []) world.props.push({ owner: ownerIndex, ...pr, p: toWorld(...pr.p), heading: rot + (pr.heading ?? 0) });

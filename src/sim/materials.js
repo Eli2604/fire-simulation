@@ -414,6 +414,22 @@ const DEFS = {
     selfHeating: 0.3, residue: 0.02, smokeYield: 0.05, smokeColor: [0.08, 0.07, 0.06],
     meltingPoint: 70, latentHeat: 150e3, fluidity: 0.3, liquidColor: [0.2, 0.12, 0.05],
   },
+  // (the ground a terrain lays down, models/terrain.js, besides soil, sand, gravel, rock and basalt)
+  mud: {
+    // soil soaked to a paste (a lake bed, a bog): heavy and slow to heat (the water in it: ~2.2
+    // kJ/(kg·K) with half its dry weight of water), it conducts like wet soil; nothing in it burns,
+    // and a fire over it has to boil its water off before the ground under it gets hot
+    label: 'Mud (wet soil)', color: [0.27, 0.21, 0.14], density: 1750, specificHeat: 2200, conductivity: 1.4,
+    moisture: 0.5, maxMoisture: 0.9, oxidizeTemp: 300, charColor: [0.16, 0.13, 0.1],
+  },
+  tephra: {
+    // volcanic ash and cinders (scoria, lapilli): basalt foamed by its gases as it was thrown out,
+    // lying loose on a volcano's flanks. Porous (a bulk density of ~1.1 t/m³, half of it air), so
+    // it insulates (~0.25 W/(m·K)) where solid basalt conducts; it melts as basalt does, into lava
+    label: 'Volcanic ash and cinders (tephra)', color: [0.23, 0.21, 0.2], density: 1100, specificHeat: 840, conductivity: 0.25,
+    emissivity: 0.95, meltingPoint: 1120, latentHeat: 400e3, fluidity: 0.3, maxMoisture: 0.3, moisture: 0.02,
+    charColor: [0.16, 0.15, 0.14], liquidColor: [0.95, 0.42, 0.08], crust: true, photo: 'ash',
+  },
 };
 
 /** id -> material definition. id 0 is air/empty. */
@@ -509,6 +525,8 @@ const MECH = {
   soil: { ...GROUND, E: 50e6 },
   quarrySand: { ...GROUND, E: 80e6, eta: 0.4 },
   beachSand: { ...GROUND, E: 80e6, eta: 0.4 },
+  mud: { ...GROUND, E: 5e6, eta: 0.6, hardness: 0.08 },
+  tephra: { ...GROUND, E: 30e6, eta: 0.4, hardness: 0.3 },
   ash: { ...GROUND, E: 5e6, eta: 0.5, burnSound: 'smoulder' },
   grass: { ...GROUND, E: 10e6, eta: 0.45, pop: 0.35, grain: 0.004, burnSound: 'hiss' },
   wood: { ...WOOD, E: 10e9, pop: 0.6, grain: 0.08 },
