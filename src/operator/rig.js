@@ -48,6 +48,7 @@ import { allows as handlingAllows } from '../ai/weapons.js';
 import { MELEE, REACT } from '../ai/melee.js';
 import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
 import { TORCH_T } from '../ai/flashlight.js';
+import { RT_T } from '../ai/retreat.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -486,6 +487,128 @@ const CAS_CLIPS = {
   }],
 };
 export const CASUALTY = { woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, coverFire: 1 };
+
+/* ---------- the retreat (ai/retreat.js): backing off aiming, the fireman's carry, the tripwire ---------- */
+/**
+ * The fireman's carry. The carried man's root rides on the carrier's, turned a quarter to his left
+ * (ai/retreat.js: yaw + PI/2): in his own frame he lies face down across the carrier's shoulders,
+ * his belly over the carrier's neck (his hips a hand behind it, towards his legs), his upper body
+ * hanging down the carrier's left side, his legs down the right in front, his arms dangling. The
+ * carrier: his weapon slung (sling2), a little bent under the load, the right arm round the man's
+ * legs holding his wrist at the front, the left hand steadying him on the left shoulder.
+ */
+function carriedPose(p, f) {
+  p.hips = [1.5, 0.03 * sin(f), 0.04 * sin(f)];
+  p.hipsPos = [0.04, 0.62 + 0.012 * sin(2 * f), -0.2];
+  p.spine = [0.55, 0, 0]; p.chest = [0.45, 0, 0]; p.neck = [0.25, 0, 0]; p.head = [0.25 + 0.06 * sin(f), 0.05 * sin(f), 0];
+  p.thighR = [-1.0, 0, -0.06]; p.thighL = [-0.9, 0, 0.06]; p.shinR = [0.55 + 0.08 * sin(f), 0, 0]; p.shinL = [0.62 - 0.08 * sin(f), 0, 0];
+  p.footR = [0.45, 0, 0]; p.footL = [0.45, 0, 0];
+  p.sling = 1; p.lG = 0; p.lH = 0; p.rG = 0; p.rH = 0;
+  p.lTW = [0.14, 0.86 + 0.04 * sin(f), 0.42 + 0.03 * cos(f)]; p.rTW = [-0.1, 0.84 - 0.04 * sin(f), 0.46]; p.lW = 1; p.rW = 1;
+  p.lPole = [1, 0, -0.4]; p.rPole = [-1, 0, -0.4];
+  return p;
+}
+function carrierPose(p, f, amp = 0.26) {
+  walkLegs(p, f, amp);
+  p.hipsPos[1] -= 0.07; p.thighR[0] -= 0.12; p.thighL[0] -= 0.12; p.shinR[0] += 0.22; p.shinL[0] += 0.22;
+  p.spine = [0.22, 0.04 * sin(f), 0]; p.chest = [0.05, 0, 0]; p.head = [-0.25, 0, 0];
+  handsFree(p);
+  p.sling2 = 1;
+  p.rTW = [-0.2, 1.32, 0.24]; p.lTW = [0.27, 1.5, -0.04]; p.rW = 1; p.lW = 1;
+  p.rPole = [-1, -0.3, -0.5]; p.lPole = [1, 0.4, -0.6];
+  return p;
+}
+/**
+ * Up into the carry (the carrier, RT_T.lift s): down into a squat by him, hands under his arms,
+ * pulls him up against his chest, dips a shoulder under his middle and stands with him. Played
+ * backwards it puts him down again. The casualty's half ('lifted'): from lying, pulled up slumped
+ * against the carrier, then over onto the shoulders.
+ */
+// (built on first use: handsFree needs FREE_R, defined further down)
+let LIFT_K0 = null, LIFTED_K0 = null;
+const LIFT_K = () => (LIFT_K0 ??= (() => {
+  const squat = (e, o) => {
+    const p = pose0();
+    const c = crouchLegs(pose0());
+    for (const k of ['hipsPos', 'thighR', 'thighL', 'shinR', 'shinL', 'footR', 'footL']) p[k] = c[k].map((v) => v * e);
+    handsFree(p);
+    p.sling2 = 1;
+    p.lW = p.rW = 1;
+    return Object.assign(p, o);
+  };
+  return [
+    [0, squat(0, { lW: 0, rW: 0, lTW: [0.25, 0.97, 0.07], rTW: [-0.25, 0.97, 0.07] })],
+    [0.7, squat(1, { spine: [0.6, 0, 0], head: [-0.2, 0, 0], lTW: [0.2, 0.35, 0.35], rTW: [-0.2, 0.35, 0.35] })],
+    [1.5, squat(0.75, { spine: [0.35, 0, 0], head: [-0.1, 0, 0], lTW: [0.25, 1.0, 0.25], rTW: [-0.2, 0.9, 0.3] })],
+    [2.0, squat(0.45, { spine: [0.45, 0, 0.1], head: [-0.2, 0, 0], lTW: [0.27, 1.25, 0.05], rTW: [-0.2, 1.1, 0.28] })],
+    [RT_T.lift, carrierPose(pose0(), 0, 0)],
+  ];
+})());
+const LIFTED_K = () => (LIFTED_K0 ??= [
+  [0, downPose(pose0(), 0)],
+  [0.7, downPose(pose0(), 0)],
+  [1.5, Object.assign(downPose(pose0(), 0), { hips: [0.3, 0, 0], hipsPos: [0, -0.3, 0.05], spine: [0.5, 0, 0], neck: [0.3, 0, 0], head: [0.5, 0, 0], thighR: [-0.3, 0, -0.06], thighL: [-0.3, 0, 0.06], shinR: [0.7, 0, 0], shinL: [0.7, 0, 0], footR: [0.2, 0, 0], footL: [0.2, 0, 0], lTW: [0.18, 0.65, 0.3], rTW: [-0.18, 0.65, 0.3], lW: 1, rW: 1 })],
+  [2.0, Object.assign(carriedPose(pose0(), 0), { hips: [1.0, 0, 0], hipsPos: [0.04, 0.3, -0.1] })],
+  [RT_T.lift, carriedPose(pose0(), 0)],
+]);
+/**
+ * The tripwire (RT_T.wire s): kneeling just past the doorway, facing back through it, his weapon
+ * slung: the charge out of the pouch on his right hip, onto the right-hand jamb low down and
+ * pressed home; the wire's end from the charge, run across to the left-hand jamb low, pulled taut
+ * and tied off; up off the ground with his hands.
+ */
+const WIRE_HANDS = [
+  // t, right hand, left hand, lean (to the side the work is on: + left)
+  [0, [-0.25, 0.97, 0.07], [0.25, 0.97, 0.07], 0],
+  [0.6, [-0.22, 0.95, -0.05], [0.2, 0.9, 0.2], 0],
+  [1.2, [-0.38, 0.26, 0.55], [-0.22, 0.3, 0.55], -0.12],
+  [1.8, [-0.4, 0.24, 0.56], [-0.26, 0.27, 0.56], -0.14],
+  [2.4, [-0.38, 0.25, 0.55], [-0.3, 0.22, 0.55], -0.14],
+  [2.8, [-0.38, 0.24, 0.55], [-0.36, 0.2, 0.56], -0.12],
+  [4.0, [-0.3, 0.25, 0.5], [0.48, 0.18, 0.5], 0.14],
+  [4.6, [0.36, 0.2, 0.52], [0.5, 0.18, 0.5], 0.16],
+  [4.9, [0.4, 0.22, 0.5], [0.46, 0.2, 0.52], 0.15],
+  [RT_T.wire, [-0.2, 0.6, 0.35], [0.2, 0.6, 0.35], 0],
+];
+function wirePose(t) {
+  const p = droneKneel(pose0(), sm01(t / 0.5));
+  handsFree(p);
+  p.sling2 = 1;
+  const K = (j) => WIRE_HANDS.map((k) => [k[0], Array.isArray(k[j]) ? k[j] : [k[j]]]);
+  p.rTW = pathK(K(1), t); p.lTW = pathK(K(2), t);
+  const lean = pathK(K(3), t)[0];
+  // the fingers at work: a little to and fro while fixing and tying
+  const work = env(t, 1.2, 1.4, 2.4, 2.7) + env(t, 4.5, 4.6, 4.9, 5.0);
+  p.rTW[0] += 0.015 * work * sin(t * 22); p.lTW[2] += 0.012 * work * sin(t * 19);
+  p.rW = p.lW = env(t, 0, 0.3, RT_T.wire - 0.2, RT_T.wire + 1);
+  p.spine = [0.45 * env(t, 0.6, 1.2, RT_T.wire - 0.4, RT_T.wire), 0, -lean * 0.8];
+  p.chest = [0.15, 0, -lean * 0.6];
+  p.head = [0.2, lean * 1.6, 0];
+  p.rPole = [-1, -0.6, -0.4]; p.lPole = [1, -0.6, -0.4];
+  return p;
+}
+const RETREAT_CLIPS = {
+  // backing away from the threat, crouched a little, the weapon up at it (the upper body turned to
+  // the aim like aimWalk): the walk cycle run backwards
+  aimWalkBack: [1.3, (t, u) => {
+    const p = walkLegs(pose0(), -TAU * u, 0.26), f = TAU * u;
+    p.hipsPos[1] -= 0.1; p.thighR[0] -= 0.2; p.thighL[0] -= 0.2; p.shinR[0] += 0.32; p.shinL[0] += 0.32;
+    p.spine[0] = 0.12;
+    aimUpper(p, 1); p.wOff = [0, 0.005 * sin(2 * f), 0];
+    return p;
+  }],
+  fireCarry: [1.5, (t, u) => carrierPose(pose0(), TAU * u)],
+  carried: [1.5, (t, u) => carriedPose(pose0(), TAU * u)],
+  liftCasualty: [RT_T.lift, (t) => keyed(LIFT_K(), t)],
+  lifted: [RT_T.lift, (t) => keyed(LIFTED_K(), t)],
+  putDownCasualty: [RT_T.putDown, (t) => keyed(LIFT_K(), RT_T.lift * (1 - t / RT_T.putDown))],
+  setDown: [RT_T.putDown, (t) => keyed(LIFTED_K(), RT_T.lift * (1 - t / RT_T.putDown))],
+  setTripwire: [RT_T.wire, (t) => wirePose(t)],
+};
+/** The retreat's clips that place the weapons themselves (slung) or hold none. */
+export const RETREAT = { fireCarry: 1, carried: 1, liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
+const RETREAT_ONCE = { liftCasualty: 1, lifted: 1, putDownCasualty: 1, setDown: 1, setTripwire: 1 };
+const RETREAT_LABELS = { aimWalkBack: 'Aim-walk backwards', fireCarry: "Fireman's carry (carrier + casualty)", carried: 'Carried (casualty)', liftCasualty: 'Lift casualty (into the carry)', lifted: 'Lifted (casualty)', putDownCasualty: 'Put casualty down', setDown: 'Set down (casualty)', setTripwire: 'Set a tripwire (kneel, fix, string)' };
 
 const SHOOT_CACHE = new Map();
 export function shootClips(R = recoilSpec('rifle'), control = 1) {
@@ -1702,6 +1825,8 @@ const CLIPS = {
   ...MELEE_CLIPS,
   // gear: the weapon dropped, the pack taken off and put down, picking things up
   ...GEAR_CLIPS,
+  // the retreat: backing off aiming, the fireman's carry (both men), setting a tripwire
+  ...RETREAT_CLIPS,
   // peeking over a wall and round corners, slicing the pie; the hand torch drawn and put away
   ...PEEK_TORCH_CLIPS,
 };
@@ -1718,11 +1843,17 @@ export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stair
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
   woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS, ...PEEK_TORCH_LABELS };
 export { PARKOUR, ROLL };
+// the retreat's clips (ai/retreat.js): the one-shots, their walking speeds, the aimed one, their names
+Object.assign(ONCE, RETREAT_ONCE);
+Object.assign(MOVING, { aimWalkBack: 1.0, fireCarry: 0.85 });
+Object.assign(AIMING, { aimWalkBack: 1 });
+Object.assign(LABELS, RETREAT_LABELS);
 /** Without a rifle: what each clip becomes. */
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
 const NO_UNARMED = { ...MELEE_CLIP, dropWeapon: 1, pickupOne: 1, dropPack: 1, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
   holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
+Object.assign(NO_UNARMED, RETREAT);
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
 const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
 const PRONE = { crawl: 1, proneAim: 1, proneShoot: 1, peekOver: 1, peekOverAim: 1 };
@@ -1920,6 +2051,7 @@ function pistolReload(t) {
 const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
 const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
+Object.assign(NO_STYLE, RETREAT);
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way

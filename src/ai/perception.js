@@ -93,7 +93,7 @@ export function senses(a = {}, kind = KIND_OF(a)) {
 
 /* ------------------------------------------------------------------ eyes and heads */
 /** Eye heights (m above the feet) by the clip he shows. */
-const LOW = { crouch: 1, crouchAim: 1, crouchShoot: 1, peekWall: 1, drawTorch: 0, stowTorch: 0 };
+const LOW = { crouch: 1, crouchAim: 1, crouchShoot: 1, peekWall: 1, drawTorch: 0, stowTorch: 0, setTripwire: 1, liftCasualty: 1, putDownCasualty: 1 };
 const PRONE = { crawl: 1, proneAim: 1, proneShoot: 1, woundedDown: 1, dragged: 1, peekOver: 1, peekOverAim: 1 };
 export const EYE = { stand: 1.6, crouch: 1.05, prone: 0.35 };
 /** Where he looks along (unit x, z): his aim point, else his heading (yaw 0 looks along +z). */

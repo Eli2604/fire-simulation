@@ -114,6 +114,8 @@ export function stepCasualties(sq, al, dt) {
     if (sq.strategy) sq.strategy.dirty = true;
   }
   for (const m of al) if (m.down && (m.rescueRole === 'casualty' || m.safe) && sq.rescue?.cas !== m) sq.setAnim(m, 'woundedDown');
+  // (falling back: the retreat decides about them, carry or leave: ai/retreat.js)
+  if (sq.retreating) return;
   let R = sq.rescue;
   if (R && (R.cas.dead || R.rescuer.dead || R.rescuer.down)) {
     // gone wrong: the rescuer is hit too, or too late
@@ -121,7 +123,7 @@ export function stepCasualties(sq, al, dt) {
     R = null;
   }
   if (!R) {
-    const cas = al.find((m) => m.down && !m.safe && !m.dead);
+    const cas = al.find((m) => m.down && !m.safe && !m.dead && m.rt?.role !== 'left');
     if (!cas || !T) return;
     sq.rescueT = (sq.rescueT ?? 0) - dt;
     if (sq.rescueT > 0) return;

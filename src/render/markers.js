@@ -4,7 +4,8 @@ import { groundAt } from '../ai/dragon.js';
 /**
  * Markers for fire starts and pending sources (a pipe that will burst):
  * a bobbing cone pointing at the spot, a ring around it and a text label.
- * Also draws thrown grenades.
+ * Also draws thrown grenades, and the squads' tripwires at doors (ai/retreat.js, world.traps):
+ * the charge on the jamb and the thin wire across the doorway at ankle height.
  */
 export class MarkerRenderer {
   constructor(scene) {
@@ -30,6 +31,15 @@ export class MarkerRenderer {
     this.rockets.count = 0;
     this.rockets.frustumCulled = false;
     scene.add(this.rockets);
+    // tripwires: the charge (a small olive block) and the wire (a hair-thin box, stretched along it)
+    this.charges = new THREE.InstancedMesh(new THREE.BoxGeometry(0.09, 0.14, 0.06), new THREE.MeshStandardMaterial({ color: 0x4a5236, roughness: 0.7 }), 16);
+    this.charges.count = 0;
+    this.charges.frustumCulled = false;
+    scene.add(this.charges);
+    this.wires = new THREE.InstancedMesh(new THREE.BoxGeometry(0.004, 0.004, 1), new THREE.MeshStandardMaterial({ color: 0x9a9a92, roughness: 0.3, metalness: 0.6 }), 16);
+    this.wires.count = 0;
+    this.wires.frustumCulled = false;
+    scene.add(this.wires);
     this.q = new THREE.Quaternion();
     this.fwd = new THREE.Vector3(0, 0, 1);
     this.dv = new THREE.Vector3();
@@ -195,6 +205,24 @@ export class MarkerRenderer {
       }
     }
     this.grenades.count = ng;
+    // the wires at the doors, until they go off
+    let nc = 0, nw = 0;
+    for (const t of world?.traps ?? []) {
+      if (t.fired || nc >= 16) continue;
+      this.m.makeTranslation(t.charge[0], t.charge[1], t.charge[2]);
+      this.charges.setMatrixAt(nc++, this.m);
+      if (t.stage !== 'wire') continue;
+      this.dv.set(t.b[0] - t.a[0], t.b[1] - t.a[1], t.b[2] - t.a[2]);
+      const L = this.dv.length() || 1;
+      this.q.setFromUnitVectors(this.fwd, this.dv.normalize());
+      this.pv.set((t.a[0] + t.b[0]) / 2, (t.a[1] + t.b[1]) / 2, (t.a[2] + t.b[2]) / 2);
+      this.m.compose(this.pv, this.q, new THREE.Vector3(1, 1, L));
+      this.wires.setMatrixAt(nw++, this.m);
+    }
+    this.charges.count = nc;
+    this.wires.count = nw;
+    this.charges.instanceMatrix.needsUpdate = true;
+    this.wires.instanceMatrix.needsUpdate = true;
     this.arrows.count = na;
     this.rockets.count = nr;
     this.grenades.instanceMatrix.needsUpdate = true;

@@ -114,6 +114,13 @@ export const CASUALTY_ACTS = {
   dragCasualty: { label: 'Drag casualty (rescuer + casualty)', partner: 'dragged' },
   firstAid: { label: 'First aid', partner: 'woundedDown' },
   coverFire: { label: 'Cover fire' },
+  // the retreat (ai/retreat.js): the fireman's carry (the casualty rides on the carrier's root,
+  // turned across his shoulders: off 0, turn a quarter; walked at the carry's pace), into it and
+  // out of it again; a tripwire strung across a doorway
+  liftCasualty: { label: "Lift casualty (fireman's carry)", partner: 'lifted', off: 0, turn: Math.PI / 2 },
+  fireCarry: { label: "Fireman's carry (carrier + casualty)", partner: 'carried', off: 0, turn: Math.PI / 2, speed: 0.85 },
+  putDownCasualty: { label: 'Put casualty down', partner: 'setDown', off: 0, turn: Math.PI / 2 },
+  setTripwire: { label: 'Set a tripwire (kneel, fix the charge, string the wire)' },
 };
 
 /* ---------- peeking and the hand torch (soldier and squad): ai/peek.js, ai/flashlight.js ---------- */

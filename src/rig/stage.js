@@ -566,7 +566,7 @@ export function mountRig(root, opts = {}) {
       const yaw = this.d.yaw;
       const c = new Soldier({ name: 'casualty', position: this.home.slice(), facing: yaw });
       c.fig.play(act.partner, { fade: 0 });
-      this.pk = { kind, t: 0, dur: kind === 'dragCasualty' ? 6.5 : 1e9, from: this.home.slice(), yaw, wait: 0, cas: c };
+      this.pk = { kind, t: 0, dur: kind === 'dragCasualty' || act.speed ? 6.5 : act.off === 0 ? this.fig.A.clips[kind].duration + 1 : 1e9, from: this.home.slice(), yaw, wait: 0, cas: c, act };
       this.fig.play(kind, { fade: 0 });
       this.pkStep(0);
       return this;
@@ -615,14 +615,22 @@ export function mountRig(root, opts = {}) {
       if (P.cas) {
         // the rescuer walks backwards (away from where he faces) 0.8 m/s; the casualty follows his hands
         P.t += dt;
-        if (P.t > P.dur) P.t = 0;
+        if (P.t > P.dur) {
+          P.t = 0;
+          // (a one-shot pair, the lift, the put-down: again from the start, both of them)
+          if (P.act?.off === 0 && !P.act.speed) {
+            this.fig.play(P.kind, { restart: true, fade: 0 });
+            P.cas.fig.play(P.act.partner, { restart: true, fade: 0 });
+          }
+        }
         const f = [Math.sin(P.yaw), Math.cos(P.yaw)];
-        const back = P.kind === 'dragCasualty' ? 0.8 * P.t : 0;
+        // (the carry walks forwards at its pace; the drag backwards)
+        const back = P.kind === 'dragCasualty' ? 0.8 * P.t : P.act?.speed ? -P.act.speed * P.t : 0;
         this.d.p = [P.from[0] - f[0] * back, 0, P.from[2] - f[1] * back];
         this.d.yaw = P.yaw;
-        const off = P.kind === 'dragCasualty' ? DRAG_OFF : 0.75;
-        // (first aid: he lies across in front of the kneeling man)
-        P.cas.d.yaw = P.kind === 'dragCasualty' ? P.yaw : P.yaw + Math.PI / 2;
+        const off = P.kind === 'dragCasualty' ? DRAG_OFF : P.act?.off ?? 0.75;
+        // (first aid: he lies across in front of the kneeling man; the carry: across his shoulders)
+        P.cas.d.yaw = P.kind === 'dragCasualty' ? P.yaw : P.yaw + (P.act?.turn ?? Math.PI / 2);
         P.cas.d.p = [this.d.p[0] + f[0] * off, 0, this.d.p[2] + f[1] * off];
         const g = P.cas.fig.group;
         g.position.set(...P.cas.d.p);

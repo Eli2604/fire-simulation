@@ -14,6 +14,9 @@
  *      defend         too weak to attack (men down, wounded to look after): hold in cover and fire
  *      withdraw       outmatched (or out of ammunition): break contact, one team covering the
  *                     other back to a rally point away from the threat
+ *      retreat        ordered, or men down / pinned down by as many as they have standing: man by
+ *                     man back to a rally point under covering fire, the wounded carried or left
+ *                     to cover them, a wire on the last door they pass (ai/retreat.js)
  *  - It is called on the radio ("Alpha, team B base of fire, team A flank left with me"), the planned
  *    route is kept on the men for the paths view (m.planRoute), and it is looked at again every few
  *    seconds: a flank route that turns out exposed (the flankers being hit, the enemy moved to see
@@ -22,6 +25,7 @@
  *    (host.seed, else the call sign).
  */
 import { badlyHit, roundsLeft, ARMS } from './soldier.js';
+import { retreatWanted, startRetreat, stepRetreat } from './retreat.js';
 
 export const STRATEGIES = {
   suppressFlank: 'Suppress and flank',
@@ -29,6 +33,7 @@ export const STRATEGIES = {
   bound: 'Bounding assault (frontal)',
   defend: 'Hold and defend',
   withdraw: 'Break contact (withdraw)',
+  retreat: 'Retreat (peel back, covering fire)',
 };
 const SIDE = { 1: 'left', [-1]: 'right' };
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
@@ -123,6 +128,9 @@ export function assess(sq) {
 /** The strategy for what the leader sees: { kind, side?, why }. */
 export function choose(sq, a, not = null) {
   const can = (k) => k !== not;
+  // ordered back, or too hurt to hold (ai/retreat.js)
+  const r = can('retreat') ? retreatWanted(sq, a) : null;
+  if (r) return { kind: 'retreat', why: r.why };
   // (a man on his own fights where he is: a team down to one man standing breaks contact)
   const outmatched = a.enemies >= 2 * Math.max(1, a.fit) || (a.fit <= 1 && a.men > 1) || a.ammo < 0.15;
   if (outmatched && can('withdraw')) return { kind: 'withdraw', why: a.ammo < 0.15 ? 'low on ammunition' : 'outnumbered' };
@@ -143,6 +151,7 @@ const CALL = {
   bound: (U) => `${U}, bounding overwatch, team A move`,
   defend: (U) => `${U}, hold here, take cover and defend`,
   withdraw: (U, s) => `${U}, break contact, ${s.why}, fall back, team B cover`,
+  retreat: (U, s) => `${U}, ${s.why === 'ordered' ? 'we are pulling out' : s.why}, retreat, peel back to the rally point, covering fire`,
 };
 
 /** Put strategy s in hand: the call, the routes, the teams' parts. */
@@ -162,6 +171,8 @@ export function apply(sq, s, a, quiet = false) {
     return;
   }
   sq.phase = 'strategy';
+  sq.retreating = false;
+  if (s.kind === 'retreat') return startRetreat(sq, sq.strategy);
   const go = (men, to, mode, then) =>
     men.forEach((m, i) => {
       if (m.goingFor || badlyHit(m) || m.crawling || m.down || m.rescueRole) return;
@@ -243,6 +254,8 @@ export function stepStrategy(sq, dt) {
     apply(sq, choose(sq, a), a);
     return sq.phase === 'strategy';
   }
+  // (a retreat once begun is seen through: ai/retreat.js has it)
+  if (S.kind === 'retreat') S.dirty = false;
   if (S.dirty && sq.stratT <= 0) {
     // the threat moved: the same plan if it still fits (new routes to the new flank), else another
     S.dirty = false;
@@ -255,14 +268,14 @@ export function stepStrategy(sq, dt) {
   const A = al.filter((m) => team(m) === 'A'), B = al.filter((m) => team(m) === 'B');
   const now = sq.host.now?.() ?? sq.time;
   // look at it again: outmatched now, or a flank going wrong (the flankers hit, their way seen)
-  if (sq.stratT <= 0) {
+  if (sq.stratT <= 0 && S.kind !== 'retreat') {
     sq.stratT = 4;
     const a = assess(sq);
     const want = choose(sq, a);
     const flankers = S.kind === 'envelop' ? al : A;
     const hitMoving = S.phase === 'move' && flankers.some((m) => m.path && m.lastHitT != null && now - m.lastHitT < 4);
     const seenWay = S.phase === 'move' && (S.kind === 'suppressFlank' || S.kind === 'envelop') && flankers.some((m) => m.path && exposure(sq, T, m.p, m.path.slice(m.pathI ?? 0)) > 0.6);
-    if (want.kind === 'withdraw' && S.kind !== 'withdraw') apply(sq, want, a);
+    if ((want.kind === 'withdraw' || want.kind === 'retreat') && S.kind !== want.kind) apply(sq, want, a);
     else if (hitMoving || seenWay) {
       const alt = choose(sq, a, S.kind);
       sq.say(sq.radioMan() ?? al[0], `${sq.unit}, the flank is exposed, pulling back`, 'order');
@@ -291,6 +304,7 @@ export function stepStrategy(sq, dt) {
     }
     return P.phase !== 'done';
   }
+  if (P.kind === 'retreat') return stepRetreat(sq, dt);
   if (P.kind === 'withdraw') {
     if (P.phase === 'move' && A.every((m) => m.arrived && !m.path)) {
       // team A is back and covering: team B goes

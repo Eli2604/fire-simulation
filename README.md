@@ -1623,6 +1623,38 @@ A **lookout** (`host.lookouts`: a raised place, such as a deck): before contact 
 it to look round, and on contact the gunner takes it as his overwatch when it sees the threat; he
 stays up there while the team is within reach, and comes down by the stairs.
 
+### The retreat: peeling back, the wounded, a wire on the door
+
+`ai/retreat.js` is one of the leader's strategies (`ai/strategy.js`: suppress and flank,
+envelop, bound, defend, withdraw, **retreat**). He picks it when ordered, or by himself when men
+are down and the enemies are as many as the men standing ("heavy casualties"), or when two of
+them were hit in the last seconds by as many ("pinned down"); once begun it is seen through.
+- **Rally point**: a param, else where they started (if that is behind them), else ~20 m back
+  out of the enemy's sight; each man has a slot there.
+- **Peeling back** (bounding overwatch backwards): one man at a time, the one nearest the enemy
+  first, goes to the next cover behind the rearmost man ("Moving!" / "Covering!" / "Set!"), the
+  others firing at what they see; a short bound he backs off with his weapon up (clip
+  *aimWalkBack*), a long one he turns and runs. A man moves only while another covers.
+- **A man down**: carried or left behind, by the param or (auto) by the best carrier's
+  experience, how close the enemy is, whether he can still fight, how badly hurt he is and how
+  many are left. **Carried**: the carrier runs to him, slings his weapon, takes his pack off (the
+  staged pack drop), lifts him into a fireman's carry (*liftCasualty* / *lifted*), walks him back
+  slowly, unable to shoot (*fireCarry* / *carried*), puts him down at the rally point
+  (*putDownCasualty* / *setDown*) and takes his weapon up again. **Left behind**: he stays where
+  he lies and, if he still can, gives covering fire, prone, his aim the worse for his wounds,
+  for as long as he has rounds.
+- **The tripwire**: the last man back through a doorway (a gap in a wall on his way, room on
+  both sides) stops, kneels and strings a wire across it at ankle height with a charge on the
+  jamb (*setTripwire*), then moves on. An enemy whose feet cross it sets it off: the blast
+  (`sim/explosions.js`), its shockwave (`sim/impact.js`), fragments into you. The squad's own men
+  step over it. It is drawn (the charge, the wire) until it goes off.
+
+Squad model params: *Strategy on contact* (auto, retreat: ordered back at once, no retreat),
+*Rally point offset X/Z*, *A man down in a retreat* (auto, carry, leave), *tripwire*. In code:
+`host.retreat = { order, auto, rally, casualties, tripwire, wires, dropPack }`, or
+`orderRetreat(sq, rally)` at any time. The rig's *Casualty* acts show the carry (both men) and
+the wire.
+
 **Hosted**: `scripts/build-rig-artifact.mjs` builds the editor as one file (the rig and the camp
 inside it), to host anywhere.
 

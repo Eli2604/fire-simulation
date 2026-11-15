@@ -89,6 +89,7 @@ import { gaitK } from './weapons.js';
 import { stepKnocked } from './melee.js';
 import { stepStrategy, rethink, exposedTo } from './strategy.js';
 import { stepCasualties } from './casualty.js';
+import { stepTraps } from './retreat.js';
 import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM } from './perception.js';
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
@@ -257,7 +258,7 @@ export class SquadAI {
     this.navAge = Infinity;
     this.replan();
     if (moved && this.contacted) {
-      if (away && this.isLead) {
+      if (away && this.isLead && !this.retreating) {
         const U = this.unit;
         this.say(this.radioMan(), `${U}, threat is moving away, ${this.bearing()}, going into pursuit, all teams follow`, 'order');
         this.startPursuit();
@@ -873,7 +874,8 @@ export class SquadAI {
    * diving on him or its fire): a combat roll out of it (ai/evade.js), if he can and it is worth it.
    */
   dodge(m) {
-    if (m.dead || m.down || m.rescueRole === 'rescuer' || m.trav || !this.host.dangers) return false;
+    // (nor one the retreat moves: carrying a man, stringing a wire, ai/retreat.js)
+    if (m.dead || m.down || m.rescueRole === 'rescuer' || m.rescueRole === 'retreat' || m.trav || !this.host.dangers) return false;
     const H = this.host;
     const rand = H.rand ?? Math.random;
     for (const t of H.dangers(m)) {
@@ -1366,6 +1368,9 @@ export class SquadAI {
     this.time += dt;
     const ms = this.members();
     if (!ms.length) return;
+    // where they started (a rally point to fall back on, ai/retreat.js); their wires at the doors
+    this.home ??= centroid(ms);
+    stepTraps(this);
     // no threat yet: listen, look, send men to investigate; hold where they are
     if (this.on) this.senses(dt);
     stepGroups(this, dt);
@@ -1487,7 +1492,8 @@ export class SquadAI {
     const cmd = al.find((m) => m.squad === 'CMD') ?? al[0];
     for (const m of al) {
       if (this.host.ownMove?.(m)) continue;
-      // down wounded, or in a rescue (fetching him, covering): ai/casualty.js has him
+      // down wounded, or in a rescue (fetching him, covering): ai/casualty.js has him (falling
+      // back, moving, carrying, wiring a door: ai/retreat.js, rescueRole 'retreat')
       if (m.down || m.rescueRole) continue;
       // thrown or knocked down hand-to-hand (ai/melee.js): on his back, then up again
       if (stepKnocked(m, this.time)) {
@@ -1597,7 +1603,7 @@ export class SquadAI {
         if (m.fireT <= 0) {
           this.setAnim(m, AIM);
           // the base of fire suppressing (ai/strategy.js): hardly a pause between bursts
-          const suppress = this.phase === 'strategy' && ['suppressFlank', 'withdraw'].includes(this.strategy?.kind) && teamOf(m) !== this.moving;
+          const suppress = this.phase === 'strategy' && ['suppressFlank', 'withdraw', 'retreat'].includes(this.strategy?.kind) && teamOf(m) !== this.moving;
           m.fireT = suppress ? 0.5 + Math.random() * 0.5 : m.squad === 'MG' ? 1.4 + Math.random() : 3 + Math.random() * 2.5;
         }
       } else {
