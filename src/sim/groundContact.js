@@ -1,5 +1,5 @@
 import { MATERIALS, MAT } from './materials.js';
-import { F_ANCHOR } from './world.js';
+import { F_ANCHOR, F_LIQUID } from './world.js';
 import { massOf, wheelPoints, G } from './carPhysics.js';
 import { iceBears } from './ice.js';
 
@@ -221,7 +221,8 @@ export function groundTop(w, x, z, yFrom, owns = null) {
   for (; y >= yEnd; y--) {
     const i = cx + w.nx * (y + w.ny * cz);
     const m = w.mat[i];
-    if (!m || SKIP_M[m] || (own && own.has(w.owner[i])) || (owns && owns(i))) continue;
+    // (a liquid is no ground: spilt fuel, molten metal, bilge water; nor its own voxels, a car's)
+    if (!m || SKIP_M[m] || w.flags[i] & F_LIQUID || (own && own.has(w.owner[i])) || (owns && owns(i))) continue;
     if (m === grass && y > 0 && w.mat[i - w.nx] === grass) continue; // (tall grass: the blades over the turf)
     return { y: (y + 1) * h, i, material: NAME[m], mu: null };
   }
@@ -822,7 +823,9 @@ export function boatGround(sim, f, dt, opts) {
   for (let s = 0; s < n; s++) {
     const x = hull.x0 + ((hull.x1 - hull.x0) * (s + 0.5)) / n;
     const p = toW(b, [x, hull.keel(x), 0]);
-    const g = groundTop(w, p[0], p[2], level + 0.2, opts.owns);
+    // (the bed under the keel, looked for from a little above it: not what lies inside its hull, its
+    // bilge water, spilt fuel, ash, which the scan from the surface down would meet first)
+    const g = groundTop(w, p[0], p[2], Math.min(level + 0.2, p[1] + 0.15), opts.owns);
     if (!g) continue;
     const Sx = surfaceAt(w, g, p[0], p[2]);
     const pen = Sx.y - Sx.rut - p[1];

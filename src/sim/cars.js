@@ -138,7 +138,7 @@ export function checkState(w, c) {
     for (let k = 0; k < B.n; k++) {
       if (B.region?.[k] !== 'battery') continue;
       n++;
-      if (B.alive[k] && B.state.fuel[k] >= FRESH) fresh++;
+      if (B.s.mat[k] !== 0 && B.s.fuel[k] >= FRESH) fresh++; // (still there: movingBody alive())
     }
     if (n) {
       c.packLeft = fresh / n;

@@ -856,8 +856,9 @@ export function stepFloats(sim, dt) {
     stepBody(f.body, dt, env);
     f.surf = surfaceOf(env); // (the water's surface round it now, its waves too: quenchBelow)
     if (f.row) moveBoat(sim, f, dt, env);
-    // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js)
-    if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i), toWorld, level: f.water.level });
+    // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js). Its own
+    // voxels and what they left in it (ash and char in the bilge) are not the bed it rests on.
+    if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i) || (f.mb?.owner >= 0 && w.owner[i] === f.mb.owner), toWorld, level: f.water.level });
     // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
     f.stampT = (f.stampT ?? 0) - dt;
     if (f.mb && f.stampT <= 0) stampFloat(w, f);
