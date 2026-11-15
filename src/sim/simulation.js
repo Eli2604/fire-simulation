@@ -10,6 +10,7 @@ import { updateActivity } from './activity.js';
 import { stepWounds } from './wounds.js';
 import { stepVolcanoes } from './volcano.js';
 import { stepSprinklers, stepWater, stepFlood, stepLeaks, waterDamage } from './water.js';
+import { stepFloats } from './buoyancy.js';
 import { updateRegions, takeO2, resyncO2 } from './oxygen.js';
 import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
@@ -232,6 +233,7 @@ export class Simulation {
     if (w.volcanoes.length) stepVolcanoes(this, dt);
     stepWater(this, dt);
     stepFlood(this, dt);
+    stepFloats(this, dt); // rowing boats afloat (Archimedes: sim/buoyancy.js), on the waves, taking water
     stepLeaks(this, dt);
     stepBreach(this, dt); // a hull breach: the sea pushes loose things in, the escaping air pulls them out
     // automatic inert-gas systems (server rooms): a heat detector under the ceiling

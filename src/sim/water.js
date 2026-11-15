@@ -1,5 +1,6 @@
 import { MATERIALS, MAT } from './materials.js';
 import { F_LIQUID, F_ANCHOR } from './world.js';
+import { carrierBody, makeBody, placeAt, stepBody, updateMass, framePose, waveSpectrum, RHO_SEA } from './buoyancy.js';
 
 const LV = 2.26e6;
 const CW = 4186;
@@ -221,7 +222,6 @@ export function stepLeaks(sim, dt) {
   }
 }
 
-const RHO_SEA = 1025;
 
 /** The sea level against the hull at (x, z): higher where the ship has settled (it lists and trims). */
 export function seaLevelAt(sea, x, z) {
@@ -231,17 +231,26 @@ export function seaLevelAt(sea, x, z) {
 }
 
 /**
- * A ship floats where its weight equals the weight of the sea it displaces
- * (Archimedes). Water that comes aboard adds its weight: the ship settles deeper by
- * m / (ρ_sea · A_waterplane) until it balances again, and since the water lies off
- * the centre line (where the hole is) it lists and trims:
- *   tan θ = m · offset / (Δ · GM),  GM = KB + BM − KG,  KB = T/2,  BM = B² / (12 T)
- * (T the draft, B the beam, or L the length for trim; KG the centre of gravity
- * above the keel). Here the ship stays still in its own frame and the sea moves
- * instead: its level rises up the hull and its surface tilts against it. That puts
- * the holes deeper, so the sea comes in faster: the flooding feeds itself. When the
- * sea reaches the deck edge the ship loses its last reserve of buoyancy and founders:
- * the sea pours in over the deck until it is gone.
+ * A ship floats where its weight equals the weight of the sea it displaces (Archimedes: the
+ * floating body of sim/buoyancy.js, the same law the rowing boats float by). The carrier is
+ * its real hull (a Nimitz: 317 m on the waterline, 40.8 m wide, ~100 000 t, its centre of
+ * mass 15 m over the keel): it floats ~10.3 m deep, GM ~1.7 m, and rolls and pitches a little
+ * in the sea of the weather (periods ~20 s and ~9 s: a fraction of a degree in a fresh breeze).
+ * A ship section of its own (models/shipSection.js: no displacement given) is a box ship of
+ * its footprint floating at its waterline (as stable as the ship it stands for: GM ≥ 0.3 m).
+ *
+ * Water that comes aboard adds its weight at its place: the ship settles deeper by about
+ * m / (ρ_sea · A_waterplane) and, the water lying off the centre line (where the hole is),
+ * lists and trims (tan θ ≈ m · offset / (Δ · GM)), as the body's moments come out.
+ *
+ * The flight deck and the decks below are worlds of their own, built in the ship's frame: the
+ * ship stays still in them and the sea moves instead (the choice that keeps walking, the jets
+ * landing on the deck, the hatches and every voxel where they are): the sea level here is the
+ * world's waterline at rest plus how much deeper the hull floats now than at rest, its surface
+ * tilted by the heel (slopeZ = tan φ) and trim (slopeX = −tan θ, + bow down); the ocean, the
+ * flooding (holes deeper: the sea comes in faster, the flooding feeds itself) and the HUD go by
+ * it. When the sea reaches the deck edge the ship loses its last reserve of buoyancy and
+ * founders: the sea pours in over the deck until it is gone.
  */
 export function stepBuoyancy(sim, dt) {
   const w = sim.world;
@@ -251,16 +260,15 @@ export function stepBuoyancy(sim, dt) {
   const [bx0, bz0, bx1, bz1] = sea.box;
   const L = S.length ?? bx1 - bx0;
   const B = S.beam ?? bz1 - bz0;
-  const A = S.waterplane ?? L * B;
   S.level0 ??= sea.level;
   const T0 = Math.max(0.3, S.level0 - S.keel);
-  S.mass0 ??= S.displacement ?? RHO_SEA * A * T0;
   // the water aboard: how much, and where its centre is
   const { solids, mat, nx, ny, h } = w;
   const id = MAT.water;
   const V = h * h * h * 1000;
   let m = 0;
   let mx = 0;
+  let my = 0;
   let mz = 0;
   for (let k = 0; k < w.solidCount; k++) {
     const i = solids[k];
@@ -268,25 +276,55 @@ export function stepBuoyancy(sim, dt) {
     const x = ((i % nx) + 0.5) * h;
     const z = (Math.floor(i / (nx * ny)) + 0.5) * h;
     if (x < bx0 || x > bx1 || z < bz0 || z > bz1) continue;
+    const y = ((Math.floor(i / nx) % ny) + 0.5) * h;
     m += V;
     mx += V * x;
+    my += V * y;
     mz += V * z;
   }
   S.water = m;
   const cx = (bx0 + bx1) / 2;
   const cz = (bz0 + bz1) / 2;
-  const disp = S.mass0 + m;
-  const T = T0 + m / (RHO_SEA * A); // the new draft
-  const KG = S.kg ?? (S.deck - S.keel) * 0.55;
-  const gm = (b) => Math.max(0.3, T / 2 + (b * b) / (12 * T) - KG);
+  // the ship as a floating body (its own frame: the still sea at 0, amidships over the origin)
+  if (!S.body) {
+    if (S.displacement >= 1e7) S.body = carrierBody({ displacement: S.displacement, kg: S.kg ?? 15 });
+    else {
+      const D = Math.max(T0 + 0.5, S.deck - S.keel);
+      const Lb = bx1 - bx0, Bb = bz1 - bz0;
+      const KM = T0 / 2 + (Bb * Bb) / (12 * T0);
+      const kg = Math.min(S.kg ?? D * 0.55, KM - Math.max(0.3, 0.05 * Bb));
+      S.body = makeBody({ hull: { kind: 'box', length: Lb, beam: Bb, depth: D }, solid: true, mass: RHO_SEA * Lb * Bb * T0, cg: [0, kg, 0], cells: { n: 12, m: 8, l: Math.max(6, Math.round(D / 0.5)) } });
+      S.still = true; // (a section: no waves of its own)
+    }
+    const eq = placeAt(S.body, 0, 0, 0, 0);
+    S.draft0 = eq.draft;
+    S.acc = 0;
+  }
+  const body = S.body;
+  // its weight where it is: a load in the hull's frame (the section's middle amidships)
+  S.acc += dt;
+  if (S.acc >= 0.2 || dt >= 0.2) {
+    const was = body.loads[0]?.m ?? 0;
+    if (Math.abs(m - was) > 1 || (m > 0) !== (was > 0)) {
+      body.loads = m > 0 ? [{ m, p: [mx / m - cx + body.hullCg[0], my / m - S.keel, mz / m - cz], label: 'water aboard' }] : [];
+      updateMass(body);
+    }
+    const W = sim.weather ?? {};
+    if (!S.still && (S._wU !== W.windSpeed || S._wD !== W.windDir)) {
+      S._wU = W.windSpeed;
+      S._wD = W.windDir;
+      S.waves = waveSpectrum(W);
+    }
+    stepBody(body, S.acc, { level: 0, t: w.time, waves: S.still ? null : S.waves });
+    S.acc = 0;
+  }
+  const pose = body.pose ?? framePose(body);
+  // (its draft along its own upright: what the sea is up its sides in its frame)
+  const draft = -pose.p[1] / Math.max(0.5, pose.R[4]);
   const lim = Math.tan((25 * Math.PI) / 180);
-  let heel = m > 0 ? (m * (mz / m - cz)) / (disp * gm(B)) : 0;
-  let trim = m > 0 ? (m * (mx / m - cx)) / (disp * gm(L)) : 0;
-  heel = Math.max(-lim, Math.min(lim, heel));
-  trim = Math.max(-lim, Math.min(lim, trim));
-  // settle towards the balance (a ship takes some seconds to come to rest)
-  const k = 1 - Math.exp(-dt / 4);
-  let target = S.keel + T;
+  const heel = Math.max(-lim, Math.min(lim, Math.tan(body.roll)));
+  const trim = Math.max(-lim, Math.min(lim, -Math.tan(body.pitch)));
+  let target = S.level0 + (draft - S.draft0);
   // foundering: the sea is over the deck edge somewhere: no reserve buoyancy left
   const edge = Math.max(...[[bx0, bz0], [bx1, bz0], [bx0, bz1], [bx1, bz1]].map(([x, z]) => seaLevelAt(sea, x, z)));
   if (!S.foundering && edge > S.deck) {
@@ -295,13 +333,16 @@ export function stepBuoyancy(sim, dt) {
   }
   // going down, until it is under (the sea over the top of the world)
   if (S.foundering) target = Math.min(w.size[1] + 1, Math.max(target, sea.level + 0.25 * dt * 20));
-  sea.level += (target - sea.level) * k;
-  sea.slopeZ = (sea.slopeZ ?? 0) + (heel - (sea.slopeZ ?? 0)) * k;
-  sea.slopeX = (sea.slopeX ?? 0) + (trim - (sea.slopeX ?? 0)) * k;
+  sea.level = target;
+  sea.slopeZ = heel;
+  sea.slopeX = trim;
+  S.draft = draft + (S.foundering ? sea.level - target : 0);
+  S.GM = body.tuned?.GM;
   S.heelDeg = (Math.atan(sea.slopeZ) * 180) / Math.PI;
   S.trimDeg = (Math.atan(sea.slopeX) * 180) / Math.PI;
   S.sunk = sea.level - S.level0;
-  void ny;
+  void L;
+  void B;
 }
 
 /**

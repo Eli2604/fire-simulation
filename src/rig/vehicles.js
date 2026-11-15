@@ -5,7 +5,9 @@
  * the field; the boat bobs, cruises, turns and rides a rough sea) and its hit parts
  * (models/vehicleZones.js VEHICLE_ZONES: shown, resized, damage multipliers, damage on click).
  * A destroyed part does what it would: a fire in the engine bay, a flat tyre, a wing torn off, the
- * boat settling and sinking.
+ * boat settling and sinking. The row boat (models/rowBoat.js, render/rowBoatMesh.js) floats by
+ * Archimedes (sim/buoyancy.js) on the stage's sea: its draft from its load, heave, roll and pitch
+ * on the waves, water in through a hole until it swamps.
  *
  * Only one vehicle is built at a time: switching kind frees the last one's geometry and materials.
  * While one is shown the soldiers are hidden and paused (rig/stage.js skips their tick).
@@ -19,9 +21,12 @@ import { PilotFigure } from '../render/pilotFigure.js';
 import { FlareFx } from '../render/flares.js';
 import { VEHICLE_ZONES, VEHICLE_WEAPONS, vehicleZones, rayZone, hitPart, integrity } from '../models/vehicleZones.js';
 import { buildCarMesh, buildJet, buildBoatMesh, Sea, disposeTree } from './vehicleMeshes.js';
+import { buildRowBoatMesh } from '../render/rowBoatMesh.js';
+import { ROW_BOAT_PARAMS, rowBoatSpec, rowBoatDraft, thwartsOf } from '../models/rowBoat.js';
+import { bodyFromSpec, placeAt, stepBody, framePose } from '../sim/buoyancy.js';
 
-const NAMES = { car: 'Car', jet: 'Jet', boat: 'Boat', jetFlight: 'Jet flight', pilot: 'Pilot' };
-const CAMS = { car: [[6.4, 3.0, 8.2], [0, 0.7, 0]], jet: [[19, 8.5, 24], [-1.5, 1.8, 1.5]], boat: [[7.5, 3.6, 9.5], [0, 0.4, 0]], jetFlight: [[80, 50, 110], [0, 24, 0]], pilot: [[7, 3.5, 9], [0, 1.6, 0]] };
+const NAMES = { car: 'Car', jet: 'Jet', boat: 'Boat', jetFlight: 'Jet flight', pilot: 'Pilot', rowBoat: 'Row boat' };
+const CAMS = { car: [[6.4, 3.0, 8.2], [0, 0.7, 0]], jet: [[19, 8.5, 24], [-1.5, 1.8, 1.5]], boat: [[7.5, 3.6, 9.5], [0, 0.4, 0]], rowBoat: [[6, 2.8, 7.5], [0, 0.3, 0]], jetFlight: [[80, 50, 110], [0, 24, 0]], pilot: [[7, 3.5, 9], [0, 1.6, 0]] };
 /** The rig's flight: slow and tight enough to stay over the field. */
 const RIG_FLIGHT = { altitude: 28, speed: 30, orbitRadius: 75, target: [150, 0, -40], holdTime: 12 };
 const approach = (v, target, rate, dt) => v + (target - v) * Math.min(1, rate * dt);
@@ -119,13 +124,13 @@ export class VehicleRig {
       this.params = params ?? {};
       if (VEHICLE_GROUPS[kind]) this.buildFlight();
       else {
-        this.v = kind === 'car' ? buildCarMesh(params ?? {}) : kind === 'jet' ? buildJet(params ?? {}) : kind === 'pilot' ? buildPilotStage() : buildBoatMesh(params ?? {});
+        this.v = kind === 'car' ? buildCarMesh(params ?? {}) : kind === 'jet' ? buildJet(params ?? {}) : kind === 'pilot' ? buildPilotStage() : kind === 'rowBoat' ? rowBoatStage(params ?? {}) : buildBoatMesh(params ?? {});
         this.v.group.rotation.order = 'YZX';
         this.holder.add(this.v.group);
         if (kind === 'jet') seatPilot(this.v);
         this.jets = null;
       }
-      if (kind === 'boat') {
+      if (kind === 'boat' || kind === 'rowBoat') {
         this.sea = new Sea();
         this.holder.add(this.sea.mesh);
       }
@@ -182,6 +187,7 @@ export class VehicleRig {
     this.flat = [0, 0, 0, 0];
     this.char = 0;
     this.sunk = 0;
+    this.rb = null; // (the row boat's floating body: afloat again)
     this.act = this.kind === 'pilot' ? 'seated' : 'idle';
     this.t = 0;
     this.s = { a: 0, x: 0, z: 0, yaw: Math.PI * 0.12, y: 0, roll: 0, pitch: 0, steer: 0, speed: 0, gear: 1, flaps: 0, burner: 0, doors: 0 };
@@ -231,7 +237,7 @@ export class VehicleRig {
   /** Everything else on the stage out of sight (the ground too, under the boat's sea). */
   hideRange() {
     for (const o of this.scene.children) {
-      if (o === this.holder || o.isLight || (isGround(o) && this.kind !== 'boat') || !(o.visible || this.hidden.has(o))) continue;
+      if (o === this.holder || o.isLight || (isGround(o) && this.kind !== 'boat' && this.kind !== 'rowBoat') || !(o.visible || this.hidden.has(o))) continue;
       o.visible = false;
       this.hidden.add(o);
     }
@@ -248,6 +254,7 @@ export class VehicleRig {
     else if (this.kind === 'pilot') this.pilotAct(sdt);
     else if (this.kind === 'car') this.car(sdt);
     else if (this.kind === 'jet') this.jet(sdt);
+    else if (this.kind === 'rowBoat') this.rowBoat(sdt);
     else this.boat(sdt);
     if (this.jets) this.jets.forEach((j) => this.withJet(j, () => this.effects(sdt)));
     else this.effects(sdt);
@@ -462,6 +469,64 @@ export class VehicleRig {
     v.prop.rotation.x += (engineOut ? 0 : 6 + s.speed * 8) * dt;
   }
 
+  /**
+   * The row boat afloat (sim/buoyancy.js) on the stage's sea: one rows it round, four aboard sit
+   * it deeper, a rough sea throws it about, a hole (the act, or its hull shot through) lets the
+   * water in until it swamps and goes down.
+   */
+  rowBoat(dt) {
+    const s = this.s;
+    const v = this.v;
+    const act = this.act;
+    this.sea.update(dt, act === 'rough' ? 0.75 : 0.12);
+    const crew = act === 'loaded' ? 4 : act === 'row' || act === 'rough' ? 1 : 0;
+    if (!this.rb || this.rb.crew !== crew) {
+      const p = { ...Object.fromEntries(Object.entries(ROW_BOAT_PARAMS).map(([k, q]) => [k, q.value])), ...this.params, crew };
+      const body = bodyFromSpec(rowBoatSpec(p), 1025);
+      // (a change of crew: the same hull where it was, its water still in it)
+      const old = this.rb?.body;
+      placeAt(body, s.x, 0, s.z, s.yaw);
+      if (old) {
+        body.water = old.water;
+        body.roll = old.roll;
+        body.pitch = old.pitch;
+      }
+      this.rb = { crew, body };
+    }
+    const b = this.rb.body;
+    // rowed round the middle at ~1.5 m/s (broken oars: it drifts to a stop)
+    const go = (act === 'row' || act === 'rough') && (this.dmg.oars ?? 0) < 1 && !b.swamped;
+    s.speed = approach(s.speed, go ? 1.5 : 0, 0.8, dt);
+    if (s.speed > 0.05) this.circle(9, s.speed, dt);
+    b.yaw = s.yaw;
+    b.X = s.x;
+    b.Z = s.z;
+    // a hole below the waterline: the act's 10 × 10 cm, or the hull shot through (up to 15 × 15 cm)
+    const hole = act === 'holed' ? 0.01 : 0;
+    const shot = (this.dmg.hull ?? 0) >= 0.3 ? 0.0225 * Math.min(1, this.dmg.hull) : 0;
+    b.holes = hole + shot > 0 ? [{ p: [0.3, 0.04, 0.18], area: hole + shot }] : [];
+    const t = this.sea.t;
+    stepBody(b, dt, { level: 0, t, surface: (x, z) => this.sea.heightAt(x, z, t), ampMax: 1.2, bottom: -6 });
+    const pose = framePose(b);
+    // (its frame here: the waterline at rest, as its hit parts are drawn: the hull's keel under it)
+    const R = pose.R;
+    v.group.position.set(pose.p[0] + R[1] * v.T0, pose.p[1] + R[4] * v.T0, pose.p[2] + R[7] * v.T0);
+    v.group.rotation.set(b.roll, b.yaw, b.pitch, 'YXZ'); // (R = Ry · Rx · Rz: sim/buoyancy.js rot)
+    this.sunk = b.sunk ? 1 : b.Vcap > 0 ? Math.min(0.99, b.water / b.Vcap) : 0;
+    // the oars: out through the rowlocks, sweeping, when it is rowed
+    v.oars?.forEach((o, k) => {
+      const sd = k ? 1 : -1;
+      if (go) {
+        const ph = this.t * 2.6;
+        o.position.set(v.lock[0], v.lock[1], sd * v.lock[2]);
+        o.rotation.set(0.12 * Math.max(0, Math.sin(ph)) * -sd, sd * (Math.PI / 2 - 0.45 * Math.sin(ph)), -0.12, 'YXZ');
+      } else {
+        o.position.set(0, v.rest, sd * Math.min(0.32, v.beam * 0.22));
+        o.rotation.set(0, 0, 0);
+      }
+    });
+  }
+
   /* ---------------- what the damage does (and the burning car) ---------------- */
   effects(dt) {
     if (this.kind === 'pilot') return;
@@ -499,13 +564,16 @@ export class VehicleRig {
         if (e.fire > 0) fires.push([L(...e.p), 1 + e.fire * 1.5]);
         smokes.push([L(...e.p), 1 + e.smoke]);
       }
+    } else if (k === 'rowBoat') {
+      // (broken oars gone overboard; nothing else of it burns here: in the world its wood does)
+      for (const o of v.oars ?? []) o.visible = (d.oars ?? 0) < 1;
     } else {
       if ((d.engine ?? 0) > 0.4) smokes.push([L(-2.6, 1.1, 0), 0.9]);
       if ((d.engine ?? 0) >= 1) fires.push([L(-2.6, 0.9, 0), 0.9]);
       if ((d.fuel ?? 0) >= 1) fires.push([L(-1.75, 0.5, 0.5), 1.2]);
       v.glass.visible = (d.cabin ?? 0) < 1;
     }
-    if (this.kind === 'boat' && this.sunk > 0.5) fires.length = 0; // (under water)
+    if ((this.kind === 'boat' || this.kind === 'rowBoat') && this.sunk > 0.5) fires.length = 0; // (under water)
     for (const [p, size] of fires) if (Math.random() < dt * 40) this.fx.emit(p, true, size);
     for (const [p, size] of smokes) if (Math.random() < dt * 10) this.fx.emit(p, false, size);
   }
@@ -621,7 +689,7 @@ export class VehicleRig {
     }
     const st = $('vState');
     const jstate = this.jd && !['ok', 'damaged'].includes(this.jd.state) ? ` · ${this.jd.state}` : '';
-    const extra = (this.kind === 'boat' && this.sunk > 0 ? ' · sinking' : this.kind === 'car' && this.char > 0.05 ? ' · on fire' : '') + jstate + (this.ai ? ` · ${this.ai.mode} · lead ${this.ai.leader.call}` : '');
+    const extra = ((this.kind === 'boat' || this.kind === 'rowBoat') && this.sunk > 0 ? (this.kind === 'rowBoat' && this.rb ? ` · ${this.rb.body.water > 0.01 ? `${Math.round(this.rb.body.water * 1000)} l aboard · ` : ''}${this.rb.body.sunk ? 'sunk' : this.rb.body.swamped ? 'swamped' : 'sinking'}` : ' · sinking') : this.kind === 'car' && this.char > 0.05 ? ' · on fire' : '') + jstate + (this.ai ? ` · ${this.ai.mode} · lead ${this.ai.leader.call}` : '');
     if (st) st.textContent = `${VEHICLE_ACTS[this.kind][this.act]} · ${Math.round(hp * 100)}%${extra}`;
     $('vActs')?.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.a === this.act));
     if (parts || this.partsDirty !== false) {
@@ -1161,4 +1229,31 @@ function buildPilotStage() {
   water.visible = false;
   group.add(water);
   return { group, fig, water, dims: [1, 2, 1], dispose: () => disposeTree(group) };
+}
+
+/**
+ * The row boat on the stage (render/rowBoatMesh.js): its frame the waterline at rest (empty), as
+ * its hit parts are (models/vehicleZones.js), the hull's keel T0 under it; where its oars rest
+ * and its rowlocks are (the hull's frame).
+ */
+function rowBoatStage(params) {
+  const p = { ...Object.fromEntries(Object.entries(ROW_BOAT_PARAMS).map(([k, q]) => [k, q.value])), ...params };
+  const m = buildRowBoatMesh(p);
+  const T0 = rowBoatDraft({ ...p, crew: 0, load: 0 });
+  const group = new THREE.Group();
+  m.group.position.y = -T0;
+  group.add(m.group);
+  const th = thwartsOf(p, m.hull);
+  const mid = th.length ? th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a)) : { x: 0 };
+  const lx = mid.x + 0.32;
+  return {
+    group,
+    oars: m.oars,
+    T0,
+    beam: p.beam,
+    rest: Math.max(0.3, ...th.map((t) => t.y)) + 0.03,
+    lock: [lx, m.hull.sheer(lx) + 0.02, m.hull.half(lx, m.hull.sheer(lx) - 0.01)],
+    dims: [p.length, m.hull.D, p.beam],
+    dispose: () => m.dispose(),
+  };
 }

@@ -1,3 +1,5 @@
+import { placeRowBoat } from './rowBoat.js';
+
 /**
  * The camp island: a height field like the other islands (models/island.js: sandy shores, grassy
  * slopes on soil, a rocky top), laid out for a camp. In the west a level pad for the camp (its
@@ -96,11 +98,17 @@ export default {
         { shape: 'cylinder', a: [x, 0, pz - 0.7], b: [x, ph, pz - 0.7], r: 0.1, material: 'wood' },
         { shape: 'cylinder', a: [x, 0, pz + 0.7], b: [x, ph, pz + 0.7], r: 0.1, material: 'wood' },
       ]).flat(),
-      { shape: 'ellipsoid', c: [px1 - 1.8, sea, pz + 2.2], r: [2.4, 0.6, 0.9], material: 'wood', density: 0.15, color: [0.32, 0.36, 0.26] },
-      { shape: 'ellipsoid', c: [px1 - 1.8, sea + 0.15, pz + 2.2], r: [2.2, 0.5, 0.75], mode: 'carve' },
     );
     const portals = [];
-    if (p.boatTo) portals.push({ p: [px1 - 1.8, ph, pz], r: 1.6, to: p.boatTo, label: p.boatLabel, arrive: { p: [px0 + 1, ph, pz], yaw: Math.PI } });
+    // the boat: a rowing boat afloat alongside (models/rowBoat.js, sim/buoyancy.js), olive drab;
+    // coming back you step ashore at the pier's landward end, facing the island
+    const floats = [];
+    if (p.boatTo) {
+      const b = placeRowBoat({ goesTo: p.boatTo, label: p.boatLabel, hullColor: '#525c42', insideColor: '#8a8468', stripeColor: '#2c2f27', arriveX: px0 + 1 - (px1 - 1.8), arriveY: ph - sea, arriveZ: -2.2, arriveYaw: 180, seed: p.seed }, [px1 - 1.8, sea, pz + 2.2], h);
+      prims.push(...b.prims);
+      floats.push(...b.floats);
+      portals.push(...b.portals);
+    }
     // where you are put down: the landing ground behind the ridge, facing it (west)
     const lx = L.landing.x;
     const lz = L.landing.z;
@@ -108,6 +116,7 @@ export default {
       prims,
       sea: { level: sea, box: [0, 0, 0, 0] },
       portals,
+      floats,
       spawn: { p: [lx, height(lx, lz) + 0.05, lz], yaw: Math.PI },
     };
   },

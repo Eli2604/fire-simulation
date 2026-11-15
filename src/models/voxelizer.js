@@ -17,6 +17,7 @@ import { resolveTree, rotationMatrix } from './composite.js';
  *  { shape: 'gable', x0, x1, y0, half, rise, shell?, along? }  roof prism along x (or z)
  *  { shape: 'prism', poly: [[x,z],...], y0, y1, hole? } polygon extruded upwards
  *  { shape: 'columns', x0, z0, cell, nx, nz, lo, hi }   a height field: a column per cell (terrain)
+ *  { shape: 'custom', bounds: [min, max], test(x, y, z) }  any shape: inside where test says (a hull's planking)
  *
  * Common options:
  *  material   material name
@@ -180,6 +181,8 @@ function insideFn(p, h) {
         },
       };
     }
+    case 'custom':
+      return { bounds: p.bounds, test: p.test };
     default:
       throw new Error(`Unknown shape '${p.shape}'`);
   }
@@ -341,6 +344,9 @@ export function placeObject(world, obj, ownerIndex = -1) {
     const c = toWorld(br.c[0], 0, br.c[1]);
     world.barrels.push({ ...br, c: [c[0], c[2]], y0: c[1] + br.y0, y1: c[1] + br.y1 });
   }
+  // floating things (a rowing boat: sim/buoyancy.js stepFloats): where its origin went, its heading; prims with float: k are its voxels (floatHull: its planking)
+  const floatBase = (world.floats ??= []).length;
+  for (const fl of built.floats ?? []) world.floats.push({ ...fl, at: toWorld(...(fl.at ?? [0, 0, 0])), yaw: rot + (fl.yaw ?? 0), owner: ownerIndex, voxels: [], own: [] });
   if (built.docks) for (const d of built.docks) world.docks.push({ ...d, p: toWorld(...d.p), dir: dirToWorld(d.dir), arrive: d.arrive ? toWorld(...d.arrive) : undefined });
   if (built.sea) {
     const a = toWorld(built.sea.box[0], 0, built.sea.box[1]);
@@ -446,6 +452,11 @@ export function placeObject(world, obj, ownerIndex = -1) {
           }
           if (pickupTag) world.pickups[pickupTag - 1].voxels.push(i);
           if (p.hull) hullCandidates.push(i);
+          if (p.float !== undefined) {
+            const F = world.floats[floatBase + p.float];
+            F?.own.push(i);
+            if (p.floatHull) F?.voxels.push(i);
+          }
           if (pipe) pipe.voxels.push(i);
           if (wpipe) wpipe.voxels.push(i);
         }

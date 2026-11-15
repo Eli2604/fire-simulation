@@ -6,6 +6,7 @@ import { TreeRenderer } from './trees.js';
 import { VehicleRenderer } from './vehicles.js';
 import { VolcanoRenderer } from './volcano.js';
 import { WaterworksRenderer } from './waterworks.js';
+import { FloatRenderer } from './floats.js';
 import { TorchRenderer } from './torches.js';
 import { DoorRenderer } from './doors.js';
 import { F_HIDDEN } from '../sim/world.js';
@@ -142,6 +143,7 @@ export class PlaceScenery {
         ob.vehicles.update(t);
         ob.volcanoes.update(t);
         ob.waterworks.update(dt, t); // (the fall, the river and the wheels go on: as they were when it froze)
+        ob.floats.update(dt); // (its boats as they were when it froze)
         // (no shadows from a place you are not in: the sun's shadow map is fitted to where you are,
         // and drawing the church into it again doubles its cost; now and then: the jets come later)
         if ((ob.unshadowed = (ob.unshadowed ?? 0) - 1) < 0) {
@@ -219,6 +221,8 @@ export class PlaceScenery {
         ob.volcanoes.setWorld(w);
         ob.waterworks = new WaterworksRenderer(ob.group, { live: false });
         ob.waterworks.setWorld(w);
+        ob.floats = new FloatRenderer(ob.group);
+        ob.floats.setWorld(w);
         ob.ready = true;
       })(),
     );
