@@ -63,6 +63,17 @@ when it is decided or done.
 - Steel's heat capacity is a constant 490 J/kg·K; over 760–1050 °C it averages ~620, so hot steel
   cools ~25 % too fast everywhere. Fix: temperature-dependent heat capacity per material.
 
+## Vehicles on the shared physics engine: what is left
+
+- One physics world for all: today each vehicle kind (and each helicopter) has its own, so a car
+  never meets a boat, helicopters don't meet each other, and debris hits vehicles' voxels without
+  the vehicles feeling it. Vehicles don't feel explosions either.
+- Boats and the helicopter are carried by their own models (no HullBuoyancy / RotorForce force
+  generators yet); people in a car's way are still handled by the old code (people are not bodies).
+- Car–car impacts slightly lopsided (bounce applied in one pass in the solver).
+- The carrier hull is not a body; boats against it unchecked. The helicopter's mass ignores fuel burnt.
+- Cost: car stepping ~2–3× (alone), ~40 % in a voxel street; helicopter ~4×.
+
 ## Known limits of features already built
 
 - Blue and red soldiers look the same; you can shoot blue soldiers.
