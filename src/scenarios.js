@@ -3,6 +3,7 @@ import { carrierObject } from './models/carrier.js';
 import { liftPlaces } from './models/composite.js';
 import { campIslandZone, CAMP_ISLAND_SEA, HQ_PLACE } from './campIsland.js';
 import { fantasyWorld } from './fantasyWorld.js';
+import { heliBattleScene } from './heliBattle.js';
 
 /**
  * Scene description format (also used for JSON import/export):
@@ -60,6 +61,8 @@ export const SCENARIO_ALIASES = {
   // burns; the office hallway's gas pipe burst: that passageway, its sprinklers)
   gasCylinders: { scenario: 'carrier', zone: 'below' },
   hallway: { scenario: 'carrier', zone: 'below' },
+  // the helicopter battle's attack on the convoy at the military base
+  heliBattleCamp: { scenario: 'heliBattle', zone: 'camp' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -454,6 +457,8 @@ export const SCENARIOS = {
 
 // the places in objects (below deck in the carrier) as zones of their scenes
 for (const sc of Object.values(SCENARIOS)) liftPlaces(sc);
+// the helicopter battle: the carrier's world with a fight in it (src/heliBattle.js)
+SCENARIOS.heliBattle = heliBattleScene(cloneScene(SCENARIOS.carrier));
 
 /** A copy of a scene to edit (its places in objects zones again: models/composite.js). */
 export function cloneScene(s) {

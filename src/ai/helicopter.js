@@ -100,6 +100,11 @@ import { startRope } from './rope.js';
 import { sideOf, hostile } from './sides.js';
 import { isCore } from '../physics/vehicleCore.js';
 import { heliStep } from '../physics/heliCore.js';
+import { initArms, stepArms, armsMass } from './heliArms.js';
+import { stepCombat, stepDefence } from './heliCombat.js';
+import { vehicleContacts } from './vehicleSides.js';
+import { stepBattle } from './battle.js';
+import { battleCtx } from '../sim/ordnance.js';
 
 const G = 9.81;
 /**
@@ -109,7 +114,7 @@ const G = 9.81;
  */
 export function heliMass(o = {}) {
   const guns = { both: 2, left: 1, right: 1, none: 0 }[o.doorGuns ?? 'both'] ?? 2;
-  return HELI_MASS + ((o.fuel ?? 1) - 1) * 1360 + ((o.soldiers ?? 6) - 6) * 110 + (guns - 2) * 45 + ({ none: -150, standard: 0, armoured: 450 }[o.armour ?? 'standard'] ?? 0);
+  return HELI_MASS + ((o.fuel ?? 1) - 1) * 1360 + ((o.soldiers ?? 6) - 6) * 110 + (guns - 2) * 45 + ({ none: -150, standard: 0, armoured: 450 }[o.armour ?? 'standard'] ?? 0) + armsMass(o.armsSpec);
 }
 const HELI_MASS = 7000;
 /** The helicopter's numbers (a UH-60-sized machine). */
@@ -445,13 +450,19 @@ export class Helicopter {
     this.leak = 0;
     // the fuel load (the editor's, 0..1 of full) and what it all weighs: lighter climbs and turns quicker (heliMass)
     this.fuel = Math.max(0.05, Math.min(1, o.fuel ?? 1));
-    this.mass = heliMass({ ...o, fuel: this.fuel });
+    // its armament beside the door guns (ai/heliArms.js: a chin gun, rocket pods, missiles, flares)
+    this.arms = initArms(this, o);
+    this.engageR = o.engageR;
+    this.attackStyle = o.attackStyle; // ('gunRun': in with the gun; else from a standoff: ai/heliCombat.js)
+    this.mass = heliMass({ ...o, fuel: this.fuel, armsSpec: this.arms?.spec });
     this.perf = Math.max(0.55, Math.min(1.3, (HELI.mass / this.mass) ** 0.8));
     this.smoke = 0; // engine smoke (0..1)
     this.vibration = 0;
     this.glass = false; // the cockpit glass shattered
     this.skidsBent = false;
     this.mode = this.airborne ? 'transit' : o.autoStart === false ? 'parked' : 'spinUp';
+    // where it goes home to (ai/heliCombat.js: out of ammunition, badly hurt)
+    this.home = (o.home ?? [this.p[0], this.ground(this.p[0], this.p[2]), this.p[2]]).slice();
     this.t = 0; // in this mode
     this.time = 0;
     this.landed = !this.airborne;
@@ -731,6 +742,10 @@ export class Helicopter {
     this.placeCrew();
     this.stepSenses(dt);
     this.stepGuns(dt);
+    if (this.arms) {
+      stepArms(this, dt);
+      stepDefence(this, dt);
+    }
     this.stepDebris(dt);
     this.stepDeployed();
     // its noise: the rotor's thud carries far (the guards' side does not care: ai/perception.js 'enemy')
@@ -810,8 +825,15 @@ export class Helicopter {
         if (this.p[1] - gy > 12) this.setMode(this.next ? 'depart' : 'transit');
         return;
       }
+      case 'hunt':
+        // (ai/heliCombat.js: patrol, find, attack, evade; home when it has nothing left)
+        if (this.arms) return stepCombat(this, dt);
+        this.setMode('orbit');
+        return;
       case 'transit': {
-        if (this.mission === 'overwatch') {
+        if (this.mission === 'hunt') {
+          if (d < this.orbitR * 2 || (this.arms && this.known.size && [...this.known.values()].some((k) => hostile(this.side, k.c.side)))) this.setMode('hunt');
+        } else if (this.mission === 'overwatch') {
           if (d < this.orbitR * 1.5) this.setMode('orbit');
         } else if (d < Math.max(120, this.cruise ** 2 / (2 * HELI.decel) + 30)) this.setMode('approach');
         return this.fly(dt, { to: this.lz, speed: this.cruise, y: cruiseY });
@@ -1420,7 +1442,7 @@ export class Helicopter {
    * shorter look), or forward and down through the pilots' glass; not through the fuselage.
    */
   viewOut(side, l) {
-    if (!side) return l[0] > -0.15 && l[1] < 0.55 ? 1 : 0;
+    if (!side) return this.arms ? (l[0] > -0.55 && l[1] < 0.8 ? 1 : 0) : l[0] > -0.15 && l[1] < 0.55 ? 1 : 0;
     if (l[2] * side < 0.3 || l[1] > 0.5 || l[0] > 0.85 || l[0] < -0.75) return 0;
     return this.doorOpen(side) ? 1 : 0.4;
   }
@@ -1462,7 +1484,9 @@ export class Helicopter {
         if (side == null) continue;
         const view = this.viewOut(side, heliToLocal(this, d.map((x) => x / L), true, A));
         if (!view) continue;
-        const prof = senses(e, 'soldier');
+        let prof = senses(e, 'soldier');
+        // (an armed helicopter's pilots: its sight, for what is big enough to pick out far off)
+        if (side === 0 && this.arms && (c.kind === 'heli' || c.kind === 'car' || c.kind === 'boat')) prof = { ...prof, sightRange: this.arms.sensor };
         const r = perceive(e, { ...c, key: c.key ?? c.ref, head: at }, sdt, {
           now, eye, at, prof, range: prof.sightRange * view, expect,
           los: this.host.sees ? (a, b) => this.host.sees(a, b) : null, world: this.host.sim?.world ?? null,
@@ -1481,7 +1505,7 @@ export class Helicopter {
       }
     }
     for (const [k, kn] of this.known) {
-      const dead = kn.c.ref?.dead || (kn.c.ref?.health != null && kn.c.ref.health <= 0) || kn.c.ref?.crashed;
+      const dead = kn.c.ref?.dead || (kn.c.ref?.health != null && kn.c.ref.health <= 0) || kn.c.ref?.crashed || kn.c.ref?.armsWreck || kn.c.ref?.body?.sunk;
       if (dead || now - kn.seenT > HELI.forgetAfter || !cs.some((c) => (c.key ?? c.ref) === k)) this.known.delete(k);
     }
   }
@@ -1496,7 +1520,7 @@ export class Helicopter {
    * crouched or prone) more; the one already on the gun a little more (no flicking between two).
    */
   threatScore(c, d, current = false) {
-    const W = { dragon: 2.5, heli: 2, player: 1.2, soldier: 1, target: 1 };
+    const W = { dragon: 2.5, heli: 2, car: 1.4, boat: 1.3, player: 1.2, soldier: 1, target: 1 };
     const exp = c.exposure ?? 1;
     return (W[c.kind] ?? 1) * (this.attacking(c) ? 4 : 1) * (0.4 + 0.6 * exp) * (current ? 1.3 : 1) / (1 + d / 60);
   }
@@ -1711,6 +1735,8 @@ export class HeliAI {
     return {
       sim,
       world: w,
+      // the battle it fires into (sim/ordnance.js: its chin gun's rounds, rockets, missiles, flares)
+      battle: this.battle(),
       ground: (x, z) => groundY(w, x, z),
       addCrew: (e) => w.enemies.push(e),
       // what there is to see (each on its side: ai/sides.js): you on foot, the soldiers (not the men
@@ -1737,12 +1763,22 @@ export class HeliAI {
       radio: (h, text) => w.events.push({ type: 'radio', pos: h.p.slice(), time: w.time, name: `${h.call}: ${text}`, kind: 'call' }),
     };
   }
+  /** The battle's context on this simulation (sim/ordnance.js battleCtx). */
+  battle() {
+    const sim = this.sim;
+    return (this._battle ??= battleCtx(sim.world, sim, { ground: (x, z) => groundY(sim.world, x, z), sees: (a, b) => (sim.ai?.sightLine ? sim.ai.sightLine(a, b) : true) }));
+  }
   step(dt) {
     const w = this.world;
     for (const s of w.helis ?? []) {
+      // (one that comes later: not there until then, models/helicopter.js startAfter)
+      if (!s.ai && (s.startAfter ?? 0) > (w.time ?? 0)) continue;
       s.ai ??= new Helicopter(s, this.host());
       s.ai.step(dt);
     }
+    // the guns on the cars and boats, the ordnance in the air, burning cars (ai/battle.js)
+    if (this._battle && this._battle.world !== w) this._battle = null;
+    stepBattle(this.battle(), dt);
     // (the men on the cables: sim/simulation.js steps ai/rope.js after the squads)
   }
   /** A projectile at p (an arrow, a rocket: sim.hitEnemy): the part it is in. */
@@ -1810,7 +1846,7 @@ export function worldContacts(sim) {
     out.push({ key: 'player', ref: pl, kind: 'player', side: 'blue', p: pl.p, at: [pl.p[0], pl.p[1] + low, pl.p[2]], speed: pl.moving ? 1.5 : 0, exposure: pl.crouch ? 0.45 : 1, lightOn: pl.lightOn, beam: pl.beam });
   }
   for (const e of w.enemies ?? []) {
-    if (e.dead || e.aboard != null || e.devoured || e.held || !e.p) continue;
+    if (e.dead || e.aboard != null || e.inCar || e.devoured || e.held || !e.p) continue; // (in a car: the car is the contact)
     const a = e.anim ?? '';
     const prone = e.crawling || /prone|crawl|wounded|peekOver/.test(a);
     const low = !prone && /crouch|peekWall|kneel/i.test(a);
@@ -1826,6 +1862,8 @@ export function worldContacts(sim) {
     if (!h || h.crashed) continue;
     out.push({ key: h, ref: h, kind: 'heli', side: h.side, p: h.p, at: h.toWorld([0, 1.4, 0]), speed: len(h.v), size: 5 });
   }
+  // the cars and boats with men of a side in them, or marked (ai/vehicleSides.js; an empty one is no one's)
+  out.push(...vehicleContacts(w));
   return out;
 }
 

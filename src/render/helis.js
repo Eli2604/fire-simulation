@@ -14,7 +14,7 @@ export class HeliRenderer {
   constructor(scene) {
     this.scene = scene;
     this.items = new Map();
-    this.fx = new Puffs(scene, 300);
+    this.fx = new Puffs(scene, 600);
     this._p = new THREE.Vector3();
   }
   setWorld(world) {
@@ -37,6 +37,41 @@ export class HeliRenderer {
     const list = (this.world?.helis ?? []).map((s) => s.ai ?? s).filter((h) => h?.p && h.axes);
     this.draw(list, dt);
   }
+  /**
+   * What the battle has in the air (sim/ordnance.js world.ordnance): a rocket's or a missile's
+   * motor and its smoke trail, a burning flare on its trail; where rounds and warheads hit: a flash
+   * and smoke, a splash on the water. (Cannon rounds are the world's tracers.)
+   */
+  drawOrdnance(dt) {
+    const w = this.world;
+    if (!w) return;
+    const P = (p) => this._p.set(p[0], p[1], p[2]).clone();
+    const rate = (r) => Math.random() < r * dt;
+    for (const g of w.ordnance ?? []) {
+      if (g.type === 'rocket' || g.type === 'missile') {
+        const burning = g.t < (g.spec?.burn ?? 1);
+        if (burning) this.fx.emit(P(g.p), 'fire', 0.7, null, 0.12);
+        if (rate(burning ? 40 : 8)) this.fx.emit(P(g.p), 'smoke', burning ? 1.2 : 0.8, null, 2.5);
+      } else if (g.type === 'flare') {
+        this.fx.emit(P(g.p), 'fire', 1.1, null, 0.2);
+        if (rate(20)) this.fx.emit(P(g.p), 'smoke', 0.9, null, 3);
+      }
+    }
+    const now = w.time ?? 0;
+    for (const q of w.ordnanceHits ?? []) {
+      if (q.drawn) continue;
+      q.drawn = true;
+      if (now - q.t > 1) continue;
+      if (q.kind === 'water') {
+        for (let i = 0; i < (q.he ? 6 : 2); i++) this.fx.emit(P(q.p), 'spray', q.type === 'round' ? 0.6 : 2, new THREE.Vector3((Math.random() - 0.5) * 2, 5 + Math.random() * 4, (Math.random() - 0.5) * 2), 0.8);
+        continue;
+      }
+      if (q.he) {
+        this.fx.emit(P(q.p), 'fire', q.type === 'round' ? 1.2 : 3, null, 0.25);
+        this.fx.emit(P(q.p), 'smoke', q.type === 'round' ? 1.5 : 4, new THREE.Vector3(0, 1.5, 0), 3);
+      } else if (rate(30)) this.fx.emit(P(q.p), 'smoke', 0.5, null, 1);
+    }
+  }
   /** Draw these helicopters (Helicopter objects). */
   draw(list, dt = 0.016) {
     dt = Math.min(dt ?? 0.016, 0.05);
@@ -45,7 +80,7 @@ export class HeliRenderer {
       seen.add(h);
       let it = this.items.get(h);
       if (!it) {
-        const mesh = buildHeliMesh({ color: h.color ?? '#4a5240' });
+        const mesh = buildHeliMesh({ color: h.color ?? '#4a5240', arms: h.arms?.spec ?? null });
         this.scene.add(mesh.group);
         it = { mesh, debris: [] };
         this.items.set(h, it);
@@ -75,6 +110,7 @@ export class HeliRenderer {
         if (rate(10)) this.fx.emit(at([-1.1, 2.5, 0]), 'smoke', 4, new THREE.Vector3(-h.v[0] * 0.3, 2.5, -h.v[2] * 0.3), 5);
       } else if (h.crashed && rate(4)) this.fx.emit(at([0, 1.5, 0]), 'smoke', 3, null, 5);
     }
+    this.drawOrdnance(dt);
     for (const [h, it] of this.items)
       if (!seen.has(h)) {
         this.drop(it);

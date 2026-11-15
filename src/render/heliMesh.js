@@ -9,13 +9,14 @@
  * VEHICLE_ZONES.helicopter); poseHeli sets the group's matrix from the helicopter's axes (heliAxes:
  * makeBasis), so the zones, the seats and the mesh agree.
  *
- *   const m = buildHeliMesh({ color });
+ *   const m = buildHeliMesh({ color, arms });   // arms: h.arms (ai/heliArms.js): stub wings, pods, rails, a chin turret
  *   scene.add(m.group);
  *   poseHeli(m, heli);   // every frame: where, attitude, rotors, doors, guns, what is shot away
  *   m.dispose();
  */
 import * as THREE from 'three';
 import { heliAxes, DOOR, HELI, BOOM_ROOT } from '../ai/helicopter.js';
+import { MOUNT } from '../ai/heliArms.js';
 
 const shadow = (m) => ((m.castShadow = m.receiveShadow = true), m);
 
@@ -85,7 +86,7 @@ export function poseTail(g, d) {
   if (g.userData.tailRotor) g.userData.tailRotor.rotation.z = d.tailAngle ?? 0;
 }
 
-export function buildHeliMesh({ color = '#4a5240' } = {}) {
+export function buildHeliMesh({ color = '#4a5240', arms = null } = {}) {
   const group = new THREE.Group();
   group.matrixAutoUpdate = false;
   const body = new THREE.Group();
@@ -219,6 +220,7 @@ export function buildHeliMesh({ color = '#4a5240' } = {}) {
     guns[k] = { g, flash, side: s };
   }
   const m = { group, body, rotor, blades, disc, tail, tailRotor, stub, ragged, doors, guns, glass, mats };
+  if (arms) m.weapons = buildWeapons(body, mats, arms);
   m.dispose = () => {
     const ms = new Set();
     group.traverse((o) => {
@@ -261,11 +263,76 @@ export function poseHeli(m, h, time = h.time) {
     G.flash.visible = !!g && time - (g.flash ?? -1) < 0.05;
     if (G.flash.visible) G.flash.rotation.z = Math.random() * 6;
   }
+  if (m.weapons) poseWeapons(m.weapons, h, time);
   // the glass: cracked white once shot through
   m.mats.glass.color.set(h.glass ? 0xb8c4cc : 0x1d3040);
   m.mats.glass.opacity = h.glass ? 0.7 : 0.5;
   // a burnt-out wreck goes dark
   if (h.crashed && h.fire > 0) m.mats.paint.color.lerp(new THREE.Color(0x1c1b19), 0.01);
+}
+
+/**
+ * An armed helicopter's weapons (ai/heliArms.js MOUNT): stub wings with a rocket pod each side
+ * and missile rails outboard, a chin turret with its cannon (turned to where it aims, a flash).
+ */
+function buildWeapons(body, mats, arms) {
+  const add = (geo, mat, p, parent = body) => {
+    const m = shadow(new THREE.Mesh(geo, mat));
+    m.position.set(...p);
+    parent.add(m);
+    return m;
+  };
+  const W = {};
+  if (arms.rockets > 0 || arms.atgm > 0 || arms.aam > 0) {
+    for (const s of [-1, 1]) {
+      const wing = add(new THREE.BoxGeometry(0.9, 0.08, 1.6), mats.paint, [0.7, 1.35, s * 1.85]);
+      wing.rotation.x = s * -0.08;
+    }
+  }
+  W.pods = [];
+  if (arms.rockets > 0) for (const s of [-1, 1]) {
+    const pod = add(new THREE.CylinderGeometry(0.21, 0.21, 1.6, 12), mats.dark, MOUNT.pod(s));
+    pod.rotation.z = Math.PI / 2;
+    W.pods.push(pod);
+  }
+  W.rails = [];
+  const nm = (arms.atgm ?? 0) + (arms.aam ?? 0);
+  for (let i = 0; i < Math.min(8, nm); i++) {
+    const s = i % 2 ? 1 : -1;
+    const k = Math.floor(i / 2);
+    const mis = add(new THREE.CylinderGeometry(0.09, 0.09, 1.6, 8), mats.metal, [MOUNT.rail(s)[0], MOUNT.rail(s)[1] - (k % 2) * 0.22, s * (2.35 + Math.floor(k / 2) * 0.22)]);
+    mis.rotation.z = Math.PI / 2;
+    W.rails.push(mis);
+  }
+  W.nm = nm;
+  if (arms.gun) {
+    const tur = new THREE.Group();
+    tur.position.set(...MOUNT.gun);
+    body.add(tur);
+    add(new THREE.SphereGeometry(0.22, 12, 8), mats.dark, [0, 0, 0], tur);
+    const barrel = add(new THREE.CylinderGeometry(0.045, 0.045, 1.5, 8), mats.dark, [0, 0, 0.8], tur);
+    barrel.rotation.x = Math.PI / 2;
+    const flash = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.6, 8), mats.flash);
+    flash.rotation.x = Math.PI / 2;
+    flash.position.set(0, 0, 1.75);
+    flash.visible = false;
+    tur.add(flash);
+    tur.quaternion.setFromUnitVectors(_z, new THREE.Vector3(1, -0.1, 0).normalize());
+    W.turret = tur;
+    W.flash = flash;
+  }
+  return W;
+}
+function poseWeapons(W, h, time) {
+  const A = h.arms;
+  if (!A) return;
+  if (W.turret && A.gun) {
+    if (A.gun.dir) W.turret.quaternion.setFromUnitVectors(_z, _d.set(...A.gun.dir).normalize());
+    W.flash.visible = time - (A.gun.flash ?? -1) < 0.05;
+  }
+  // the missiles still on their rails
+  const left = (A.atgm ?? 0) + (A.aam ?? 0);
+  W.rails.forEach((m, i) => (m.visible = i < left));
 }
 
 /** A rotor blade (or the tail rotor) flying off: { mesh } posed from a debris entry. */

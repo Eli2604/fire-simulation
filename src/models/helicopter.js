@@ -9,14 +9,17 @@
  * Its hit parts are models/vehicleZones.js VEHICLE_ZONES.helicopter (the rig shows and edits them).
  * Side (ai/sides.js): 'enemy' (red: its crew and troops are the simulation's soldiers, its guns at
  * you and whatever else of yours they identify) or 'friendly' (blue: yours; its guns at the red
- * soldiers, dragons and helicopters they identify). Either can be flown: walk up while it is on
+ * soldiers, dragons and helicopters they identify). Armed (its armament, ai/heliArms.js) it carries a
+ * chin gun, rocket pods, missiles and flares; on a 'hunt' it patrols its zone and attacks the
+ * hostile helicopters, vehicles, boats and soldiers its crew identify (ai/heliCombat.js), home
+ * when its ammunition is gone. Either can be flown: walk up while it is on
  * the ground and press E at the cockpit (walk/heliFlight.js); an enemy crew get out and fight.
  */
 export default {
   label: 'Helicopter (crew, troops, door guns)',
   params: {
     side: { value: 'enemy', options: ['enemy', 'friendly'], label: 'Side (enemy: brings their soldiers; friendly: yours)' },
-    mission: { value: 'insert', options: ['insert', 'land', 'overwatch', 'hover'], label: 'Mission' },
+    mission: { value: 'insert', options: ['insert', 'land', 'overwatch', 'hover', 'hunt'], label: 'Mission (hunt: patrol the zone and attack what is hostile: ai/heliCombat.js)' },
     soldiers: { value: 6, min: 0, max: 8, step: 1, label: 'Soldiers in the back' },
     doorGuns: { value: 'both', options: ['both', 'left', 'right', 'none'], label: 'Door guns (manned from the back)' },
     start: { value: 'air', options: ['air', 'ground'], label: 'Starts (in the air / on the ground, rotor still)' },
@@ -30,6 +33,10 @@ export default {
     callsign: { value: 'Hawk', options: ['Hawk', 'Raven', 'Dustoff', 'Viper'], label: 'Call sign' },
     color: { value: '#4a5240', color: true, label: 'Paint' },
     seed: { value: 1, min: 1, max: 999, step: 1, label: 'Seed' },
+    armament: { value: 'none', options: ['none', 'gunship', 'attack', 'escort'], label: 'Armament beside the door guns (gunship: 30 mm chin gun, 38 rockets; attack: gun, 19 rockets, 8 anti-tank and 2 air-to-air missiles; escort: 20 mm, 14 rockets, 2 air-to-air)', group: 'Weapons' },
+    attackStyle: { value: 'standoff', options: ['standoff', 'gunRun'], label: 'With the gun only: from a standoff, masked, popping up / gun runs', group: 'Weapons' },
+    engageR: { value: 2600, min: 300, max: 5000, step: 50, label: 'Goes for what it identifies within (m)', group: 'Weapons' },
+    startAfter: { value: 0, min: 0, max: 600, step: 5, label: 'Comes after (s: not there until then)', group: 'Weapons' },
     autoStart: { value: true, label: 'On the ground: starts its mission by itself (off: parked, rotor still, until flown)' },
     // load and crew (ai/helicopter.js heliMass: its weight sets how fast it climbs and turns)
     fuel: { value: 1, min: 0.1, max: 1, step: 0.05, label: 'Fuel load (of full: 1360 kg; lighter climbs and accelerates quicker, less to burn when hit)', group: 'Load & crew' },
@@ -46,6 +53,8 @@ export default {
         airborne: p.start !== 'ground', altitude: p.altitude, cruise: p.cruise, hoverAlt: p.hoverAlt, ropeLength: p.ropeLength,
         orbitRadius: p.orbitRadius, callsign: p.callsign, color: p.color, seed: p.seed, ...(p.autoStart === false ? { autoStart: false } : {}),
         fuel: p.fuel ?? 1, armour: p.armour ?? 'standard', pilotSkill: p.pilotSkill, troopSkill: p.troopSkill,
+        ...(p.armament && p.armament !== 'none' ? { armament: p.armament, attackStyle: p.attackStyle, engageR: p.engageR } : {}),
+        ...(p.startAfter > 0 ? { startAfter: p.startAfter } : {}),
       }],
     };
   },

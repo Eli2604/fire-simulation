@@ -17,6 +17,13 @@ export default {
     batteryKWh: { value: 0, min: 0, max: 150, step: 1, label: 'Battery pack (kWh; 0: EV 60, hybrid 1.5)' },
     charge: { value: 0.8, min: 0, max: 1, step: 0.05, label: 'Battery charge (share)' },
     igniteAt: { value: 'engine', options: ['engine', 'interior', 'battery'], label: 'Fire starts in' },
+    // in a fight (ai/vehicleSides.js, ai/mountedGuns.js): whose it is (auto: the side of the men in it;
+    // empty and unmarked it is nobody's, no target), a machine gun on a pintle over the roof
+    side: { value: 'auto', options: ['auto', 'blue', 'red', 'green', 'neutral'], label: 'Side (auto: of the men in it)' },
+    mountedGun: { value: 'none', options: ['none', 'mg', 'hmg'], label: 'Machine gun on the roof (7.62 / 12.7 mm, manned from the rear right seat)' },
+    crewMen: { value: 0, min: 0, max: 4, step: 1, label: 'Soldiers of its side in it (ai/battle.js: the first drives, the last mans the gun)' },
+    driveToX: { value: 0, min: -500, max: 500, step: 1, label: 'Its driver takes it to X (0: stays)' },
+    driveToZ: { value: 0, min: -500, max: 500, step: 1, label: 'Its driver takes it to Z (0: stays)' },
   },
   build(p, { h }) {
     const t = h;
@@ -114,6 +121,16 @@ export default {
         { shape: 'box', min: [x0, y0, -zw], max: [x1, y1, zw], material: 'liion', density: dens },
       );
       pack = { p: [(x0 + x1) / 2, (y0 + y1) / 2, 0] };
+    }
+    // a machine gun on a pintle over the roof, aft of its middle (ai/mountedGuns.js fires it): the post, the gun
+    if (p.mountedGun && p.mountedGun !== 'none') {
+      const gx = -0.2 * L, heavy = p.mountedGun === 'hmg';
+      const gunMetal = { material: 'steel', color: [0.16, 0.17, 0.16], variation: 0.02 };
+      prims.push(
+        { shape: 'cylinder', a: [gx, H, 0], b: [gx, H + 0.3, 0], r: 0.04, ...gunMetal, density: thin(0.03) },
+        { shape: 'box', min: [gx - 0.35, H + 0.28, -0.08], max: [gx + 0.25, H + 0.42, 0.08], ...gunMetal, density: thin(0.04) },
+        { shape: 'cylinder', a: [gx + 0.25, H + 0.36, 0], b: [gx + (heavy ? 1.35 : 0.95), H + 0.36, 0], r: heavy ? 0.03 : 0.018, ...gunMetal, density: thin(0.02) },
+      );
     }
     // bumpers
     prims.push(

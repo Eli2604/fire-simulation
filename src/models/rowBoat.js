@@ -48,6 +48,10 @@ export const ROW_BOAT_PARAMS = {
   arriveZ: { value: 1.8, min: -12, max: 12, step: 0.1, label: 'Ashore here, across it (m, + starboard)' },
   arriveYaw: { value: 0, min: -180, max: 180, step: 5, label: 'Ashore facing (degrees from its bow)' },
   seed: { value: 1, min: 1, max: 999, step: 1, label: 'Seed' },
+  // whose it is in a fight (ai/vehicleSides.js: auto, the side of the men in it; empty and unmarked: nobody's), a gun in its bow (ai/mountedGuns.js)
+  side: { value: 'auto', options: ['auto', 'blue', 'red', 'green', 'neutral'], label: 'Side (auto: of the men in it)' },
+  mountedGun: { value: 'none', options: ['none', 'mg', 'hmg'], label: 'Gun in the bow (7.62 / 12.7 mm, manned from the front thwart)' },
+  crewMen: { value: 0, min: 0, max: 4, step: 1, label: 'Soldiers of its side in it (ai/battle.js: one at the helm, one at the gun)' },
 };
 // (the editor's folders for these: editor/editor.js puts a param in the folder its group names)
 for (const [g, keys] of Object.entries({
@@ -56,6 +60,7 @@ for (const [g, keys] of Object.entries({
   'Hull & paint': ['length', 'beam', 'depth', 'material', 'transom', 'thwarts', 'hullColor', 'insideColor', 'stripeColor'],
   'Water & mooring': ['water', 'moored', 'mooring'],
   'Where it takes you': ['goesTo', 'label', 'arriveX', 'arriveY', 'arriveZ', 'arriveYaw'],
+  Fight: ['side', 'mountedGun', 'crewMen'],
 })) for (const k of keys) if (ROW_BOAT_PARAMS[k]) ROW_BOAT_PARAMS[k].group = g;
 
 const PERSON = 80; // kg
@@ -265,7 +270,7 @@ function rowBoatBuild(p, { h }) {
     for (const q of prims) q.anchored = true;
     return {
       prims,
-      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, ...seatsOf(p, hull), moor: { moored: p.moored !== false, length: p.mooring ?? 2 }, boatKind: p.kind ?? 'row', ...(hasMotor(p) ? { outboard: { power: p.motorPower ?? 7.5 } } : {}), ...(p.kind === 'sail' ? { sail: sailRigOf(p, hull) } : {}), params: { kind: p.kind ?? 'row', length: p.length, beam: p.beam, depth: p.depth, transom: p.transom, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load, motor: hasMotor(p) ? 'outboard' : 'none', sailArea: p.sailArea } }],
+      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, ...seatsOf(p, hull), moor: { moored: p.moored !== false, length: p.mooring ?? 2 }, boatKind: p.kind ?? 'row', ...(p.side && p.side !== 'auto' ? { side: p.side } : {}), ...(p.mountedGun && p.mountedGun !== 'none' ? { mountedGun: p.mountedGun } : {}), ...(p.crewMen > 0 ? { crewMen: p.crewMen } : {}), ...(hasMotor(p) ? { outboard: { power: p.motorPower ?? 7.5 } } : {}), ...(p.kind === 'sail' ? { sail: sailRigOf(p, hull) } : {}), params: { kind: p.kind ?? 'row', length: p.length, beam: p.beam, depth: p.depth, transom: p.transom, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load, motor: hasMotor(p) ? 'outboard' : 'none', sailArea: p.sailArea } }],
       portals,
     };
 }

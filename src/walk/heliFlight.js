@@ -16,6 +16,12 @@ import { heliToWorld, HELI } from '../ai/helicopter.js';
  *                left and right bank; the stick centres itself when you let go
  *   arrow keys   the cyclic from the keyboard (↑ nose down: forward)
  *   G            at a steady hover low enough: the troops in the back fast-rope down (again: cut the ropes)
+ *   armed (ai/heliArms.js, its armament):
+ *   Space (held) the chin gun: onto the hostile the crew have identified nearest the nose, else ahead
+ *   click        a pair of rockets along the nose
+ *   T            a missile at what the seeker has locked (keep the nose on it: a heat seeker at a
+ *                helicopter, the anti-tank missile at a vehicle or a boat)
+ *   F            flares (a heat seeker's warning shows on the instruments)
  *   E            climb out, once it is on the ground and still
  * The crew in the back fight from the open doors on their own (what they identify: ai/helicopter.js).
  * You are in it: the rounds through your side of the cockpit reach you in your seat (ai/helicopter.js
@@ -72,8 +78,15 @@ export class HeliFlight {
     const c = HeliFlight.controlsFrom(keys, this.cyc, this.collective, dt);
     this.collective = c.collective;
     if (h.player) h.controls = c;
-    // the space bar and F do nothing here (no rockets, no flares): forget them
-    this.fireRequested = this.flaresRequested = false;
+    // its weapons (ai/heliArms.js stepArms takes h.armsInput): Space held the gun, a click rockets, T a missile, F flares
+    if (h.arms && h.player) {
+      const I = (h.armsInput ??= {});
+      I.gun = keys.has('Space');
+      if (this.clickRequested) I.rockets = true;
+      if (this.flaresRequested) I.flares = true;
+      if (this.missileRequested) I.missile = true;
+    }
+    this.fireRequested = this.flaresRequested = this.clickRequested = this.missileRequested = false;
     if (h.crashed) {
       this.crashT += dt;
       if (this.crashT > 2.5) return this.endCrash();
@@ -108,13 +121,30 @@ export class HeliFlight {
     const troops = h.aboard().filter((e) => !e.dead && h.seats[e.seat].role === 'troop').length;
     const known = [...h.known.values()].filter((k) => k.c && (k.c.side !== h.side)).length;
     const parts = Object.entries(h.dmg).filter(([, v]) => v > 0.05).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ') || 'none';
+    // armed: what is left, the target under the nose, the lock, a missile coming
+    const A = h.arms;
+    let arms = '';
+    if (A) {
+      const lock = A.lock ? (A.lock.locked ? `LOCKED ${A.lock.kind.toUpperCase()}` : `locking ${Math.round((A.lock.t / 1.6) * 100)}%`) : '';
+      arms = `
+GUN ${A.gun?.ammo ?? 0} [Space]  RKT ${A.rockets} [click]  ATGM ${A.atgm}  AAM ${A.aam} [T]  FLR ${A.flares} [F]` + (A.cue ? `   target: ${A.cue.kind} ${Math.round(Math.hypot(A.cue.p[0] - h.p[0], A.cue.p[2] - h.p[2]))} m ${lock}` : '');
+      if (A.warning) warn.unshift(`⚠ MISSILE ${Math.round(Math.min(...A.warning.map((x) => x.d)))} m: FLARES (F), break`);
+    }
     this.hud.textContent =
       `HELI  collective ${Math.round(this.collective * 100)}%   rotor ${Math.round(h.omega * 100)}%   alt ${alt.toFixed(0)} m   speed ${Math.round(sp * 3.6)} km/h   vs ${h.v[1].toFixed(1)} m/s\n` +
       `pitch ${deg(h.pitch)}°  bank ${deg(h.roll)}°  heading ${(360 + deg(h.yaw)) % 360}°   troops ${troops}   contacts ${known}\n` +
-      `damage: ${parts}` +
+      `damage: ${parts}` + arms +
       (h.crashed ? '' : h.landed ? (sp < 0.5 ? '   [E] climb out   W: lift' : '') : troops ? '   [G] fast-rope' : '') +
       (h.ropes.some((r) => r.attached) ? '   ropes out ([G] cut)' : '') +
       (warn.length ? `\n${warn.join('   ')}` : '');
+  }
+
+  /** T: a missile at what is locked (armed: ai/heliArms.js). */
+  missile() {
+    const A = this.h.arms;
+    if (!A) return this.walk.say('No missiles on this one', 1.5);
+    if (!A.lock?.locked) return this.walk.say(A.lockOn ? 'Not locked yet: keep the nose on it' : 'Nothing to lock on: point the nose at an identified target', 2);
+    this.missileRequested = true;
   }
 
   /** G: the troops down the ropes at the hover (or the ropes cut). */
