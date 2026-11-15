@@ -37,6 +37,7 @@ import { LooseRenderer } from './loose.js';
 import { PhoenixRenderer } from './phoenix.js';
 import { PatchRenderer } from './patches.js';
 import { SnowRenderer } from './snow.js';
+import { GroundMarksRenderer } from './groundMarks.js';
 import { BreathRenderer } from './breath.js';
 import { TeaRenderer } from './tea.js';
 import { SmithyRenderer } from './smithy.js';
@@ -156,6 +157,7 @@ export class View {
     this.inland = new InlandWaterRenderer(this.root); // the surface of ponds, lakes, the canal (render/waterSurface.js)
     this.stirrers = new StirrerRenderer(this.root); // whirlpools, wind hoses, wind jets (sim/stirrers.js)
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
+    this.groundMarks = new GroundMarksRenderer(this.root); // ruts, furrows, wheel spray, boats' wakes (sim/groundContact.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
     this.smithy = new SmithyRenderer(this.root, this.flames); // a smith at his forge, the blade, the bellows, the shop (sim/smithy.js)
@@ -250,6 +252,7 @@ export class View {
     this.tea.setWorld(world);
     this.smithy.setWorld(world);
     this.snow.setWorld(world);
+    this.groundMarks.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
     this.surface.setWorld(world);
@@ -812,6 +815,7 @@ export class View {
     this.patches.update(this.time, sim.patches, this.voxels.mode, dt, scale);
     this.flames.skip = this.patches.coarseSkip;
     this.snow.update(this.time);
+    this.groundMarks.update();
     this.updateSnowCover();
     this.updateBreath(dt, sim, scale);
     this.updateFireLight(stats);

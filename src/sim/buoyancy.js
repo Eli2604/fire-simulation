@@ -4,6 +4,7 @@ import { initBoat, stepDrift, updateHoles } from './boats.js';
 import { makeMovingBody, needsRestamp, restamp, syncBody, ownsCell, displaceLiquid } from './movingBody.js';
 import { F_BURNING, F_SMOLDER } from './world.js';
 import { placeCrew } from './boatCrew.js';
+import { boatGround, rutAt } from './groundContact.js';
 
 /**
  * Floating bodies: Archimedes for a rigid hull (a rowing boat, the aircraft carrier).
@@ -852,6 +853,8 @@ export function stepFloats(sim, dt) {
     }
     stepBody(f.body, dt, env);
     if (f.row) moveBoat(sim, f, dt, env);
+    // its keel on a soft bottom: a furrow, held back; its wake (sim/groundContact.js)
+    if (f.row) boatGround(sim, f, dt, { owns: (i) => floatOwns(f, i), toWorld, level: f.water.level });
     // its voxels (and their heat, fire, char) where it is now (sim/movingBody.js)
     f.stampT = (f.stampT ?? 0) - dt;
     if (f.mb && f.stampT <= 0) stampFloat(w, f);
@@ -973,7 +976,15 @@ function moveBoat(sim, f, dt, env) {
     f.look = 0.25;
     const k = toWorld(b, [0, 0, 0]);
     if (!f.water.sea) {
-      const top = surfaceUnder(w, k[0], k[2], f.water.level + 0.6);
+      // (beside the hull, not under it: under its keel the water's top is the keel's bottom, and
+      // the level found there would sink it a voxel at a time)
+      let top = null;
+      for (const sd of [1, -1]) {
+        const p = toWorld(b, [0, 0, sd * (b.hull.B / 2 + 0.3)]);
+        const t = surfaceUnder(w, p[0], p[2], f.water.level + 0.6);
+        if (t !== null && (top === null || t > top)) top = t;
+      }
+      top ??= surfaceUnder(w, k[0], k[2], f.water.level + 0.6);
       if (top !== null) f.water.level = top;
     }
     f.bottom = bottomUnder(w, k[0], k[2], f.water.level, f);
@@ -1016,7 +1027,7 @@ function bottomUnder(w, x, z, level, f) {
   for (let y = Math.min(w.ny - 1, Math.floor(level / w.h)); y >= 0; y--) {
     const i = w.idx(cx, y, cz);
     const m = w.mat[i];
-    if (m && m !== MAT.water && !floatOwns(f, i)) return (y + 1) * w.h;
+    if (m && m !== MAT.water && !floatOwns(f, i)) return (y + 1) * w.h - rutAt(w, x, z); // (less a furrow cut in it: sim/groundContact.js)
   }
   return 0;
 }
