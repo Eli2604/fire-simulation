@@ -365,7 +365,8 @@ export function placeObject(world, obj, ownerIndex = -1) {
   const vesselIndex = {};
   for (const [name, spec] of Object.entries(built.vessels ?? {})) {
     vesselIndex[name] = world.vessels.length;
-    world.vessels.push({ ...spec, name, owner: ownerIndex, state: 'sealed' });
+    // (a vessel that knows where it is: its foot and its valve in the world, sim/vessels.js)
+    world.vessels.push({ ...spec, name, owner: ownerIndex, state: 'sealed', ...(spec.base ? { base: toWorld(...spec.base), top: toWorld(...spec.top) } : {}) });
   }
 
   for (const p of built.prims) {

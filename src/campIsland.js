@@ -146,6 +146,12 @@ export function campIslandZone() {
       { type: 'car', params: { length: 5.5, width: 2.2, height: 2, bodyColor: '#3f4a2c', fuelLiters: 80, tankMaterial: 'steel' }, x: at(0.5, 0)[0], z: at(0, 14.5)[1], y: 'auto', rotation: 90 },
       { type: 'scannedProp', params: { asset: 'drum' }, x: at(1.2, 0)[0], z: at(0, 20.3)[1], y: 'auto' },
       { type: 'scannedProp', params: { asset: 'drum' }, x: at(1.9, 0)[0], z: at(0, 20.4)[1], y: 'auto', rotation: 40 },
+      // gas cylinders (models/gasCylinder.js, sim/vessels.js): propane for the workshop's cutting
+      // torch by the fuel drums (a big one and a spare), and the kitchen's at the barracks' east end
+      { type: 'gasCylinder', params: { capacity: 33, fill: 0.8 }, x: at(3.0, 0)[0], z: at(0, 20.2)[1], y: 'auto' },
+      { type: 'gasCylinder', params: { capacity: 11, fill: 0.6 }, x: at(3.0, 0)[0], z: at(0, 21.0)[1], y: 'auto' },
+      { type: 'gasCylinder', params: { capacity: 11, fill: 0.7 }, x: at(-30.9, 0)[0], z: at(0, 12.6)[1], y: 'auto' },
+      { type: 'gasCylinder', params: { capacity: 11, fill: 0.3, color: '#3a6fb0', gas: 'butane' }, x: at(-30.9, 0)[0], z: at(0, 13.2)[1], y: 'auto' },
       // crates of stores behind the headquarters
       { type: 'crate', params: { size: 1.2 }, x: at(-3.5, 0)[0], z: at(0, -19)[1], y: 'auto' },
       { type: 'crate', params: { size: 1.0 }, x: at(-2.1, 0)[0], z: at(0, -19.4)[1], y: 'auto' },

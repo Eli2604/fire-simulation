@@ -344,7 +344,11 @@ const DEFS = {
     combustible: true, ignitionTemp: 80, pyrolysisTemp: 60, heatOfCombustion: 46e6, burnRate: 0.08,
     selfHeating: 0.2, residue: 0, smokeYield: 0.002, smokeColor: [0.3, 0.3, 0.3],
     meltingPoint: -188, latentHeat: 0, fluidity: 1,
-    vapor: { refP: 8.4e5, refT: 20, B: 2000, Tb: -42, Lv: 428e3, beta: 0.0031 },
+    // vapour pressure: Clausius–Clapeyron through 8.4 bar at 20 °C with B = Lv·M/R ≈ 2265 K
+    // (≈ 8 bar at 20 °C, 17 at 50, 26 at 70, 34 at 85: within a few % of the tables up to the
+    // critical point, 96.7 °C). The liquid swells as it warms (507 kg/m³ at 15 °C, 449 at 50,
+    // 405 at 70): ρ(T) = ρ15·exp(-(a·ΔT + b·ΔT²)), ΔT from 15 °C (sim/vessels.js liquidDensity)
+    vapor: { refP: 8.4e5, refT: 20, B: 2265, Tb: -42, Lv: 428e3, beta: 0.0031, expansion: { a: 0.00234, b: 3.2e-5 }, critical: 96.7 },
   },
   water: {
     // liquid water (puddles, flooding sea water): flows, soaks, boils off
@@ -443,6 +447,15 @@ const DEFS = {
     // onset °C (less when damaged); energy: J of stored charge per m³ of cells (~250 Wh/l); the
     // heat of the runaway inside the cells and of the vented gas burning, × that energy
     runaway: { onset: 170, energy: 9e8, internal: 1.5, vent: 2.2 },
+  },
+  butane: {
+    // liquefied butane (camping and patio-heater cylinders): ~2.1 bar abs at 20 °C (B = Lv·M/R ≈
+    // 2690 K: ~5 bar at 50 °C, ~10 at 80), boils at -0.5 °C; it swells less as it warms than propane
+    label: 'Butane (LPG)', color: [0.84, 0.86, 0.88], density: 580, specificHeat: 2400, conductivity: 0.1,
+    combustible: true, ignitionTemp: 80, pyrolysisTemp: 60, heatOfCombustion: 45.7e6, burnRate: 0.08,
+    selfHeating: 0.2, residue: 0, smokeYield: 0.002, smokeColor: [0.3, 0.3, 0.3],
+    meltingPoint: -138, latentHeat: 0, fluidity: 1,
+    vapor: { refP: 2.1e5, refT: 20, B: 2690, Tb: -0.5, Lv: 385e3, beta: 0.002, expansion: { a: 0.0019, b: 1.2e-5 }, critical: 152 },
   },
 };
 
@@ -568,6 +581,7 @@ const MECH = {
   pitch: { ...SOFT, E: 0.1e9, eta: 0.3, pop: 0.6, burnSound: 'crackle' },
   gasoline: { E: 1.3e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
   propane: { E: 1e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
+  butane: { E: 1e9, nu: 0.5, eta: 1, hardness: 0.02, strength: 0, radiation: 0.003, shape: 'liquid', pop: 0, burnSound: 'whoosh' },
   water: { E: 2.2e9, nu: 0.5, eta: 1, hardness: 0.03, strength: 0, radiation: 0.004, shape: 'liquid', pop: 0 },
   liion: { E: 10e9, nu: 0.3, eta: 0.03, hardness: 0.55, strength: 30e6, radiation: 0.008, shape: 'block', pop: 0.4, grain: 0.02, burnSound: 'whoosh' },
   bone: { E: 15e9, nu: 0.3, eta: 0.03, hardness: 0.7, strength: 150e6, radiation: 0.008, shape: 'bar', brittle: true, pop: 0.1 },

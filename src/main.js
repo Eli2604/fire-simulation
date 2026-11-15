@@ -815,7 +815,7 @@ function updateHud(dt) {
   if (inspected >= 0 || inspectedCloth || inspectedThing) showInspect();
 }
 
-const VESSEL_STATE = { sealed: 'sealed', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
+const VESSEL_STATE = { sealed: 'sealed', holed: 'holed – burning jet', venting: 'venting', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
 function vesselRows(w) {
   return w.vessels.map((v) => {
     const label = v.name === 'cylinder' ? 'Gas cylinder' : 'Fuel tank';
@@ -824,7 +824,7 @@ function vesselRows(w) {
     return [label, st + p];
   });
 }
-const EVENT_TEXT = { radio: '(radio)', flightRadio: '(radio)', jetCrash: 'crashed and exploded', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', dragonWingHurt: 'is hit in the wing: it comes down', dragonFalls: 'cannot use its wing: it falls from the sky', dragonCrash: 'crashes to the ground', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys', quench: 'hisses into the slack tub (quenched)', weaponDone: 'finished: on display in the shop', gateBroken: 'smashed' };
+const EVENT_TEXT = { radio: '(radio)', flightRadio: '(radio)', jetCrash: 'crashed and exploded', enemyDown: 'is down', explosion: 'BURST', leak: 'is leaking', reliefValve: 'relief valve opened – jet flame', split: 'split open, fuel pouring out', pipeBurst: 'BURST – gas jet burning', waterBurst: 'BURST – water pouring out', spall: 'spalled', sprinkler: 'went off', doorOpen: 'opened', doorClose: 'closed', inerted: 'flooded with inert gas', inertSystem: '', rackFire: 'electrical fault – fire', enemyFire: 'set a fire to lure you', glass: 'broke', lightSeen: 'saw a light and comes to look', foundering: 'is going down: the sea is over the deck edge', eruption: 'ERUPTS – lava is coming down', eruptionEnd: 'has calmed down', laze: 'runs into the sea – clouds of steam', shout: 'shouted: they have seen you', roar: 'roars', seized: 'seized you in its jaws', devoured: 'swallowed you', gulp: 'swallowed its prey', dragonSnap: 'snapped its jaws shut', dragonFire: 'set you alight', dragonHit: 'is mortally wounded', dragonDown: 'is down', dragonWingHurt: 'is hit in the wing: it comes down', dragonFalls: 'cannot use its wing: it falls from the sky', dragonCrash: 'crashes to the ground', phoenixCalls: 'calls from its cell', phoenixCry: 'calls', phoenixHurt: 'is hit', phoenixFreed: 'is out of its cell', phoenixWaits: 'waits at a closed door', phoenixBurns: 'bursts into flame', phoenixReborn: 'rises from its ashes', phoenixEscape: 'flies up the stairs', phoenixFree: 'is free: out of the catacombs', keysDropped: 'dropped his keys', quench: 'hisses into the slack tub (quenched)', weaponDone: 'finished: on display in the shop', gateBroken: 'smashed' };
 Object.assign(EVENT_TEXT, AIR_EVENT_TEXT); // (a snatch, a dragon fight)
 function eventRows(w) {
   return w.events
@@ -984,7 +984,8 @@ canvas.addEventListener('pointerup', (e) => {
     case 'inspect':
       inspected = hit.voxel;
       inspectedCloth = hit.cloth ?? null; // (the wash on a line: its garment, as a whole)
-      inspectedThing = null;
+      // (a gas cylinder, a fuel tank: the vessel as a whole, its pressure and why it did or did not burst)
+      inspectedThing = w.vesselTag[hit.voxel] ? { kind: 'vessel', k: Math.abs(w.vesselTag[hit.voxel]) - 1 } : null;
       showInspect();
       break;
     case 'ignite':

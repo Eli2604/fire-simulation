@@ -44,11 +44,11 @@ test('squad range: the squads, no dragon or jets', () => {
   assert.ok(!menu.has('dragon') && !menu.has('flights'));
 });
 
-test('office hallway: indoors (only the air), its doors', () => {
-  const { summary, menu } = menuOf('hallway');
+test('carrier below deck (the old office hallway: its gas line, its sprinklers): indoors (only the air), its doors', () => {
+  const { summary, menu } = menuOf('carrier', 'below');
   assert.equal(summary.exposure, 'indoor');
   assert.ok(menu.has('tool.door'));
-  for (const k of ['weather.outdoor', 'weather.ice', 'preset.lightning', 'dragon', 'squads']) assert.ok(!menu.has(k), k);
+  for (const k of ['weather.outdoor', 'weather.ice', 'preset.lightning', 'dragon']) assert.ok(!menu.has(k), k);
 });
 
 test('carrier world, the island: its dragons, guards, the pond (ice, cold snap)', () => {

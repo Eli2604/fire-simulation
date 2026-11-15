@@ -55,6 +55,11 @@ export const SCENARIO_ALIASES = {
   // (the hallway with sprinklers: the corridor inside the headquarters of the military base on the
   // camp island, a place of its own: src/campIsland.js, models/militaryBase.js)
   hallwaySprinklers: { scenario: 'carrier', zone: HQ_PLACE },
+  // (the gas cylinders in a bonfire: gas cylinders are objects now, sim/vessels.js; a rack of them
+  // in the store room below deck in the carrier, off the main passageway whose gas line bursts and
+  // burns; the office hallway's gas pipe burst: that passageway, its sprinklers)
+  gasCylinders: { scenario: 'carrier', zone: 'below' },
+  hallway: { scenario: 'carrier', zone: 'below' },
 };
 
 /** A scenario key (old or new) as { scenario, zone, weather? } (zone: null for the scenario's start). */
@@ -214,32 +219,6 @@ export const SCENARIOS = {
     ...smithyScene(),
   },
   // (the old Forest fire in fog is the forest in the fog valley of the Fantasy world: ?scenario=foggyForest)
-  gasCylinders: {
-    name: 'Gas cylinders in a bonfire',
-    description: 'Two 11 kg propane cylinders in a burning pile of pallets. The one with a working relief valve vents a roaring jet flame; the one with a blocked valve overfills as the liquid expands and bursts (BLEVE): fireball and fragments.',
-    world: { size: [8, 6, 8], h: 0.08 },
-    weather: w({ windSpeed: 1, humidity: 0.4 }),
-    timeScale: 8,
-    view: { camera: [1.5, 3.2, 8.5] },
-    objects: [
-      { type: 'grass', params: { width: 7.8, depth: 7.8, height: 0.1, density: 0.6, moisture: 0.2, clearRadius: 1.6 }, x: 4, z: 4 },
-      { type: 'woodPile', params: { arrangement: 'stack', logs: 14, logLength: 1.4, logRadius: 0.07, moisture: 0.1, stones: false }, x: 4, z: 4, ignite: true },
-      { type: 'burner', params: { power: 150000, flameRadius: 0.7, flameHeight: 1.6, nozzleHeight: 0.04 }, x: 4, z: 4 },
-      { type: 'gasCylinder', params: { reliefValve: 'working' }, x: 3.4, z: 4.6 },
-      { type: 'gasCylinder', params: { reliefValve: 'blocked', color: '#3b6fb0' }, x: 4.6, z: 3.5 },
-      { type: 'fence', params: { length: 6 }, x: 4, z: 7.2 },
-    ],
-  },
-  hallway: {
-    name: 'Hallway: gas pipe burst',
-    description: 'An office corridor with a suspended ceiling. After 20 s the gas pipe hidden in the ceiling void bursts and ignites. Smoke leaks through the tiles and fills the corridor from the top down; tiles drop, the grid sags, paint blisters and peels. Try the firefighter walk-through.',
-    world: { size: [17, 4.2, 7.6], h: 0.1 },
-    weather: w({ ambient: 18, humidity: 0.5 }),
-    exposure: 'indoor', // (no weather in an office corridor)
-    timeScale: 1,
-    view: { camera: [1.2, 3.8, -1.5], walk: true },
-    objects: [{ type: 'hallway', params: {}, x: 9.5, z: 2 }],
-  },
   // the dragon isle in a sea of its own: the dragon island (church, catacombs, volcano,
   // waterfall), the harbour village and its smithy, the castle and the forest in the fog valley
   fantasy: fantasyWorld(),

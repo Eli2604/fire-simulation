@@ -24,6 +24,9 @@ import { describeSmithy } from './smithy.js';
  *               (its heat, hardness and temper), the slack tub, the shop
  *   volcano     world.volcanoes (sim/volcano.js): asleep / erupting / spent, how long, the
  *               lava in the crater and how hot it is
+ *   vessel      world.vessels[k] (sim/vessels.js): a gas cylinder (a fuel tank): its pressure,
+ *               liquid and wall temperatures, fill, relief valve, jet flame, and why it did or
+ *               did not burst (burst: at what pressure, its energy, the fireball, the blast)
  *
  * describeThing(sim, thing) -> { title, sub, rows: [string] } or null (gone). Plain data in,
  * text out: tested without a view.
@@ -48,6 +51,8 @@ export function describeThing(sim, thing) {
       return describeSmithy(w.smithies?.[thing.index]);
     case 'volcano':
       return volcano(w, thing.index);
+    case 'vessel':
+      return vessel(w, thing.k);
     default:
       return null;
   }
@@ -342,4 +347,38 @@ function volcano(w, index) {
   if (v.column?.on) rows.push(`Ash column over the crater: ${fmtWatts(v.column.power)}`);
   rows.push(`Crater: vent radius ${(v.craterRadius ?? 0).toFixed(1)} m, rim at ${(v.rim ?? 0).toFixed(1)} m`);
   return { title: 'Volcano', sub: 'basalt cone', rows };
+}
+
+// ------------------------------------------------------------------ pressure vessels
+
+const VESSEL_STATE = { sealed: 'sealed', holed: 'holed: a burning jet from the hole', leaking: 'leaking (shell failed)', ruptured: 'BURST', empty: 'empty' };
+const bar = (p) => `${(p / 1e5).toFixed(1)} bar`;
+
+/** A gas cylinder (or a fuel tank): its state, and why it did or did not burst. */
+function vessel(w, k) {
+  const v = w.vessels?.[k];
+  if (!v) return null;
+  const title = v.lumped ? 'Gas cylinder' : v.name === 'fuel' ? 'Fuel tank' : 'Pressure vessel';
+  const rows = [`State: ${v.venting ? 'relief valve venting' : VESSEL_STATE[v.state] ?? v.state}`];
+  if (v.why) rows.push(`Why: ${v.why}`);
+  if (!v.lumped) {
+    if (v.pressure != null) rows.push(`Pressure: ${bar(v.pressure)}${v.strength != null ? ` (holds ${bar(v.strength)})` : ''}`);
+    return { title, sub: 'pressure vessel', rows };
+  }
+  if (v.state !== 'ruptured') {
+    rows.push(`Pressure: ${bar(v.pressure ?? 0)} (gauge)${v.strength != null ? `; the wall holds ${bar(v.strength)} now (${pct(v.strengthFactor ?? 1)} of its cold ${bar(v.burstPressure)})` : ''}`);
+    if (v.Tl != null) rows.push(`Liquid: ${C(v.Tl)}, ${(v.mass ?? 0).toFixed(1)} of ${(v.mass0 ?? 0).toFixed(1)} kg, fills ${pct(v.fill ?? 0)} of the cylinder${v.hydraulic ? ' – LIQUID-FULL' : ''}`);
+    if (v.Tv != null) rows.push(`Wall: ${C(v.Tv)} above the liquid (dry), ${C(v.Tw)} where the liquid wets it`);
+    if (v.phiDry != null) rows.push(`Heat on the wall: ${(v.phiDry / 1000).toFixed(0)} kW/m² (dry part), ${(v.phiWet / 1000).toFixed(0)} kW/m² (wetted)`);
+  }
+  rows.push(`Relief valve: ${v.ventPressure == null ? 'BLOCKED' : `working, opens at ${bar(v.ventPressure)}, ${v.prvOpen ? 'OPEN' : 'closed'}${v.prvOpened != null ? ` (first opened at ${v.prvOpened.toFixed(0)} s)` : ''}`}`);
+  rows.push(`Cylinder valve: ${v.drawRate > 0 ? 'open, the gas burning at it' : 'closed'}`);
+  if (v.jetPower > 0) rows.push(`Jet flame: ${fmtWatts(v.jetPower)}, ~${(v.jetLength ?? 0).toFixed(1)} m (${((v.mdot ?? 0) * 1000).toFixed(0)} g/s)`);
+  if (v.vented > 0) rows.push(`Burnt off so far: ${v.vented.toFixed(1)} kg`);
+  if (v.state === 'ruptured') {
+    rows.push(`Burst at ${(v.burstAt ?? 0).toFixed(0)} s, ${bar(v.burstPressure0 ?? 0)}: ${((v.burstEnergy ?? 0) / 1e6).toFixed(2)} MJ (~${((v.burstEnergy ?? 0) / 4.6e6).toFixed(2)} kg TNT), ${pct(v.flash ?? 0)} of the liquid flashed`);
+    if (v.fireball) rows.push(`Fireball: ${(v.fireballMass ?? 0).toFixed(1)} kg, ${v.fireball.diameter.toFixed(1)} m across, ${v.fireball.duration.toFixed(1)} s`);
+    if (v.overpressure) rows.push(`Blast: ${v.overpressure.map((o) => `${o.kPa.toFixed(0)} kPa at ${o.r} m`).join(', ')}; fragments ~${(v.fragmentSpeed ?? 0).toFixed(0)} m/s`);
+  }
+  return { title, sub: v.fluid?.label ?? v.gas ?? 'gas', rows };
 }

@@ -215,7 +215,7 @@ its points are edited where that thing stands in Edit world.
 ## Using it
 
 - **Scenario**: a smithy (a smith forging blades at a charcoal forge he blows up with the bellows – E at the lever to work it yourself –, quenching them in the slack tub and putting them in his shop; steel, aluminium and copper test bars on burners by the wall; `?scenario=metalBars`), gas cylinders in a bonfire,
-  what a car's fuel tank does in a fire, a gas pipe bursting in an office hallway (with or without sprinklers),
+  what a car's fuel tank does in a fire, a gas pipe bursting in an office corridor with sprinklers (the headquarters of the military base),
   the **Fantasy world** (`?scenario=fantasy`, src/fantasyWorld.js, models/fantasyIsland.js): the dragon isle in a sea of its
   own, one land of several places: the dragon island (hills, a canal, a pond, a gothic church under construction, a campfire,
   a house, the volcano, the waterfall with its walkway, river and mill, the dragons) with the catacombs of limestone and
@@ -224,7 +224,7 @@ its points are edited where that thing stands in Edit world.
   gatehouse with a portcullis and gates, the keep, a timber hall and stables) and below it the forest fire in fog in the
   valley between the castle hill and the ridge on the south coast; roads join them (signposts: E), the ground between
   the places drawn from the same height function as their voxels;
-  an aircraft carrier with a flyable jet, a server room below deck,
+  an aircraft carrier with a flyable jet, a server room below deck and a gas line bursting in its main passageway (sprinklers; a rack of gas cylinders in the store room off it),
   its lower decks below the waterline (a fuel line bursts against the hull, the sea pours in, the ship settles and lists),
   in an island group (an islet with a campfire, the military base on the camp island), and a
   spaceship in orbit above them, and the lake house (tea on the veranda by its lake, its garden
@@ -1249,7 +1249,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Wood pile / campfire | log cabin / teepee / stack, number, length and radius of logs, moisture, kindling, stone ring |
 | Gas burner | power, flame radius and height, nozzle height |
 | Wooden fence | length, height, boards or rails, moisture |
-| Gas cylinder (propane) | capacity, fill level, relief valve working/blocked, colour |
+| Gas cylinder (LPG) | gas (propane, butane), size (kg when full), fill level, cylinder valve closed / open with the gas burning at it, relief valve working/blocked, colour |
 | Ship section | length, beam, depth, draft (waterline), corridor width, furnished cabins, sprinklers, fuel line burst delay and power, loose stores. Two decks, the lower one below the waterline, a long corridor plus cross corridors out to the hull sides, cabins, a stair, cabin and watertight doors |
 | Catacombs | passages along x and z (default 4 × 4), spacing, width and height, flat or vaulted ceiling, share of masonry walls, share of ossuary walls, torch spacing, entrance open or closed, seed. Vaulted limestone passages with carved inscriptions, stretches of walls of stacked skulls and long bones (ossuary), domed chambers with bone walls and coffins, burial niches with bones and rags, wooden doors on both sides of each chamber (one locked), burning torches on iron brackets that light the passages |
 | Aircraft carrier | an object of objects: the flight deck's params, and in it its 16 jets, the flight of four overhead, a tow tractor, gas bottles and drums, and the places *Below deck* (with *Lower decks* in it). See *Objects of objects* below |
@@ -1469,6 +1469,23 @@ The world is a regular voxel grid (`World`, `src/sim/world.js`). A coarser air g
      straight into the liquid. The wall above the liquid has only vapour behind it, gets
      red hot and loses its strength.
    - A working relief valve vents burning vapour as a jet flame; boiling cools the liquid.
+   - Gas (LPG) cylinders are simulated as the real cylinder, whatever the voxel size (an 11 kg
+     cylinder is one voxel on the flight deck, a few voxels of liquid at 8 cm): its mass, volume,
+     radius, height and wall thickness. The heat the flames put into its shell voxels is the flux
+     on the wall (where it has no voxels of its own, the air and flames round it); the wetted wall
+     passes it to the boiling liquid, the dry wall above the liquid heats up. Propane: ≈ 8 bar at
+     20 °C, 17 at 50, 26 at 70; the liquid swells as it warms (an 80 % fill is liquid-full near
+     65 °C). The relief valve pops at 17.5 bar and reseats at 90 % of it; its vapour burns as a jet
+     flame (≈ 0.12·Q^0.4 m long), the level falls as it vents, drying out more wall. It bursts
+     when the pressure exceeds what the hot wall still holds (the BLEVE of a cylinder engulfed in
+     flames, a minute or two even with a working valve) or once a blocked cylinder is full of
+     liquid (hydraulic); at the edge of a fire a working valve jet-fires for minutes. The burst:
+     a fireball of the flashing liquid and its spray, a blast (energy from the expanding vapour,
+     overpressure by Hopkinson scaling), fragments, the top rocketing off. A hole in the shell
+     makes a burning jet until it is empty. Click a cylinder (Inspect) for its pressure, liquid and
+     wall temperatures, fill, relief valve, jet flame, and why it did or did not burst. There are
+     racks of them below deck in the carrier (in the store room off the passageway whose gas line
+     bursts) and at the military base (by the fuel drums, at the barracks' kitchen end).
    - A shell that melts or burns through, or fails below 1.5 bar, splits and leaks into a
      pool fire. This is what car fuel tanks do.
    - Above that pressure the vessel **bursts**: a blast throws the shell and light nearby
