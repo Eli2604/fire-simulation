@@ -688,6 +688,17 @@ for (const [k, label] of [['formUp', 'Form up'], ['flank', 'Split & flank the ta
 fFlight.add({ hitLead: () => { const a = theFlight(); if (a) a.hit(a.lead, 'engines', 60); } }, 'hitLead').name('💥 Hit the leader (engine fire)');
 fFlight.add({ hitWing: () => { const a = theFlight(); const m = a?.ranked()[1]; if (m) a.hit(m.i, 'wingL', 400); } }, 'hitWing').name('💥 Shoot a wing off his wingman');
 fFlight.add({ rig: () => editor.setMode('rig', { kind: 'jetFlight' }) }, 'rig').name('🦴 Rig the jet flight (formations, orders, hit parts)');
+// sound: the space's reverb and echoes, the walls between (audio/roomReverb.js, audio/acoustics.js)
+const soundState = { reverb: true, amount: 1, occlusion: true, space: '' };
+const fSound = gui.addFolder('Sound').close();
+const setAcoustics = () => walk.sound.setAcoustics({ enabled: soundState.reverb, amount: soundState.amount, occlusion: soundState.occlusion });
+fSound.add(soundState, 'reverb').name('Reverb / echoes of the space').onChange(setAcoustics);
+fSound.add(soundState, 'amount', 0, 2, 0.05).name('Reverb amount').onChange(setAcoustics);
+fSound.add(soundState, 'occlusion').name('Muffled through walls').onChange(setAcoustics);
+fSound.add(soundState, 'space').name('Measured space').disable().listen();
+setInterval(() => {
+  if (!fSound._closed) soundState.space = walk.sound.acousticsInfo();
+}, 500);
 fT.add(state, 'waterLitres', 0.1, 200, 0.1).name('Bucket water (litres)');
 fT.add(state, 'agent', Object.fromEntries(Object.entries(AGENTS).map(([k, a]) => [a.label, k])))
   .name('Extinguisher')

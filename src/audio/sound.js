@@ -34,11 +34,17 @@
  *    the tyres rolling and squealing with their slip, the wind, the brakes, the horn, crashes;
  *    with the Doppler shift.
  *  - CPU: a voice budget (MAX_VOICES one-shots at a time; quieter ones are dropped).
+ *  - the space (audio/roomReverb.js, audio/acoustics.js): the voxels around the listener probed
+ *    by rays (volume, openness, the absorption of what is hit, clutter) → a reverb (a procedural
+ *    impulse response, crossfaded as the space changes) and discrete echoes off big distant walls,
+ *    on everything through the master bus; one-shots send more the further away they are, and are
+ *    muffled by the walls between (mass law). setAcoustics() / acousticsInfo(): the Sound menu.
  */
 import { HeliVoices } from './heliVoices.js';
 import { BoatVoices } from './boatVoices.js';
 import { CarVoices } from './carVoices.js';
 import { heliCrashSound, heliHitSound } from './heliSound.js';
+import { RoomAcoustics } from './roomReverb.js';
 import { impactSound, propagate, fireRoar, crackle, steamHiss, metalTick, aggregate, lodFor, windNoise, rainSound, wingBeat, gunshot, decompression, gainOf, dbOf, P_ATM } from './physics.js';
 
 const MAX_VOICES = 28;
@@ -48,6 +54,18 @@ export class SoundScape {
   constructor() {
     this.ctx = null;
     this.running = false;
+    this.acoustics = { enabled: true, amount: 1, occlusion: true };
+  }
+
+  /** The room acoustics' settings ({ enabled, amount 0..2, occlusion }): the Sound menu. */
+  setAcoustics(s) {
+    Object.assign(this.acoustics, s);
+    this.room?.set(this.acoustics);
+  }
+
+  /** A line on the space measured around the listener (volume, RT60, openness, echoes). */
+  acousticsInfo() {
+    return this.room ? this.room.info() : this.running ? 'no reverb (no Web Audio convolver)' : 'sound off';
   }
 
   start() {
@@ -63,6 +81,13 @@ export class SoundScape {
     this.muffle.type = 'lowpass';
     this.muffle.frequency.value = 20000;
     this.master.connect(this.muffle).connect(ctx.destination);
+    // the space's reverb and echoes: a send from the master bus, back in before the muffle
+    try {
+      this.room = new RoomAcoustics(ctx, this.muffle, this.acoustics);
+      this.master.connect(this.room.input);
+    } catch {
+      this.room = null;
+    }
     // loud one-shots (impacts, booms) through a limiter
     this.limiter = ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -10;
@@ -137,6 +162,7 @@ export class SoundScape {
     this.heliVoices = null;
     this.boatVoices = null;
     this.carVoices = null;
+    this.room = null;
     this.ctx.close();
     this.ctx = null;
   }
@@ -271,6 +297,8 @@ export class SoundScape {
     this.lastT = t;
     this.state = state;
     this.muffle.frequency.setTargetAtTime(state.underwater ? 450 : 20000, t, 0.1);
+    // the space around the listener: probe a little more, reverb and echoes (audio/roomReverb.js)
+    this.room?.update(state.world, state.listener, !!state.underwater);
     // the fire: roar, crackle, hiss, ticks, per region (physics: audio/physics.js)
     this.updateFire(state, t, dtF, setPos);
     // wind and rain (the weather's own numbers)
@@ -618,9 +646,11 @@ export class SoundScape {
     const st = this.state ?? {};
     const lp = st.listener?.pos;
     const d = lp && p ? Math.hypot(p[0] - lp[0], p[1] - lp[1], p[2] - lp[2]) : 3;
-    const occluded = !!(lp && p && st.lineOfSight && d > 2 && d < 120 && !st.lineOfSight(lp, p));
+    // the walls between, through the voxels (audio/acoustics.js occlusion), else the line of sight
+    const occ = st.underwater ? null : this.room?.occlusion(lp, p, d);
+    const occluded = !occ && !!(lp && p && st.lineOfSight && d > 2 && d < 120 && !st.lineOfSight(lp, p));
     const pr = propagate(d, { ref: o.ref ?? 3, occluded, underwater: !!st.underwater && !o.underwater, bothUnderwater: !!st.underwater && !!o.underwater });
-    const gain = level * pr.gain;
+    const gain = level * pr.gain * (occ?.gain ?? 1);
     if (gain < 0.004 || !this.budget(gain, dur + pr.delay)) return null;
     const pan = ctx.createPanner();
     pan.panningModel = d < 40 ? 'HRTF' : 'equalpower';
@@ -633,9 +663,10 @@ export class SoundScape {
     }
     const lpf = ctx.createBiquadFilter();
     lpf.type = 'lowpass';
-    lpf.frequency.value = pr.cutoff;
+    lpf.frequency.value = Math.min(pr.cutoff, occ?.cutoff ?? 20000);
     lpf.Q.value = 0.5;
     pan.connect(lpf).connect(this.limiter);
+    this.room?.send(lpf, d); // the further, the more of it is the room's
     return { out: pan, t0: ctx.currentTime + (o.noDelay ? 0 : pr.delay), gain, dist: d, cutoff: pr.cutoff };
   }
 
