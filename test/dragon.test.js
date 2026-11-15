@@ -31,7 +31,7 @@ function field(objects = [], grass = false) {
 const player = (sim, p) => (sim.ai.player = { p: p.slice(), head: [p[0], p[1] + 1.7, p[2]] });
 
 test('the island has a dragon lying in its lair, its body on the ground', () => {
-  const sc = cloneScene(SCENARIOS.carrier);
+  const sc = cloneScene(SCENARIOS.fantasy);
   sc.startZone = 'island';
   sc.noFire = true;
   const sim = createSimulation(sc);
@@ -176,7 +176,7 @@ test('arrows and rockets hurt it, fire does not; killed, it falls', () => {
 });
 
 test('on the island it walks its round: the hilltop, up the church walls and over the roof, to the catacomb stairs; its feet are heard', () => {
-  const sc = cloneScene(SCENARIOS.carrier);
+  const sc = cloneScene(SCENARIOS.fantasy);
   sc.startZone = 'island';
   sc.noFire = true;
   // (without the volcano: it would erupt as the dragon passes, and set the island's grass alight)

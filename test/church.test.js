@@ -7,8 +7,8 @@ import { MATERIALS } from '../src/sim/materials.js';
 import { F_HIDDEN } from '../src/sim/world.js';
 import { ChurchDrawing } from '../src/render/church.js';
 
-const zone = SCENARIOS.carrier.zones.island;
-const build = () => buildScene({ world: zone.world, objects: zone.objects, weather: SCENARIOS.carrier.weather }).world;
+const zone = SCENARIOS.fantasy.zones.island;
+const build = () => buildScene({ world: zone.world, objects: zone.objects, weather: SCENARIOS.fantasy.weather }).world;
 
 test('island: a gothic church stands on the plateau, glazed where finished, in scaffolding where not', () => {
   const world = build();

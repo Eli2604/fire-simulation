@@ -1,5 +1,6 @@
 import { islandFall } from './islandFall.js';
 import { placeRowBoat } from './rowBoat.js';
+import { LANDS } from './fantasyIsland.js';
 
 /**
  * An island in the sea: sandy shores, grassy slopes, two hills (rocky tops),
@@ -48,57 +49,16 @@ export default {
     riverWidth: { value: 2, min: 1, max: 4, step: 0.1, label: 'River width (m)' },
     flow: { value: 1, min: 0, max: 5, step: 0.05, label: 'Water over the fall (m³/s)' },
     seed: { value: 5, min: 1, max: 999, step: 1, label: 'Random seed' },
+    // part of a larger land (models/fantasyIsland.js: LANDS): its ground rises out of the sea
+    // beyond this island's coast and joins it; landX/landZ: this island's centre in that land's frame
+    land: { value: '', label: 'Part of a larger land (its name; empty: an island on its own)' },
+    landX: { value: 0, min: -2000, max: 2000, step: 0.1, label: 'Its centre in the land, X (m)' },
+    landZ: { value: 0, min: -2000, max: 2000, step: 0.1, label: 'Its centre in the land, Z (m)' },
+    margin: { value: 0, min: 0, max: 10, step: 0.1, label: 'Ground beyond its width and depth (m: up to the edge of its place)' },
   },
   build(p, { h, rng }) {
-    const W = p.width / 2;
-    const D = p.depth / 2;
-    const sea = p.seaLevel;
-    const top0 = sea + p.plateau;
-    // plateau (buildings, campfire) in the south-west, hills in the north-east
-    const plat = { x0: -W * 0.75, x1: W * p.plateauEast, z0: -D * 0.05, z1: D * 0.7 };
-    const hills = [
-      { x: W * 0.45, z: -D * 0.4, r: Math.min(W, D) * 0.32, hgt: p.hill },
-      { x: -W * 0.35, z: -D * 0.55, r: Math.min(W, D) * 0.22, hgt: p.hill * 0.55 },
-    ];
-    // the canal: a winding line from below the main hill down to the east shore
-    const canalZ = (x) => -D * 0.05 + Math.sin(x * 0.35) * D * 0.08;
-    const canalW = 1.4;
-    const pondC = { x: W * p.pondX, z: D * p.pondZ, r: p.pondRadius, rz: p.pondRadiusZ || p.pondRadius };
-    // distance from the pond's centre, in metres along its X radius (an ellipse)
-    const pondDist = (x, z) => Math.hypot(x - pondC.x, ((z - pondC.z) * pondC.r) / pondC.rz);
-    let pondBase = null;
-    const ground = (x, z, noDip = false) => {
-      const r = Math.hypot(x / W, z / D);
-      const land = Math.min(1, Math.max(0, (0.95 - r) / 0.25));
-      let y = sea - 1.6 + land * (p.plateau + 1.6 + 0.3 * Math.sin(x * 0.4) * Math.cos(z * 0.3));
-      for (const hl of hills) y += land * hl.hgt * Math.exp(-((x - hl.x) ** 2 + (z - hl.z) ** 2) / (2 * hl.r * hl.r));
-      // the plateau is flat
-      const inPlat = x > plat.x0 && x < plat.x1 && z > plat.z0 && z < plat.z1;
-      if (inPlat) y = top0;
-      else {
-        const dx = Math.max(plat.x0 - x, 0, x - plat.x1);
-        const dz = Math.max(plat.z0 - z, 0, z - plat.z1);
-        const d = Math.hypot(dx, dz);
-        if (d < 3 && land > 0.5) y = top0 + (y - top0) * (d / 3);
-      }
-      if (p.canal && x > W * p.canalStart) {
-        const d = Math.abs(z - canalZ(x));
-        if (d < canalW + 1) y = Math.min(y, d < canalW ? sea - 0.8 : sea - 0.8 + (d - canalW) * (y - sea + 0.8));
-      }
-      // a dip for the pond
-      const dp = pondDist(x, z);
-      if (p.pond && !noDip && dp < pondC.r + 2.5) {
-        // a level terrace on the hillside, with the pond dug into it
-        const base = pondBase ?? (pondBase = ground(pondC.x, pondC.z, true));
-        const t = Math.min(1, Math.max(0, (dp - pondC.r - 0.8) / 1.7));
-        y = base + (y - base) * t * t * (3 - 2 * t);
-        if (dp < pondC.r) y -= p.pondDepth * Math.min(1, 2 * (1 - dp / pondC.r));
-      }
-      return y;
-    };
-    // the waterfall, its pool and the river (models/islandFall.js): it reshapes the terrain round it
-    const fall = p.waterfall ? islandFall(p, { h, sea, W, D, ground: (x, z) => ground(x, z) }) : null;
-    const height = fall ? (x, z) => fall.shape(x, z, ground(x, z)) : ground;
+    const T = islandTerrain(p, h);
+    const { W, D, sea, height, fall, pondC, pondDist, land } = T;
     const prims = [];
     const step = h;
     let pondLevel = -Infinity;
@@ -106,8 +66,9 @@ export default {
       // the rim's lowest point is where it would spill: fill a bit below that
       pondLevel = height(pondC.x + pondC.r + 0.4, pondC.z) - h * 0.4; // the terrace, a little below its edge
     }
-    for (let x = -W; x < W; x += step)
-      for (let z = -D; z < D; z += step) {
+    const M = p.land ? p.margin : 0;
+    for (let x = -W - M; x < W + M - 1e-6; x += step)
+      for (let z = -D - M; z < D + M - 1e-6; z += step) {
         const cx = x + step / 2;
         const cz = z + step / 2;
         const y = Math.max(h, height(cx, cz));
@@ -115,73 +76,142 @@ export default {
         const flowing = fall?.water(cx, cz);
         const rock = y > sea + p.plateau + p.hill * 0.55 || !!fall?.rock(cx, cz);
         const sand = !rock && y < sea + 0.45;
-        const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : [0.32 + n, 0.42 + n, 0.2];
+        // (part of a larger land: its roads and paths, models/fantasyIsland.js)
+        const road = !!land && !rock && !sand && !flowing && land.road(cx + p.landX, cz + p.landZ);
+        const color = rock ? [0.36 + n, 0.34 + n, 0.31 + n] : sand ? [0.78 + n, 0.7 + n, 0.5] : road ? [0.5 + n, 0.44 + n, 0.33 + n] : [0.32 + n, 0.42 + n, 0.2];
         // the green slopes are grass (it burns: a lighter or a spark sets it going), on soil
-        const sward = !rock && !sand && !(p.pond && pondDist(cx, cz) < pondC.r) && !flowing;
+        const sward = !rock && !sand && !road && !(p.pond && pondDist(cx, cz) < pondC.r) && !flowing;
         // down at least to its lowest neighbour's top: where the ground steps down (the shore,
         // the canal banks) there is no gap to see through under the thin shell of voxels
         const nb = Math.min(height(cx - step, cz), height(cx + step, cz), height(cx, cz - step), height(cx, cz + step));
         const bottom = Math.max(0, Math.min(y - Math.max(2.2 * h, 0.6), nb - h)); // (at least 0.6 m of ground: a blast digs a crater in it, not a hole through)
-        prims.push({ shape: 'box', min: [x, bottom, z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
+        prims.push({ shape: 'box', min: [x, bottom, z], max: [x + step, sward ? y - h : y, z + step], material: rock ? 'hillRock' : sand ? 'beachSand' : road ? 'quarrySand' : 'soil', anchored: true, color: sward ? [0.3, 0.24, 0.16] : color, variation: 0.05 });
         if (sward) prims.push({ shape: 'box', min: [x, y - h, z], max: [x + step, y, z + step], material: 'grass', moisture: 0.2, color, variation: 0.04, anchored: true });
         if (p.pond && y < pondLevel && pondDist(cx, cz) < pondC.r)
           prims.push({ shape: 'box', min: [x, y, z], max: [x + step, pondLevel, z + step], material: 'water' });
         if (flowing && flowing[1] > y) prims.push({ shape: 'box', min: [x, y, z], max: [x + step, flowing[1], z + step], material: 'water' });
       }
-    if (fall) prims.push(...fall.prims);
-    // the pier and a boat on the west shore
-    const px = -W * 0.98;
-    const pz = D * 0.35;
-    const ph = sea + 0.6;
-    prims.push(
-      { shape: 'box', min: [px, ph - 0.1, pz - 0.8], max: [px + p.pierLength, ph, pz + 0.8], material: 'wood', density: 0.3, color: [0.5, 0.38, 0.24] },
-      ...Array.from({ length: Math.ceil(p.pierLength / 2) }, (_, k) => k * 2).filter((k) => k < p.pierLength - 0.5).flatMap((k) => [
-        { shape: 'cylinder', a: [px + k + 0.3, 0, pz - 0.7], b: [px + k + 0.3, ph, pz - 0.7], r: 0.1, material: 'wood' },
-        { shape: 'cylinder', a: [px + k + 0.3, 0, pz + 0.7], b: [px + k + 0.3, ph, pz + 0.7], r: 0.1, material: 'wood' },
-      ]),
-    );
-    // the catacomb entrance on the north shore: a stone hut over a stair going down
-    const ex = -W * 0.05;
-    const ez = D * 0.78;
-    const ey = height(ex, ez);
-    if (p.hut) prims.push(
-      { shape: 'box', min: [ex - 1.6, ey - 0.4, ez - 1.6], max: [ex + 1.6, ey + 2.6, ez + 1.6], material: 'stone', anchored: true, color: [0.6, 0.58, 0.52] },
-      { shape: 'box', min: [ex - 1.6 + 0.35, ey, ez - 1.6 + 0.35], max: [ex + 1.6 - 0.35, ey + 2.3, ez + 1.6 - 0.35], mode: 'carve' },
-      { shape: 'box', min: [ex - 0.6, ey, ez - 1.7], max: [ex + 0.6, ey + 2.0, ez - 1.2], mode: 'carve' },
-      { shape: 'box', min: [ex - 0.6, ey - 0.4, ez - 0.6], max: [ex + 0.6, ey + 0.01, ez + 1.0], mode: 'carve' },
-      // a torch on each side of the door
-      { shape: 'capsule', a: [ex - 0.9, ey + 1.4, ez - 1.75], b: [ex - 0.9, ey + 1.8, ez - 1.95], r: 0.03, material: 'wood' },
-      { shape: 'capsule', a: [ex + 0.9, ey + 1.4, ez - 1.75], b: [ex + 0.9, ey + 1.8, ez - 1.95], r: 0.03, material: 'wood' },
-    );
-    const portals = [];
-    if (p.catacombs) portals.push({ p: [ex, ey, ez - 0.3], r: 1.0, to: p.catacombs, label: 'Stairs: down into the catacombs', arrive: { p: [ex, ey, ez - 2.6], yaw: -Math.PI / 2 } });
-    // the boats at the pier: rowing boats (models/rowBoat.js) afloat on the sea alongside it, the
-    // red one north of it, the blue one south (they used to be painted half-ellipsoids of
-    // voxels). Walk up to one and press E: it takes you there; coming back you step ashore on
-    // the pier, at its landward end
-    const floats = [];
-    const moor = (params, dz) => {
-      const b = placeRowBoat({ ...params, arriveX: p.pierLength - 3.5, arriveY: ph - sea, arriveZ: -dz + (dz < 0 ? -0.3 : 0) }, [px + 1.5, sea, pz + dz], h, floats.length);
-      prims.push(...b.prims);
-      floats.push(...b.floats);
-      portals.push(...b.portals);
-    };
-    if (p.boatTo) moor({ goesTo: p.boatTo, label: p.boatLabel, hullColor: '#b3332a', seed: p.seed }, 2.2);
-    // a second boat on the other side of the pier (to another island): a little smaller, blue
-    if (p.ferryTo) moor({ goesTo: p.ferryTo, label: p.ferryLabel, length: 3.7, beam: 1.3, depth: 0.56, hullColor: '#33598f', stripeColor: '#e8c547', seed: p.seed + 1 }, -2.2);
-    return {
-      prims,
-      ...(fall ? { rivers: [fall.river], loose: fall.loose } : {}),
-      sea: { level: sea, box: [0, 0, 0, 0] },
-      heaters: p.hut
-        ? [
-            { pos: [ex - 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
-            { pos: [ex + 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
-          ]
-        : [],
-      portals,
-      floats,
-      spawn: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 },
-    };
+    return finishIsland(p, h, T, prims);
   },
 };
+
+/**
+ * The island's terrain (its frame: x, z from its centre, y up from its base): the height field
+ * with the waterfall's shaping (`height`), without it (`ground`), the fall, the pond. Shared with
+ * the land it may be part of (models/fantasyIsland.js: drawn round its place, the same ground).
+ */
+export function islandTerrain(p, h) {
+  const W = p.width / 2;
+  const D = p.depth / 2;
+  const sea = p.seaLevel;
+  const top0 = sea + p.plateau;
+  // plateau (buildings, campfire) in the south-west, hills in the north-east
+  const plat = { x0: -W * 0.75, x1: W * p.plateauEast, z0: -D * 0.05, z1: D * 0.7 };
+  const hills = [
+    { x: W * 0.45, z: -D * 0.4, r: Math.min(W, D) * 0.32, hgt: p.hill },
+    { x: -W * 0.35, z: -D * 0.55, r: Math.min(W, D) * 0.22, hgt: p.hill * 0.55 },
+  ];
+  // the canal: a winding line from below the main hill down to the east shore
+  const canalZ = (x) => -D * 0.05 + Math.sin(x * 0.35) * D * 0.08;
+  const canalW = 1.4;
+  const pondC = { x: W * p.pondX, z: D * p.pondZ, r: p.pondRadius, rz: p.pondRadiusZ || p.pondRadius };
+  // distance from the pond's centre, in metres along its X radius (an ellipse)
+  const pondDist = (x, z) => Math.hypot(x - pondC.x, ((z - pondC.z) * pondC.r) / pondC.rz);
+  let pondBase = null;
+  const ext = p.land ? LANDS[p.land] : null;
+  const ground = (x, z, noDip = false) => {
+    const r = Math.hypot(x / W, z / D);
+    const land = Math.min(1, Math.max(0, (0.95 - r) / 0.25));
+    let y = sea - 1.6 + land * (p.plateau + 1.6 + 0.3 * Math.sin(x * 0.4) * Math.cos(z * 0.3));
+    for (const hl of hills) y += land * hl.hgt * Math.exp(-((x - hl.x) ** 2 + (z - hl.z) ** 2) / (2 * hl.r * hl.r));
+    // the plateau is flat
+    const inPlat = x > plat.x0 && x < plat.x1 && z > plat.z0 && z < plat.z1;
+    if (inPlat) y = top0;
+    else {
+      const dx = Math.max(plat.x0 - x, 0, x - plat.x1);
+      const dz = Math.max(plat.z0 - z, 0, z - plat.z1);
+      const d = Math.hypot(dx, dz);
+      if (d < 3 && land > 0.5) y = top0 + (y - top0) * (d / 3);
+    }
+    // part of a larger land: its ground beyond this island's coast (models/fantasyIsland.js)
+    if (ext) y = Math.max(y, sea + ext.height(x + p.landX, z + p.landZ));
+    if (p.canal && x > W * p.canalStart) {
+      const d = Math.abs(z - canalZ(x));
+      if (d < canalW + 1) y = Math.min(y, d < canalW ? sea - 0.8 : sea - 0.8 + (d - canalW) * (y - sea + 0.8));
+    }
+    // a dip for the pond
+    const dp = pondDist(x, z);
+    if (p.pond && !noDip && dp < pondC.r + 2.5) {
+      // a level terrace on the hillside, with the pond dug into it
+      const base = pondBase ?? (pondBase = ground(pondC.x, pondC.z, true));
+      const t = Math.min(1, Math.max(0, (dp - pondC.r - 0.8) / 1.7));
+      y = base + (y - base) * t * t * (3 - 2 * t);
+      if (dp < pondC.r) y -= p.pondDepth * Math.min(1, 2 * (1 - dp / pondC.r));
+    }
+    return y;
+  };
+  // the waterfall, its pool and the river (models/islandFall.js): it reshapes the terrain round it
+  const fall = p.waterfall ? islandFall(p, { h, sea, W, D, ground: (x, z) => ground(x, z) }) : null;
+  const height = fall ? (x, z) => fall.shape(x, z, ground(x, z)) : ground;
+  return { W, D, sea, height, ground, fall, pondC, pondDist, land: ext };
+}
+
+/** The pier, the boats, the catacomb entrance: the island's things on its terrain. */
+function finishIsland(p, h, T, prims) {
+  const { W, D, sea, height, fall } = T;
+  if (fall) prims.push(...fall.prims);
+  // the pier and a boat on the west shore
+  const px = -W * 0.98;
+  const pz = D * 0.35;
+  const ph = sea + 0.6;
+  prims.push(
+    { shape: 'box', min: [px, ph - 0.1, pz - 0.8], max: [px + p.pierLength, ph, pz + 0.8], material: 'wood', density: 0.3, color: [0.5, 0.38, 0.24] },
+    ...Array.from({ length: Math.ceil(p.pierLength / 2) }, (_, k) => k * 2).filter((k) => k < p.pierLength - 0.5).flatMap((k) => [
+      { shape: 'cylinder', a: [px + k + 0.3, 0, pz - 0.7], b: [px + k + 0.3, ph, pz - 0.7], r: 0.1, material: 'wood' },
+      { shape: 'cylinder', a: [px + k + 0.3, 0, pz + 0.7], b: [px + k + 0.3, ph, pz + 0.7], r: 0.1, material: 'wood' },
+    ]),
+  );
+  // the catacomb entrance on the north shore: a stone hut over a stair going down
+  const ex = -W * 0.05;
+  const ez = D * 0.78;
+  const ey = height(ex, ez);
+  if (p.hut) prims.push(
+    { shape: 'box', min: [ex - 1.6, ey - 0.4, ez - 1.6], max: [ex + 1.6, ey + 2.6, ez + 1.6], material: 'stone', anchored: true, color: [0.6, 0.58, 0.52] },
+    { shape: 'box', min: [ex - 1.6 + 0.35, ey, ez - 1.6 + 0.35], max: [ex + 1.6 - 0.35, ey + 2.3, ez + 1.6 - 0.35], mode: 'carve' },
+    { shape: 'box', min: [ex - 0.6, ey, ez - 1.7], max: [ex + 0.6, ey + 2.0, ez - 1.2], mode: 'carve' },
+    { shape: 'box', min: [ex - 0.6, ey - 0.4, ez - 0.6], max: [ex + 0.6, ey + 0.01, ez + 1.0], mode: 'carve' },
+    // a torch on each side of the door
+    { shape: 'capsule', a: [ex - 0.9, ey + 1.4, ez - 1.75], b: [ex - 0.9, ey + 1.8, ez - 1.95], r: 0.03, material: 'wood' },
+    { shape: 'capsule', a: [ex + 0.9, ey + 1.4, ez - 1.75], b: [ex + 0.9, ey + 1.8, ez - 1.95], r: 0.03, material: 'wood' },
+  );
+  const portals = [];
+  if (p.catacombs) portals.push({ p: [ex, ey, ez - 0.3], r: 1.0, to: p.catacombs, label: 'Stairs: down into the catacombs', arrive: { p: [ex, ey, ez - 2.6], yaw: -Math.PI / 2 } });
+  // the boats at the pier: rowing boats (models/rowBoat.js) afloat on the sea alongside it, the
+  // red one north of it, the blue one south (they used to be painted half-ellipsoids of
+  // voxels). Walk up to one and press E: it takes you there; coming back you step ashore on
+  // the pier, at its landward end
+  const floats = [];
+  const moor = (params, dz) => {
+    const b = placeRowBoat({ ...params, arriveX: p.pierLength - 3.5, arriveY: ph - sea, arriveZ: -dz + (dz < 0 ? -0.3 : 0) }, [px + 1.5, sea, pz + dz], h, floats.length);
+    prims.push(...b.prims);
+    floats.push(...b.floats);
+    portals.push(...b.portals);
+  };
+  if (p.boatTo) moor({ goesTo: p.boatTo, label: p.boatLabel, hullColor: '#b3332a', seed: p.seed }, 2.2);
+  // a second boat on the other side of the pier (to another island): a little smaller, blue
+  if (p.ferryTo) moor({ goesTo: p.ferryTo, label: p.ferryLabel, length: 3.7, beam: 1.3, depth: 0.56, hullColor: '#33598f', stripeColor: '#e8c547', seed: p.seed + 1 }, -2.2);
+  return {
+    prims,
+    ...(fall ? { rivers: [fall.river], loose: fall.loose } : {}),
+    sea: { level: sea, box: [0, 0, 0, 0] },
+    heaters: p.hut
+      ? [
+          { pos: [ex - 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
+          { pos: [ex + 0.9, ey + 1.9, ez - 2.0], power: 1500, radius: 0.05, height: 0.35, light: true, label: 'torch' },
+        ]
+      : [],
+    portals,
+    floats,
+    spawn: { p: [px + p.pierLength - 2, ph, pz], yaw: 0 },
+  };
+}

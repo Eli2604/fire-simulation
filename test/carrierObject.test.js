@@ -11,7 +11,7 @@ const near = (a, b, e = 1e-6) => Math.abs(a - b) < e;
 
 // the carrier's deck as it was written before it was one object: the same objects, flat
 const OLD_DECK = [
-  { type: 'carrierDeck', params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'island' }, x: 106, z: 26 },
+  { type: 'carrierDeck', params: { length: 210, beam: 48, deckHeight: 11, draft: 4, helipads: 3, boatTo: 'islet', boatLabel: 'Boat ladder: to the islet' }, x: 106, z: 26 },
   ...[[145, 20], [145, 30], [85, 10.4], [85, 21.2]].map(([x, z], k) => ({ type: 'jet', params: { color: k % 2 ? '#7a8590' : '#6f7b86' }, x, z, y: 11, rotation: 0 })),
   ...[150, 161, 172, 183].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 42.5, y: 11, rotation: 90 })),
   ...[160, 171, 182, 193].map((x) => ({ type: 'jet', params: { rockets: 4 }, x, z: 7.4, y: 11, rotation: -90 })),

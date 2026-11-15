@@ -5,6 +5,7 @@ import { createSimulation } from '../src/sim/createSimulation.js';
 import { SCENARIOS, cloneScene } from '../src/scenarios.js';
 import { Flight } from '../src/walk/flight.js';
 import { ProxyRenderer } from '../src/render/proxies.js';
+import { campDeployPoint, CAMP_ISLAND_CENTRE } from '../src/campIsland.js';
 
 // the flight code runs in the browser; give it the little it needs
 globalThis.document ??= { createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {} } };
@@ -55,13 +56,15 @@ function fly(c, f, seconds, control = () => {}) {
   }
 }
 
-test('jet: catapult take-off, climb, fly to the island (built on the way) and rocket it', () => {
+// (the island the jet flies to: the camp island, the military base; the dragon island is in the Fantasy world now)
+test('jet: catapult take-off, climb, fly to the camp island (built on the way) and rocket it', () => {
   const c = carrierWorld();
   const f = c.board();
   assert.equal(c.deck.world.vehicles.length, 15, 'boarded: its parked voxels are gone (the others stay)');
-  // point at the island
-  const isl = c.scene.zones.island;
-  const target = new THREE.Vector3(isl.origin[0] + 20, 6, isl.origin[2] + 14);
+  // point at the island: the landing ground behind its ridge
+  const isl = c.scene.zones.camp;
+  const dp = campDeployPoint();
+  const target = new THREE.Vector3(isl.origin[0] + dp.p[0], isl.origin[1] + dp.ground + 1, isl.origin[2] + dp.p[2]);
   f.heading = 0; // (along its catapult: off the bow, clear of the deck park)
   f.keys = new Set(['KeyW']);
   f.throttle = 1;
@@ -70,7 +73,7 @@ test('jet: catapult take-off, climb, fly to the island (built on the way) and ro
   fly(c, f, 0.6, (fl) => (fl.pitchIn = 0.8));
   assert.ok(!f.done, 'still flying');
   assert.ok(f.pos.y > f.seaLevel + 4, `airborne (alt ${(f.pos.y - f.seaLevel).toFixed(1)} m)`);
-  assert.equal(c.zones.built('island'), false, `the island is not built yet (jet at x ${f.pos.x.toFixed(0)})`);
+  assert.equal(c.zones.built('camp'), false, `the island is not built yet (jet at x ${f.pos.x.toFixed(0)})`);
   // 120 m out at 30 m altitude: aim at the island and fire a salvo, pulling up in between
   f.pos.set(target.x, f.seaLevel + 30, target.z - 120); // (from the north: the carrier lies to the west now)
   f.heading = 0;
@@ -96,8 +99,8 @@ test('jet: catapult take-off, climb, fly to the island (built on the way) and ro
     fl.vy = Math.max(fl.vy, 2);
   });
   assert.ok(!f.done, c.walk.ended?.msg);
-  assert.ok(c.zones.built('island'), 'the rockets brought the island in');
-  const w = c.sims.island.world;
+  assert.ok(c.zones.built('camp'), 'the rockets brought the island in');
+  const w = c.sims.camp.world;
   const blasts = w.events.filter((e) => e.type === 'explosion' && e.name === 'rocket');
   assert.ok(blasts.length >= 1, `${blasts.length} rocket explosions on the island`);
   assert.equal(f.rockets, (c.deck.world.vehicles[0]?.rockets ?? 8) - 3);
@@ -177,13 +180,14 @@ test('stand-ins for the zones you are not in', () => {
   assert.ok(r.items.get('island'), 'a placeholder for the unbuilt island');
 });
 
-test('jet: eject over the island, come down under the parachute and walk on there; the empty jet crashes and explodes', () => {
+test('jet: eject over the camp island, come down under the parachute and walk on there; the empty jet crashes and explodes', () => {
   const c = carrierWorld();
   c.scene.weather.windSpeed = 0;
   for (const s of Object.values(c.sims)) s.weather.windSpeed = 0;
   const f = c.board();
-  const isl = c.scene.zones.island;
-  const centre = new THREE.Vector3(isl.origin[0] + 13, 0, isl.origin[2] + 21); // the plateau (the middle of the island is the canal)
+  const isl = c.scene.zones.camp;
+  isl.weather = { ...isl.weather, windSpeed: 0 }; // (the camp island's own fresh breeze: still, as the rest)
+  const centre = new THREE.Vector3(isl.origin[0] + CAMP_ISLAND_CENTRE[0], 0, isl.origin[2] + CAMP_ISLAND_CENTRE[1]); // the middle of the island (the base)
   f.onGround = false;
   f.pos.set(centre.x - 50, f.seaLevel + 35, centre.z);
   f.heading = 0;
@@ -202,7 +206,7 @@ test('jet: eject over the island, come down under the parachute and walk on ther
   void t0;
   assert.ok(c.walk.ended, 'down');
   assert.ok(c.walk.ended.at, `landed on solid ground: ${c.walk.ended.msg}`);
-  assert.equal(c.zones.current(), 'island');
+  assert.equal(c.zones.current(), 'camp');
   assert.ok(f.pilot.chute, 'under an open parachute');
   // the jet without pilot: it keeps flying until it comes down, then explodes
   const orphan = c.walk.ended.orphan ?? f;

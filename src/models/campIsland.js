@@ -60,8 +60,8 @@ export default {
     ridgeWidth: { value: 5, min: 2, max: 12, step: 0.5, label: 'Ridge width (m, its slopes)' },
     landingX: { value: 0.58, min: 0.3, max: 0.8, step: 0.02, label: 'Landing ground at X (share of half width)' },
     pierLength: { value: 7, min: 3, max: 12, step: 0.5, label: 'Pier length (m)' },
-    boatTo: { value: 'island', label: 'Zone the boat takes you to' },
-    boatLabel: { value: 'Boat: to the island', label: 'What the boat is (its hint)' },
+    boatTo: { value: 'deck', label: 'Zone the boat takes you to' },
+    boatLabel: { value: 'Boat: to the ship', label: 'What the boat is (its hint)' },
     seed: { value: 21, min: 1, max: 999, step: 1, label: 'Random seed' },
   },
   build(p, { h, rng }) {

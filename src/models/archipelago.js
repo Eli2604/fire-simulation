@@ -12,10 +12,14 @@
  *    zone's own voxel sea floor at its edge and slopes away from it: the ground under
  *    the water runs on without a seam;
  *  - banks (spec.banks: { box, floor }): a sandy bank at that depth, sloping away the same way
- *    (where a ship lies at anchor: ground under it you see through the clear water).
+ *    (where a ship lies at anchor: ground under it you see through the clear water);
+ *  - lands (spec.lands: names, models/fantasyIsland.js LANDS): a land of several places, drawn
+ *    by the same height function its places' voxels are made from (the dragon isle).
  *
  * makeArchipelago(spec) → { heightAt(x, z), extent }.
  */
+import { LANDS } from './fantasyIsland.js';
+
 export function makeArchipelago(spec) {
   const islands = spec.islands ?? [];
   // (the zones' shelves and the banks are made alike: flat at their floor, sloping away)
@@ -51,6 +55,7 @@ export function makeArchipelago(spec) {
     return s;
   };
 
+  const lands = (spec.lands ?? []).map((n) => LANDS[n]).filter(Boolean);
   function heightAt(x, z) {
     // the deep floor: ridges and troughs
     let y = -62 - 22 * fbm(x / 700, z / 700, 3) + 14 * Math.abs(noise(x / 400 + 3, z / 400) - 0.5);
@@ -85,6 +90,7 @@ export function makeArchipelago(spec) {
       if (I.peak <= 0 && rn < 1) hi = Math.min(hi, I.peak); // a sunken reef ring
       y = Math.max(y, hi);
     }
+    for (const L of lands) y = Math.max(y, L.drawn(x, z));
     // round a simulated zone: its own sea floor at its edge, a shelf sloping away
     for (const Z of zones) {
       const [x0, z0, x1, z1] = Z.box;

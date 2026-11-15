@@ -75,9 +75,9 @@ test('pick helpers: drawn meshes only (no sprites, light shafts or hidden parent
 
 // ---------------------------------------------------------------- the island: church, torches, door, volcano
 
-const zone = SCENARIOS.carrier.zones.island;
+const zone = SCENARIOS.fantasy.zones.island;
 let island = null;
-const islandWorld = () => (island ??= buildScene({ world: zone.world, objects: zone.objects, weather: SCENARIOS.carrier.weather }).world);
+const islandWorld = () => (island ??= buildScene({ world: zone.world, objects: zone.objects, weather: SCENARIOS.fantasy.weather }).world);
 
 /** The church drawn as render/props.js draws it, under a root. */
 function church() {

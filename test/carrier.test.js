@@ -78,11 +78,11 @@ test('server room: the inert-gas system puts out a rack fire when the door is sh
 });
 
 test('catacombs: torches light the passages and the scene is dark', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const w = sim.world;
   const torches = w.heaters.filter((h) => h.light);
   assert.ok(torches.length >= 10, `${torches.length} torches`);
-  assert.ok(SCENARIOS.carrier.zones.catacombs.view.dark);
+  assert.ok(SCENARIOS.fantasy.zones.catacombs.view.dark);
   assert.ok(w.doors.some((d) => d.locked));
   const names = new Set();
   for (let k = 0; k < w.solidCount; k++) names.add(MATERIALS[w.mat[w.solids[k]]].name);
@@ -94,15 +94,26 @@ test('catacombs: torches light the passages and the scene is dark', () => {
   assert.ok(w.flame[a] > 0.05 && w.airT[a] > w.ambient + 2, `a flame and warm gas at a torch (${w.airT[a].toFixed(0)} °C)`);
 });
 
-test('carrier: boat to the island, stairs from its shore down into the catacombs and back; the campfire burns', () => {
+test('carrier: a boat from the stern to the islet and back, on to the lake island; one sea', () => {
   const scene = cloneScene(SCENARIOS.carrier);
+  assert.equal(scene.zones.island, undefined, 'the dragon island is in the Fantasy world now');
+  assert.equal(scene.zones.catacombs, undefined);
   const deck = createSimulation(scene);
-  assert.ok(deck.world.portals.some((p) => p.to === 'island'), 'a boat from the ship');
+  assert.ok(deck.world.portals.some((p) => p.to === 'islet'), 'a boat from the ship');
+  const islet = createSimulation({ ...scene, zone: 'islet' });
+  assert.ok(islet.world.portals.some((p) => p.to === 'deck' && p.arrive), 'a boat back');
+  assert.ok(islet.world.portals.some((p) => p.to === 'lake' && p.arrive), 'a boat on to the lake island');
+  assert.ok(Math.abs(islet.world.sea.level + scene.zones.islet.origin[1] - (deck.world.sea.level + scene.zones.deck.origin[1])) < 1e-6, 'one sea');
+  // every boat, hatch and stair of the world goes to a place of it
+  for (const n of ['deck', 'islet', 'lake', 'camp']) for (const p of createSimulation({ ...scene, zone: n }).world.portals) assert.ok(p.to === 'jet' || p.to === '..' || scene.zones[p.to], `${n} → ${p.to}`);
+});
+
+test('the dragon island (Fantasy world): a boat to the village, stairs from the church down into the catacombs and back; the campfire burns', () => {
+  const scene = cloneScene(SCENARIOS.fantasy);
   const island = createSimulation({ ...scene, zone: 'island' });
   const w = island.world;
-  assert.ok(w.portals.some((p) => p.to === 'deck' && p.arrive), 'a boat back');
+  assert.ok(w.portals.some((p) => p.to === 'village' && p.arrive), 'a boat (and the road) to the village');
   assert.ok(w.portals.some((p) => p.to === 'catacombs' && p.arrive), 'stairs down');
-  assert.ok(Math.abs(w.sea.level + scene.zones.island.origin[1] - (deck.world.sea.level + scene.zones.deck.origin[1])) < 1e-6, 'one sea');
   const cat = createSimulation({ ...scene, zone: 'catacombs' });
   assert.ok(cat.world.portals.some((p) => p.to === 'island'), 'stairs up');
   // hills above the plateau, a canal and a pond

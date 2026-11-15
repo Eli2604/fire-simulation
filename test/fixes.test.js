@@ -67,7 +67,7 @@ function walkable(w, from) {
 }
 
 test('catacombs: you can walk from the stairs through every passage and crossing; the torches are on the walls', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const w = sim.world;
   assert.ok(spawnFloor(w, sim.spawn.p) < 0.5, 'you start on the floor, not on the vault');
   const reach = walkable(w, sim.spawn.p);
@@ -103,7 +103,7 @@ test('catacombs: you can walk from the stairs through every passage and crossing
 });
 
 test('catacombs: the guards walk their rounds through the passages, opening (and closing) doors', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const w = sim.world;
   assert.ok(w.enemies.length >= 5);
   const start = w.enemies.map((e) => e.p.slice());
@@ -230,7 +230,7 @@ test('walk-through: water is no floor; deep water with air above it floats you, 
 test('catacombs: bone walls as in Paris – bone ends in rows, bands and a crown of skulls, crosses and hearts, tablets', async () => {
   const THREE = await import('three');
   const { OssuaryRenderer } = await import('../src/render/ossuary.js');
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const r = new OssuaryRenderer(new THREE.Scene());
   r.setWorld(sim.world);
   r.update(5, null);
@@ -251,7 +251,7 @@ test('catacombs: bone walls as in Paris – bone ends in rows, bands and a crown
 });
 
 test('catacombs: a lamp lighting up a dark spot draws the guard who sees it; a spot by a torch does not', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const w = sim.world;
   assert.ok(w.dark, 'underground: dark');
   const ai = sim.ai;
@@ -286,7 +286,7 @@ test('catacombs: a lamp lighting up a dark spot draws the guard who sees it; a s
 });
 
 test('catacombs: a blast brings the guards running, and they search the place', () => {
-  const sim = createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'catacombs' });
+  const sim = createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'catacombs' });
   const w = sim.world;
   run(sim, 1);
   const at = [2, 1, 22];

@@ -52,7 +52,7 @@ test('office hallway: indoors (only the air), its doors', () => {
 });
 
 test('carrier world, the island: its dragons, guards, the pond (ice, cold snap)', () => {
-  const { menu } = menuOf('carrier', 'island');
+  const { menu } = menuOf('fantasy', 'island');
   for (const k of ['dragon', 'squads', 'weather.outdoor', 'weather.ice', 'preset.coldSnap']) assert.ok(menu.has(k), k);
   assert.ok(!menu.has('flights'));
 });

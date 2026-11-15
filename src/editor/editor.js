@@ -53,7 +53,7 @@ export const GROUPS = [
   ['Water & air', ['waterVortex', 'windHose', 'windJet', 'mill']],
   ['Camp & power', ['droneCamp', 'solarPark', 'windTurbine', 'campPatrol', 'campIsland']],
   ['Military base', ['hqBuilding', 'barracks', 'helipad', 'guardPost', 'blastWall', 'road']],
-  ['Places', ['carrier', 'island', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
+  ['Places', ['carrier', 'island', 'fantasyLand', 'castle', 'signpost', 'landingStage', 'catacombs', 'cryptChapel', 'carrierDeck', 'carrierBelow', 'jet', 'spaceship']],
   // objects of objects (models/composite.js): a group to move things as one; a place inside an object or a world
   ['Groups & rooms', ['group', 'place']],
   // film cameras for an in-game movie (models/camera.js; the 🎬 Movie panel: editor/cinemaPanel.js)

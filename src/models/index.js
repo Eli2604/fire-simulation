@@ -52,6 +52,8 @@ import rowBoat, { motorBoat, sailBoat, canoe } from './rowBoat.js';
 import { hqBuilding, barracks, helipad, guardPost, blastWall, road } from './militaryBase.js';
 import smithy from './smithy.js';
 import camera from './camera.js';
+import castle from './castle.js';
+import { fantasyLand, signpost, landingStage } from './fantasyIsland.js';
 import { TREE_OBJECTS } from './treeObjects.js';
 
 /**
@@ -64,7 +66,7 @@ import { TREE_OBJECTS } from './treeObjects.js';
  *   }
  * See voxelizer.js for the primitive shapes; models/composite.js for objects in objects.
  */
-export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol, hedge, livingRoom, mill, rope, helicopter, terrain, rowBoat, motorBoat, sailBoat, canoe, hqBuilding, barracks, helipad, guardPost, blastWall, road, smithy, camera, ...TREE_OBJECTS };
+export const MODELS = { tree, grass, car, house, candle, metalBar, woodPile, burner, fence, gasCylinder, hallway, shipSection, enemy, catacombs, carrierDeck, jet, carrierBelow, island, spaceship, dragon, church, volcano, cryptChapel, statue, candelabra, clothesline, scannedProp, torch, wall, crate, squad, couch, sideTable, veranda, teaCup, deck, jetFlight, waterVortex, windHose, windJet, carrier, group, place, campIsland, droneCamp, solarPark, windTurbine, campPatrol, hedge, livingRoom, mill, rope, helicopter, terrain, rowBoat, motorBoat, sailBoat, canoe, hqBuilding, barracks, helipad, guardPost, blastWall, road, smithy, camera, castle, fantasyLand, signpost, landingStage, ...TREE_OBJECTS };
 
 export function resolveParams(model, given = {}) {
   const out = {};

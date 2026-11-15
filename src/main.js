@@ -339,7 +339,8 @@ function switchZone(pt) {
   if (!scene.zones?.[pt.to]) return;
   const from = scene.zone;
   activateZone(pt.to);
-  const back = sim.world.portals.find((q) => q.to === from);
+  // (back the way you came: by road to the road's end, by boat to the boat, else any way back)
+  const back = sim.world.portals.find((q) => q.to === from && (q.kind ?? '') === (pt.kind ?? '')) ?? sim.world.portals.find((q) => q.to === from);
   const sp = back?.arrive ?? sim.spawn ?? { p: back?.p ?? [sim.world.size[0] / 2, 0, sim.world.size[2] / 2], yaw: 0 };
   walk.arrive(sp.p, sp.yaw ?? 0);
   walk.say(scene.zones[pt.to].name, 3);

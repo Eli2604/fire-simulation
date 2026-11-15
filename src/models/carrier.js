@@ -25,6 +25,7 @@ export const carrierDeck = {
     draft: { value: 4, min: 1, max: 12, step: 0.1, label: 'Waterline above the keel (m)' },
     helipads: { value: 3, min: 0, max: 6, step: 1, label: 'Helicopter spots' },
     boatTo: { value: '', label: 'Zone the boat at the stern goes to (empty: none)' },
+    boatLabel: { value: 'Boat ladder: to the islet', label: 'What the boat at the stern is (its hint)' },
     hatchTo: { value: 'below', label: 'Place the hatch by the island leads down to (empty: none)' },
   },
   build(p, { h }) {
@@ -156,7 +157,7 @@ export const carrierDeck = {
       spawn: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 },
       portals: [
         ...(p.hatchTo ? [{ p: [hatch[0], D, hatch[2]], r: 1.0, to: p.hatchTo, label: 'Hatch: below deck', arrive: { p: [hatch[0] + 2, D, hatch[2] + 2], yaw: 0 } }] : []),
-        ...(p.boatTo ? [{ p: [-hx + 1.5, D, hz - 1.5], r: 1.4, to: p.boatTo, label: 'Boat ladder: to the island', arrive: { p: [-hx + 3.5, D, hz - 1.5], yaw: 0 } }] : []),
+        ...(p.boatTo ? [{ p: [-hx + 1.5, D, hz - 1.5], r: 1.4, to: p.boatTo, label: p.boatLabel ?? 'Boat ladder', arrive: { p: [-hx + 3.5, D, hz - 1.5], yaw: 0 } }] : []),
       ],
       ignite: { p: [-hx + 5, D + 0.5, hz - 4.3], radius: 0.4, power: 5000 },
     };

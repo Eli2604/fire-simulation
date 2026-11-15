@@ -10,8 +10,8 @@ import { MODELS, resolveParams } from '../src/models/index.js';
 
 // one island for all the tests (it takes a while to build)
 let built = null;
-const island = () => (built ??= createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'island' }));
-const fresh = () => createSimulation({ ...cloneScene(SCENARIOS.carrier), zone: 'island' });
+const island = () => (built ??= createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'island' }));
+const fresh = () => createSimulation({ ...cloneScene(SCENARIOS.fantasy), zone: 'island' });
 /** Only the water: the rivers, the mills and what floats (the rest of the world is not needed). */
 const runWater = (sim, t, dt = 0.05) => {
   for (let s = 0; s < t; s += dt) {
