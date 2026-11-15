@@ -101,6 +101,7 @@ import { perceive, senses as senseProfile, hears, eyeOf, headOf, lightAt, BEAM }
 import { stepLight } from './flashlight.js';
 import { peekOptions, choosePeek, startPeek, peeking } from './peek.js';
 import { stepRopeTeam } from './ropeTeam.js';
+import { stepVehicles, mountForBackup } from './squadVehicle.js';
 
 const SPEED = { walk: 1.35, run: 3.4, aimWalk: 1.0, crawl: 0.35 };
 const SCOUT_R = [10, 16];
@@ -118,7 +119,8 @@ export class SquadAI {
     // a man the rope drill has (ai/ropeTeam.js: covering a descent, waiting his turn at the top,
     // lowering a rope) is not this AI's to move either
     const own = host.ownMove;
-    host.ownMove = (m) => !!m.ropeTask || !!own?.call(host, m);
+    // (nor a man the vehicle drill has: going to his post or the door, climbing in, aboard: ai/squadVehicle.js)
+    host.ownMove = (m) => !!m.ropeTask || !!m.vehTask || !!own?.call(host, m);
     this.threat = host.threat ? host.threat.slice() : null;
     this.on = true;
     this.phase = 'bound';
@@ -1362,7 +1364,26 @@ export class SquadAI {
         this.silentUntil = 0;
         this.say(cmd, `${this.unit}, requesting backup, ${down} down, ${nSeen} hostiles`, 'order');
         if (!peers.length) this.radioQueue.push({ at: this.time + 3.2, self: true, text: `${this.unit}, no response`, kind: 'none' });
-        peers.forEach((p, i) => p.radioQueue.push({ at: p.time + 2.8 + i * 2.6, text: `${p.unit}, copy ${this.unit}, on our way`, kind: 'reply', order: { kind: 'flank', to: c } }));
+        const call = { unit: this.unit, p: c, T: this.threat?.slice() ?? c, t: this.time };
+        peers.forEach((p, i) => {
+          const at = p.time + 2.8 + i * 2.6, plain = { at, text: `${p.unit}, copy ${this.unit}, on our way`, kind: 'reply', order: { kind: 'flank', to: c } };
+          // a stationary vehicle by them: they mount up and come in it (ai/squadVehicle.js); else on foot
+          p.radioQueue.push({
+            ...plain,
+            fn: (q, m, r) => {
+              const t = mountForBackup(q, call);
+              if (t) {
+                r.order = null;
+                return t;
+              }
+              if (!q.threat) {
+                q.radioQueue.push(plain); // (no fight of their own yet: as before, the plain reply waits)
+                return null;
+              }
+              return plain.text;
+            },
+          });
+        });
       }
     }
   }
@@ -1395,6 +1416,8 @@ export class SquadAI {
     if (this.on) this.senses(dt);
     // the rope drill (ai/ropeTeam.js): overwatch on a descent, ropes lowered, the team rope-down
     stepRopeTeam(this, dt);
+    // into a vehicle and off in it (ai/squadVehicle.js: falling back to it, mounting up to help a team)
+    stepVehicles(this, dt);
     stepGroups(this, dt);
     stepClearing(this);
     if (this.breach && !this.breach.g?.route) breachStep(this, this.breach.g, dt);
