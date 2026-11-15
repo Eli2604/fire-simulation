@@ -15,6 +15,7 @@ import { EnemyAI } from '../ai/enemies.js';
 import { DragonAI } from '../ai/dragon.js';
 import { PhoenixAI } from '../ai/phoenix.js';
 import { SquadAI } from '../ai/squad.js';
+import { stepRopes, rappelFrom } from '../ai/rope.js';
 import { isDark, LOUDNESS, emitSound } from '../ai/perception.js';
 import { dangers } from '../ai/evade.js';
 import { stepWorldFlights } from '../ai/flight.js';
@@ -267,6 +268,8 @@ export class Simulation {
       }
       this.ai.debrisHits();
     }
+    // men on ropes and cables (ai/rope.js): rappelling, fast-roping (a helicopter's rope), on a zipline; the player's stand-in too
+    if (w.ropes?.length || w.ropeRiders?.length) stepRopes(this, dt);
     if (w.dragons.length) this.dragonAI.step(dt);
     if (w.phoenixes.length) this.phoenixAI.step(dt);
     if (w.flights?.length) stepWorldFlights(this, dt);
@@ -1596,7 +1599,10 @@ export class Simulation {
       },
       threat: squad[0].threat,
       // guards: the guard AI moves them on their patrol and when they run from fire (ai/enemies.js)
-      ownMove: (m) => !!m.guardCtl,
+      // (and a man on a rope or a cable: ai/rope.js moves him until he is off it)
+      ownMove: (m) => !!m.guardCtl || !!m.rope,
+      // at a drop too deep to jump: a rope rigged at the edge and down it (ai/rope.js)
+      rappel: (m, dir) => rappelFrom(this, m, dir),
       // what threatens a man (a grenade by him, a rocket, rounds cracking past, a dragon): he rolls out of it (ai/evade.js)
       dangers: (m) => dangers(w, m),
       // you: seen through doorways, not through walls or thick smoke

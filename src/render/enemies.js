@@ -4,6 +4,7 @@ import { loadOperatorAssets, OperatorFigure, PhysicsWorld, MOVING, ONCE } from '
 import { SquadViz } from '../operator/squadviz.js';
 import { radioSay, shoutSay, flashBang } from '../audio/radio.js';
 import { driveFromAI } from '../operator/drive.js';
+import { ropeEnds } from '../ai/rope.js';
 import { lod, updateEvery } from './lod.js';
 import { FlashlightPool } from './flashlights.js';
 
@@ -517,7 +518,19 @@ export class EnemyRenderer {
     else if (e.moving && f.slope < -0.3) name = 'stairsDown';
     else if (e.moving) name = e.state === 'flee' || e.state === 'retreat' || e.urgent ? 'run' : e.state === 'investigate' ? 'aimWalk' : 'walk';
     else name = e.state === 'investigate' ? 'aim' : 'idle';
-    if (sq && !e.held) {
+    // on a rope (ai/rope.js): the figure's rope runs from its anchor to its end (rappelling, fast-roping)
+    if (e.rope && e.rope.kind !== 'zipline') [f.ropeTop, f.ropeTail] = ropeEnds(e.rope.rope);
+    else f.ropeTop = f.ropeTail = null;
+    if (e.rope && !e.dead) {
+      // posed by the rope module, whoever's AI he belongs to (a guard too): its clip, looped or once
+      name = e.anim ?? 'idle';
+      if (ONCE[name] ? e.animT !== f.animT : f.shown !== name) {
+        f.animT = e.animT;
+        f.play(name, { restart: !!ONCE[name], fade: 0.15 });
+      }
+      if (MOVING[name]) f.setSpeed(Math.max(0.5, Math.min(1.8, (e.speed ?? 1) / MOVING[name])));
+      f.setAim(null); // (no twist towards a target: both hands on the rope)
+    } else if (sq && !e.held) {
       // the squad AI's member: clip, weapon switches, reload speed, armour (operator/drive.js)
       driveFromAI(f, e, (f.aiState ??= {}));
     } else if (!sq && e.trav?.roll && !e.dead && !e.held) {

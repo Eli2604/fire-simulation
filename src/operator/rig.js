@@ -48,6 +48,7 @@ import { allows as handlingAllows } from '../ai/weapons.js';
 import { MELEE, REACT } from '../ai/melee.js';
 import { PEEK_CLIPS, PEEK_LABELS } from '../ai/peek.js';
 import { TORCH_T } from '../ai/flashlight.js';
+import { FAST, ZIP } from '../ai/rope.js';
 
 const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -742,6 +743,71 @@ const RAPPEL_END = (() => {
   k3.sling2 = 1;
   return [[0, rappelPose(pose0(), 0)], [0.6, k1], [1.0, k2], [1.4, k3]];
 })();
+/*
+ * Fast rope, zipline (ai/rope.js FAST, ZIP: the root is his feet; the rope runs down in front of
+ * the chest ROPE_FRONT m ahead, a cable ROPE_HANG m over the root). The rifle slung on the back.
+ */
+export const ROPE_FRONT = FAST.front, ROPE_HANG = ZIP.hang, ROPE_GRIP = FAST.grip;
+/** Fast-roping (u: one cycle): both hands on the rope in front of the face, the left above, knees up and the rope clamped between the boots; the grip eases and clamps, the body sways a little. */
+function fastRopePose(p, u) {
+  const f = TAU * u, s = sin(f), z = ROPE_FRONT;
+  p.sling2 = 1;
+  handsFree(p);
+  // (squatting on the rope: the boots at the root, so they meet the ground as he lands)
+  p.hipsPos = [0, -0.32 + 0.015 * s, -0.04];
+  p.hips = [-0.12, 0.04 * s, 0];
+  p.spine = [0.08, 0, 0]; p.chest = [0.04, 0, 0]; p.neck = [0.1, 0, 0]; p.head = [0.32 + 0.04 * s, 0.15 * sin(f * 0.5), 0];
+  // the feet round the rope: the right instep under it, the left boot pressing on it from above
+  p.thighR = [-0.75, 0, -0.03]; p.shinR = [1.05, 0, 0]; p.footR = [0.25, 0, 0];
+  p.thighL = [-0.95, 0, 0.06]; p.shinL = [1.25, 0, 0]; p.footL = [0.1, 0, 0];
+  p.lW = p.rW = 1;
+  p.lTW = [0.03, ROPE_GRIP + 0.02 * s, z]; p.rTW = [-0.04, ROPE_GRIP - 0.26 - 0.02 * s, z];
+  p.lPole = [1, -0.6, -0.2]; p.rPole = [-1, -0.6, -0.2];
+  return p;
+}
+/** On the zipline: hanging from the pulley by both hands overhead, knees a little up, swaying along the cable. */
+function ziplinePose(p, u) {
+  const f = TAU * u, s = sin(f);
+  p.sling2 = 1;
+  handsFree(p);
+  p.hips = [-0.25 + 0.06 * s, 0, 0];
+  // (the knees up: the boots just over the root, so they meet the ground as he lets go)
+  p.hipsPos = [0, -0.22, -0.06 * s];
+  p.spine = [0.05, 0, 0]; p.chest = [-0.08, 0, 0]; p.neck = [0.05, 0, 0]; p.head = [-0.12, 0, 0];
+  p.thighR = [-0.45, 0, -0.05]; p.shinR = [0.75, 0, 0]; p.footR = [0.35, 0, 0];
+  p.thighL = [-0.55, 0, 0.05]; p.shinL = [0.85, 0, 0]; p.footL = [0.35, 0, 0];
+  p.lW = p.rW = 1;
+  p.lTW = [0.06, ROPE_HANG - 0.07, 0.02]; p.rTW = [-0.06, ROPE_HANG - 0.07, -0.02];
+  p.lPole = [1, 0, 0.3]; p.rPole = [-1, 0, 0.3];
+  return p;
+}
+/** Hand over hand along a cable too flat to run down: one hand reaching forward while the other pulls, the body swinging under. */
+function zipHandPose(p, u) {
+  ziplinePose(p, 0);
+  // each hand: half a cycle gripping (sliding back as he goes forward), half reaching forward again
+  const hand = (ph) => {
+    const v = (u + ph) % 1;
+    return v < 0.5 ? [0.25 - v, ROPE_HANG - 0.07] : [-0.25 + (v - 0.5) * 1.0, ROPE_HANG - 0.1 - 0.06 * sin(TAU * (v - 0.5))];
+  };
+  const [lz, ly] = hand(0), [rz, ry] = hand(0.5);
+  p.lTW = [0.06, ly, lz]; p.rTW = [-0.06, ry, rz];
+  p.hips[1] = 0.12 * sin(TAU * u * 2);
+  p.chest[1] = -0.1 * sin(TAU * u * 2);
+  p.thighR[0] = -0.3 - 0.2 * sin(TAU * u); p.thighL[0] = -0.3 + 0.2 * sin(TAU * u);
+  return p;
+}
+/** Falling off a rope: arms flung up, legs bent and kicking. */
+function ropeFallPose(p, u) {
+  const f = TAU * u, s = sin(f);
+  p.sling2 = 1;
+  handsFree(p);
+  p.hips = [-0.3, 0, 0.1 * s]; p.spine = [-0.15, 0, 0]; p.chest = [-0.1, 0.1 * s, 0]; p.head = [-0.3, 0, 0];
+  p.thighR = [-0.6 - 0.4 * s, 0, -0.15]; p.shinR = [0.9 + 0.3 * s, 0, 0]; p.footR = [0.2, 0, 0];
+  p.thighL = [-0.6 + 0.4 * s, 0, 0.15]; p.shinL = [0.9 - 0.3 * s, 0, 0]; p.footL = [0.2, 0, 0];
+  p.lT = [0.45, 1.75 + 0.1 * s, 0.1]; p.rT = [-0.45, 1.75 - 0.1 * s, 0.1];
+  p.lPole = [1, -0.3, -0.5]; p.rPole = [-1, -0.3, -0.5];
+  return p;
+}
 /** Prone at an edge, head and shoulders out over it, looking down (about 60 degrees); aim: the rifle down at the shoulder too. */
 function peek(p, f, aim) {
   prone(p);
@@ -1692,6 +1758,11 @@ const CLIPS = {
   rappel: [1.8, (t, u) => rappelPose(pose0(), u)],
   rappelStart: [1.8, (t) => keyed(RAPPEL_START, t)],
   rappelEnd: [1.4, (t) => keyed(RAPPEL_END, t)],
+  // ropes and cables (ai/rope.js): fast-roping, the zipline (on the pulley, hand over hand), falling off one
+  fastRope: [1.2, (t, u) => fastRopePose(pose0(), u)],
+  zipline: [1.6, (t, u) => ziplinePose(pose0(), u)],
+  zipHand: [1.4, (t, u) => zipHandPose(pose0(), u)],
+  ropeFall: [0.8, (t, u) => ropeFallPose(pose0(), u)],
   peekOver: [3.0, (t, u) => peek(pose0(), TAU * u, false)],
   peekOverAim: [2.4, (t, u) => peek(pose0(), TAU * u, true)],
   // parkour (ai/parkour.js MOVES: their durations and root paths)
@@ -1714,7 +1785,7 @@ export const AIMING = { aim: 1, shoot: 1, crouchAim: 1, crouchShoot: 1, aimWalk:
 export const LABELS = { idle: 'Idle', walk: 'Walk', run: 'Run', stairsUp: 'Stairs up', stairsDown: 'Stairs down', slide: 'Slide (hill)', crouch: 'Crouch', aim: 'Aim', shoot: 'Shoot', crouchAim: 'Crouch aim', crouchShoot: 'Crouch fire', aimWalk: 'Aim-walk',
   reload: 'Reload', throwGrenade: 'Grenade', jump: 'Jump', crawl: 'Crawl', proneAim: 'Prone aim', proneShoot: 'Prone fire', drawSecondary: 'Draw 2nd', flame: 'Flame gun', deployDrone: 'Drone', droneControl: 'Drone ctrl', droneScout: 'Drone scout', deskSit: 'Desk', swim: 'Swim', signalMove: 'Sig: move', signalHalt: 'Sig: halt', signalDown: 'Sig: down', radio: 'Radio', hit: 'Hit', die: 'Die',
   holsterRifle: 'Sling rifle', drawRifle: 'Draw rifle', holsterSecondary: 'Sling 2nd', drawKnife: 'Draw knife', sheathKnife: 'Sheathe knife', knifeReady: 'Knife ready', stab: 'Stab',
-  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
+  throwFlash: 'Flash-bang', rappelStart: 'Rappel: over', rappel: 'Rappel', rappelEnd: 'Rappel: off', fastRope: 'Fast rope', zipline: 'Zipline', zipHand: 'Cable: hand over hand', ropeFall: 'Fall off the rope', peekOver: 'Peek over', peekOverAim: 'Peek-over aim',
   vaultSpeed: 'Vault (speed)', vaultSide: 'Vault (side)', vaultStep: 'Vault (step-over)', climbJump: 'Climb up (jump)', mantle: 'Mantle', dropDown: 'Drop down', dropRoll: 'Drop down (roll)', slideCover: 'Slide into cover', ...ROLL_LABELS,
   woundedDown: 'Wounded down', dragCasualty: 'Drag casualty (rescuer + casualty)', dragged: 'Dragged (casualty)', firstAid: 'First aid', coverFire: 'Cover fire', ...MELEE_LABELS, ...GEAR_LABELS, ...PEEK_TORCH_LABELS };
 export { PARKOUR, ROLL };
@@ -1722,7 +1793,7 @@ export { PARKOUR, ROLL };
 const UNARMED_AS = { shoot: 'aim', crouchShoot: 'crouchAim', proneShoot: 'proneAim', reload: 'idle', flame: 'aim' };
 /** Clips that do not care whether he has a rifle (they say where the weapons are themselves). */
 const NO_UNARMED = { ...MELEE_CLIP, dropWeapon: 1, pickupOne: 1, dropPack: 1, woundedDown: 1, dragged: 1, dragCasualty: 1, firstAid: 1, drawSecondary: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, pickup: 1, swim: 1,
-  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1 };
+  holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1 };
 /** With the knife out (or empty-handed, the rifle on his back): what each clip becomes. */
 const KNIFE_AS = { aim: 'knifeReady', shoot: 'knifeReady', crouchAim: 'crouch', crouchShoot: 'crouch', aimWalk: 'walk', proneShoot: 'proneAim', reload: 'knifeReady', flame: 'knifeReady' };
 const PRONE = { crawl: 1, proneAim: 1, proneShoot: 1, peekOver: 1, peekOverAim: 1 };
@@ -1919,7 +1990,7 @@ function pistolReload(t) {
 }
 const RELOAD_AS = { shotgun: [SHOTGUN_RELOAD, shotgunReload], pistol: [PISTOL_RELOAD, pistolReload] };
 /** Clips a weapon's style leaves alone (they place the weapons themselves, or hold none). */
-const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, die: 1 };
+const NO_STYLE = { ...CASUALTY, ...MELEE_CLIP, pickupOne: 1, dropPack: 1, deployDrone: 1, droneControl: 1, droneScout: 1, deskSit: 1, swim: 1, pickup: 1, drawSecondary: 1, holsterRifle: 1, drawRifle: 1, holsterSecondary: 1, drawKnife: 1, sheathKnife: 1, knifeReady: 1, stab: 1, rappel: 1, rappelStart: 1, rappelEnd: 1, fastRope: 1, zipline: 1, zipHand: 1, ropeFall: 1, die: 1 };
 const STYLE_CACHE = new Map();
 /**
  * The clips for weapon kind (ai/weapons.js), baked once and shared: the armed clips held its way
@@ -3569,17 +3640,25 @@ export class OperatorFigure {
     this.holdKnife(inHand);
     // the rifle's sling goes with the rifle (not with the carbine on the weapon bone)
     if (this.loadout !== 'torch' && this.loadout !== 'unarmed') this.sling.visible = this.parts.rifle.parent === this.bones.weapon && PRIMARY_MESH[this.primaryKind] !== 'own';
-    const roped = this.shown === 'rappel' || this.shown === 'rappelStart' || (this.shown === 'rappelEnd' && a && a.time < 1.0);
+    const fast = this.shown === 'fastRope';
+    const roped = fast || this.shown === 'rappel' || this.shown === 'rappelStart' || (this.shown === 'rappelEnd' && a && a.time < 1.0);
     this.rope.visible = !!roped;
-    if (roped) this.updateRope();
+    if (roped) this.updateRope(fast);
   }
-  /** The rope: from high on the wall through the guide hand, the harness and the brake hand, down. */
-  updateRope() {
+  /**
+   * The rope: rappelling, from its anchor (ropeTop: a world point, set by whoever drives the
+   * figure; else high on the wall) through the guide hand, the harness and the brake hand, down
+   * (to ropeTail, or 40 m); fast-roping, from the anchor through both hands and between the boots.
+   */
+  updateRope(fast = false) {
     const g = this.group;
     g.updateMatrixWorld(true);
     const loc = (bone, v) => g.worldToLocal(bone.localToWorld(v.clone()));
-    const guide = loc(this.bones.handL, ROPE_L), harness = loc(this.bones.hips, ROPE_H), brake = loc(this.bones.handR, K_G0);
-    const pts = [new THREE.Vector3(guide.x, guide.y + 40, RAPPEL.wall), guide, harness, brake, brake.clone().add(new THREE.Vector3(0, -40, 0))];
+    const guide = loc(this.bones.handL, ROPE_L), brake = loc(this.bones.handR, K_G0);
+    const mid = fast ? loc(this.bones.footL, new THREE.Vector3()).lerp(loc(this.bones.footR, new THREE.Vector3()), 0.5) : loc(this.bones.hips, ROPE_H);
+    const top = this.ropeTop ? g.worldToLocal(V3(this.ropeTop)) : new THREE.Vector3(guide.x, guide.y + 40, fast ? ROPE_FRONT : RAPPEL.wall);
+    const tail = this.ropeTail ? g.worldToLocal(V3(this.ropeTail)) : (fast ? mid : brake).clone().add(new THREE.Vector3(0, -40, 0));
+    const pts = [top, guide, fast ? brake : mid, fast ? mid : brake, tail];
     this.rope.children.forEach((m, i) => {
       const d = pts[i + 1].clone().sub(pts[i]);
       m.position.copy(pts[i]).addScaledVector(d, 0.5);

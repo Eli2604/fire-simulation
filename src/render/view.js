@@ -44,6 +44,7 @@ import { SkyRenderer, sunColor } from './sky.js';
 import { lod, projection } from './lod.js';
 import { InlandWaterRenderer, WATER_UNIFORMS, setWaterWeather, setWaterSun, setWaterSea } from './waterSurface.js';
 import { StirrerRenderer } from './stirrers.js';
+import { RopeRenderer } from './ropes.js';
 
 const SKY_CLEAR = new THREE.Color(0x8fb7dc);
 const SKY_GREY = new THREE.Color(0x8d939a);
@@ -150,6 +151,7 @@ export class View {
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
     this.enemies = new EnemyRenderer(this.root, this.flames);
+    this.ropes = new RopeRenderer(this.root); // ropes and cables (ai/rope.js): fast ropes, ziplines, rappel ropes
     this.dragons = new DragonRenderer(this.root, this.flames);
     this.loose = new LooseRenderer(this.root); // what a dragon can snatch and throw (ai/dragonAir.js)
     this.phoenixes = new PhoenixRenderer(this.root, this.flames);
@@ -242,6 +244,7 @@ export class View {
     this.ice.setWorld(world);
     this.inland.setWorld(world);
     this.stirrers.setWorld(world);
+    this.ropes.setWorld(world);
     this.volume.setWorld(world);
     this.seenEvents = 0;
     this.flash = null;
@@ -785,6 +788,7 @@ export class View {
     this.puddles.update();
     this.ice.update();
     this.enemies.update(this.world, this.time);
+    this.ropes.update();
     this.dragons.update(this.world, this.time, dt);
     this.loose.update(this.world);
     this.phoenixes.update(this.world, this.time, dt);

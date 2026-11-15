@@ -14,6 +14,7 @@ import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
 import { probe, moveFor, ability, geoFor, durFor, rootAt, eyeDip } from '../ai/parkour.js';
 import { ROLLS, rollAt, rollEyeDip } from '../ai/evade.js';
+import { startRope, rappelFrom, nearRope } from '../ai/rope.js';
 import { allows, evadeKind, gaitK, whyNot } from '../ai/weapons.js';
 import { MELEE, resolveMelee, applyMelee, playerMove } from '../ai/melee.js';
 import { peekOptions } from '../ai/peek.js';
@@ -196,7 +197,8 @@ export class Walkthrough {
       // hand-to-hand (ai/melee.js): G punch, V kick, B throw
       if (!e.repeat && (e.code === 'KeyG' || e.code === 'KeyV' || e.code === 'KeyB') && !this.crawl && !this.swimming && !this.downed) this.melee({ KeyG: 'punch', KeyV: 'kick', KeyB: 'throw' }[e.code]);
       // Space by a low wall, a ledge or a drop ahead: over it, up onto it, down off it
-      if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.downed) this.parkour();
+      // (or onto a rope: its top within reach, or your own rigged at a drop too deep to jump: ai/rope.js)
+      if (e.code === 'Space' && !this.swimming && !this.crawl && !this.trav && !this.ropeRider && !this.downed) this.parkour();
       // a direction key tapped twice quickly: a combat roll that way (A / D sideways, W forward;
       // W twice with Shift held: a dive to prone)
       if (!e.repeat) {
@@ -1135,8 +1137,11 @@ export class Walkthrough {
    */
   parkour() {
     const dir = [-Math.sin(this.yaw), -Math.cos(this.yaw)];
+    if (this.ropeStart(null)) return true; // a rope's top right here
     const geo = probe((x, y, z) => this.solidAt(x, y, z), [this.pos.x, this.pos.y, this.pos.z], dir, { range: 1.4 });
     if (!geo) return false;
+    // a drop too deep to jump: a rope rigged at the edge, down it (as the soldiers rappel)
+    if (geo.type === 'down' && geo.h > 3.3 && this.ropeStart(dir)) return true;
     const hurry = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     const ab = ability({ health: this.health, handling: this.handling() });
     const kind = moveFor(geo, ab, hurry ? 'run' : 'walk');
@@ -1146,6 +1151,25 @@ export class Walkthrough {
       return false;
     }
     this.trav = { kind, t: 0, dur: durFor(kind, ab), geo: geoFor(kind, geo), from: [this.pos.x, this.pos.y, this.pos.z], dir };
+    return true;
+  }
+  /**
+   * Onto a rope (ai/rope.js, as the soldiers go): the top of a fast rope, a rappel rope at an edge or
+   * a zipline's high end within reach, or (dir: towards a drop too deep to jump) your own rope tied
+   * off at the edge. A stand-in rider in world.ropeRiders is stepped with the soldiers; you go where
+   * it goes (step) until it is off the rope. Hit on the rope (world.playerHits), you let go.
+   */
+  ropeStart(dir) {
+    const sim = this.hooks.getSim?.();
+    if (!sim || this.ropeRider || this.health < 30) return false;
+    const R = { p: [this.pos.x, this.pos.y, this.pos.z], yaw: this.yaw + Math.PI, player: true, health: this.health, handling: this.handling() };
+    const rope = dir ? null : nearRope(sim, R.p);
+    const ok = rope ? startRope(sim, R, rope) : dir ? rappelFrom(sim, R, dir) : false;
+    if (!ok) return false;
+    (sim.world.ropeRiders ??= []).push(R);
+    this.ropeRider = R;
+    this.ropeHits = sim.world.playerHits?.length ?? 0;
+    this.say(R.rope.kind === 'zipline' ? 'On the cable' : R.rope.kind === 'fastrope' ? 'Fast-roping down' : 'Rappelling down the wall', 2);
     return true;
   }
   /**
@@ -1253,7 +1277,18 @@ export class Walkthrough {
     const len = Math.hypot(fx, fz);
     let moving = 0;
     let dip = 0;
-    if (this.trav?.roll) {
+    if (this.ropeRider) {
+      // on a rope or a cable (ai/rope.js steps your stand-in): where it is; a hit and you let go
+      const R = this.ropeRider;
+      const hits = w.playerHits?.length ?? 0;
+      if (hits > this.ropeHits) (R.ropeHit = true), (this.ropeHits = hits);
+      this.pos.set(R.p[0], R.p[1], R.p[2]);
+      moving = R.rope ? 1 : 0;
+      if (!R.rope) {
+        w.ropeRiders = (w.ropeRiders ?? []).filter((o) => o !== R);
+        this.ropeRider = null;
+      }
+    } else if (this.trav?.roll) {
       // a roll under way (ai/evade.js): along its path, as far as there is room
       const T = this.trav;
       T.t += dt;
@@ -1406,7 +1441,7 @@ export class Walkthrough {
       }
     } else this.dive = 0;
     const target = this.swimming ? Math.max(floor, this.water.surface - (eye - 0.12) - this.dive) : floor;
-    if (!this.trav) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
+    if (!this.trav && !this.ropeRider) this.pos.y += (target - this.pos.y) * Math.min(1, dt * (this.dive > 0 ? 6 : this.water.depth > 0.3 ? 2.5 : 10)); // settle / fall / float
     const bob = moving ? Math.sin(w.time * 9) * 0.02 : 0;
     const cam = v.camera;
     // a big impact near you (a dragon landing, a crash): the ground shakes, and you with it (sim/impact.js shakeAt)

@@ -39,7 +39,7 @@ const CHARACTERS = { squad: 'soldier', enemy: 'soldier', dragon: 'dragon' };
 const STIRRERS = { waterVortex: 1, windHose: 1, windJet: 1 };
 /** The palette, by kind (a model not named here goes under Other). */
 export const GROUPS = [
-  ['Cover & buildings', ['wall', 'crate', 'deck', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
+  ['Cover & buildings', ['wall', 'crate', 'deck', 'rope', 'fence', 'house', 'hallway', 'veranda', 'church', 'shipSection']],
   ['Characters', ['squad', 'enemy', 'dragon']],
   ['Fire & fuel', ['woodPile', 'candle', 'candelabra', 'torch', 'burner', 'metalBar', 'gasCylinder']],
   ['Vehicles', ['car']],

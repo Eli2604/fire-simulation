@@ -955,6 +955,7 @@ open (or the glass broken) the gas escapes and the fire keeps burning.
 | Volcano | base radius, height, crater radius, how close a moving dragon must come to wake it, how long it erupts, lava rate, seed. A basalt cone with a crater, a vent and old lava ridges |
 | Spaceship | length, width, hull height, engine-room cable fire delay, windows, doors that close themselves on a pressure drop, loose cargo. Pressure hull with vacuum outside, corridor, bridge, engine room, quarters, mess, cargo bay, lab, airlock and docking port |
 | Carrier below deck | length, width, deck height, server rack fire delay, inert-gas system on/off |
+| Rope / zipline | kind (fast rope from a steel gantry, zipline cable between a tall and a short pole, rappel anchor at a roof edge), height, rope length, zipline span and drop, whether it builds what holds it (gantry, poles, a rappel tower). Gives the world a rope (`world.ropes`) that soldiers and the player go down or along (`ai/rope.js`) |
 | Enemies | number, spread, floor height, patrol (wander / area / guard round), patrol area width, depth and offset, seed |
 | Dragon (lair) | length nose to tail, scales (bronze / tarpon / koi), health, resting or flying at the start, route (waypoints with rest / climb / sniff / fly), seed |
 | Building hallway | size, walls, paint colour, suspended/plain ceiling, void depth, cable tray, doors, entrance, end window, windows in the outer wall, gas pipe in the ceiling void or along the wall, burst on a timer or only by fire/blast, burst position, delay and power, boxes, notice board, carpet |
@@ -1622,6 +1623,45 @@ who takes it, the throws and the clinch with the partner in the other half of th
 A **lookout** (`host.lookouts`: a raised place, such as a deck): before contact a rifleman climbs
 it to look round, and on contact the gunner takes it as his overwatch when it sees the threat; he
 stays up there while the team is within reach, and comes down by the stairs.
+
+### Ropes and cables: rappelling, fast-roping, the zipline
+
+`ai/rope.js` (pure logic) takes a man down a rope or along a cable; while he is on it (`m.rope =
+{ rope, s, phase, ... }`) it moves and poses him, and his squad AI (`host.ownMove`) and the guard
+AI leave him alone. A rope is a plain object in `world.ropes`: `{ id, kind: 'fastrope' | 'zipline'
+| 'rappel', top: [x, y, z], bottom: [x, y, z], owner?, attached? }`; its `top` may move every step
+(a hovering helicopter writes it) and whoever is on it goes with it (an `attached` fast rope hangs
+straight down from its top). `startRope(sim, m, rope)` puts a man on one (false if he cannot:
+dead, both arms hit, or the rope taken too close to its top), `stepRopes(sim, dt)` moves everyone
+on ropes (the simulation's step, after the squads).
+- **Rappel**: at the edge he clips in and turns his back to the drop, sits back into the rope over
+  the edge (`rappelStart`), bounds down the wall, feet on it, leaning back, the brake hand letting
+  rope run in each swing out (`rappel`, at most 1.7 m a bound, the depth split into equal bounds:
+  about 1 m/s, never over 3), stands up on the ground and unclips (`rappelEnd`), and the rifle
+  comes back round off his back. A squad man whose way leads over a drop too deep to jump (a roof
+  edge) rigs his own rope there and rappels (`host.rappel` → `rappelFrom`; the rope stays for the
+  next man); so does the player with **Space** at such an edge.
+- **Fast rope** (a helicopter's, or model `rope`'s gantry): he swings onto the rope, both hands on
+  it and the rope clamped between his boots (`fastRope`), slides down braking with hands and feet
+  (towards 4.5 m/s, slower with a heavy load, braking to land at 1.6 m/s), lands in a crouch and
+  runs 3 m clear, each man a different way. Men on one rope keep 3.2 m apart, and nobody comes
+  down onto a man who has not cleared the bottom.
+- **Zipline** ("vaulting along a cable"): from the high end he hangs from a pulley on the cable
+  (`zipline`) and runs down it with the slope (g sin θ less the pulley's friction and the air's
+  drag; a gloved hand keeps him under 9 m/s), brakes in to the low end, lets go and drops to the
+  ground. Too flat (or rising): hand over hand (`zipHand`).
+- **Hit on the rope** (a wound: `sim/wounds.js`; a round the plate stops only rocks him): his
+  hands open and he falls (`ropeFall`), landing through `sim/impact.js`; a rappeller keeps the guide
+  hand on the rope and slides down it out of control. The weapon is slung all the way (its carry
+  slot, `ai/weapons.js` `HANDLING`).
+- **Placed ropes**: model `rope` (editor group *Cover & buildings*): a fast rope from a gantry, a
+  zipline between a tall and a short pole (height, span, drop), or a rappel anchor at a roof edge
+  (with or without a rappel tower of its own); the voxelizer puts its rope in `world.ropes`.
+  `render/ropes.js` draws every rope and cable (and the pulleys); the figure draws the rope
+  through his hands while rappelling or fast-roping (`operator/rig.js` `updateRope`).
+- **Player**: Space at the top of a rope (a fast rope, a rappel anchor, a zipline's high end
+  overhead) or at a drop too deep to jump: down it as the soldiers go (a stand-in rider in
+  `world.ropeRiders`); hit on the rope, you fall.
 
 **Hosted**: `scripts/build-rig-artifact.mjs` builds the editor as one file (the rig and the camp
 inside it), to host anywhere.

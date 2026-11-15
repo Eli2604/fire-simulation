@@ -239,6 +239,7 @@ export class EnemyAI {
     this.enlist();
     for (const e of w.enemies) {
       if (e.dead || (e.squad && !e.guard)) continue; // a soldiers' fire team has only its squad AI (ai/squad.js)
+      if (e.rope) continue; // on a rope or a cable: ai/rope.js has him
       // a combat roll under way (ai/evade.js): carried along it (one the dragon's snatch started, it carries him itself)
       if (e.trav && (!e.squad || e.guardCtl)) {
         if (e.trav.ext) continue;

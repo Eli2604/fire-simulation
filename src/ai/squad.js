@@ -861,6 +861,11 @@ export class SquadAI {
       const e = k0 && rootEnd(k0, geoFor(k0, geo));
       if (!e || !this.standsOn(m.p[0] + dir[0] * e[0], m.p[2] + dir[1] * e[0], m.p[1] + e[1])) return null;
     }
+    // a drop too deep for anyone to jump (a roof's edge, a wall): down a rope rigged there (ai/rope.js, the host's)
+    if (geo.type === 'down' && !moveFor(geo, FIT, mode) && this.host.rappel) {
+      if (geo.face > 0.45) return { near: geo.face - 0.35 };
+      if (this.host.rappel(m, dir, geo)) return 'go';
+    }
     const kind = moveFor(geo, ability(m), mode);
     if (!kind) return moveFor(geo, FIT, mode) ? 'cannot' : null;
     const pre = PK_MOVES[kind].geo.pre;
