@@ -12,7 +12,9 @@
  *    on a downshift) and a clunk (c.sfx 'shift'); the starter's whine (c.crank), the stall.
  *  - the tyres: rolling, a broadband roar ∝ v^1.6 (louder and coarser off the road: gravel and
  *    soil crunch), their squeal from the slip (c.skid: on a hard surface a tone ~0.9-1.4 kHz
- *    rising with the slip; on soil a scrub of noise); a brake's squeal at walking pace.
+ *    rising with the slip; on soil a scrub of noise); a brake's squeal at walking pace. Wheels
+ *    spinning in mud, sand, snow (c.ground.spin: sim/groundContact.js) churn: the scrub, louder
+ *    with the spin (spin: its share, 0..1), over the engine racing.
  *  - the wind over the body ∝ v^2.5, its hiss rising with the speed.
  *  - the horn (c.horn): two tones a third apart (~420 / 500 Hz, a car's twin horn).
  *  - an electric car (sim/carPhysics.js powertrain 'electric'): no engine firing at all; its motor's
@@ -128,7 +130,9 @@ export function carSoundParams(c, listener = {}) {
   const skid = clamp(c.skid ?? 0, 0, 1.5);
   const squeal = gi.road && onGround ? clamp(skid * 0.9, 0, 1.2) : 0;
   const squealHz0 = 950 + 380 * clamp(skid, 0, 1) + 4 * v;
-  const scrub = onGround ? clamp(skid * (gi.road ? 0.25 : 0.9), 0, 1) : 0;
+  // wheelspin in soft stuff (sim/groundContact.js c.ground.spin, m/s of slip): it churns
+  const spin = onGround && !gi.road ? clamp((c.ground?.spin ?? 0) / 8, 0, 1) : 0;
+  const scrub = onGround ? clamp(Math.max(skid * (gi.road ? 0.25 : 0.9), spin * 0.85), 0, 1) : 0;
   const wind = clamp((v / 38) ** 2.5, 0, 1);
   const windHz0 = 300 + 18 * v;
   const brake = c.brakeOn > 0.3 && v > 0.3 && v < 4 ? clamp(c.brakeOn * (1 - v / 4), 0, 1) * 0.25 : 0;
@@ -148,7 +152,7 @@ export function carSoundParams(c, listener = {}) {
     engine: { ...engine, fire0: engine.fire, fire: engine.fire * dop, crank0: engine.crank, crank: engine.crank * dop, starterHz: engine.starterHz * dop },
     motor: { ...motor, whineHz0: motor.whineHz, whineHz: motor.whineHz * dop, elecHz: motor.elecHz * dop, inverterHz: motor.inverterHz * dop, avasHz: motor.avasHz.map((f) => f * dop) },
     roll, rollHz: rollHz0 * dop, rollHz0, rough,
-    squeal, squealHz: squealHz0 * dop, squealHz0, scrub,
+    squeal, squealHz: squealHz0 * dop, squealHz0, scrub, spin,
     wind, windHz: windHz0 * dop,
     brake, brakeHz: 2900 * dop,
     horn, hornHz: [420 * dop, 500 * dop],

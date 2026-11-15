@@ -209,6 +209,7 @@ export function makeCar(spec, { x = 0, y = 0, z = 0, yaw = 0, fuel } = {}) {
     wheelAngle: 0, // the steering wheel's (rad, + left: steer × the steering ratio)
     omega: 0, // the drive's speed at the wheels (rad/s: the driven axle's; awd: the centre differential's)
     omegaF: 0, omegaR: 0, // the axles' wheel spin (rad/s)
+    wheels: [{ omega: 0 }, { omega: 0 }, { omega: 0 }, { omega: 0 }], // each wheel's (FL, FR, RL, RR): its axle's (sim/groundContact.js reads them)
     spinF: 0, spinR: 0, // the wheels' turn (rad, drawn)
     rpm: 0, // the engine's (an EV: its motor's)
     motorRpm: 0,
@@ -332,11 +333,13 @@ export function setMode(c, m) {
 function autoShift(c, thr) {
   const S = c.spec, E = S.engine;
   if (c.mode !== 'D' || c.shiftT > 0 || c.gear < 1 || c.t - (c.shiftAt ?? -9) < 1) return;
+  // the driven wheels spinning (mud, sand, snow, ice): their revs are not the car's speed: it holds its gear
+  const spinning = Math.abs(c.omega * S.wheelR - c.u) > Math.max(1.5, 0.25 * Math.abs(c.u));
   const wheelRpm = Math.abs(c.omega) * RPM;
   const rpmIn = (g) => wheelRpm * ratioOf(S, g);
   const up = E.idle + (E.redline - E.idle) * (0.42 + 0.5 * thr);
   const down = E.idle + (E.redline - E.idle) * (0.08 + 0.3 * thr);
-  if (c.gear < S.gears.length && c.locked && rpmIn(c.gear) > up && rpmIn(c.gear + 1) > E.idle * 1.1) {
+  if (c.gear < S.gears.length && c.locked && !spinning && rpmIn(c.gear) > up && rpmIn(c.gear + 1) > E.idle * 1.1) {
     c.gear++;
     c.shiftAt = c.t;
     c.shiftT = S.shiftTime;
@@ -487,6 +490,10 @@ export function subStep(c, dt, env) {
   }
   c.omegaF = wF;
   c.omegaR = wR;
+  if (c.wheels) {
+    c.wheels[0].omega = c.wheels[1].omega = wF;
+    c.wheels[2].omega = c.wheels[3].omega = wR;
+  }
   c.omega = ws;
   if (cl) clutchOut(c, dt, cl, ws);
   else {
@@ -544,6 +551,7 @@ export function subStep(c, dt, env) {
     vz = 0;
     c.wz = 0;
     c.omega = c.omegaF = c.omegaR = 0;
+    if (c.wheels) for (const q of c.wheels) q.omega = 0;
   }
   const yaw0 = c.yaw;
   c.yaw += c.wz * dt;

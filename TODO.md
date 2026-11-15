@@ -1,0 +1,67 @@
+# To do: open topics
+
+Topics to decide on later. Measured against what AAA game engines offer; strike or move an item
+when it is decided or done.
+
+## In progress
+
+- Grid solvers (heat, air, smoke, water) on the GPU with WebGPU compute, CPU path kept as fallback.
+- Shared general physics: one rigid-body core for vehicles, debris, props and ragdolls.
+- Room acoustics: echo and reverb from the size of a space and what is in it.
+
+## Verification
+
+- Look at the recent features in a real browser: poses, sounds, film cameras, sailing, driving,
+  the gate, the smithy. Most are covered by node tests only.
+- Automated screenshot comparisons and frame-time budgets per scene.
+- A profiler view in the app (time per solver per step).
+
+## Scale and rendering
+
+- Larger worlds streamed in seamlessly (levels of detail, occlusion culling) instead of separate
+  places built on arrival.
+- Global illumination, better shadows, temporal anti-aliasing, reflections.
+- Volumetric smoke, steam and fog instead of particles.
+- Authored physically based art (textures, materials) instead of simple shapes.
+
+## Animation
+
+- Motion-captured clips and smooth blending between motions.
+- Full-body inverse kinematics: feet on uneven ground, hands on grips, oars, the steering wheel.
+- Ragdolls (depends on the shared physics) and facial animation.
+
+## Audio
+
+- Recorded samples next to the synthesised sounds.
+- Sound muffled through walls and doors (occlusion), mixing groups, a better 3D positioning model.
+
+## AI and tools
+
+- A general navigation mesh for walkers and vehicles.
+- A behaviour-tree editor and a debug view of AI decisions.
+- Asset browser, visual scripting, scene version history, full undo.
+
+## Game layer
+
+- Save and load a game in progress.
+- Gamepad support.
+- Pause, settings and loading menus.
+- Multiplayer.
+- Localisation and accessibility options.
+- The film recorder's download on the shared page (the page needs the downloads capability).
+
+## Platforms
+
+- Mobile tuning; consoles are out of reach for a browser app.
+
+## Known limits of features already built
+
+- Blue and red soldiers look the same; you can shoot blue soldiers.
+- The smith follows a fixed routine and cannot be hurt by fire.
+- Cars: no gearbox creep at idle; collisions treat the body as a box; hitting the player gives a
+  fixed hit; enemies lose sight of you while you drive or row.
+- Ruts are flat marks (except in snow) and are not saved with the scene; ice never breaks under a car.
+- Boats cannot run up a beach; the wake does not move the water surface.
+- Film cameras: one track only; a dissolve needs touching clips; framing ignores roll.
+- The gate: sentries walk straight to the barrier; no driver gets out to open an unmanned gate;
+  ordinary doors are not managed gates.

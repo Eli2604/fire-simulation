@@ -31,12 +31,14 @@ import { VolcanoRenderer } from './volcano.js';
 import { WaterworksRenderer } from './waterworks.js';
 import { FloatRenderer } from './floats.js';
 import { CarRenderer } from './cars.js';
+import { GateRenderer } from './gates.js';
 import { EnemyRenderer } from './enemies.js';
 import { DragonRenderer } from './dragon.js';
 import { LooseRenderer } from './loose.js';
 import { PhoenixRenderer } from './phoenix.js';
 import { PatchRenderer } from './patches.js';
 import { SnowRenderer } from './snow.js';
+import { GroundMarksRenderer } from './groundMarks.js';
 import { BreathRenderer } from './breath.js';
 import { TeaRenderer } from './tea.js';
 import { SmithyRenderer } from './smithy.js';
@@ -137,6 +139,7 @@ export class View {
     this.waterworks = new WaterworksRenderer(this.root); // waterfalls, rivers, water wheels (sim/river.js)
     this.floats = new FloatRenderer(this.root); // rowing boats afloat (sim/buoyancy.js)
     this.cars = new CarRenderer(this.root); // cars on the move (sim/cars.js): wheels turning and steering
+    this.gates = new GateRenderer(this.root); // gate arms swinging (sim/gates.js)
     this.blood = new BloodRenderer(this.root); // blood, bullet holes, shots
     this._camLocal = new THREE.Vector3();
     // flames and the extinguisher jet are drawn in a separate overlay pass (after the volumetric smoke)
@@ -156,6 +159,7 @@ export class View {
     this.inland = new InlandWaterRenderer(this.root); // the surface of ponds, lakes, the canal (render/waterSurface.js)
     this.stirrers = new StirrerRenderer(this.root); // whirlpools, wind hoses, wind jets (sim/stirrers.js)
     this.snow = new SnowRenderer(this.root); // snow lying (sim/snow.js)
+    this.groundMarks = new GroundMarksRenderer(this.root); // ruts, furrows, wheel spray, boats' wakes (sim/groundContact.js)
     this.breath = new BreathRenderer(this.root); // breath that shows in the cold
     this.tea = new TeaRenderer(this.root); // cups of tea and their steam (sim/tea.js)
     this.smithy = new SmithyRenderer(this.root, this.flames); // a smith at his forge, the blade, the bellows, the shop (sim/smithy.js)
@@ -243,6 +247,7 @@ export class View {
     this.waterworks.setWorld(world);
     this.floats.setWorld(world);
     this.cars.setWorld(world);
+    this.gates.setWorld(world);
     this.blood.setWorld(world);
     this.flames.setWorld(world);
     this.patches.clear();
@@ -250,6 +255,7 @@ export class View {
     this.tea.setWorld(world);
     this.smithy.setWorld(world);
     this.snow.setWorld(world);
+    this.groundMarks.setWorld(world);
     this.smoke.setWorld(world);
     this.spray.setScale(world);
     this.surface.setWorld(world);
@@ -812,6 +818,7 @@ export class View {
     this.patches.update(this.time, sim.patches, this.voxels.mode, dt, scale);
     this.flames.skip = this.patches.coarseSkip;
     this.snow.update(this.time);
+    this.groundMarks.update();
     this.updateSnowCover();
     this.updateBreath(dt, sim, scale);
     this.updateFireLight(stats);
@@ -828,6 +835,7 @@ export class View {
     this.waterworks.update(dt, this.world.time ?? this.time);
     this.floats.update(dt, this.camera);
     this.cars.update(dt, this.camera);
+    this.gates.update(dt);
     this.blood.update(this.time);
     this.ossuary.update(this.time, this.root.worldToLocal(this._camLocal.copy(this.camera.position)));
     this.updateFlash(dt);

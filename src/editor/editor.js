@@ -436,7 +436,7 @@ export class Editor {
       const i = index.get(ob);
       const M = MODELS[ob.type];
       const kids = kidsOf(ob).length;
-      const tag = ob.type === 'camera' ? ob.params?.name ?? '' : CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : kids ? `${kids} in it` : '';
+      const tag = ob.type === 'camera' ? ob.params?.name ?? '' : ob.ref ? ob.ref : CHARACTERS[ob.type] ? (ob.type === 'squad' ? ob.params?.unit ?? 'team' : CHARACTERS[ob.type]) : kids ? `${kids} in it` : '';
       list.append(el('button', { style: pad, class: i === this.sel ? 'on' : '', onclick: () => this.select(i, true) }, el('span', { class: 'n' }, String(i + 1)), M?.label?.replace(/ \(.*\)$/, '') ?? ob.type, tag ? el('span', { class: 'tag' }, tag) : null));
       for (const k of ob.children ?? []) row(k, depth + 1);
     };

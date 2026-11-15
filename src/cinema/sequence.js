@@ -1,5 +1,7 @@
 /**
- * The movie of a place (its shot list), without three.js (test/cinema.test.js).
+ * The movie of a place as it was first kept: a shot list, without three.js (test/cinema.test.js).
+ * A movie is now a timeline of clips (timeline.js), which migrates a shot list (migrateMovie);
+ * these sums remain for that and for the names (uniqueName, nextCameraName).
  *
  *  movie: { shots: [{ camera (its name), dur (s), from (s into the camera's own move: its keys,
  *           its orbit...; 0), transition ('cut' | 'dissolve' | 'fade'), tdur (s) }],

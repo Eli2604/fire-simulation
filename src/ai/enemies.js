@@ -242,6 +242,7 @@ export class EnemyAI {
     for (const e of w.enemies) {
       if (e.dead || (e.squad && !e.guard)) continue; // a soldiers' fire team has only its squad AI (ai/squad.js)
       if (e.rope) continue; // on a rope or a cable: ai/rope.js has him
+      if (e.gateTask) continue; // a sentry gone to work the gate (sim/gates.js has him till it is down again)
       // a combat roll under way (ai/evade.js): carried along it (one the dragon's snatch started, it carries him itself)
       if (e.trav && (!e.squad || e.guardCtl)) {
         if (e.trav.ext) continue;

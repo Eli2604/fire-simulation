@@ -125,7 +125,7 @@ export class SquadAI {
     // lowering a rope) is not this AI's to move either
     const own = host.ownMove;
     // (nor a man the vehicle drill has: going to his post or the door, climbing in, aboard: ai/squadVehicle.js)
-    host.ownMove = (m) => !!m.ropeTask || !!m.vehTask || !!own?.call(host, m);
+    host.ownMove = (m) => !!m.ropeTask || !!m.vehTask || !!m.gateTask || !!own?.call(host, m);
     this.threat = host.threat ? host.threat.slice() : null;
     this.on = true;
     this.phase = 'bound';

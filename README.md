@@ -114,13 +114,44 @@ Its properties, in folders:
 - **Effects**: colour grade (neutral, warm, cool, teal & orange, bleach bypass, black & white,
   vintage film, day for night, night vision, thermal — the voxels by their heat, as Play's
   thermal camera), film grain, vignette, chromatic aberration, lens distortion, bloom / glare,
-  anamorphic streaks, handheld shake, a dutch angle.
+  anamorphic streaks, handheld shake (the dutch angle is under Aim).
+- **Aim** (`cinema/aim.js`): where it points and what it looks at. **Pan** (0: along +z, 90: +x)
+  and **Tilt** (up +) are fields that turn it live (the frustum with them), and the selected
+  camera has an **aim handle** in the view, a yellow ball where it looks: drag it onto a wall, a
+  roof, a tree (or into the air) and the camera turns to it. **Looks at**: its own direction
+  (pan / tilt), its aim point (the ball, anywhere), what it follows, or any target in the list —
+  the place's characters and vehicles by name (*Dragon (koi)*, *Helicopter 1*, *Jeep 1*, *Alpha
+  squad – man 3 (rifleman)*, *Boat 1*…) and the objects you aimed at before (*House 1*,
+  *Crate 2*). **🎯 Aim at…** then a click in the view picks it: the character or vehicle nearest
+  where you clicked, else the object you clicked (named then, the exact spot of it kept, turning
+  with it), else that spot of the ground. **Framing** keeps what it looks at on a third of the
+  frame (left / right / upper / lower thirds, or custom) instead of the middle, drawn as the
+  thirds in its frustum; **Look smoothing** eases the aim after a fast subject; **Roll** (dutch
+  angle). **⤓ Keep this direction** turns where it looks now into its own pan / tilt.
 - **Move** (`cinema/rig.js`): static; keyframes; a dolly (forward / back), a truck (sideways), a
-  crane (up, still looking at what it looked at); an orbit round the point it looks at or a
-  subject; follow (behind) or track (alongside) a subject with a lag. The subject is one of the
-  world's moving things (the dragon, a helicopter, a soldier of a squad, a boat, a car, a jet,
-  the phoenix; *which one*: the first, the second…); *Look: subject* keeps it in the middle of the
-  frame whatever the move.
+  crane (up, still looking at what it looked at); an orbit round the point it looks at or what
+  it follows; follow (behind) or track (alongside) with a lag. **Follows** picks what its
+  position goes with, from the same list or **🎯 Pick…** and a click in the view (an object:
+  orbit it); its offset (distance back, height, sideways) and lag. What it follows and what it
+  looks at are separate: stand still and look at the helicopter; follow the jeep and look at the
+  dragon; orbit the church and look at a soldier. In Edit world a green line links a camera to
+  what it follows, a dashed yellow one to what it looks at. (Old cameras keep their *subject by
+  kind* and *which one*.)
+- **Path** (Move: *path*, `cinema/path.js`): the camera travels a path drawn in the world. **✎ Draw
+  path** (in Move), then each click in the view adds a point (over what you click, *new points* m
+  up; in the air at the last point's height); drag a point (blue ball) to move it at its height,
+  its white cone to raise or lower it; Del deletes the picked one; the points are also listed
+  with x, height, z to type. The curve is a centripetal Catmull-Rom spline through the points
+  (no loops where they bunch up), open or a **closed loop**, measured by arc length so a speed in
+  m/s moves evenly along it however the points are spaced — or **timed per point** (a time at
+  each point, the others from the speed, an easing to the next). At its end it stops, goes round
+  again or goes back and forth (ping-pong). It looks along the path (its tangent, or *look ahead*
+  m further on) unless its Aim looks at something (a path past the church, looking at the
+  dragon); *banking* rolls it into the curves as a plane turning at that speed would. A camera
+  can travel **another camera's path** (*Path: Cam A's*), spaced out on it by *start this far
+  along* (m) or *start later* (s); a path can be **on** a moving thing (a ship, a helicopter, a
+  car): its points are in that thing's frame and it moves and turns with it. In Edit world the
+  path is drawn in blue, the camera where it is at the scrubbed time or the movie's playhead.
 - **Keyframes**: scrub the timeline, frame the view, **◆ Set key here** (the view's position and
   aim, relative to the camera object, so moving it moves the whole path, and the focal length,
   focus, aperture and roll; with *Keys record the effects too* also the grain, bloom, exposure,
@@ -129,13 +160,36 @@ Its properties, in folders:
   **⇢ View from camera**, **👁 Look through** (its picture with all its effects at the scrubbed
   time; Esc: back), **▶ Preview** (its move played).
 
-**🎬 Movie** (the mode bar): the shot list of the place you are in (saved with it as `movie`):
-each shot a camera (by its name), its length, where in the camera's move it starts, and how it
-comes in — a cut, a dissolve (from the last picture of the shot before) or a fade through black;
-the world's speed while it plays, fades in and out, from the scene's start. **▶ Play movie**
+**🎬 Movie** (the mode bar): the timeline of the place you are in (saved with it as `movie`,
+`cinema/timeline.js`). A place has **sequences** (named; ＋ new, ⧉ duplicate, ✎ rename, 🗑
+delete; the one marked *plays* is what ▶ Play movie and Play use), each a track of camera
+**clips** under a time ruler (seconds of the movie, and below them, in green, of the simulation
+when it runs at another speed):
+
+- drag a **camera** (the chips above the track) onto it to put a clip there, as long as the
+  camera's move (or 4 s), double click a chip to put it at the playhead;
+- drag a **clip** to move it, its **edges** to trim it (trimming its start keeps its picture
+  where it was: it starts later in the camera's move); clips never lie on each other — a clip
+  dropped or moved onto another goes into the nearest gap it fits. Everything **snaps** to the
+  other clips' edges, the playhead and a grid that follows the zoom (Shift: no snapping);
+- the cut is at the clip's start; a gap between clips is black. A clip's **badge** is how it
+  comes in: a cut, a dissolve (from the clip right before it) or a fade through black (also out
+  of and into a gap); the yellow bar under it is how long that takes;
+- the **playhead** (click or drag the ruler, or type its time in movie or simulation seconds)
+  shows which camera is on and how far into its move; that camera is drawn at that moment in
+  Edit world, **👁 Look** looks through it (scrubbing follows), **▶ Preview** plays the sequence
+  from there with the cuts and dissolves (the world stands still), **✂** cuts the clip there in
+  two;
+- **☰ List**: every clip with its exact times to type — its camera, start (s of movie, or s of
+  simulation), length, from when in its camera's move, its transition and how long.
+
+Per sequence: the world's speed while it plays, **cuts on** movie time or simulation time (the
+clips cut when the simulation reaches their time, however fast it runs, for a cut that must land
+on an event of the simulation), fades in and out, from the scene's start. **▶ Play movie**
 switches to Play, hides the UI, runs the simulation and cuts between the cameras (Esc stops and
 goes back); **⏺ Record** does the same and saves the picture as a video (WebM, MediaRecorder on
-the canvas, 30 fps, no sound) when it ends or on Esc.
+the canvas, 30 fps, no sound) when it ends or on Esc. A movie saved as a shot list (the first
+version) opens as a sequence *Main* with its shots one after the other.
 
 The picture's effects are post-processing (`render/cinePost.js`, three.js `EffectComposer`): the
 frame as the view drew it (any path: plain, ambient occlusion, volumetric smoke, the flames
@@ -144,13 +198,19 @@ a motion blur that mixes in the frames before by the shutter angle, and a final 
 exposure, white balance, grade, streaks, distortion, aberration, vignette, grain and the bars.
 None of it runs unless a camera is looked through or a movie plays. The sums (field of view,
 circle of confusion, exposure, white balance, grades, motion blur weight, easing, keyframes,
-moves, the shot list) are pure modules in `src/cinema/` (`test/cinema.test.js`).
+moves, paths, aiming and framing, the timeline) are pure modules in `src/cinema/` (`test/cinema.test.js`,
+`test/cinemaAim.test.js`, `test/cinemaPath.test.js`, `test/cinemaTimeline.test.js`).
 
 Limits: a dissolve fades from a still of the last picture (not two cameras rendered at once);
 motion blur is an accumulation over frames (a smear behind what moves, not per-object vectors);
 the fisheye is a wide perspective view bent round (up to 150°), not a true 180° fisheye; flames,
 sparks and spray take the depth of field of what is behind them; a movie uses the cameras of the
-place you are in.
+place you are in; one track (no picture-in-picture, no clips on top of each other); framing on the
+thirds leaves out the roll (a dutch angle moves the subject a little off its third); the aim
+handle of a keyframed or following camera is its look target (its own keys aim it otherwise); a
+camera in another object turns in the world when you let go of its handle (the world rebuilt); a
+path attached to a moving thing follows its position and heading (not its pitch or roll), and
+its points are edited where that thing stands in Edit world.
 
 ## Using it
 

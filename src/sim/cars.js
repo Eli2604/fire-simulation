@@ -5,6 +5,7 @@ import { captureBody, stampBody, bodyLeft, regionState, bodyBurning } from './ca
 import { impact } from './impact.js';
 import { F_LIQUID } from './world.js';
 import { stepDriver } from '../ai/carDriver.js';
+import { wheelContact, groundDrag, groundWork } from './groundContact.js';
 
 /**
  * Cars in the world: every object of type 'car' (models/car.js: the street's cars, the military
@@ -57,6 +58,7 @@ const SOFT_M = isName(SOFT);
 const NOT_GROUND_M = isName(NOT_GROUND);
 const ROAD_M = isName(ROAD);
 const MU_M = Float32Array.from(MATERIALS, (m) => MU[m.name] ?? 0.8);
+const GRASS = MATERIALS.findIndex((m) => m.name === 'grass');
 
 /* ------------------------------------------------------------------ the cars */
 
@@ -208,7 +210,8 @@ export function voxelGround(w, x, z, yFrom) {
     const i = cx + w.nx * (y + w.ny * cz);
     const m = w.mat[i];
     if (!m || NOT_GROUND_M[m] || (own && own.has(w.owner[i]))) continue;
-    return { y: (y + 1) * h, mu: MU_M[m], road: !!ROAD_M[m], material: MATERIALS[m].name };
+    if (m === GRASS && y > 0 && w.mat[i - w.nx] === m) continue; // (tall grass: the wheels flatten the blades: sim/groundContact.js)
+    return { y: (y + 1) * h, mu: MU_M[m], road: !!ROAD_M[m], material: MATERIALS[m].name, i };
   }
   return null;
 }
@@ -271,7 +274,8 @@ export function carEnv(c, ctx) {
   const w = ctx.world;
   const env = (c._env ??= {});
   env.h = w?.h ?? 0;
-  env.ground = w?.mat ? (x, z, y) => smoothGround(w, x, z, y) : (x, z) => ctx.ground?.(x, z) ?? { y: 0, mu: ctx.mu ?? 1, road: true };
+  // (under each wheel: the rut it is in, the snow, how far it sinks, its grip: sim/groundContact.js)
+  env.ground = w?.mat ? (x, z, y) => wheelContact(w, c, x, z, smoothGround(w, x, z, y)) : (x, z) => ctx.ground?.(x, z) ?? { y: 0, mu: ctx.mu ?? 1, road: true };
   env.collide = (car, prev, dt) => collideWorld(car, prev, dt, ctx);
   return env;
 }
@@ -470,10 +474,14 @@ export function stepCarList(cars, dt, ctx = {}) {
   const n = Math.max(1, Math.ceil(dt / CAR_SUBSTEP - 1e-6)), ds = dt / n;
   for (const c of active) carEnv(c, ctx);
   for (let s = 0; s < n; s++) {
-    for (const c of active) subStep(c, ds, c._env);
+    for (const c of active) {
+      subStep(c, ds, c._env);
+      if (w?.mat) groundDrag(c, ds); // (what the soft ground, its ruts, a belly on the ground hold back)
+    }
     if (cars.length > 1) collideCars(cars, ctx);
   }
   for (const c of active) {
+    if (w?.mat) groundWork(w, c, dt, ctx); // ruts, tracks in the snow, grass torn, spray; stuck or not
     collidePeople(c, ctx);
     placeAboard(c);
     if (!w?.mat || !c.body) continue;

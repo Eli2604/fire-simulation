@@ -6,6 +6,7 @@ import { FireAudio } from '../sim/fireAudio.js';
 import { F_FALLING } from '../sim/world.js';
 import { MATERIALS } from '../sim/materials.js';
 import { toggleDoor, nearestDoor, doorGlassBroken } from '../sim/doors.js';
+import { initGates, operateGate } from '../sim/gates.js';
 import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
@@ -168,6 +169,7 @@ export class Walkthrough {
         if (e.code === 'Space') this.flight.fireRequested = true;
         if (e.code === 'KeyF') this.flight.flaresRequested = true;
         if (e.code === 'KeyG' && !e.repeat) this.flight.ropes?.(); // (a helicopter: the troops down the ropes)
+        if (e.code === 'KeyG' && !e.repeat) this.flight.radioGate?.(); // (a car: radio the base to raise the gate)
         if (e.code === 'KeyV' && !e.repeat) this.flight.toggleView?.(); // (a boat: your eyes / from outside)
         return;
       }
@@ -359,6 +361,15 @@ export class Walkthrough {
           return this.say('You reach through the broken glass for the handle…', 2);
         }
         return this.say(d0.glass?.length ? 'Locked. Break the glass (F) and reach through' : 'Locked', 3);
+      }
+      // a gate's barrier (sim/gates.js): raised or lowered as the gate is run, the arm swinging
+      const gate = initGates(w).find((g) => g.door === best.door);
+      if (gate) {
+        if (gate.state === 'broken') return this.say(`${gate.name}: smashed`, 2);
+        const up = !(gate.state === 'open' || gate.state === 'opening');
+        operateGate(w, gate, up, 'hand');
+        this.sound.door?.();
+        return this.say(`${gate.name}: ${up ? 'going up' : 'coming down once nothing is under it'}`, 2);
       }
       // (a pressure door with vacuum on one side: the difference holds it shut, sim/doors.js)
       if (!toggleDoor(sim, best.door) && w.doors[best.door].equalize) return this.say(`${w.doors[best.door].name}: the pressure difference holds it shut – its valve hisses open to level it`, 3);
