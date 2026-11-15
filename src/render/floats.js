@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { F_HIDDEN } from '../sim/world.js';
 import { buildRowBoatMesh } from './rowBoatMesh.js';
+import { toWorld } from '../sim/buoyancy.js';
+
+const LINE_N = 12;
 
 /**
  * What floats (world.floats: rowing boats, models/rowBoat.js), drawn in its pose on the water:
@@ -24,7 +27,12 @@ export class FloatRenderer {
       const m = buildRowBoatMesh(f.params ?? {});
       m.group.rotation.order = 'YXZ'; // (R = Ry(yaw) · Rx(roll) · Rz(pitch): sim/buoyancy.js rot)
       this.group.add(m.group);
-      this.items.push({ f, m, char: 0, gone: false });
+      // its painter, when it is moored (sim/boats.js f.mooring): from its stem to the ring ashore
+      const line = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(3 * LINE_N), 3)), new THREE.LineBasicMaterial({ color: 0xd8cfb4 }));
+      line.frustumCulled = false;
+      line.visible = false;
+      this.group.add(line);
+      this.items.push({ f, m, line, char: 0, gone: false });
       this.place(this.items[this.items.length - 1]);
     }
   }
@@ -32,6 +40,11 @@ export class FloatRenderer {
   clear() {
     for (const it of this.items) {
       this.group.remove(it.m.group);
+      if (it.line) {
+        this.group.remove(it.line);
+        it.line.geometry.dispose();
+        it.line.material.dispose();
+      }
       it.m.dispose();
     }
     this.items = [];
@@ -44,11 +57,34 @@ export class FloatRenderer {
     if (pose) {
       m.group.position.set(pose.p[0], pose.p[1], pose.p[2]);
       m.group.rotation.set(pose.roll, pose.yaw, pose.pitch);
+      m.setOars?.(f.row ?? null);
+      this.placeLine(it);
     } else {
       const k = f.spec?.keelY ?? 0;
       m.group.position.set(f.at[0], f.at[1] + k, f.at[2]);
       m.group.rotation.set(0, f.yaw ?? 0, 0);
     }
+  }
+
+  /** The mooring line: a sagging curve from its stem to where it is made fast (taut: straight). */
+  placeLine(it) {
+    const { f, line } = it;
+    const mo = f.mooring;
+    if (!line || !mo || !f.body) {
+      if (line) line.visible = false;
+      return;
+    }
+    const a = toWorld(f.body, mo.at);
+    const b = mo.anchor;
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const sag = Math.sqrt(Math.max(0, mo.length * mo.length - d * d)) * 0.5;
+    const pos = line.geometry.attributes.position;
+    for (let k = 0; k < LINE_N; k++) {
+      const t = k / (LINE_N - 1);
+      pos.setXYZ(k, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - sag * 4 * t * (1 - t), a[2] + (b[2] - a[2]) * t);
+    }
+    pos.needsUpdate = true;
+    line.visible = true;
   }
 
   update(dt) {
@@ -59,7 +95,8 @@ export class FloatRenderer {
     const w = this.world;
     for (const it of this.items) {
       const f = it.f;
-      if (it.gone || !f.voxels?.length) continue;
+      // (gone, or off its berth: its voxels out of the grid, sim/buoyancy.js moveBoat)
+      if (it.gone || f.detached || !f.voxels?.length) continue;
       let left = 0;
       let ch = 0;
       for (const i of f.voxels)

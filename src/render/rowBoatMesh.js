@@ -115,12 +115,50 @@ export function buildRowBoatMesh(params = {}) {
       oars.push(o);
     }
   }
+  // the oars out, being pulled (sim/boats.js f.row.oars): each pivots at its rowlock, its loom
+  // inboard to the rower's hands, its blade out over the water; swept fore and aft (yaw about the
+  // rowlock), the blade dipped in for the drive and lifted for the recovery
+  const sweeps = [];
+  if (p.oars && mid) {
+    const x = mid.x + 0.32;
+    const s = hull.sheer(x);
+    for (const sd of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, s + 0.03, sd * hull.half(x, s - 0.01));
+      const arm = new THREE.Group(); // (dips: about the boat's x axis)
+      const inb = 0.78, outb = 1.55;
+      const shaft = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.022, inb + outb, 8).rotateX(Math.PI / 2), oarWood));
+      shaft.position.z = sd * (outb - inb) / 2;
+      const blade = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.012, 0.5), oarWood));
+      blade.rotation.z = Math.PI / 2; // (squared: the blade upright in the water)
+      blade.position.z = sd * (outb - 0.2);
+      arm.add(shaft, blade);
+      pivot.add(arm);
+      pivot.visible = false;
+      group.add(pivot);
+      sweeps.push({ pivot, arm, sd });
+    }
+  }
+  /** The oars from the rowing state (null: shipped, laid along the thwarts). */
+  const setOars = (row) => {
+    const out = !!row && row.oars?.some((o) => o.out);
+    for (const o of oars) o.visible = !out;
+    for (const [k, s] of sweeps.entries()) {
+      s.pivot.visible = out;
+      if (!out) continue;
+      const o = row.oars[k];
+      // sweep: + the blade towards the bow; dip: the blade down into the water (the loom up)
+      s.pivot.rotation.y = s.sd * o.sweep;
+      s.arm.rotation.x = s.sd * (o.dip > 0 ? 0.28 : -0.08) * (o.dip > 0 ? o.dip : 1);
+    }
+  };
   const hullMats = [outside, inside, stripe];
   for (const m of [outside, inside, stripe, wood, oarWood]) m.userData.base = m.color.clone();
   return {
     group,
     hull,
     oars,
+    setOars,
     hullMats,
     woodMats: [wood, oarWood],
     dims: [p.length, hull.D, p.beam],

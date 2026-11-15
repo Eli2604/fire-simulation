@@ -10,6 +10,7 @@ import { F_BROKEN } from '../sim/world.js';
 import { AGENTS } from '../sim/simulation.js';
 import { Flight } from './flight.js';
 import { HeliFlight } from './heliFlight.js';
+import { BoatRow } from './boatRow.js';
 import { pressureAt, suctionAt } from '../sim/vacuum.js';
 import { waterStirAt } from '../sim/stirrers.js';
 import { shoot, WEAPONS } from '../sim/wounds.js';
@@ -158,7 +159,8 @@ export class Walkthrough {
       if (!this.active) return;
       this.keys.add(e.code);
       if (this.flight) {
-        if (e.code === 'KeyE') this.flight.tryExit();
+        if (e.code === 'KeyE') this.flight.tryExit(this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'));
+        if (e.code === 'KeyC' && !e.repeat) this.flight.castOff?.(); // (a rowing boat: cast off / make fast)
         if (e.code === 'KeyX') this.flight.eject();
         if (e.code === 'Space') this.flight.fireRequested = true;
         if (e.code === 'KeyF') this.flight.flaresRequested = true;
@@ -305,6 +307,10 @@ export class Walkthrough {
       this.flight.undock();
       return;
     }
+    // a rowing boat afloat within reach: into it, at the oars (walk/boatRow.js); one that takes you
+    // somewhere (its portal): Shift+E to row it yourself
+    const boat = BoatRow.near(w, [this.pos.x, this.pos.y + 0.5, this.pos.z]);
+    if (boat && (!pt || this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'))) return this.boardBoat(boat);
     if (pt && this.hooks.onPortal) return this.hooks.onPortal(pt);
     // the jet: climb in
     const veh = w.vehicles.find((q) => Math.hypot(q.seat[0] - this.pos.x, q.seat[2] - this.pos.z) < 4.5 && Math.abs(q.base[1] - this.pos.y) < 2);
@@ -392,6 +398,25 @@ export class Walkthrough {
       const c = h.toWorld([2.4, 0, 0]);
       return Math.hypot(c[0] - this.pos.x, c[2] - this.pos.z) < 4.5 && Math.abs(h.p[1] - this.pos.y) < 2;
     }) ?? null;
+  }
+
+  /** Into a rowing boat, at its oars (see boatRow.js). */
+  boardBoat(f) {
+    const sim = this.hooks.getSim();
+    this.spraying = false;
+    this.arm = null;
+    this.flight = new BoatRow(this, sim, f);
+    if (this.flight.seat < 0) {
+      this.flight.dispose();
+      this.flight = null;
+      return this.say('The boat is full', 2);
+    }
+    if (this.gun) this.gun.visible = false;
+    this.aiming = false;
+    this.aimK = 0;
+    this.el.mask.hidden = true;
+    this.lamp.intensity = 0;
+    this.say('W/S pull / back water, A/D port / starboard, mouse to look, C cast off / make fast, E step ashore (Shift+E: over the side)', 6);
   }
 
   /** Into the helicopter's pilot seat and fly it (see heliFlight.js). */

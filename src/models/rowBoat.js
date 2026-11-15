@@ -16,6 +16,9 @@ import { hexToRgb } from './util.js';
  * With `goesTo`, it is a boat that takes you to another place (walk up to it and press E): you
  * step ashore there, and coming back you land at `arrive` (in its frame: the pier beside it).
  * The island (models/island.js) moors its boats at its pier with this.
+ * Moored (`moored`, a `mooring` line from its stem to a point ahead of it) it swings on its line;
+ * cast off it drifts with the current and the wind and can be rowed (sim/boats.js: its seats,
+ * boardSeat / leaveSeat / row / rowToward, holes shot in its hull; walk/boatRow.js: you at the oars).
  */
 export const ROW_BOAT_PARAMS = {
   length: { value: 4.3, min: 2.4, max: 7, step: 0.1, label: 'Length (m)' },
@@ -31,6 +34,8 @@ export const ROW_BOAT_PARAMS = {
   load: { value: 0, min: 0, max: 2500, step: 10, label: 'Load on the floorboards (kg)' },
   flotation: { value: 0, min: 0, max: 0.6, step: 0.01, label: 'Buoyancy tanks (m³ that cannot flood)' },
   water: { value: 'auto', options: ['auto', 'sea', 'fresh'], label: 'Water (auto: the sea, or fresh on a pond)' },
+  moored: { value: true, label: 'Moored (its painter made fast ahead of its bow; off: it drifts with the current and the wind)' },
+  mooring: { value: 2, min: 0.5, max: 12, step: 0.1, label: 'Mooring line (m)' },
   goesTo: { value: '', label: 'Place it takes you to (empty: none)' },
   label: { value: 'Boat', label: 'What it is (its hint)' },
   arriveX: { value: 0, min: -12, max: 12, step: 0.1, label: 'Ashore here, along it (m)' },
@@ -73,6 +78,26 @@ export function loadsOf(p, hull = rowBoatHull(p)) {
   }
   if (p.load > 0) loads.push({ m: p.load, p: [-0.05 * p.length, 0.16, 0], label: 'load' });
   return loads;
+}
+
+/**
+ * Its seats (hull frame: x along it, y the thwart's top over the keel, z across): one on the
+ * rowing thwart (the middle one, by the rowlocks: the rower, facing aft), two on each other
+ * thwart; and the rowlocks (where the oars pivot, on the gunwale either side).
+ */
+export function seatsOf(p, hull = rowBoatHull(p)) {
+  const th = thwartsOf(p, hull);
+  if (!th.length) return { seats: [{ x: 0, y: hull.keel(0) + 0.3, z: 0, role: 'rower' }], rowlocks: rowlocksAt(hull, 0) };
+  const mid = th.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a));
+  const seats = [{ x: mid.x, y: mid.y, z: 0, role: 'rower' }];
+  // (the stern thwart first: the helmsman's place, then forward)
+  for (const t of [...th].sort((a, b) => a.x - b.x)) if (t !== mid) for (const s of [-1, 1]) seats.push({ x: t.x, y: t.y, z: s * Math.min(0.25, t.half * 0.5), role: 'passenger' });
+  return { seats, rowlocks: rowlocksAt(hull, mid.x) };
+}
+function rowlocksAt(hull, x0) {
+  const x = x0 + 0.32;
+  const s = hull.sheer(x);
+  return [-1, 1].map((sd) => [x, s + 0.01, sd * hull.half(x, s - 0.01)]);
 }
 
 /** The float spec (sim/buoyancy.js bodyFromSpec) of a row boat with these params. */
@@ -159,7 +184,7 @@ function rowBoatBuild(p, { h }) {
     for (const q of prims) q.anchored = true;
     return {
       prims,
-      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, params: { length: p.length, beam: p.beam, depth: p.depth, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load } }],
+      floats: [{ model: 'rowBoat', spec, label: p.label || 'boat', waterKind: p.water, ...seatsOf(p, hull), moor: { moored: p.moored !== false, length: p.mooring ?? 2 }, params: { length: p.length, beam: p.beam, depth: p.depth, material: p.material, hullColor: p.hullColor, insideColor: p.insideColor, stripeColor: p.stripeColor, thwarts: p.thwarts, oars: p.oars, crew: p.crew, load: p.load } }],
       portals,
     };
 }
