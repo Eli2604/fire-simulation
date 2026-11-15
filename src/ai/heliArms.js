@@ -228,7 +228,7 @@ export function contactState(c) {
   if (ref?.axes && ref.toWorld) return { p: ref.toWorld([0, 1.4, 0]), v: ref.v.slice() };
   if (vehicleKind(ref)) {
     const P = vehiclePose(ref);
-    return { p: P.at, v: P.vel };
+    return { p: P.at, v: P.vel, look: P.look };
   }
   const p = c.at ?? c.p;
   return { p: p.slice(), v: c.v ?? [0, 0, 0] };
@@ -362,7 +362,7 @@ function stepLock(h, dt) {
   const d = len(r);
   const off = Math.acos(clamp(dot(norm(r), h.axes.f), -1, 1));
   const key = want.c.key ?? want.c.ref;
-  const sees = !h.host.sees || h.host.sees(h.toWorld([3.5, 1.2, 0]), st.p);
+  const sees = !h.host.sees || h.host.sees(h.toWorld([3.5, 1.2, 0]), st.look ?? st.p);
   if (off < S.cone && d < S.range && d > S.minRange * 0.5 && sees) {
     if (A.lock?.key !== key || A.lock.kind !== want.kind) A.lock = { key, c: want.c, kind: want.kind, t: 0 };
     A.lock.t += dt;

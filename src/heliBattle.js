@@ -35,14 +35,15 @@ export function airBattleObjects() {
 /** The attack on the convoy and the boats at the military base (the camp zone's frame: the landing ground at ~x 94–112, z 28–72; the sea east of x 115 at 3 m). */
 export function convoyAttackObjects() {
   const car = (params, x, z, rotation) => ({ type: 'car', params: { side: 'blue', ...params }, x, z, y: 'auto', rotation });
-  const boat = (params, x, z) => ({ type: 'motorBoat', params: { side: 'blue', moored: true, mooring: 3, crewMen: 2, label: 'Blue patrol boat', hullColor: '#46525a', ...params }, x, z, y: 2.5, rotation: 90 });
+  const boat = (params, x, z) => ({ type: 'motorBoat', params: { side: 'blue', moored: true, mooring: 3, crewMen: 2, label: 'Blue patrol boat', hullColor: '#46525a', length: 5.2, beam: 1.9, depth: 0.85, ...params }, x, z, y: 2.5, rotation: 90 });
   return [
-    // the convoy: the jeep ahead (a 12.7 mm on its roof, three men: the last on the gun), the truck behind
+    // the convoy: the jeep ahead (a 12.7 mm on its roof, three men: the last on the gun) moving up, the
+    // truck halted behind (a 5.5 m truck set moving spills its fuel at once: a car-body bug to look at)
     car({ length: 4.4, width: 1.9, height: 1.9, bodyColor: '#4b5a3a', fuelLiters: 60, mountedGun: 'hmg', crewMen: 3, driveToX: 101, driveToZ: 68 }, 97, 44, -90),
-    car({ length: 5.5, width: 2.2, height: 2, bodyColor: '#4b5a3a', fuelLiters: 80, tankMaterial: 'steel', crewMen: 2, driveToX: 99, driveToZ: 58 }, 97, 34, -90),
+    car({ length: 5.5, width: 2.2, height: 2, bodyColor: '#4b5a3a', fuelLiters: 80, tankMaterial: 'steel', crewMen: 2 }, 97, 34, -90),
     // two patrol boats off the east shore, one with a machine gun in its bow
     boat({ mountedGun: 'mg', seed: 3 }, 121, 46),
-    boat({ seed: 4 }, 120.5, 82),
+    boat({ seed: 4 }, 122, 30),
     // the red gunship: over the base from the west, a while after you arrive
     { type: 'helicopter', params: { side: 'enemy', mission: 'hunt', armament: 'gunship', start: 'air', soldiers: 0, doorGuns: 'none', callsign: 'Hawk', color: '#5a4a3a', fromX: -950, fromZ: -260, altitude: 70, orbitRadius: 230, engageR: 1800, startAfter: 40, seed: 21 }, x: 104, z: 50, rotation: 0 },
     // yours: an armed attack helicopter on the landing ground (E at its cockpit)

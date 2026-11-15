@@ -103,7 +103,7 @@ export function stepMountedGuns(ctx, dt) {
       const st = contactState(c);
       const d = len(sub(st.p, from));
       if (d > M.spec.range) continue;
-      const sees = !ctx.sees || ctx.sees(from, st.p);
+      const sees = !ctx.sees || ctx.sees(from, st.look ?? st.p);
       const k = c.key ?? c.ref;
       const shooting = (v.hitBy && (v.hitBy === c.ref)) && now - (v.lastHitT ?? -99) < 10;
       let a = G.seen.get(k) ?? 0;

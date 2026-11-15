@@ -77,7 +77,7 @@ export function battleCtx(w, sim = null, o = {}) {
     world: w,
     sim,
     ground: o.ground ?? ((x, z) => worldGround(w, x, z)),
-    sees: o.sees ?? (sim?.ai?.sightLine ? (a, b) => sim.ai.sightLine(a, b) : null),
+    sees: o.sees ?? (sim?.ai?.sightLine ? (a, b) => gridSight(sim, a, b) : null),
     rand: o.rand ?? (sim?.rand ? () => sim.rand() : rng(o.seed ?? 1234567)),
     player: o.player ?? (() => (sim?.ai?.player && !sim.ai.player.dead ? sim.ai.player : null)),
     seaLevel: () => (w.sea ? w.sea.level : 0),
@@ -279,7 +279,8 @@ export function firstHit(ctx, from, d, L, g = {}) {
     if (r) take({ kind: 'boat', boat: f, t: r.t, p: r.p });
   }
   for (const e of w.enemies ?? []) {
-    if (e.dead || e.aboard != null || e.inVehicle || e.inCar || e.boat || e === g.shooter || !e.p) continue;
+    // (a man well under water: the round stops in the water first, the 'water' hit below; ai/dive.js)
+    if (e.dead || e.aboard != null || e.inVehicle || e.inCar || e.boat || e === g.shooter || !e.p || e.submerged > 0.9) continue;
     const r = manHit(e.p, from, d, best ? best.t : L);
     if (r) take({ kind: 'man', man: e, ...r });
   }
@@ -318,6 +319,22 @@ export function firstHit(ctx, from, d, L, g = {}) {
     }
   }
   return best;
+}
+
+/**
+ * A line of sight from a to b in a simulation (its voxels: walls, smoke), clipped to the voxel
+ * grid first: out over the sea, beyond the place's voxels, nothing is in the way.
+ */
+export function gridSight(sim, a, b) {
+  const w = sim.world;
+  if (!sim.ai?.sightLine || !w.size) return true;
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const L = Math.hypot(d[0], d[1], d[2]);
+  if (L < 1e-6) return true;
+  const u = d.map((x) => x / L);
+  const c = clipToBox(a, u, L, [w.size[0] - 1e-3, w.size[1] - 1e-3, w.size[2] - 1e-3]);
+  if (!c || c[1] - c[0] < 1e-3) return true;
+  return sim.ai.sightLine(along(a, u, c[0]), along(a, u, c[1]));
 }
 
 /** The segment's part inside the box [0, size] (t from, t to) or null. */
@@ -648,7 +665,7 @@ export function fragBlast(ctx, p, R, amount, o = {}) {
   carBlast(ctx, p, R, amount, { skip: o.skip?.car, owner: o.owner });
   if (w.floats?.length) boatBlast(ctx.sim ?? { world: w }, p, R);
   for (const e of w.enemies ?? []) {
-    if (e.dead || e.aboard != null || !e.p) continue;
+    if (e.dead || e.aboard != null || !e.p || e.submerged > 0.9) continue; // (fragments stop in the water)
     const dd = len(sub([e.p[0], e.p[1] + 1, e.p[2]], p));
     if (dd < R && e !== o.skip?.man && ctx.rand() < 1 - dd / R) hurtMan(ctx, e, 'torso', 'fragment', p, norm(sub(e.p, p)), 0);
   }
@@ -685,6 +702,8 @@ export function battleBlast(ctx, p, E, o = {}) {
     for (const e of w.enemies ?? []) {
       if (e.dead || e.aboard != null || !e.p) continue;
       const dd = len(sub([e.p[0], e.p[1] + 1, e.p[2]], p));
+      // (under water the fragments stop; only the shock of a warhead close by reaches him)
+      if (e.submerged > 0.9 && dd > R * 0.5) continue;
       if (dd < R * 1.5) hurtMan(ctx, e, 'torso', 'fragment', p, norm(sub(e.p, p)), 120 * (1 - dd / (R * 1.5)));
     }
     const pl = ctx.player?.();

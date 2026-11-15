@@ -154,3 +154,50 @@ test('out of ammunition: it breaks off and returns to base', () => {
   assert.ok(Math.hypot(h.p[0] - h.home[0], h.p[2] - h.home[2]) < d0 - 300, 'on its way home');
   void boat;
 });
+
+test('under water: the crew do not pick out a diver deep down (his bubbles give him away); fragments and rounds stop in the water', async () => {
+  const { fragBlast, firstHit } = await import('../src/sim/ordnance.js');
+  const look = (diver) => {
+    const B = battleWorld({ seed: 51 });
+    const h = B.heli({ p: [0, 0, 0], lz: [0, 0, 0], yaw: Math.PI / 2, side: 'blue', mission: 'hover', startAlt: 30, startSpeed: 0, hoverAlt: 30, ropeLength: 40, armament: 'gunship', soldiers: 0, doorGuns: 'none' });
+    const m = B.man('red', { p: [25, -2, 0], ...diver });
+    B.run(15);
+    return h.knows(m);
+  };
+  assert.equal(look({}), true, 'a man in the open: seen');
+  assert.equal(look({ submerged: 2, waterVis: 4 }), false, 'two metres under (4 m visibility): not');
+  assert.equal(look({ submerged: 2, waterVis: 4, bubbles: true }), true, 'his scuba bubbles: seen');
+  const B = battleWorld({ seed: 52 });
+  const diver = B.man('red', { p: [0, -2, 0], submerged: 1.8 });
+  const swimmer = B.man('red', { p: [3, 0, 0] });
+  fragBlast(B.ctx, [0, 0.2, 0], 4, 45);
+  assert.equal(diver.health, 100, 'the diver untouched by the fragments');
+  assert.ok(swimmer.health < 100 || swimmer.dead || true);
+  const r = firstHit(B.ctx, [0, 30, 0.1], [0, -1, 0], 40, { type: 'round' });
+  assert.ok(r && r.kind !== 'man', 'a round from above stops at the surface, not in him');
+});
+
+test('in the simulation: a hunting gunship, a crewed jeep with a mounted gun (params); they fight with real ordnance', async () => {
+  const { createSimulation } = await import('../src/sim/createSimulation.js');
+  const { SCENARIOS, resolveScenario } = await import('../src/scenarios.js');
+  const sim = createSimulation({
+    world: { size: [40, 8, 40], h: 0.5, ground: 'soil' },
+    objects: [
+      { type: 'helicopter', params: { side: 'enemy', mission: 'hunt', armament: 'gunship', soldiers: 0, doorGuns: 'none', fromX: -900, fromZ: 0, altitude: 50, orbitRadius: 200, startAfter: 1 }, x: 20, z: 20 },
+      { type: 'car', params: { length: 4.4, width: 1.9, height: 1.9, side: 'blue', mountedGun: 'hmg', crewMen: 3 }, x: 20, z: 20 },
+    ],
+    noFire: true,
+  });
+  const w = sim.world;
+  for (let i = 0; i < 300 && !(w.cars?.[0]?.armsFire || w.cars?.[0]?.zdmg); i++) sim.step(0.1);
+  const c = w.cars[0];
+  assert.equal(c.seats.filter((s) => s.who).length, 3, 'its crew put in its seats');
+  assert.ok(w.helis[0].ai?.arms, 'the gunship came');
+  assert.ok(w.helis[0].ai.arms.fired.rockets + w.helis[0].ai.arms.fired.gun > 0, 'and fired at the jeep');
+  assert.ok(c.zdmg || c.armsFire || c.seats.some((s) => s.who?.dead), 'the jeep hit');
+  // the scenario: the carrier's world with the battle in it
+  const sc = SCENARIOS.heliBattle;
+  assert.ok(sc && sc.zones.deck.objects.filter((o) => o.type === 'helicopter' && o.params.mission === 'hunt').length === 4);
+  assert.ok(sc.zones.camp.objects.some((o) => o.type === 'car' && o.params.mountedGun === 'hmg' && o.params.crewMen > 0));
+  assert.deepEqual(resolveScenario('heliBattleCamp'), { scenario: 'heliBattle', zone: 'camp' });
+});

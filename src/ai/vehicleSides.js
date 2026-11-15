@@ -49,12 +49,13 @@ export function vehicleSide(v) {
 export function vehiclePose(v) {
   if (vehicleKind(v) === 'car') {
     const S = v.spec;
-    return { p: [v.x, v.y, v.z], at: [v.x, v.y + S.H * 0.55, v.z], vel: [v.vx ?? 0, v.vy ?? 0, v.vz ?? 0], size: Math.max(S.L, S.H * 2) };
+    // (look: a point on its roof (over its gun), to see it by: its middle is inside its own voxels)
+    return { p: [v.x, v.y, v.z], at: [v.x, v.y + S.H * 0.55, v.z], look: [v.x, v.y + S.H + (v.params?.mountedGun && v.params.mountedGun !== 'none' ? 0.8 : 0.15), v.z], vel: [v.vx ?? 0, v.vy ?? 0, v.vz ?? 0], size: Math.max(S.L, S.H * 2) };
   }
   const b = v.body;
   if (!b) return null;
   const y = b.Y ?? 0;
-  return { p: [b.X, y, b.Z], at: [b.X, y + 0.2, b.Z], vel: [b.vx ?? 0, b.vy ?? 0, b.vz ?? 0], size: b.hull?.L ?? 4 };
+  return { p: [b.X, y, b.Z], at: [b.X, y + 0.2, b.Z], look: [b.X, y + (b.hull?.D ?? 0.6) + 0.3, b.Z], vel: [b.vx ?? 0, b.vy ?? 0, b.vz ?? 0], size: b.hull?.L ?? 4 };
 }
 
 /** Out of the fight: a car burnt out or wrecked, a boat sunk. */
@@ -72,7 +73,7 @@ export function vehicleContacts(w) {
     if (!side || vehicleDead(v)) continue;
     const P = vehiclePose(v);
     if (!P) continue;
-    out.push({ key: v, ref: v, kind, side, p: P.p, at: P.at, v: P.vel, speed: Math.hypot(P.vel[0], P.vel[2]), size: P.size, exposure: 1 });
+    out.push({ key: v, ref: v, kind, side, p: P.p, at: P.look, aim: P.at, v: P.vel, speed: Math.hypot(P.vel[0], P.vel[2]), size: P.size, exposure: 1 });
   }
   return out;
 }

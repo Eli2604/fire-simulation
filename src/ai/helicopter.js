@@ -104,7 +104,7 @@ import { initArms, stepArms, armsMass } from './heliArms.js';
 import { stepCombat, stepDefence } from './heliCombat.js';
 import { vehicleContacts } from './vehicleSides.js';
 import { stepBattle } from './battle.js';
-import { battleCtx } from '../sim/ordnance.js';
+import { battleCtx, gridSight } from '../sim/ordnance.js';
 
 const G = 9.81;
 /**
@@ -1742,7 +1742,8 @@ export class HeliAI {
       // what there is to see (each on its side: ai/sides.js): you on foot, the soldiers (not the men
       // aboard a helicopter: the helicopter is the contact), the dragons, the helicopters
       contacts: () => worldContacts(sim),
-      sees: (a, b) => (sim.ai?.sightLine ? sim.ai.sightLine(a, b) : true),
+      // (clipped to the voxels: beyond the place's grid nothing is in the way)
+      sees: (a, b) => gridSight(sim, a, b),
       // where the fire teams of its side have their threat (ai/squad.js: radioed, they look there)
       reports: (side) => (sim.squads ?? []).filter((sq) => sq.threat && w.enemies.some((m) => m.squad && !m.dead && m.aboard == null && (m.unit ?? 'Alpha') === sq.unit && sideOf(m) === side)).map((sq) => sq.threat),
       // real rounds (sim/wounds.js shoot): a soldier wounded, a dragon struck, another helicopter's
@@ -1766,7 +1767,7 @@ export class HeliAI {
   /** The battle's context on this simulation (sim/ordnance.js battleCtx). */
   battle() {
     const sim = this.sim;
-    return (this._battle ??= battleCtx(sim.world, sim, { ground: (x, z) => groundY(sim.world, x, z), sees: (a, b) => (sim.ai?.sightLine ? sim.ai.sightLine(a, b) : true) }));
+    return (this._battle ??= battleCtx(sim.world, sim, { ground: (x, z) => groundY(sim.world, x, z), sees: (a, b) => gridSight(sim, a, b) }));
   }
   step(dt) {
     const w = this.world;
@@ -1851,7 +1852,9 @@ export function worldContacts(sim) {
     const prone = e.crawling || /prone|crawl|wounded|peekOver/.test(a);
     const low = !prone && /crouch|peekWall|kneel/i.test(a);
     const h = prone ? 0.3 : low ? 0.85 : 1.25;
-    out.push({ key: e, ref: e, kind: 'soldier', side: sideOf(e), p: e.p, at: [e.p[0], e.p[1] + h, e.p[2]], speed: e.moving ? e.speed ?? 1.3 : 0, exposure: prone ? 0.4 : low ? 0.7 : 1, lightOn: e.lightOn, beam: e.beam });
+    out.push({ key: e, ref: e, kind: 'soldier', side: sideOf(e), p: e.p, at: [e.p[0], e.p[1] + h, e.p[2]], speed: e.moving ? e.speed ?? 1.3 : 0, exposure: prone ? 0.4 : low ? 0.7 : 1, lightOn: e.lightOn, beam: e.beam,
+      // (under water: seen from above only within the water's visibility and his depth; a scuba set's bubbles give him away: ai/perception.js, ai/dive.js)
+      submerged: e.submerged, waterVis: e.waterVis, bubbles: e.bubbles });
   }
   for (const d of w.dragons ?? []) {
     if (!(d.health > 0) || !d.chest) continue;

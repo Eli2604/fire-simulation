@@ -229,7 +229,7 @@ function gunAt(h, dt, T, st, range) {
   if (r > range || r < 30) return false;
   const sol = aimSolution(from, h.v, g.spec, st.p, st.v);
   if (!turretBears(h, sol.dir)) return false;
-  if (h.host.sees && !h.host.sees(from, st.p)) return false;
+  if (h.host.sees && !h.host.sees(from, st.look ?? st.p)) return false;
   if (h.friendlyInLine(from, st.p, h.contactsNow ?? [])) return false;
   g.dirWant = sol.dir;
   C.burstT -= dt;
@@ -324,7 +324,7 @@ function standoff(h, dt, T, st, d, gy) {
     return;
   }
   if (C.sub === 'popup') {
-    const sees = !h.host.sees || h.host.sees(h.toWorld([3.5, 1.2, 0]), st.p);
+    const sees = !h.host.sees || h.host.sees(h.toWorld([3.5, 1.2, 0]), st.look ?? st.p);
     h.fly(dt, { to: hold, speed: 4, y: gy + (sees ? Math.max(COMBAT.popAgl, h.p[1] - gy) : h.p[1] - gy + 10), face: bearing });
     if ((sees && h.p[1] - gy >= COMBAT.popAgl - 2) || C.subT > 12) {
       C.sub = 'fire';
